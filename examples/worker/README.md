@@ -224,8 +224,8 @@ Then point an MCP client at `<PUBLIC_URL>/mcp`. The example explicitly enables
 authentication controls. The page labels tool safety, offers fixed repair
 prompts for classified failures, and shows client setup commands for endpoints
 the signed-in person may use. Those commands contain no token. There is no
-separate Credentials tab. The Access tokens page is available to permitted
-interactive operators.
+separate Credentials tab. The Access tokens page, listing one token slot per
+declared agent, is available to permitted interactive operators.
 
 ## Select optional modules
 
@@ -243,20 +243,25 @@ account. Both management permissions default to none. Grant the intended
 owner's shared permissions explicitly, and grant users personal permissions
 only for connectors configured with `authScope: "personal"`. Static headers
 remain deployment configuration. `activityAccess` governs global history reads.
-`accessTokenManagement` separately allows interactive operators to create, rename,
-and revoke machine tokens. This example grants that permission to every signed-in
+`accessTokenManagement` separately allows interactive operators to issue, rotate,
+and revoke agent tokens. This example grants that permission to every signed-in
 human, matching its connector-management permissions; narrow all three for a team.
 See [inbound identity](../../documentation/auth.md#principals-visibility-and-operators).
 
 ### Machine tokens
 
-`accessTokens(storage)` is always installed over `CONNECTA_DB`, with no new
-binding. Empty token storage admits no machine client. A human authenticated
-through Access can still sign in and bootstrap the first token. Open
-`<PUBLIC_URL>/`, select Access tokens, and create a named token. Save the
-returned `cta_` secret privately; it is returned once. UI-issued tokens retain
-the issuing human's principal, while connector and pool rules are evaluated
-on every request. They never grant interactive operator authority.
+Machine clients are agents declared by name in `agents` in
+`src/connecta.config.ts`; this example declares `ci-client`. Each agent has one
+`cta_` token held by `accessTokens(storage)` over `CONNECTA_DB`, with no new
+binding. An agent with no issued token admits nothing. A human authenticated
+through Access can still sign in and issue the first token. Open
+`<PUBLIC_URL>/`, select Access tokens, and issue the agent's token. Save the
+returned `cta_` secret privately; it is returned once. Rotating replaces it
+immediately: the old secret stops on its next request. An agent has no human
+principal, so personal connectors are absent for it; connector and pool rules
+recognize it by `identity.agent` on every request. It never has interactive
+operator authority. Removing a name from `agents` stops its token on the next
+request.
 
 A machine sends all three headers:
 
@@ -278,16 +283,18 @@ deployment's D1 binding can use the published API against that same storage:
 import { AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
 import { d1Storage } from "@zackbart/connecta/d1";
 
-const manager = new AccessTokenManager(d1Storage(env.CONNECTA_DB));
-const { token } = await manager.create("ci-client", "trusted-provisioning");
+const manager = new AccessTokenManager(d1Storage(env.CONNECTA_DB), { agents: ["ci-client"] });
+const { token } = await manager.rotate("ci-client", "trusted-provisioning");
 // Deliver token once to the client's secret store, outside logs and source control.
 ```
 
-This creates a token without a human principal. The name is a label, never a
-grant. Provision only through trusted operator tooling; do not expose this
-code as a public route or mint a token at startup. Existing unrevoked `cta_`
-tokens survive a state migration into this same D1 namespace. Keep
-`accessTokens(storage)` configured and preserve the identity and pool rules.
+Provision only through trusted operator tooling; do not expose this code as a
+public route or rotate a token at startup. Tokens issued before agents survive a
+state migration into this same D1 namespace but stop admitting until trusted
+tooling binds each machine's token once with
+`manager.adopt(tokenId, "ci-client")`, which keeps its secret working. Human-bound
+tokens cannot be adopted; issue the agent a new token instead. Keep
+`accessTokens(storage)` configured over the same storage.
 
 ### UI and encrypted credentials
 
@@ -324,9 +331,9 @@ does not create credentials or permissions by itself.
 ### Client authentication and activity
 
 Interactive MCP clients use Access Managed OAuth. Machine clients need both
-Access service credentials and a stored `cta_` bearer, provisioned as described
-in [Machine tokens](#machine-tokens). `accessTokens(storage)` is always enabled,
-and the example grants token management to every interactive Access operator.
+Access service credentials and a declared agent's `cta_` bearer, issued as
+described in [Machine tokens](#machine-tokens). `accessTokens(storage)` is always
+enabled, and the example grants token management to every interactive Access operator.
 Keep token, connector, and pool grants in deployment code.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.CONNECTA_DB) })`,
@@ -430,7 +437,7 @@ CREATE INDEX IF NOT EXISTS connecta_kv_expiry ON connecta_kv (expires_at_ms);
 - **Workers KV** (`CONNECTA_KV` and `cloudflare-kv.ts`). Workers KV is no longer
   supported: `createConnecta` refuses storage without `compareAndSet` at boot.
   Copy its state into D1 once, as described below, so OAuth grants, vault
-  credentials, and `cta_` access tokens keep working.
+  credentials, and `cta_` access token records carry over.
 
 #### Copying Workers KV state into D1
 

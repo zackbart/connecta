@@ -30,6 +30,7 @@ import {
   type ConfigInput,
   type ConfigOutput,
 } from "./config-schema.js";
+import { assertAgentNames } from "./agent-identity.js";
 import { assertExecutor } from "./executor-contract.js";
 import type { AccessTokensModule, ActivityModule, OperatorSurface } from "./module-contracts.js";
 import { memoryStorage } from "./storage/memory.js";
@@ -366,6 +367,18 @@ const connectaConfig = {
   /** Code-derived connection visibility and independent management permissions. */
   identity: object(identity),
   /**
+   * Agents, declared by name: lowercase letters, digits, `_` and `-`, each
+   * unique. Each has one `cta_` token slot that operators issue, rotate, and
+   * revoke; nothing outside code adds, renames, or rebinds an agent. Removing
+   * a name stops its token on the next request. Requires `accessTokens`.
+   * An admitted agent carries `identity.agent` and has no principal, so
+   * personal connectors are absent for it. Defaults to none.
+   */
+  agents: opaque<readonly string[], readonly string[]>({
+    check: (value, path) => assertAgentNames(value, path),
+    resolve: (value) => Object.freeze([...(value ?? [])]),
+  }),
+  /**
    * Whether this admitted identity may open plain `/mcp`. Omitted admits
    * everyone; only literal true admits when configured. Other returns and
    * throws receive the same 404 as a refused or undeclared pool.
@@ -465,12 +478,12 @@ const connectaConfig = {
       }
     },
   }),
-  /** Optional managed client tokens, created by accessTokens() from /auth/access-tokens. */
+  /** Optional agent tokens for the declared `agents`, created by accessTokens() from /auth/access-tokens. */
   accessTokens: opaque<AccessTokensModule>({
     check: (value) => {
       const auth = isObject(value) ? value.auth : undefined;
       if (
-        !hasMethods(value, ["handle"]) ||
+        !hasMethods(value, ["handle", "forAgents"]) ||
         !isObject(auth) ||
         typeof auth.authorize !== "function" ||
         auth.interactiveOperator
@@ -621,6 +634,12 @@ function assertCoherent(config: Parsed): void {
   ) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
   }
+  if (config.agents.length > 0 && !config.accessTokens) {
+    throw new ConfigError(
+      "ConnectaConfig.agents needs accessTokens: accessTokens(storage) from @zackbart/connecta/auth/access-tokens " +
+        "holds each agent's token slot.",
+    );
+  }
 }
 
 /**
@@ -650,10 +669,13 @@ export function readConfig(config: ConnectaConfig): { input: ConnectaConfig; res
     name: parsed.serverInfo.name ?? "connecta",
     version: parsed.serverInfo.version ?? CONNECTA_VERSION,
   } as ResolvedConfig["serverInfo"];
+  // The token module admits exactly the agents this configuration declares.
+  const accessTokens = parsed.accessTokens?.forAgents(parsed.agents);
   const resolved: ResolvedConfig = Object.freeze({
     ...parsed,
+    accessTokens,
     // A managed-token module contributes one more provider, ordered with the rest.
-    auth: parsed.accessTokens ? normalizeAuth([parsed.accessTokens.auth, ...parsed.auth]) : parsed.auth,
+    auth: accessTokens ? normalizeAuth([accessTokens.auth, ...parsed.auth]) : parsed.auth,
     serverInfo: Object.freeze(info),
   });
   return { input, resolved };

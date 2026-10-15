@@ -1,6 +1,7 @@
 import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
-import type { UiAccessToken, UiActivityEvent } from "../../src/operator-ui/view.js";
+import type { UiActivityEvent } from "../../src/operator-ui/view.js";
+import type { UiAgentSlot } from "../../src/operator-ui/app/store.js";
 import type { Connector } from "../../src/types.js";
 import { activityHistory, type ToolCallActivityEvent } from "../../src/activity.js";
 import { accessTokens } from "../../src/access-tokens.js";
@@ -22,7 +23,7 @@ export interface OperatorVisualFixture {
   contract: OperatorUiContract;
   data: UiData;
   activity: { events: UiActivityEvent[]; nextCursor?: string };
-  tokens: { accessTokens: UiAccessToken[] };
+  tokens: { agents: UiAgentSlot[] };
 }
 
 const catalog = [
@@ -88,7 +89,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     return {
       contract, data,
       activity: { events: empty ? [] : events, ...(empty ? {} : { nextCursor: "older" }) },
-      tokens: { accessTokens: empty ? [] : [{ id: "desktop", name: "Claude desktop", tokenPrefix: "cta_fixture", createdAt: VISUAL_NOW }] },
+      tokens: { agents: empty ? [] : [{ name: "claude-desktop", state: "issued", issuedAt: VISUAL_NOW }] },
     } satisfies OperatorVisualFixture;
   } finally { await app.close(); }
 }

@@ -118,8 +118,8 @@ function gate(notice: Notice | null = null): void {
 
 interface OperatorResponse {
   token?: string;
-  accessToken?: UiAccessToken;
-  accessTokens?: UiAccessToken[];
+  agent?: UiAgentSlot;
+  agents?: UiAgentSlot[];
   ok?: boolean;
   state?: string;
   problem?: string;
@@ -908,6 +908,33 @@ export async function refreshConnector(id: string, quiet = false): Promise<void>
 
 /* Access tokens ----------------------------------------------------------- */
 
+/** One declared agent's token slot, as /ui/access-tokens returns it. */
+export type UiAgentSlot =
+  | { name: string; state: "none" }
+  | { name: string; state: "issued"; issuedAt: string }
+  | { name: string; state: "revoked"; revokedAt: string };
+
+/**
+ * Operator state still holds token rows (#834 replaces it). Each slot rides in
+ * one: `id` and `name` are the agent name, `createdAt` is when its token was
+ * issued, empty when none was, and `revokedAt` marks a revoked slot. The
+ * prefix is never shown and stays empty.
+ */
+function slotRow(slot: UiAgentSlot): UiAccessToken {
+  return {
+    id: slot.name,
+    name: slot.name,
+    tokenPrefix: "",
+    createdAt: slot.state === "issued" ? slot.issuedAt : "",
+    ...(slot.state === "revoked" ? { revokedAt: slot.revokedAt } : {}),
+  };
+}
+
+/** The slot state one token row encodes. */
+export function slotState(row: UiAccessToken): UiAgentSlot["state"] {
+  return row.revokedAt ? "revoked" : row.createdAt ? "issued" : "none";
+}
+
 let tokenRevision = 0;
 export async function loadAccessTokens(): Promise<void> {
   const identityCurrent = fence();
@@ -918,13 +945,14 @@ export async function loadAccessTokens(): Promise<void> {
   try {
     const payload = await operatorRequest("/ui/access-tokens", "GET", current);
     if (!current()) return;
-    if (!Array.isArray(payload?.accessTokens)) throw new Error("The access token collection was not returned.");
-    const tokens = payload.accessTokens;
-    // Creation, rename and revoke replace record objects. Prefer records
-    // changed locally since this read began over its possibly older snapshot.
-    const changed = state.tokens.filter((token) => existing.get(token.id) !== token);
-    const changedIds = new Set(changed.map((token) => token.id));
-    set({ tokenPhase: "ready", tokens: [...changed, ...tokens.filter((token) => !changedIds.has(token.id))] });
+    if (!Array.isArray(payload?.agents)) throw new Error("The agent token slots were not returned.");
+    const tokens = payload.agents.map(slotRow);
+    // Issue and revoke replace row objects. Prefer rows changed locally since
+    // this read began over its possibly older snapshot.
+    const changed = new Map(
+      state.tokens.filter((token) => existing.get(token.id) !== token).map((token) => [token.id, token]),
+    );
+    set({ tokenPhase: "ready", tokens: tokens.map((token) => changed.get(token.id) ?? token) });
   } catch {
     if (!current()) return;
     set({
@@ -938,84 +966,64 @@ function tokenFailure(tokenNotice: Notice): Partial<OperatorState> {
   return { tokenBusy: false, tokenNotice, pendingFocus: "tokenNotice" };
 }
 
-/**
- * Resolves true only when the token exists. `mutate` lands a handled failure in
- * state and resolves like any other outcome, so a caller that clears its form on
- * resolution would throw away what the operator typed the moment the POST
- * failed — the dead end every other flow here avoids. The form clears on this
- * boolean instead.
- */
-export function createAccessToken(name: string): Promise<boolean> {
-  if (state.tokenBusy) return Promise.resolve(false);
-  if (!name) {
-    set(tokenFailure(failure("Name the MCP client before creating a token.")));
-    return Promise.resolve(false);
+/** The rows with this slot's replaced, or appended when a read has not listed it yet. */
+function replaceRow(slot: UiAgentSlot): UiAccessToken[] {
+  const row = slotRow(slot);
+  return state.tokens.some((token) => token.id === slot.name)
+    ? state.tokens.map((token) => (token.id === slot.name ? row : token))
+    : [...state.tokens, row];
+}
+
+/** Issue the agent's first token or rotate it; the previous secret stops at once. */
+export function rotateAgentToken(name: string): Promise<void> {
+  if (state.tokenBusy) return Promise.resolve();
+  const row = state.tokens.find((token) => token.id === name);
+  if (
+    row &&
+    slotState(row) === "issued" &&
+    !window.confirm(`Rotate ${name}'s token? Its current token stops working immediately.`)
+  ) {
+    return Promise.resolve();
   }
-  let created = false;
   return mutate({
-    request: (current) => operatorRequest("/ui/access-tokens", "POST", current, { name }),
+    request: (current) => operatorRequest(`/ui/access-tokens/${encodeURIComponent(name)}`, "POST", current),
     busy: { tokenBusy: true, tokenNotice: null },
     done: (payload) => {
-      const issued = payload?.accessToken;
-      if (!payload?.token || !issued) {
-        throw new Error("The created token was not returned.");
-      }
-      created = true;
+      const slot = payload?.agent;
+      if (!payload?.token || slot?.name !== name) throw new Error("The issued token was not returned.");
+      const reveal = state.page === "tokens";
       return {
         tokenBusy: false,
         tokenPhase: "ready",
-        tokens: [issued, ...state.tokens.filter((token) => token.id !== issued.id)],
-        createdToken: state.page === "tokens" ? payload.token : null,
-        tokenNotice: info("Access token created."),
-        pendingFocus: state.page === "tokens" ? "tokenRevealHeading" : null,
+        tokens: replaceRow(slot),
+        createdToken: reveal ? payload.token : null,
+        tokenNotice: info(`Token issued for ${name}.`),
+        pendingFocus: reveal ? "tokenRevealHeading" : null,
       };
     },
-    failed: () => tokenFailure(failure("Access token could not be created. Check the name, capacity, and storage.")),
-  }).then(() => created);
+    failed: () => tokenFailure(failure(`A token could not be issued for ${name}. Reload and try again.`)),
+  });
 }
 
 export function dismissCreatedToken(): void {
   set({ createdToken: null });
 }
 
-export function renameAccessToken(id: string | null): void {
-  set({ tokenRenaming: id });
-}
-
-function accessTokenMutation(
-  id: string,
-  method: "DELETE" | "PUT",
-  body: object | undefined,
-  success: string,
-  fallback: string,
-): Promise<void> {
+export function revokeAgentToken(name: string): Promise<void> {
+  if (!window.confirm(`Revoke ${name}'s token? The agent will immediately lose access.`)) return Promise.resolve();
   return mutate({
-    request: (current) => operatorRequest(`/ui/access-tokens/${encodeURIComponent(id)}`, method, current, body),
+    request: (current) => operatorRequest(`/ui/access-tokens/${encodeURIComponent(name)}`, "DELETE", current),
     busy: { tokenBusy: true, tokenNotice: null },
-    done: (payload) => ({
-      tokenBusy: false,
-      tokenRenaming: null,
-      tokenNotice: info(success),
-      pendingFocus: "tokenNotice",
-      ...(payload?.accessToken
-        ? {
-            tokens: state.tokens.map((token) => (token.id === id ? payload.accessToken! : token)),
-          }
-        : {}),
-    }),
-    failed: () => tokenFailure(failure(fallback)),
+    done: (payload) => {
+      const slot = payload?.agent;
+      if (slot?.name !== name) throw new Error("The revoked slot was not returned.");
+      return {
+        tokenBusy: false,
+        tokens: replaceRow(slot),
+        tokenNotice: info(`${name}'s token revoked.`),
+        pendingFocus: "tokenNotice",
+      };
+    },
+    failed: () => tokenFailure(failure(`${name}'s token could not be revoked.`)),
   });
-}
-
-export function saveAccessTokenName(id: string, name: string): Promise<void> {
-  return accessTokenMutation(id, "PUT", { name }, "Access token renamed.", "Access token could not be renamed.");
-}
-
-export function revokeAccessToken(id: string): Promise<void> {
-  const named = state.tokens.find((token) => token.id === id);
-  const confirmed = window.confirm(
-    `Revoke ${named?.name || "this access token"}? Its MCP client will immediately lose access.`,
-  );
-  if (!confirmed) return Promise.resolve();
-  return accessTokenMutation(id, "DELETE", undefined, "Access token revoked.", "Access token could not be revoked.");
 }

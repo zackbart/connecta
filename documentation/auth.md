@@ -8,7 +8,7 @@ credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 
 | Task                                                                | Sections                                                                                                                                                                      |
 | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connect a machine or migrate an old client                          | [Managed tokens](#managed-client-tokens-and-upgrading-from-v023), [static bearer migration](#migrating-static-bearer-clients)                                                 |
+| Connect a machine or migrate an old client                          | [Agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens), [static bearer migration](#migrating-static-bearer-clients)                                                  |
 | Configure caller visibility, read-only endpoints, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                      |
 | Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [management](#human-authentication-management)    |
 | Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                         |
@@ -57,7 +57,7 @@ storage, then ask only interactive providers. Replace custom `final` and
 `finalRefusals` handling with recognition; handshake redirects and admission
 policy refusals are provider verdicts too. Recognition grants no identity.
 
-`authorize` returns `{ ok: true, userId?, subjectId?, principal? }` or a refusal
+`authorize` returns `{ ok: true, userId?, subjectId?, principal?, agent? }` or a refusal
 carrying a `Response`. On 401, routing and challenge selection use the first
 provider that actually answers the endpoint's protected-resource metadata
 request. Its `challenge(request, baseUrl)` supplies `WWW-Authenticate`, including
@@ -70,21 +70,28 @@ Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
 addresses, and email domains stay out of denial logs, activity, and status,
 including email lookup failures and admission policy refusals.
 
-## Managed client tokens and upgrading from v0.23
+## Agent tokens and upgrading from earlier tokens
 
-`accessTokens` from `@zackbart/connecta/auth/access-tokens` installs its inbound
-adapter and, beside `ui`, the Access tokens page and `/ui/access-tokens`
-routes. Omitted, none of it loads or is served.
+Machine clients are **agents**, declared by name in code. `agents: string[]`
+lists them: each name matches `^[a-z0-9_-]+$`, at most 64 characters, and is
+unique; anything else, or agents without `accessTokens`, throws at
+construction. `describeConfig()` lists the names and never token state.
+`accessTokens` from `@zackbart/connecta/auth/access-tokens` installs the `cta_`
+inbound adapter and, beside `ui`, the Access tokens page and `/ui/access-tokens`
+routes. Omitted, none of it loads or is served. It takes no options;
+`accessTokens(storage, { maxActive })` throws, since each declared agent has
+exactly one token slot.
 
 ```ts
 import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 createConnecta({
   storage,
+  agents: ["simon", "ci"],
   accessTokens: accessTokens(storage),
   auth: clerkAuth({ publishableKey, secretKey }),
   ui: operatorUi(),
   identity: {
-    connectorAccess, // Keep the existing principal and token-id grant rules.
+    connectorAccess: ({ agent, principal }) => (agent === "ci" ? ["github"] : "all"),
     accessTokenManagement: ({ principal }) =>
       principal?.namespace === "clerk:your-existing-namespace" &&
       principal.id === "your-operator-id",
@@ -94,37 +101,65 @@ createConnecta({
 });
 ```
 
-From v0.23, replace `accessTokens: true` or its options object with
-`accessTokens(storage)` on **the same storage and key namespace**, keeping the
-`access-token:v1:record:*` and `access-token:v1:lookup:*` records: unrevoked
-`cta_…` secrets keep working with no recovery, rewrite, or client rotation. Keep
-the identity namespaces and connector/pool grant callbacks too; storage
-compatibility translates no configuration and invents no grants. `access_token`
-actor ids, the `connecta:access-tokens:v1` activity namespace, friendly names,
-and stored principals carry over; a token without a principal stays unbound.
-Every request evaluates current identity, tool, and endpoint grants, and a token
-never becomes an interactive operator. Names are labels, never permissions. A
-UI-issued token belongs to the issuing human's principal, and any explicitly
-permitted token manager can list, rename, or revoke deployment tokens. Machine tokens manage neither tokens nor connection credentials; operators
-need an interactive provider.
+**Slots.** Each declared agent has one slot: `none`, `issued`, or `revoked`.
+Nothing outside code adds, renames, or rebinds an agent. A permitted operator
+issues the first token, rotates it, or revokes it; `AccessTokenManager` exposes
+the same `rotate(name)` and `revoke(name)` to trusted provisioning, and the
+Node template wraps rotation as `npm run --silent rotate-token -- <agent>`.
+Secrets carry 256 random bits and are returned once, on issue or rotate; only
+SHA-256 digests persist. Listing returns `{ name, state, issuedAt?, revokedAt? }`
+per declared agent, never a secret, digest, or prefix.
 
-Issuance claims capacity with `compareAndSet`, because counting records before
-writing admits too many concurrent creates; every supported store provides
-it. Active
-capacity defaults to 100, configurable with
-`accessTokens(storage, { maxActive: 200 })` up to 1,000, counted by a durable
-reservation before a secret is written. A failure before lookup publication
-releases it; an uncertain lookup write keeps its metadata and capacity so an
-operator can revoke it, even if creation returned no secret. Creation is never
-retried automatically, and once new-version issuance starts, old-version
-instances must create no tokens: they ignore reservations.
+**Admission.** A `cta_` token admits only while its record is bound to an agent
+currently declared in code and that agent's slot names it. Every other case
+refuses with the same 401 as an unknown token: an undeclared agent, a revoked or
+rotated-out token, a token bound to a human principal, and an unbound token from
+an earlier release. Removing an agent from code stops its token on the next
+request without any storage write. An admitted agent's identity is:
 
-Secrets carry 256 random bits; only SHA-256 digests persist. Creation returns
-the secret once, list and rename never. Revocation removes the lookup before
-updating metadata and authorization caches no token, so revocation takes
-effect on the next authorization (D1 and SQLite are strongly consistent);
-admitted requests are not recalled. Management writes
-require an exact same-origin Origin; responses are private and non-cacheable.
+```ts
+{
+  actor: { kind: "access_token", id: "<name>", namespace: "connecta:access-tokens:v1" },
+  subject: { namespace: "connecta:access-tokens:v1", id: "agent:<name>" },
+  agent: "<name>",
+  interactive: false,
+}
+```
+
+`identity.agent` is set only by the built-in adapter; a result from any other
+inbound provider that carries `agent` is refused like an unknown token. An
+agent has no principal, so personal connectors are absent for it and it never
+qualifies for `activityAccess`. Its subject partitions result handles per
+agent. Activity attributes its calls to the agent name. Grant callbacks
+recognize agents by `identity.agent`. An agent never becomes an interactive
+operator: machine tokens manage neither tokens nor connection credentials.
+
+**Rotation is an immediate cutover.** A rotation writes the new record and its
+digest lookup, then swaps the slot to it with one `compareAndSet`. From that
+swap the new secret admits and the old one refuses, so after `rotate` returns
+the old secret fails on its next request. Of concurrent rotations exactly one
+swaps and returns a secret; the others publish nothing and fail with a conflict
+(409 on the route). If a write's answer is lost, the new secret is retired, so
+no live secret exists that nobody holds. Revocation removes the digest lookup
+before it marks the slot revoked. Authorization caches no token, and D1 and
+SQLite are strongly consistent; admitted requests are not recalled. Management
+writes require an exact same-origin Origin; responses are private and
+non-cacheable.
+
+**Upgrading.** Keep `accessTokens(storage)` on **the same storage and key
+namespace**. The `access-token:v1:record:*` and `access-token:v1:lookup:*`
+records stay readable, and slots are added beside them as
+`access-token:v1:agent:<name>`. A stored token stops admitting until it is bound
+to an agent. Trusted provisioning binds an existing machine token once with
+`AccessTokenManager.adopt(tokenId, agentName)`, so that machine's `cta_` secret
+keeps working; `unboundTokens()` lists the records it accepts. Adoption
+refuses a record already bound, a human-bound or revoked record, and an agent
+whose slot was ever issued. The Node template wraps both as `npm run adopt-token`.
+Human-bound tokens, which earlier UI issuance tied to the issuing operator,
+cannot be adopted and stay refused; issue the agent a new token instead. Rows
+recorded before the upgrade keep their token-record actor ids. Grant callbacks
+that matched token record ids with `actor.id` match agent names through
+`identity.agent` instead.
 
 ## Origins
 
@@ -143,7 +178,7 @@ silently never matching. A permitted origin still has to authenticate.
 One authorization yields three roles: the **actor** identifies the caller in
 activity, the **subject** owns transient results such as `connecta.result` pages,
 and the **principal** is the human owner of personal connector auth. An
-interactive Clerk or Access user supplies all three; Access service identities are refused; machines present `cta_` tokens. The principal is an explicit
+interactive Clerk or Access user supplies all three; Access service identities are refused; machines are agents presenting `cta_` tokens, with an actor and a subject but no principal. The principal is an explicit
 `principal: { namespace, id }` from `authorize`, accepted whenever it
 validates, or else one derived from `userId` and the provider's
 `activityActorNamespace`, so only the derived path needs a namespace.
@@ -186,7 +221,7 @@ as for a connector that does not exist. An ungranted tool fails exactly like one
 the connector never had: `unknown_tool`, with no hint that it exists. That is
 the whole security claim, in one place on purpose. There is no _caller-selected_
 tool set: a narrower slice is a branch in this resolver or a pool, and a bot
-needing its own is its own stored token subject. A request may never name its own
+needing its own is its own declared agent. A request may never name its own
 scope.
 
 ### Team read sets
@@ -219,7 +254,7 @@ Engineering sees all `issues` tools and only `campaigns.list`; Marketing sees al
 `campaigns` tools and only `issues.search`. Neither sees `billing`; both memberships
 grant both connectors in full. Unknown or unprincipalled identities get `[]`.
 Use a stable authenticated principal or subject, never request headers or tool
-arguments. A token's stored principal is vouched for by inbound auth. Pools narrow their endpoint, not plain `/mcp`.
+arguments. An agent's name is vouched for by the built-in token adapter. Pools narrow their endpoint, not plain `/mcp`.
 
 | Catalog change                                           | Guarded exact grant                                                                                                     | Unrestricted exact string grant                                     |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -248,34 +283,28 @@ administration are separate from visibility; writes follow the endpoint's `readO
 
 The `/auth/bearer` export, `bearerToken`, and its `assertedPrincipal` header
 mode are removed. Existing static secrets cannot be converted into `cta_`
-secrets. Use a separate stored token for each machine or human owner:
+secrets. Declare each machine as an agent instead:
 
 1. Configure the existing D1 or SQLite store as `storage`, and install
    `accessTokens(storage)`. Keep its existing keys and namespaces.
-2. Sign in through Clerk or Worker Access. Grant the intended token manager
-   `identity.accessTokenManagement`, then create a token on Access tokens.
-   It is bound to that human's principal. For a machine without a human owner,
-   provision `new AccessTokenManager(storage).create("machine-name", "deployment-provisioning")` from
-   trusted deployment code. The Node template provides `npm run provision-token -- machine-name`.
-3. Update `identity.connectorAccess` and pool grants to the returned token
-   metadata id with `actor.kind === "access_token"`. Names and `tokenPrefix`
-   are display labels. Keep existing human principal namespaces unchanged.
+2. Add the machine's name to `agents`. Issue its token from the Access tokens
+   page as an operator granted `identity.accessTokenManagement`, or from trusted
+   deployment code with
+   `new AccessTokenManager(storage, { agents }).rotate("machine-name", "deployment-provisioning")`.
+   The Node template provides `npm run --silent rotate-token -- machine-name`.
+3. Update `identity.connectorAccess` and pool grants to match
+   `identity.agent === "machine-name"`.
 4. Save the once-returned secret in the client's secret store and send
    `Authorization: Bearer cta_…`. Behind Worker Access, also satisfy the edge
    with Access service credentials; an Access-only machine no longer admits.
 5. Verify MCP initialization and the intended grants. Confirm the old static
    secret refuses, then remove its environment secret and the old import.
-   Remove `X-Connecta-Principal`; a token's stored principal cannot vary by
-   request. Provision one human-bound token per represented user instead.
-   To retain an old asserted user's personal state, trusted provisioning must
-   call `manager.create(name, { namespace: existingNamespace, id: existingId })`
-   with the exact existing namespace and canonical id, after applying the old
-   admission policy. A Clerk UI token uses the Clerk principal instead and
-   cannot inherit a different asserted namespace's partitions.
+   Remove `X-Connecta-Principal`. An agent has no principal, so a client that
+   acted for a human with personal connectors has no token replacement; that
+   human signs in instead.
 
-Revocation acts on the next request. Rotate by creating a replacement,
-updating the client, verifying it, and revoking the old token. Keep token text
-out of logs and reports.
+Rotation and revocation act on the next request. Keep token text out of logs
+and reports.
 
 ## Pools
 
@@ -291,7 +320,8 @@ createConnecta({
   accessTokens: accessTokens(storage),
   auth: clerkAuth({ publishableKey, secretKey }),
   readOnly: false, // required; pools without their own readOnly inherit it
-  grant: ({ actor }) => actor.kind !== "access_token", // machines use their pools
+  agents: ["calendar-bot"],
+  grant: ({ agent }) => agent === undefined, // agents use their pools
   pools: {
     support: {
       tools: ["linear", "notion.search_pages", "notion.fetch_page"],
@@ -299,7 +329,7 @@ createConnecta({
     },
     calendar_bot: {
       tools: ["calendar.create_event"],
-      grant: ({ actor }) => actor.kind === "access_token" && actor.id === calendarTokenId,
+      grant: ({ agent }) => agent === "calendar-bot",
     },
     reporting: {
       tools: ["linear", "notion"],
@@ -830,9 +860,9 @@ closed; permissions come from authenticated identity, never caller input.
 
 `identity.activityAccess` takes `Readonly<IdentityReference>` — `id` and
 `namespace` — and controls reading activity. When configured, an authenticated
-principal may pass it without an interactive session. This includes a `cta_`
-token's stored principal and a non-interactive API principal; subject-only
-callers and anonymous requests cannot qualify. The optional activity `readGate`
+principal may pass it without an interactive session. This includes a
+non-interactive API principal; agents, subject-only callers, and anonymous
+requests have no principal and cannot qualify. The optional activity `readGate`
 also applies. Reads remain GET-only and filter connector/tool grants, personal
 ownership and recorded pool access before any actor-label lookup. Personal rows
 use the admitted principal in the existing typed actor id and namespace fields;
@@ -842,7 +872,7 @@ remain subject to connector, tool and owner checks. Undeclared, it admits every
 interactive human, the one default here that is open, because a single-operator
 deployment would otherwise be locked out of its own event stream. Team
 deployments should set it. There is no general administrator role and no
-implicit token-management authority. `identity.accessTokenManagement` is a separate boolean permission, false by default, evaluated only for interactive humans. Lifecycle routes also require a stable principal.
+implicit token-management authority. `identity.accessTokenManagement` is a separate boolean permission, false by default, evaluated only for interactive humans. Lifecycle routes also require a stable principal; they issue, rotate, and revoke declared agents' tokens, and never create, rename, or bind one.
 
 Personal activity rows must carry the checked `principal` actor basis as well as
 a matching principal ID and namespace. Legacy subject actors cannot prove
@@ -855,10 +885,10 @@ boundary reads returns 503 without a cursor; cancellation starts no further read
 createConnecta({
   auth: cloudflareAccessAuth(),
   identity: {
-    connectorAccess: ({ principal, actor }) =>
+    connectorAccess: ({ principal, agent }) =>
       principal?.id === "owner-id"
         ? "all"
-        : actor.id === "calendar-bot"
+        : agent === "calendar-bot"
           ? ["calendar.create_event"]
           : ["shared_docs", "personal_linear", "notion.search_pages"],
     credentialAdministration: ({ principal }) =>

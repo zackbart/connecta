@@ -17,10 +17,10 @@ export interface ActivityModule {
   readonly recordTool: typeof recordToolActivity;
   readonly recordChange: typeof recordCatalogChangeActivity;
 }
-/** Optional client-token authentication and operator lifecycle. */
+/** Optional agent-token authentication and operator lifecycle. */
 export interface AccessTokensModule {
   readonly auth: import("./types.js").InboundAuth;
   handle(context: RouteContext): Promise<Response | null>;
-  /** Token policy for `describeConfig()`; never token material. */
-  describe?(): { maxActive: number; optionSources?: Readonly<Record<string, "default" | "config">> };
+  /** The same module bound to the deployment's declared `agents`; createConnecta calls it once. */
+  forAgents(agents: readonly string[]): AccessTokensModule;
 }

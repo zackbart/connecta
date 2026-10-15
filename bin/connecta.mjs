@@ -78,7 +78,8 @@ async function init() {
   console.log(`  ${shellCd(target)}`);
   console.log("  npm install");
   console.log("  # Choose readOnly in src/connecta.config.ts: false writes with client approval, true refuses writes.");
-  console.log('  npm run --silent provision-token -- "local-machine"');
+  console.log("  # Declare each machine client in agents in src/connecta.config.ts; local-machine is the first.");
+  console.log("  npm run --silent rotate-token -- local-machine");
   console.log("  # Save the returned cta_ token privately for your MCP client and doctor.");
   console.log("  npm start");
   console.log("  # README.md covers database paths and Docker provisioning.");

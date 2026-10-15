@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UiData } from "../src/operator-ui/model.js";
 
+const NOW = "2026-10-15T12:00:00.000Z";
+
 /**
  * Within-document identity changes and request ordering in the operator store.
  * The visual matrix covers presentation; real-server flows cover sign-in and
@@ -430,79 +432,76 @@ describe("managed token secret lifetime", () => {
     await store.boot();
     const slow = deferred<Response>();
     fetchMock.mockImplementationOnce(() => slow.promise);
-    const pending = store.createAccessToken("desktop");
+    const pending = store.rotateAgentToken("desktop");
     // Let the POST capture its original session before switching identities.
     await Promise.resolve();
     await Promise.resolve();
     fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
     changeSession({ id: "b", getToken: async () => "b" });
-    slow.resolve(Response.json({ token: "cta_disposable-secret", accessToken: { id: "issued", name: "desktop" } }));
-    expect(await pending).toBe(false);
+    slow.resolve(
+      Response.json({ token: "cta_disposable-secret", agent: { name: "desktop", state: "issued", issuedAt: NOW } }),
+    );
+    await pending;
     expect(store.getState().createdToken).toBeNull();
     expect(JSON.stringify(store.getState())).not.toContain("cta_disposable-secret");
   });
 });
 
 describe("operator collection ordering", () => {
-  it("loads existing tokens and keeps issuance when an earlier list finishes later", async () => {
+  const none = (name: string) => ({ name, state: "none" as const });
+  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW });
+  const row = (name: string, createdAt = "", revokedAt?: string) => ({
+    id: name,
+    name,
+    tokenPrefix: "",
+    createdAt,
+    ...(revokedAt ? { revokedAt } : {}),
+  });
+
+  it("loads agent slots and keeps an issuance when an earlier list finishes later", async () => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
     const old = deferred<Response>();
     fetchMock.mockReturnValueOnce(old.promise);
     const listing = store.loadAccessTokens();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const issued = { id: "issued", name: "client" };
-    fetchMock.mockResolvedValueOnce(Response.json({ token: "secret", accessToken: issued }));
-    expect(await store.createAccessToken("client")).toBe(true);
-    const existing = { id: "existing", name: "older client" };
-    old.resolve(Response.json({ accessTokens: [existing] }));
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "secret", agent: issued("simon") }));
+    await store.rotateAgentToken("simon");
+    expect(fetchMock).toHaveBeenLastCalledWith("/ui/access-tokens/simon", expect.objectContaining({ method: "POST" }));
+    old.resolve(Response.json({ agents: [none("simon"), none("ci")] }));
     await listing;
-    expect(store.getState().tokens).toEqual([issued, existing]);
+    expect(store.getState().tokens).toEqual([row("simon", NOW), row("ci")]);
     expect(store.getState().tokenPhase).toBe("ready");
   });
 
-  it.each(["rename", "revoke"])(
-    "keeps a local %s when a pending list captured the new token earlier",
-    async (action) => {
-      const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
-      const old = deferred<Response>();
-      fetchMock.mockReturnValueOnce(old.promise);
-      const listing = store.loadAccessTokens();
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-      const issued = { id: "issued", name: "client" };
-      fetchMock.mockResolvedValueOnce(Response.json({ token: "secret", accessToken: issued }));
-      expect(await store.createAccessToken("client")).toBe(true);
-      const existing = { id: "existing", name: "older client" };
-      const snapshot = Response.json({ accessTokens: [issued, existing] });
-      const updated =
-        action === "rename" ? { ...issued, name: "renamed client" } : { ...issued, revokedAt: "2026-10-01T00:00:00Z" };
-      fetchMock.mockResolvedValueOnce(Response.json({ accessToken: updated }));
-      if (action === "rename") await store.saveAccessTokenName(issued.id, updated.name);
-      else await store.revokeAccessToken(issued.id);
-      old.resolve(snapshot);
-      await listing;
-      expect(store.getState().tokens).toEqual([updated, existing]);
-    },
-  );
-
-  it("keeps an existing token's local rename while a creation exposes its card during a pending read", async () => {
+  it("keeps a local revoke when a pending list captured the issued slot earlier", async () => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
-    const existing = { id: "existing", name: "older client" };
-    fetchMock.mockResolvedValueOnce(Response.json({ accessTokens: [existing] }));
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("simon"), none("ci")] }));
     await store.loadAccessTokens();
     const old = deferred<Response>();
     fetchMock.mockReturnValueOnce(old.promise);
     const listing = store.loadAccessTokens();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const issued = { id: "issued", name: "new client" };
-    fetchMock.mockResolvedValueOnce(Response.json({ token: "secret", accessToken: issued }));
-    await store.createAccessToken("new client");
-    const updated = { ...existing, name: "renamed client" };
-    fetchMock.mockResolvedValueOnce(Response.json({ accessToken: updated }));
-    await store.saveAccessTokenName(existing.id, updated.name);
-    const other = { id: "other", name: "another client" };
-    old.resolve(Response.json({ accessTokens: [issued, existing, other] }));
+    const revoked = { name: "simon", state: "revoked" as const, revokedAt: "2026-10-01T00:00:00Z" };
+    fetchMock.mockResolvedValueOnce(Response.json({ agent: revoked }));
+    await store.revokeAgentToken("simon");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/ui/access-tokens/simon",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    old.resolve(Response.json({ agents: [issued("simon"), none("ci")] }));
     await listing;
-    expect(store.getState().tokens).toEqual([issued, updated, other]);
+    expect(store.getState().tokens).toEqual([row("simon", "", revoked.revokedAt), row("ci")]);
+  });
+
+  it("refuses an issuance response for another agent and reveals nothing", async () => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon")] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_misrouted", agent: issued("ci") }));
+    await store.rotateAgentToken("simon");
+    expect(store.getState().createdToken).toBeNull();
+    expect(store.getState().tokenNotice?.tone).toBe("error");
+    expect(store.getState().tokens).toEqual([row("simon")]);
   });
 });
 
@@ -564,7 +563,7 @@ describe("operator unreadable collections", () => {
       await store.loadAccessTokens();
       expect(store.getState().tokenPhase).toBe("error");
       expect(store.getState().tokenNotice?.tone).toBe("error");
-      fetchMock.mockResolvedValueOnce(Response.json({ accessTokens: [{ id: "recovered", name: "Client" }] }));
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ name: "recovered", state: "none" }] }));
       await store.loadAccessTokens();
       expect(store.getState().tokenPhase).toBe("ready");
       expect(store.getState().tokens[0]?.id).toBe("recovered");

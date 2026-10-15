@@ -199,7 +199,12 @@ describe("deployment shapes", () => {
     }
     expect(read("README.md")).toContain("## Select optional modules");
     // Storage and activity come from the package; the template copies no adapter.
-    expect(readdirSync(join(TEMPLATE, "src")).sort()).toEqual(["connecta.config.ts", "index.ts", "provision-token.ts"]);
+    expect(readdirSync(join(TEMPLATE, "src")).sort()).toEqual([
+      "adopt-token.ts",
+      "connecta.config.ts",
+      "index.ts",
+      "rotate-token.ts",
+    ]);
   });
 
   it("switches every Worker example module on from its environment", async () => {
@@ -269,7 +274,7 @@ describe("deployment shapes", () => {
     expect(workerReadme).not.toContain("checking that Credentials, Tokens, and Activity are live");
   });
 
-  it("keeps empty storage fail-closed and admits only provisioned machine tokens (INV-4)", async () => {
+  it("keeps empty storage fail-closed and admits only issued agent tokens (INV-4)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "connecta-template-auth-"));
     const staticToken = `cta_${"A".repeat(43)}`;
     const env = { CONNECTA_DATABASE: join(dir, "state.sqlite"), CONNECTA_TOKEN: staticToken };
@@ -304,12 +309,16 @@ describe("deployment shapes", () => {
       expect((await app.fetch(new Request("http://localhost:8787/health"))).status).toBe(200);
       expect((await initialize()).status).toBe(401);
       expect((await initialize(staticToken)).status).toBe(401);
-      const manager = new AccessTokenManager(config.storage!);
-      const { token, accessToken } = await manager.create("template-machine", "local-provisioning");
+      expect(config.agents).toEqual(["local-machine"]);
+      const manager = new AccessTokenManager(config.storage!, { agents: config.agents });
+      const { token } = await manager.rotate("local-machine", "local-provisioning");
       expect(token).toMatch(/^cta_[A-Za-z0-9_-]{43}$/);
       expect((await initialize(token)).status).toBe(200);
-      await manager.revoke(accessToken.id, "local-provisioning");
+      const { token: rotated } = await manager.rotate("local-machine", "local-provisioning");
       expect((await initialize(token)).status).toBe(401);
+      expect((await initialize(rotated)).status).toBe(200);
+      await manager.revoke("local-machine", "local-provisioning");
+      expect((await initialize(rotated)).status).toBe(401);
     } finally {
       await app.close();
       rmSync(dir, { recursive: true, force: true });
@@ -317,10 +326,13 @@ describe("deployment shapes", () => {
     expect(read(".env.example")).toMatch(/^CONNECTA_TOKEN=\s*$/m);
     expect(read("docker-compose.yml")).not.toMatch(/^\s+CONNECTA_TOKEN:/m);
     expect(read("src", "connecta.config.ts")).not.toContain("CONNECTA_TOKEN");
-    expect(read("src", "provision-token.ts")).toContain('manager.create(name, "local-provisioning")');
-    expect(read("package.json")).toContain('"provision-token": "tsx src/provision-token.ts"');
+    expect(read("src", "rotate-token.ts")).toContain('manager.rotate(agent, "local-provisioning")');
+    expect(read("src", "adopt-token.ts")).toContain("manager.adopt(tokenId, agent)");
+    expect(read("package.json")).toContain('"rotate-token": "tsx src/rotate-token.ts"');
+    expect(read("package.json")).toContain('"adopt-token": "tsx src/adopt-token.ts"');
+    expect(read("package.json")).not.toContain("provision-token");
     expect(read("README.md")).toContain(
-      'docker compose run --rm --no-deps connecta npm run --silent provision-token -- "container-machine"',
+      "docker compose run --rm --no-deps connecta npm run --silent rotate-token -- local-machine",
     );
   });
 

@@ -49,10 +49,7 @@ describe("describeConfig", () => {
     // The published contract holds for a direct call: an operator tool may
     // read connector.describe() without going through describeConfig().
     const builtIn = config.connectors.filter((connector) => connector.id !== "custom_conn");
-    const outputs = [
-      ...builtIn.map((connector) => [connector.id, connector.describe?.()] as const),
-      ["accessTokens module", config.accessTokens.describe?.()] as const,
-    ];
+    const outputs = [...builtIn.map((connector) => [connector.id, connector.describe?.()] as const)];
     for (const [where, described] of outputs) {
       expect(described, `${where} describes itself`).toBeDefined();
       const json = JSON.stringify(described);
@@ -219,12 +216,13 @@ describe("describeConfig", () => {
           accessTokenManagement: "default",
           personalConnection: "default",
         },
+        agents: ["release-bot"],
         pools: [{ name: "support", path: "/mcp/support", tools: ["static_api"], hasGrant: true }],
         modules: {
           ui: { enabled: true },
           vault: { enabled: true, sealsOAuth: true },
           activity: { enabled: true, readable: false, deploymentId: "production", store: { kind: "custom" } },
-          accessTokens: { enabled: true, maxActive: 100 },
+          accessTokens: { enabled: true },
         },
         storage: { configured: true, kind: "memory" },
         branding: { productName: "Connecta" },

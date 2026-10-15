@@ -54,7 +54,6 @@ export function describeConfigSources(
 ): Record<string, ConfigValueSource> {
   const sources: Record<string, ConfigValueSource> = {};
   const connectorSources = new Map(raw.connectors.map((connector) => [connector.id, factorySources(connector)]));
-  const moduleSources = { accessTokens: factorySources(raw.accessTokens) };
   const provided = (value: unknown): ConfigValueSource => (value === undefined ? "default" : "config");
   for (const path of configValuePaths(snapshot)) {
     const parts = path.split(".").slice(1);
@@ -67,6 +66,7 @@ export function describeConfigSources(
       source = key === "mcpPath" ? "default" : provided(raw[key as "publicUrl" | "allowedOrigins"]);
     else if (group === "hasGrant") source = provided(raw.grant);
     else if (group === "readOnly") source = provided(raw.readOnly);
+    else if (group === "agents") source = provided(raw.agents);
     else if (group === "identity")
       source = provided(raw.identity?.[key as keyof NonNullable<ConnectaConfig["identity"]>]);
     else if (group === "storage") source = provided(raw.storage);
@@ -76,10 +76,9 @@ export function describeConfigSources(
       // An inherited value comes from wherever the deployment's came from.
       source = field === "readOnly" ? provided(raw.pools?.[key!]?.readOnly ?? raw.readOnly) : provided(raw.pools);
     else if (group === "modules") {
-      const module =
-        key === "ui" ? raw.ui : key === "vault" ? raw.vault : key === "activity" ? raw.activity : raw.accessTokens;
-      const factory = moduleSources[key as keyof typeof moduleSources];
-      source = (factory ? factorySource(factory, parts.slice(2)) : undefined) ?? provided(module);
+      source = provided(
+        key === "ui" ? raw.ui : key === "vault" ? raw.vault : key === "activity" ? raw.activity : raw.accessTokens,
+      );
     } else if (group === "branding") {
       const brand = raw.ui?.branding;
       const brandKey = key === "faviconHref" ? "favicon" : key;

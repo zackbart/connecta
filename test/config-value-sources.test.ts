@@ -8,34 +8,30 @@ import { createTestConnecta } from "./helpers.js";
 const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 
 describe("factory configuration provenance", () => {
-  it.each([undefined, {}, { maxActive: 100 }])(
-    "INV-10: distinguishes omitted and explicit accessTokens maxActive: %j",
-    async (options) => {
-      const storage = memoryStorage();
-      const module = accessTokens(storage, options);
-      const raw = {
-        readOnly: false,
-        executor,
-        publicUrl: "https://connecta.example",
-        logger: "silent" as const,
-        connectors: [],
-        storage,
-        accessTokens: module,
-      };
-      const app = createTestConnecta(raw);
-      try {
-        expect(app.describeConfig().modules.accessTokens.maxActive).toBe(100);
-        expect(describeConfigSources(app.describeConfig(), raw)["config.modules.accessTokens.maxActive"]).toBe(
-          options?.maxActive === undefined ? "default" : "config",
-        );
-        expect(module.describe?.().optionSources?.maxActive).toBe(
-          options?.maxActive === undefined ? "default" : "config",
-        );
-      } finally {
-        await app.close();
-      }
-    },
-  );
+  it.each([undefined, [], ["simon", "ci"]])("INV-10: distinguishes omitted and declared agents: %j", async (agents) => {
+    const storage = memoryStorage();
+    const raw = {
+      readOnly: false,
+      executor,
+      publicUrl: "https://connecta.example",
+      logger: "silent" as const,
+      connectors: [],
+      storage,
+      accessTokens: accessTokens(storage),
+      ...(agents === undefined ? {} : { agents }),
+    };
+    const app = createTestConnecta(raw);
+    try {
+      expect(app.describeConfig().agents).toEqual(agents ?? []);
+      const sources = describeConfigSources(app.describeConfig(), raw);
+      const agentSources = Object.entries(sources).filter(([path]) => path.startsWith("config.agents"));
+      expect(agentSources.length).toBeGreaterThan(0);
+      for (const [, source] of agentSources) expect(source).toBe(agents === undefined ? "default" : "config");
+      expect(sources["config.modules.accessTokens.enabled"]).toBe("config");
+    } finally {
+      await app.close();
+    }
+  });
 
   it.each([{}, { versionNegotiation: "auto" as const, redirects: "none" as const, requireHttps: false }])(
     "INV-10: distinguishes omitted and explicit remoteMcp transport defaults: %j",

@@ -8,11 +8,12 @@ maintenance. This README and [local agent instructions](./AGENTS.md) own the
 runnable steps for a copied Node deployment.
 
 This is the prescribed Node deployment. It runs locally from source and as
-a container. Install, provision a machine token, then start it:
+a container. Install, issue the declared `local-machine` agent's token, then
+start it:
 
 ```sh
 npm install
-npm run --silent provision-token -- "local-machine"
+npm run --silent rotate-token -- local-machine
 # Save the returned cta_ token privately. It is shown only once.
 npm start
 ```
@@ -28,35 +29,50 @@ Point an MCP client at `http://localhost:8787/mcp` with
 `Authorization: Bearer <returned-cta-token>`. `CONNECTA_TOKEN` is a client and
 doctor variable only. Setting it never configures server authentication.
 
-`accessTokens(storage)` is always installed. With no stored tokens and no
-Clerk keys, the server can start and answer `/health`, but every MCP request
-is refused. There is no open startup or configured static bearer fallback.
+`accessTokens(storage)` is always installed. With no issued agent token and
+no Clerk keys, the server can start and answer `/health`, but every MCP
+request is refused. There is no open startup or configured static bearer
+fallback.
 
-## Provision machine tokens
+## Agent tokens
 
-Run `npm run --silent provision-token -- "machine-name"` from this project
-on a trusted machine. `src/provision-token.ts` imports the installed package's
-`AccessTokenManager`, then calls `manager.create(name, "local-provisioning")`
-on `sqliteStorage(openSqlite(process.env.CONNECTA_DATABASE || "./.connecta.sqlite"))`.
-The server uses that same database path. If you override it, use the same
-`CONNECTA_DATABASE` for provisioning and startup:
+Machine clients are agents, declared by name in `agents` in
+`src/connecta.config.ts`; the template declares `local-machine`. Each agent
+has one token. Run `npm run --silent rotate-token -- <agent>` from this
+project on a trusted machine to issue it, or to rotate it: the previous secret
+stops working on its next request. `src/rotate-token.ts` loads the same
+configuration the server does, so it uses the same database and refuses an
+agent the configuration does not declare. If you override the database path,
+use the same `CONNECTA_DATABASE` for rotation and startup:
 
 ```sh
 export CONNECTA_DATABASE=/absolute/path/connecta.sqlite
-npm run --silent provision-token -- "build-agent"
+npm run --silent rotate-token -- local-machine
 npm start
 ```
 
 The local commands read the process environment; they do not load `.env`.
 Compose reads `.env` for the container commands below. Keep the returned
-secret in a client secret store and out of source control and logs. Each run
-creates a new token; it cannot recover an old secret. Only the hash persists.
-The token is unbound to a human principal and has no interactive management
-authority. Its name is a label, and deployment identity and pool rules decide
-its access on every request. To revoke it locally, use `manager.list()` to
-find its id, then `manager.revoke(id, "local-provisioning")` against that same
-storage. An explicitly permitted Clerk operator can also manage tokens.
-Never expose this provisioning script as an HTTP route or run it at startup.
+secret in a client secret store and out of source control and logs. A
+rotation cannot recover an old secret; only the hash persists. An agent has no
+human principal, no personal connectors, and no interactive management
+authority; deployment identity and pool rules decide its access on every
+request through `identity.agent`. To stop an agent, remove its name from
+`agents` and restart, or revoke its token with
+`new AccessTokenManager(storage, { agents }).revoke(name)` against the same
+storage. An explicitly permitted Clerk operator can also issue, rotate, and
+revoke from the operator UI. Never expose these scripts as an HTTP route or
+run them at startup.
+
+### Tokens issued before agents
+
+Tokens from earlier releases stay in storage but stop admitting until they are
+bound to an agent. Declare the agent, then run `npm run adopt-token` with no
+arguments to list the machine tokens that can be bound, and
+`npm run adopt-token -- <token-id> <agent>` to bind one, so that machine's
+existing secret keeps working. A token binds once, and only to an agent whose
+token was never issued. Human-bound tokens issued from the operator UI cannot
+be adopted and stay refused; issue the agent a new token instead.
 
 ## Run it in Docker
 
@@ -66,12 +82,12 @@ Same source, same configuration, one long-lived service:
 cp .env.example .env
 # edit .env for the database path and any optional modules
 docker compose build
-docker compose run --rm --no-deps connecta npm run --silent provision-token -- "container-machine"
+docker compose run --rm --no-deps connecta npm run --silent rotate-token -- local-machine
 # Save the returned cta_ token privately for clients and doctor.
 docker compose up -d
 ```
 
-The provisioning container writes through the installed package API into the
+The rotation container writes through the installed package API into the
 same named volume and `CONNECTA_DATABASE` as the service. An empty volume
 admits no machine client. Compose never passes `CONNECTA_TOKEN` to the server;
 no environment value can substitute for a stored token.
@@ -121,7 +137,7 @@ whether or not it is switched on.
 
 The template explicitly enables `ui: operatorUi()` from
 `@zackbart/connecta/ui`. Open `http://localhost:8787/` and supply a
-stored machine token to inspect Connections. Sign in with Clerk for human
+declared agent's token to inspect Connections. Sign in with Clerk for human
 connection management. Omit that option and import for an API-only
 server. OAuth callbacks remain in core even with no UI.
 
@@ -164,11 +180,12 @@ audience. New DCR registrations need new entries, so prefer audience binding
 for standard host onboarding. Clerk session tokens work only on operator
 routes. [Inbound auth](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#clerk-oauth-tokens-and-operator-sessions)
 explains configuration, verification, and fixed rejection reason codes.
-Machine clients use connecta-issued `cta_` access tokens
-through `accessTokens(storage)`, which `src/connecta.config.ts` configures on
-the database. Grant explicit `identity.accessTokenManagement` permissions to
-let a signed-in human mint them. Trusted local provisioning above works without
-Clerk and never requires opening the server.
+Machine clients are the declared `agents`, each using a connecta-issued
+`cta_` token through `accessTokens(storage)`, which `src/connecta.config.ts`
+configures on the database. Grant explicit `identity.accessTokenManagement`
+permissions to let a signed-in human issue, rotate, and revoke them. Trusted
+local rotation above works without Clerk and never requires opening the
+server.
 
 Set the code-owned identity resolvers deliberately. `connectorAccess` governs
 use; `credentialAdministration` permits shared-auth changes, and
@@ -270,6 +287,6 @@ Upgrading from v0.23 does not require rotating managed `cta_…` tokens. Import
 `accessTokens: true` with `accessTokens: accessTokens(storage)`, and keep the
 same persistent storage namespace and identity/tool/pool grant rules. Enable
 `identity.accessTokenManagement` only for the interactive operators who should
-manage tokens. New issuance needs storage with atomic `compareAndSet`; older
-storage adapters can still verify existing tokens. See the package's
+manage tokens. From 0.33 a stored token admits only once it is bound to a
+declared agent: follow "Tokens issued before agents" above. See the package's
 `documentation/auth.md` for the migration and storage requirements.

@@ -504,14 +504,11 @@ describe("OAuth identity and signature boundaries", () => {
     ["clerk", "shared"],
     ["access", "personal"],
     ["access", "shared"],
-  ] as const)("keeps principal-bound cta tokens out of %s %s browser consent", async (provider, authScope) => {
+  ] as const)("INV-4: keeps agent tokens out of %s %s browser consent", async (provider, authScope) => {
     const { AccessTokenManager } = await import("../src/access-tokens.js");
     const storage = memoryStorage();
-    const manager = new AccessTokenManager(storage);
-    const { token } = await manager.create("machine", {
-      namespace: provider === "clerk" ? "https://clerk.example.test" : "cloudflare-access",
-      id: "alice",
-    });
+    const manager = new AccessTokenManager(storage, { agents: ["machine"] });
+    const { token } = await manager.rotate("machine");
     let state = "";
     const startAuth = vi.fn(async (ctx) => {
       state = crypto.randomUUID();
@@ -549,7 +546,10 @@ describe("OAuth identity and signature boundaries", () => {
     const rpc = await readJsonRpc(
       await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token }),
     );
-    expect(JSON.parse(rpc.result.content[0].text).recovery).toBe("unavailable");
+    // An agent has no principal: a personal connector is absent for it, and
+    // a shared one offers no browser consent.
+    if (authScope === "personal") expect(rpc.result.content[0].text).toMatch(/^Unknown connector/);
+    else expect(JSON.parse(rpc.result.content[0].text).recovery).toBe("unavailable");
     const humanRpc = await readJsonRpc(
       await app.fetch(
         mcpRpc(

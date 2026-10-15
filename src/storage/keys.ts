@@ -214,7 +214,11 @@ export const oauthHandoffKeys = {
     validateStorageKey(`oauth-handoff:v1:${connectorId}:${stateHash}`),
 } as const satisfies Keyed;
 
-/** Connecta-issued `cta_` access tokens: records, digest lookups, capacity. */
+/**
+ * Connecta-issued `cta_` access tokens: token records, digest lookups, and one
+ * slot per declared agent naming its live record. `active` is the capacity
+ * ledger releases before 0.33 wrote; nothing writes it now.
+ */
 export const accessTokenKeys = {
   family: {
     name: "access-token",
@@ -228,6 +232,7 @@ export const accessTokenKeys = {
   recordPrefix: "access-token:v1:record:",
   record: (id: string) => validateStorageKey(`access-token:v1:record:${id}`),
   lookup: (tokenHash: string) => validateStorageKey(`access-token:v1:lookup:${tokenHash}`),
+  agent: (name: string) => validateStorageKey(`access-token:v1:agent:${name}`),
   active: "access-token:v1:active",
 } as const satisfies Keyed;
 

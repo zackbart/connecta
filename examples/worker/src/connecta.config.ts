@@ -80,14 +80,19 @@ export default defineConfig((env: Env) => {
     // operator pages. Machines need Access service headers at the edge plus a
     // stored cta_ bearer inside connecta; a service identity alone is refused.
     auth: [cloudflareAccessAuth()],
-    // Always installed over the same D1 storage. Empty storage admits no
-    // machine client; an Access-authenticated operator can provision tokens.
+    // Machine clients are agents declared here by name, each with one cta_
+    // token. An Access-authenticated operator issues, rotates, and revokes it
+    // in the operator UI; removing a name stops its token on the next request.
+    agents: ["ci-client"],
+    // Always installed over the same D1 storage. An agent with no issued token
+    // admits nothing.
     accessTokens: accessTokens(storage),
     // Code-owned roster. Access proves the identity; connecta derives
     // connector visibility and management permissions from the stable id it
     // supplies. Add `connectorAccess` and `activityAccess` to split members
-    // from operators; here every signed-in human may manage every connector
-    // and access token. Machine tokens never receive interactive authority.
+    // from operators, matching agents by `identity.agent`; here every
+    // signed-in human may manage every connector and agent token. Agent tokens
+    // never receive interactive authority.
     identity: {
       credentialAdministration: () => "all",
       personalConnection: () => "all",

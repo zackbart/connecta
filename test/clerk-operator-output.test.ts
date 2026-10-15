@@ -382,8 +382,8 @@ describe("Clerk operator output with the real SDK", () => {
       const fetcher = vi.fn(async (_input: RequestInfo | URL) => Response.json(jwks));
       vi.stubGlobal("fetch", fetcher);
       const provider = auth();
-      const manager = new AccessTokenManager(memoryStorage());
-      const machine = await manager.create("machine", "operator");
+      const manager = new AccessTokenManager(memoryStorage(), { agents: ["machine"] });
+      const machine = await manager.rotate("machine");
       const getIdentity = vi.fn(async () => ({ user_uuid: "ambient_access_user" }));
       const context = { waitUntil() {}, access: { aud: "app", getIdentity } };
       const providers = [manager.auth, cloudflareAccessAuth(), provider];
@@ -440,8 +440,7 @@ describe("Clerk operator output with the real SDK", () => {
       );
       if (isMcp) {
         expect(machineResult.ok).toBe(true);
-        if (machineResult.ok)
-          expect(machineResult.actor).toMatchObject({ kind: "access_token", id: machine.accessToken.id });
+        if (machineResult.ok) expect(machineResult.actor).toMatchObject({ kind: "access_token", id: "machine" });
       } else {
         expect(machineResult.ok).toBe(false);
         if (!machineResult.ok) expect(machineResult.response.status).toBe(403);

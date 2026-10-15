@@ -1,20 +1,29 @@
 import { authorizationCredential, isMachineCredential } from "./inbound-credential.js";
 import type { AuthResult, IdentityReference, InboundAuth, KVStorage } from "./types.js";
-import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
+import { assertKnownOptions, ConfigError, optionsOf } from "./config-schema.js";
 import { routeAccessTokens } from "./routes/access-tokens.js";
 import type { AccessTokensModule } from "./module-contracts.js";
 import { validIdentityReference } from "./identity.js";
 import { accessTokenKeys } from "./storage/keys.js";
+import {
+  AGENT_NAMESPACE,
+  agentSubjectId,
+  assertAgentNames,
+  isAgentName,
+  trustAgentProvider,
+} from "./agent-identity.js";
 
 const TOKEN_PREFIX = "cta_";
 const TOKEN_BYTES = 32;
 const TOKEN_VALUE_RE = /^cta_[A-Za-z0-9_-]{43}$/;
 const MAX_NAME_CHARACTERS = 80;
-const DEFAULT_MAX_ACTIVE = 100;
-const MAX_CONFIGURED_ACTIVE = 1_000;
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const encoder = new TextEncoder();
 
+/**
+ * One token record, in the v0.23 layout. `agent` binds it to a declared agent;
+ * a record without one, or with a `principal`, no longer admits.
+ */
 interface StoredAccessToken {
   version: 1;
   id: string;
@@ -24,6 +33,7 @@ interface StoredAccessToken {
   createdAt: string;
   createdBy: string;
   principal?: IdentityReference;
+  agent?: string;
   revokedAt?: string;
   revokedBy?: string;
 }
@@ -33,22 +43,40 @@ interface TokenLookup {
   id: string;
 }
 
-export interface AccessTokenMetadata {
-  id: string;
-  name: string;
-  tokenPrefix: string;
-  createdAt: string;
-  revokedAt?: string;
+/**
+ * One agent's slot. An `issued` slot names the only record that admits for
+ * the agent, so swapping it with one compare-and-set is the whole cutover.
+ */
+type StoredSlot =
+  | { version: 1; agent: string; state: "issued"; tokenId: string; issuedAt: string }
+  | { version: 1; agent: string; state: "revoked"; tokenId?: string; revokedAt: string };
+
+/** One declared agent's token slot as management sees it. Never secret material. */
+export type AgentTokenSlot =
+  | { name: string; state: "none" }
+  | { name: string; state: "issued"; issuedAt: string }
+  | { name: string; state: "revoked"; revokedAt: string };
+
+/** A newly issued secret, returned once, and the slot that now admits it. */
+export interface IssuedAgentToken {
+  token: string;
+  agent: AgentTokenSlot;
 }
 
-export interface CreatedAccessToken {
-  token: string;
-  accessToken: AccessTokenMetadata;
+/** Why a token operation was refused, for routes and provisioning scripts. */
+export class AccessTokenError extends Error {
+  override readonly name = "AccessTokenError";
+  constructor(
+    readonly code: "unknown_agent" | "conflict" | "not_adoptable",
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 const recordKey = accessTokenKeys.record;
 const lookupKey = accessTokenKeys.lookup;
-const ACTIVE_KEY = accessTokenKeys.active;
+const slotKey = accessTokenKeys.agent;
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -64,17 +92,8 @@ async function hashToken(token: string): Promise<string> {
   return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(token))));
 }
 
-function normalizeName(value: unknown): string {
-  if (typeof value !== "string") {
-    throw new Error("Token name must be a string");
-  }
-  const compact = value.replace(/\s+/gu, " ").trim();
-  if (!compact) throw new Error("Token name cannot be empty");
-  if (Array.from(compact).length > MAX_NAME_CHARACTERS) {
-    throw new Error(`Token name cannot exceed ${MAX_NAME_CHARACTERS} characters`);
-  }
-  return compact;
-}
+const isTime = (value: unknown): value is string =>
+  typeof value === "string" && value !== "" && Number.isFinite(Date.parse(value));
 
 function parseRecord(raw: string): StoredAccessToken {
   try {
@@ -90,12 +109,11 @@ function parseRecord(raw: string): StoredAccessToken {
       !/^[0-9a-f]{64}$/u.test(value.tokenHash) ||
       typeof value.tokenPrefix !== "string" ||
       !/^cta_[A-Za-z0-9_-]{8}$/u.test(value.tokenPrefix) ||
-      typeof value.createdAt !== "string" ||
-      !Number.isFinite(Date.parse(value.createdAt)) ||
+      !isTime(value.createdAt) ||
       typeof value.createdBy !== "string" ||
       (value.principal !== undefined && !validIdentityReference(value.principal)) ||
-      (value.revokedAt !== undefined &&
-        (typeof value.revokedAt !== "string" || !value.revokedAt || !Number.isFinite(Date.parse(value.revokedAt)))) ||
+      (value.agent !== undefined && !isAgentName(value.agent)) ||
+      (value.revokedAt !== undefined && !isTime(value.revokedAt)) ||
       (value.revokedBy !== undefined && typeof value.revokedBy !== "string")
     ) {
       throw new Error("invalid token record");
@@ -117,14 +135,29 @@ function parseLookup(raw: string): TokenLookup | null {
   }
 }
 
-function metadata(record: StoredAccessToken): AccessTokenMetadata {
-  return {
-    id: record.id,
-    name: record.name,
-    tokenPrefix: record.tokenPrefix,
-    createdAt: record.createdAt,
-    ...(record.revokedAt ? { revokedAt: record.revokedAt } : {}),
-  };
+function parseSlot(raw: string, agent: string): StoredSlot {
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    const valid =
+      value.version === 1 &&
+      value.agent === agent &&
+      (value.state === "issued"
+        ? typeof value.tokenId === "string" && ID_RE.test(value.tokenId) && isTime(value.issuedAt)
+        : value.state === "revoked" &&
+          (value.tokenId === undefined || (typeof value.tokenId === "string" && ID_RE.test(value.tokenId))) &&
+          isTime(value.revokedAt));
+    if (!valid) throw new Error("invalid slot");
+    return value as unknown as StoredSlot;
+  } catch {
+    throw new Error("Stored agent token slot is invalid or corrupted");
+  }
+}
+
+function slotView(name: string, slot: StoredSlot | null): AgentTokenSlot {
+  if (!slot) return { name, state: "none" };
+  return slot.state === "issued"
+    ? { name, state: "issued", issuedAt: slot.issuedAt }
+    : { name, state: "revoked", revokedAt: slot.revokedAt };
 }
 
 function unauthorized(): AuthResult {
@@ -141,36 +174,39 @@ function unauthorized(): AuthResult {
 }
 
 /**
- * Deployment-scoped personal access tokens. Secret material is never
+ * Agent tokens: one slot per agent declared in code. Secret material is never
  * recoverable: authentication indexes a SHA-256 digest of a random 256-bit
- * token, while separately enumerable metadata powers operator management.
+ * token, and only that digest persists. A token admits only while its record
+ * is bound to a currently declared agent and that agent's slot names it.
  */
 export class AccessTokenManager {
   readonly auth: InboundAuth;
-  private readonly maxActive: number;
+  private readonly agents: ReadonlySet<string>;
+  private readonly agentOrder: readonly string[];
 
   constructor(
     private readonly storage: KVStorage,
-    options: { maxActive?: number } = {},
+    options: { agents?: readonly string[] } = {},
   ) {
-    // Issuance claims capacity by compare-and-set and listing enumerates
-    // records; refuse a store without either here, not at the first create.
+    // Issuance swaps slots by compare-and-set; refuse a store without it here,
+    // not at the first rotation.
     if (typeof storage?.list !== "function" || typeof storage.compareAndSet !== "function") {
       throw new Error(
         "accessTokens requires storage that implements list and compareAndSet " +
           "(d1Storage, sqliteStorage, or memoryStorage)",
       );
     }
-    const maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE;
-    if (!Number.isInteger(maxActive) || maxActive < 1 || maxActive > MAX_CONFIGURED_ACTIVE) {
-      throw new Error(`accessTokens.maxActive must be a whole number from 1 to ${MAX_CONFIGURED_ACTIVE}`);
-    }
-    this.maxActive = maxActive;
-    this.auth = {
+    const agents = options.agents ?? [];
+    assertAgentNames(agents, "agents");
+    this.agentOrder = Object.freeze([...agents]);
+    this.agents = new Set(agents);
+    this.auth = trustAgentProvider({
       kind: "access_token",
       recognizesCredential: isMachineCredential,
-      activityActorNamespace: "connecta:access-tokens:v1",
+      activityActorNamespace: AGENT_NAMESPACE,
       activityActorLabel: async (id) => {
+        if (this.agents.has(id)) return id;
+        // Rows written before agents carry the old token record id.
         try {
           return (await this.read(id))?.name;
         } catch {
@@ -178,7 +214,14 @@ export class AccessTokenManager {
         }
       },
       authorize: (request) => this.authorize(request).catch(() => unauthorized()),
-    };
+    });
+  }
+
+  private declared(name: string): string {
+    if (typeof name !== "string" || !this.agents.has(name)) {
+      throw new AccessTokenError("unknown_agent", "That agent is not declared in this deployment's agents");
+    }
+    return name;
   }
 
   private async read(id: string): Promise<StoredAccessToken | null> {
@@ -189,81 +232,167 @@ export class AccessTokenManager {
     return record;
   }
 
-  async list(): Promise<AccessTokenMetadata[]> {
+  private async readSlot(name: string): Promise<{ raw: string | null; slot: StoredSlot | null }> {
+    const raw = await this.storage.get(slotKey(name));
+    return { raw, slot: raw === null ? null : parseSlot(raw, name) };
+  }
+
+  /** One slot per declared agent, in declaration order. */
+  async list(): Promise<AgentTokenSlot[]> {
+    return Promise.all(this.agentOrder.map(async (name) => slotView(name, (await this.readSlot(name)).slot)));
+  }
+
+  /**
+   * Issue the agent's first token, or replace its current one. The new secret
+   * admits and the previous one refuses from the same compare-and-set, so the
+   * cutover is immediate. Of concurrent rotations exactly one returns a secret;
+   * the others refuse with a conflict and publish nothing.
+   */
+  async rotate(name: string, issuedBy = "operator"): Promise<IssuedAgentToken> {
+    const agent = this.declared(name);
+    const { raw, slot: previous } = await this.readSlot(agent);
+    const token = TOKEN_PREFIX + bytesToBase64Url(crypto.getRandomValues(new Uint8Array(TOKEN_BYTES)));
+    const hash = await hashToken(token);
+    if (await this.storage.get(lookupKey(hash))) {
+      throw new AccessTokenError("conflict", "Access token collision; rotate again");
+    }
+    const now = new Date().toISOString();
+    const record: StoredAccessToken = {
+      version: 1,
+      id: crypto.randomUUID(),
+      name: agent,
+      tokenHash: hash,
+      tokenPrefix: token.slice(0, 12),
+      createdAt: now,
+      createdBy: issuedBy,
+      agent,
+    };
+    const next: StoredSlot = { version: 1, agent, state: "issued", tokenId: record.id, issuedAt: now };
+    let swapped = false;
+    try {
+      // Record and lookup land first, so the slot only ever names a token that
+      // is completely written.
+      await this.storage.set(recordKey(record.id), JSON.stringify(record));
+      await this.storage.set(lookupKey(hash), JSON.stringify({ version: 1, id: record.id } satisfies TokenLookup));
+      swapped = await this.storage.compareAndSet(slotKey(agent), raw, JSON.stringify(next));
+    } catch (error) {
+      // A write may have committed without an answer. Nobody will hold this
+      // secret, so retire it; if the swap did commit, the previous token no
+      // longer admits either, and the slot admits nothing until the next
+      // rotation. Never a live secret nobody holds.
+      const committed = await this.readSlot(agent).then(
+        ({ slot }) => slot?.state === "issued" && slot.tokenId === record.id,
+        () => false,
+      );
+      await this.retire(record.id, issuedBy).catch(() => {});
+      if (committed && previous?.tokenId) await this.retire(previous.tokenId, issuedBy).catch(() => {});
+      throw error;
+    }
+    if (!swapped) {
+      await this.retire(record.id, issuedBy).catch(() => {});
+      throw new AccessTokenError("conflict", "The agent's token changed during rotation; retry");
+    }
+    // Admission already refuses the previous token: the slot no longer names it.
+    if (previous?.tokenId) await this.retire(previous.tokenId, issuedBy).catch(() => {});
+    return { token, agent: slotView(agent, next) };
+  }
+
+  /** Revoke the agent's token. Admission is removed before the slot changes. */
+  async revoke(name: string, revokedBy = "operator"): Promise<AgentTokenSlot> {
+    const agent = this.declared(name);
+    for (let attempt = 0; attempt < 32; attempt++) {
+      const { raw, slot } = await this.readSlot(agent);
+      if (slot?.state !== "issued") return slotView(agent, slot);
+      const record = await this.read(slot.tokenId);
+      if (record) await this.storage.delete(lookupKey(record.tokenHash));
+      const next: StoredSlot = {
+        version: 1,
+        agent,
+        state: "revoked",
+        tokenId: slot.tokenId,
+        revokedAt: new Date().toISOString(),
+      };
+      // A concurrent rotation that won the slot is revoked on the next pass.
+      if (!(await this.storage.compareAndSet(slotKey(agent), raw, JSON.stringify(next)))) continue;
+      await this.retire(slot.tokenId, revokedBy).catch(() => {});
+      return slotView(agent, next);
+    }
+    throw new AccessTokenError("conflict", "The agent's token is busy; retry the revocation");
+  }
+
+  /**
+   * Trusted provisioning: bind an existing, unbound, unrevoked machine token
+   * record to a declared agent whose slot has never been issued, so its
+   * current secret keeps working. A record binds once; human-bound records
+   * are refused.
+   */
+  async adopt(tokenId: string, name: string): Promise<AgentTokenSlot> {
+    const agent = this.declared(name);
+    const refused = (message: string) => new AccessTokenError("not_adoptable", message);
+    const record = await this.read(tokenId);
+    if (!record) throw refused("No access token record has that id");
+    if (record.agent !== undefined) throw refused("That access token is already bound to an agent");
+    if (record.principal) throw refused("Human-bound access tokens cannot be adopted by an agent");
+    if (record.revokedAt) throw refused("That access token is revoked");
+    const lookupRaw = await this.storage.get(lookupKey(record.tokenHash));
+    if (!lookupRaw || parseLookup(lookupRaw)?.id !== record.id) {
+      throw refused("That access token no longer authenticates");
+    }
+    if ((await this.readSlot(agent)).raw !== null) {
+      throw refused("That agent already has a token slot; rotate it instead");
+    }
+    await this.updateRecord(record.id, (current) => {
+      if (current.agent !== undefined || current.principal || current.revokedAt) {
+        throw refused("That access token changed while it was being adopted");
+      }
+      return { ...current, agent };
+    });
+    const next: StoredSlot = { version: 1, agent, state: "issued", tokenId: record.id, issuedAt: record.createdAt };
+    if (!(await this.storage.compareAndSet(slotKey(agent), null, JSON.stringify(next)))) {
+      // Another issuance claimed the slot first. Release the bind so the
+      // record stays adoptable; it never admitted, since no slot named it.
+      await this.updateRecord(record.id, (current) => {
+        if (current.agent !== agent) return current;
+        const { agent: _bound, ...unbound } = current;
+        return unbound;
+      });
+      throw new AccessTokenError("conflict", "That agent's token slot changed during adoption; retry");
+    }
+    return slotView(agent, next);
+  }
+
+  /**
+   * Trusted provisioning: the records `adopt` can bind, oldest first. Ids,
+   * names and creation times only; never secret material.
+   */
+  async unboundTokens(): Promise<Array<{ id: string; name: string; createdAt: string }>> {
     const keys = await this.storage.list(accessTokenKeys.recordPrefix);
     const records = await Promise.all(
       keys.map(async (key) => {
         const raw = await this.storage.get(key);
-        return raw ? parseRecord(raw) : null;
+        try {
+          return raw ? parseRecord(raw) : null;
+        } catch {
+          return null;
+        }
       }),
     );
     return records
-      .filter((record): record is StoredAccessToken => Boolean(record))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map(metadata);
+      .filter((record): record is StoredAccessToken =>
+        Boolean(record && record.agent === undefined && !record.principal && !record.revokedAt),
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(({ id, name, createdAt }) => ({ id, name, createdAt }));
   }
 
-  async create(name: unknown, createdBy: string | IdentityReference): Promise<CreatedAccessToken> {
-    const normalizedName = normalizeName(name);
-    if (typeof createdBy !== "string" && !validIdentityReference(createdBy)) {
-      throw new Error("Invalid token owner");
-    }
-    const secretBytes = crypto.getRandomValues(new Uint8Array(TOKEN_BYTES));
-    const token = TOKEN_PREFIX + bytesToBase64Url(secretBytes);
-    const hash = await hashToken(token);
-    if (await this.storage.get(lookupKey(hash))) {
-      throw new Error("Access token collision; create another token");
-    }
-    const record: StoredAccessToken = {
-      version: 1,
-      id: crypto.randomUUID(),
-      name: normalizedName,
-      tokenHash: hash,
-      tokenPrefix: token.slice(0, 12),
-      createdAt: new Date().toISOString(),
-      createdBy: typeof createdBy === "string" ? createdBy : `${createdBy.namespace}:${createdBy.id}`,
-      ...(typeof createdBy === "string" ? {} : { principal: { ...createdBy } }),
-    };
-    try {
-      await this.updateActive(record.id, true);
-      await this.storage.set(recordKey(record.id), JSON.stringify(record));
-    } catch (error) {
-      // No lookup write has started, so this secret can never authenticate.
-      // A failed record or reservation write may still have committed: revoke
-      // whatever metadata exists and release the reservation even on a miss.
-      const revoked = await this.revoke(record.id, record.createdBy);
-      if (!revoked) await this.updateActive(record.id, false);
-      throw error;
-    }
-    // A failed lookup write may have committed. Keep its reservation and
-    // metadata, so a manager can revoke it without ever returning the secret.
-    await this.storage.set(lookupKey(hash), JSON.stringify({ version: 1, id: record.id } satisfies TokenLookup));
-    return { token, accessToken: metadata(record) };
-  }
-
-  async rename(id: string, name: unknown): Promise<AccessTokenMetadata | null> {
-    const normalized = normalizeName(name);
-    const record = await this.updateRecord(id, (current) => ({ ...current, name: normalized }));
-    return record ? metadata(record) : null;
-  }
-
-  async revoke(id: string, revokedBy: string): Promise<AccessTokenMetadata | null> {
+  /** Remove a token's lookup, then mark its record revoked. */
+  private async retire(id: string, revokedBy: string): Promise<void> {
     const record = await this.read(id);
-    if (!record) return null;
-    // Remove admission first. A metadata failure cannot leave a successful
-    // revocation's lookup alive. Retry deletion even if already marked revoked.
+    if (!record) return;
     await this.storage.delete(lookupKey(record.tokenHash));
-    const updated = await this.updateRecord(id, (current) =>
-      current.revokedAt
-        ? current
-        : {
-            ...current,
-            revokedAt: new Date().toISOString(),
-            revokedBy,
-          },
+    await this.updateRecord(id, (current) =>
+      current.revokedAt ? current : { ...current, revokedAt: new Date().toISOString(), revokedBy },
     );
-    await this.updateActive(id, false);
-    return updated ? metadata(updated) : null;
   }
 
   private async updateRecord(
@@ -277,34 +406,10 @@ export class AccessTokenManager {
       const record = parseRecord(raw);
       if (record.id !== id) throw new Error("Stored access token id mismatch");
       const next = update(record);
-      // A rename racing revocation must retain revokedAt, including when
-      // an in-flight create has not yet published its lookup.
       if (!(await this.storage.compareAndSet(recordKey(id), raw, JSON.stringify(next)))) continue;
       return next;
     }
     throw new Error("Access token metadata is busy; retry the operation");
-  }
-
-  private async updateActive(id: string, adding: boolean): Promise<void> {
-    for (let attempt = 0; attempt < 32; attempt++) {
-      const raw = await this.storage.get(ACTIVE_KEY);
-      const ids: unknown =
-        raw === null
-          ? (await this.list()).filter((token) => !token.revokedAt).map((token) => token.id)
-          : JSON.parse(raw);
-      if (
-        !Array.isArray(ids) ||
-        !ids.every((value) => typeof value === "string" && ID_RE.test(value)) ||
-        new Set(ids).size !== ids.length
-      ) {
-        throw new Error("Stored access token capacity is invalid");
-      }
-      if (adding && ids.length >= this.maxActive)
-        throw new Error(`This deployment already has the maximum of ${this.maxActive} active access tokens`);
-      const next = adding ? [...ids, id] : ids.filter((value) => value !== id);
-      if (await this.storage.compareAndSet(ACTIVE_KEY, raw, JSON.stringify(next))) return;
-    }
-    throw new Error("Access token capacity is busy; retry the operation");
   }
 
   private async authorize(request: Request): Promise<AuthResult> {
@@ -320,28 +425,40 @@ export class AccessTokenManager {
     if (!record || record.revokedAt || record.tokenHash !== hash || record.tokenPrefix !== token.slice(0, 12)) {
       return unauthorized();
     }
-    return {
-      ok: true,
-      subjectId: record.id,
-      ...(record.principal ? { principal: { ...record.principal } } : {}),
-    };
+    // Human-bound and unbound records, and agents no longer in code, refuse
+    // exactly as an unknown token does.
+    if (record.principal || record.agent === undefined || !this.agents.has(record.agent)) return unauthorized();
+    const { slot } = await this.readSlot(record.agent);
+    if (slot?.state !== "issued" || slot.tokenId !== record.id) return unauthorized();
+    return { ok: true, subjectId: agentSubjectId(record.agent), agent: record.agent };
   }
 }
 
-/** The closed options accessTokens() accepts; see `assertKnownOptions`. */
-const ACCESS_TOKENS_OPTIONS = optionsOf<{ maxActive?: number }>()(keys("maxActive"));
+/** accessTokens() takes no options: the agents declared in code bound its slots. */
+type AccessTokensOptions = Record<never, never>;
+const ACCESS_TOKENS_OPTIONS = optionsOf<AccessTokensOptions>()({});
 
-/** Opt in using the same storage namespace that held the v0.23 records. */
-export function accessTokens(storage: KVStorage, options: { maxActive?: number } = {}): AccessTokensModule {
-  options = assertKnownOptions(options, "accessTokens()", ACCESS_TOKENS_OPTIONS);
-  const manager = new AccessTokenManager(storage, options);
-  const maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE;
-  const optionSources = Object.freeze({
-    maxActive: options.maxActive === undefined ? ("default" as const) : ("config" as const),
-  });
+/** Build the module bound to one deployment's declared agents. */
+function moduleFor(storage: KVStorage, agents: readonly string[]): AccessTokensModule {
+  const manager = new AccessTokenManager(storage, { agents });
   return {
     auth: manager.auth,
     handle: (context) => routeAccessTokens(context, manager),
-    describe: () => ({ maxActive, optionSources }),
+    forAgents: (declared) => moduleFor(storage, declared),
   };
+}
+
+/**
+ * Agent token authentication and management over the deployment's storage.
+ * Reuse the storage that held earlier tokens so their records stay readable;
+ * `createConnecta` binds the module to `agents`.
+ */
+export function accessTokens(storage: KVStorage, options: AccessTokensOptions = {}): AccessTokensModule {
+  if (options && typeof options === "object" && Object.hasOwn(options, "maxActive")) {
+    throw new ConfigError(
+      "accessTokens().maxActive was removed: each agent declared in ConnectaConfig.agents has exactly one token slot.",
+    );
+  }
+  assertKnownOptions(options, "accessTokens()", ACCESS_TOKENS_OPTIONS);
+  return moduleFor(storage, []);
 }

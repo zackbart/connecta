@@ -222,10 +222,11 @@ describe("default endpoint grant", () => {
   it("INV-4: refuses default-denied machine tokens on every operator catalog route and admits humans", async () => {
     const storage = memoryStorage();
     const tokens = accessTokens(storage);
-    const token = await new AccessTokenManager(storage).create("Simon", "test-operator");
+    const token = await new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon", "test-operator");
     const grant = vi.fn((identity: Readonly<AuthenticatedIdentity>) => identity.interactive);
     const app = deployment({
       storage,
+      agents: ["simon"],
       accessTokens: tokens,
       auth: fakeClerkAuth(),
       grant,

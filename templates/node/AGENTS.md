@@ -21,11 +21,14 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - Optional modules (Clerk sign-in, credential vault, activity history) are type-checked code in `src/connecta.config.ts`, switched on by
   their environment variables. Follow README "Select optional modules". Auth management requires explicit
   `credentialAdministration` or `personalConnection` permissions; visibility
-  alone never grants it. Clerk supplies human identity; `cta_` access tokens cover machine clients.
+  alone never grants it. Clerk supplies human identity; machine clients are the
+  `agents` declared by name in `src/connecta.config.ts`, each with one `cta_` token.
   Keep `accessTokens(storage)` installed even before the first token exists.
-  Bootstrap machines with `npm run provision-token -- "machine-name"` against
-  the same database the server uses. `CONNECTA_TOKEN` is only for clients and
-  doctor; never add a configured static bearer or an open startup mode.
+  Issue or rotate an agent's token with `npm run --silent rotate-token -- <agent>`
+  against the same configuration and database the server uses; bind a token
+  from before agents once with `npm run adopt-token -- <token-id> <agent>`.
+  `CONNECTA_TOKEN` is only for clients and doctor; never add a configured
+  static bearer or an open startup mode.
   All state, activity included, lives in the one SQLite file `CONNECTA_DATABASE`
   names, through `@zackbart/connecta/sqlite`.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,

@@ -1,48 +1,6 @@
-import { useState } from "react";
 import { accessTokenUnavailableCopy, formatDate, type OperatorState, type UiAccessToken } from "../view.js";
 import { CopyButton, Empty, NoticeLine, Unavailable } from "./parts.js";
-import {
-  createAccessToken,
-  dismissCreatedToken,
-  loadAccessTokens,
-  renameAccessToken,
-  revokeAccessToken,
-  saveAccessTokenName,
-} from "./store.js";
-
-function CreateForm({ busy }: { busy: boolean }) {
-  const [name, setName] = useState("");
-  return (
-    <form
-      id="tokenCreateForm"
-      className="token-create"
-      onSubmit={(event) => {
-        event.preventDefault();
-        // Only a token that exists empties the field. A rejected POST leaves
-        // the typed client name where it was, so the retry is one click.
-        void createAccessToken(name.trim()).then((created) => {
-          if (created) setName("");
-        });
-      }}
-    >
-      <label htmlFor="tokenName">Client name</label>
-      <div className="row">
-        <input
-          id="tokenName"
-          type="text"
-          maxLength={80}
-          placeholder="Claude desktop, ChatGPT production…"
-          autoComplete="off"
-          value={name}
-          onInput={(event) => setName(event.currentTarget.value)}
-        />
-        <button id="createToken" className="btn" type="submit" disabled={busy}>
-          {busy ? "Creating…" : "Create token"}
-        </button>
-      </div>
-    </form>
-  );
-}
+import { dismissCreatedToken, loadAccessTokens, revokeAgentToken, rotateAgentToken, slotState } from "./store.js";
 
 function Reveal({ token }: { token: string }) {
   return (
@@ -67,66 +25,36 @@ function Reveal({ token }: { token: string }) {
   );
 }
 
-function TokenCard({ token, renaming, busy }: { token: UiAccessToken; renaming: boolean; busy: boolean }) {
-  const [name, setName] = useState(token.name);
-  const revoked = Boolean(token.revokedAt);
+/** One declared agent's token slot. Agents come from code; only the token changes here. */
+function TokenCard({ token, busy }: { token: UiAccessToken; busy: boolean }) {
+  const slot = slotState(token);
   return (
-    <section className={revoked ? "token-card revoked" : "token-card"} aria-labelledby={`access-token-${token.id}`}>
+    <section
+      className={slot === "revoked" ? "token-card revoked" : "token-card"}
+      aria-labelledby={`access-token-${token.id}`}
+    >
       <div className="token-card-head">
         <div>
           <h2 id={`access-token-${token.id}`}>{token.name}</h2>
-          <p className="mono">{token.tokenPrefix}…</p>
         </div>
         <div className="cap">
-          {revoked ? `Revoked ${formatDate(token.revokedAt)}` : `Created ${formatDate(token.createdAt)}`}
+          {slot === "revoked"
+            ? `Revoked ${formatDate(token.revokedAt)}`
+            : slot === "issued"
+              ? `Issued ${formatDate(token.createdAt)}`
+              : "No token issued"}
         </div>
       </div>
       <div className="credential-actions">
-        <button
-          className="btn"
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            setName(token.name);
-            renameAccessToken(renaming ? null : token.id);
-          }}
-        >
-          Rename
+        <button className="btn" type="button" disabled={busy} onClick={() => void rotateAgentToken(token.id)}>
+          {slot === "issued" ? "Rotate" : "Issue"}
         </button>
-        {revoked ? null : (
-          <button className="btn danger" type="button" disabled={busy} onClick={() => void revokeAccessToken(token.id)}>
+        {slot === "issued" ? (
+          <button className="btn danger" type="button" disabled={busy} onClick={() => void revokeAgentToken(token.id)}>
             Revoke
           </button>
-        )}
+        ) : null}
       </div>
-      {renaming ? (
-        <form
-          className="credential-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const next = name.trim();
-            if (next) void saveAccessTokenName(token.id, next);
-          }}
-        >
-          <label className="visually-hidden" htmlFor={`token-name-${token.id}`}>
-            Token name
-          </label>
-          <input
-            id={`token-name-${token.id}`}
-            type="text"
-            maxLength={80}
-            autoComplete="off"
-            value={name}
-            onInput={(event) => setName(event.currentTarget.value)}
-          />
-          <button className="btn" type="submit" disabled={busy}>
-            Save name
-          </button>
-          <button className="btn" type="button" disabled={busy} onClick={() => renameAccessToken(null)}>
-            Cancel
-          </button>
-        </form>
-      ) : null}
     </section>
   );
 }
@@ -142,13 +70,16 @@ export function TokensPage({ state, embedded = false }: { state: OperatorState; 
           </h1>
         )}
         <div className="lead-copy">
-          <p className="activity-copy">Bearer tokens for MCP clients. Each secret is shown once.</p>
+          <p className="activity-copy">
+            One Bearer token per agent declared in code. Each secret is shown once; rotating or revoking stops the
+            previous token immediately.
+          </p>
           <NoticeLine id="tokenNotice" notice={state.tokenNotice} />
           {!available ? (
             <Unavailable>{accessTokenUnavailableCopy(state.data?.accessTokenManagement)}</Unavailable>
           ) : (
             <div id="tokenAvailable">
-              {state.createdToken ? <Reveal token={state.createdToken} /> : <CreateForm busy={state.tokenBusy} />}
+              {state.createdToken ? <Reveal token={state.createdToken} /> : null}
               <div
                 id="tokenList"
                 className="token-ledger"
@@ -163,16 +94,9 @@ export function TokensPage({ state, embedded = false }: { state: OperatorState; 
                     </button>
                   </p>
                 ) : state.tokens.length === 0 ? (
-                  <Empty>No access tokens yet. Name the first MCP client above.</Empty>
+                  <Empty>No agents are declared. Add them to agents in the deployment code.</Empty>
                 ) : (
-                  state.tokens.map((token) => (
-                    <TokenCard
-                      key={token.id}
-                      token={token}
-                      renaming={state.tokenRenaming === token.id}
-                      busy={state.tokenBusy}
-                    />
-                  ))
+                  state.tokens.map((token) => <TokenCard key={token.id} token={token} busy={state.tokenBusy} />)
                 )}
               </div>
             </div>
