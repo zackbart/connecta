@@ -181,15 +181,11 @@ for (const delayed of ["config", "detail"] as const) {
             : 0;
       if (!delay) return route.continue();
       const response = await route.fetch();
-      await page.evaluate(
-        (ms) =>
-          new Promise<void>((resolve) => {
-            const root = document.documentElement;
-            root.dataset.delayedReads = String(Number(root.dataset.delayedReads ?? 0) + 1);
-            setTimeout(resolve, ms);
-          }),
-        delay,
-      );
+      await page.evaluate(`new Promise(resolve => {
+        const root = document.documentElement;
+        root.dataset.delayedReads = String(Number(root.dataset.delayedReads ?? 0) + 1);
+        setTimeout(resolve, ${delay});
+      })`);
       await route.fulfill({ response });
     });
     failIdentityPath = "/ui/data";
