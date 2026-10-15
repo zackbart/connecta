@@ -345,7 +345,7 @@ its `workers.dev` hostname, with compatibility date `2026-09-01`, `cf`
 1.0.0-beta.14, Wrangler 4.114.0, and curl 8.7.1 with `--path-as-is`, so raw
 paths reached the edge unnormalized. The Worker-level application allowed only
 a probe service token. Its unauthenticated refusal was therefore Access's 403
-page rather than a login redirect. The [observations](../scripts/probes/access-agent-bypass-2026-10-15.json)
+page rather than a login redirect. The [observations](https://github.com/zackbart/connecta/blob/main/scripts/probes/access-agent-bypass-2026-10-15.json)
 record three identical rounds after each configuration change had produced
 three consecutive matching responses.
 
