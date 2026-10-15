@@ -8,8 +8,9 @@
 // compares every member-visible value against a projection the caller builds
 // from config and membership, so a value that reads as a name or label cannot
 // smuggle an owner, another principal, an unadmitted pool or an ungranted tool.
-// The member's own connection state and manage actions are the only values
-// the projection cannot predict; the shape layer pins both to closed enums.
+// The caller supplies what config cannot show: the member's own partition
+// status and each personal connector's lifecycle hooks. Unordered collections
+// compare as sets and reject duplicates.
 import { expect } from "vitest";
 import type { DescribedConnector } from "../../src/describe-config.js";
 import type {
@@ -42,15 +43,30 @@ const MANAGE_ACTIONS = {
   credential: ["save", "test", "clear"],
 } satisfies { [K in OperatorMemberManage["kind"]]: Array<ActionsOf<Extract<OperatorMemberManage, { kind: K }>>> };
 
-type ExpectedManage =
-  | { kind: "none" }
-  | { kind: "oauth" }
-  | Omit<Extract<OperatorMemberManage, { kind: "credential" }>, "actions">;
-
 /** The trusted projection a member response must match, value for value. */
 export interface MemberViewExpectation {
   pools: Array<Pick<OperatorPoolV2, "name" | "humanPath" | "agentPath" | "readOnly" | "tools">>;
-  connectors: Array<Omit<OperatorMemberConnector, "connection" | "manage"> & { manage: ExpectedManage }>;
+  connectors: OperatorMemberConnector[];
+}
+
+/**
+ * Lifecycle hooks a personal connector implements. `DescribedConnector` does
+ * not carry them, so P6b must read them from the `Connector` itself:
+ * `oauth` when it has `startAuth` and `finishAuth` (connect and restart), with
+ * `disconnect` when it also has `disconnectAuth`; `credential` when it declares
+ * a credential slot, with `test` when it has `testCredential` or
+ * `testCredentials`, and `clear` when the vault can delete the member's value.
+ */
+export interface MemberConnectorHooks {
+  oauth?: { disconnect: boolean };
+  credential?: { test: boolean; clear: boolean };
+}
+
+/** One personal connector as the tested member's own partition sees it. */
+export interface MemberPartition {
+  /** The member's own status from the server's status seam, never from the response. */
+  connection: { state: ConnectorStatus["state"]; problem?: UiProblem };
+  hooks: MemberConnectorHooks;
 }
 
 export interface MemberViewSource {
@@ -62,16 +78,18 @@ export interface MemberViewSource {
   connectors: DescribedConnector[];
   /** The registry's final verdict for every served tool. */
   catalog: Array<{ address: string; classification: "read" | "write" }>;
-  /** Whether the member may manage their own connection; every personal connector by default. */
-  canManage?: (connectorId: string) => boolean;
+  /** Every personal connector in the member's pools, keyed by connector id. */
+  personal: Record<string, MemberPartition>;
+  /** Whether the member may manage their own connection to this connector. */
+  canManage: (connectorId: string) => boolean;
 }
 
-/** Build the member projection from config, catalog and membership, never from a member response. */
+/** Build the member projection from config, catalog, membership and partition status, never from a member response. */
 export function memberViewExpectation(source: MemberViewSource): MemberViewExpectation {
   const isMember = (m: OperatorMember) =>
     m.kind === "human" && m.namespace === source.member.namespace && m.id === source.member.id;
   const pools = source.pools.filter((pool) => pool.members.some(isMember));
-  const connectors = source.connectors.flatMap((connector) => {
+  const connectors = source.connectors.flatMap((connector): OperatorMemberConnector[] => {
     const grants = pools.flatMap((pool) =>
       pool.tools.filter((grant) => grant.connectorId === connector.id).map((grant) => ({ pool: pool.name, grant })),
     );
@@ -84,14 +102,22 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
         ),
       )
       .map(({ address, classification }) => ({ address, classification }));
+    const visible = {
+      id: connector.id,
+      title: connector.title ?? connector.id,
+      pools: [...new Set(grants.map((g) => g.pool))],
+      authScope: connector.authScope,
+      tools,
+    };
+    if (connector.authScope === "shared") return [{ ...visible, connection: null, manage: { kind: "none" } }];
+    const partition = source.personal[connector.id];
+    if (!partition) throw new Error(`No partition status for personal connector ${connector.id}`);
+    const { state, problem } = partition.connection;
     return [
       {
-        id: connector.id,
-        title: connector.title ?? connector.id,
-        pools: [...new Set(grants.map((g) => g.pool))],
-        authScope: connector.authScope,
-        tools,
-        manage: expectedManage(connector, source.canManage?.(connector.id) ?? true),
+        ...visible,
+        connection: problem === undefined ? { state } : { state, problem },
+        manage: source.canManage(connector.id) ? expectedManage(connector, partition.hooks) : { kind: "none" },
       },
     ];
   });
@@ -107,9 +133,10 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
   };
 }
 
-function expectedManage(connector: DescribedConnector, permitted: boolean): ExpectedManage {
-  if (connector.authScope === "shared" || !permitted) return { kind: "none" };
-  if (connector.credential) {
+// Exactly the actions the hooks support: no extras, none missing.
+function expectedManage(connector: DescribedConnector, hooks: MemberConnectorHooks): OperatorMemberManage {
+  if (hooks.credential) {
+    if (!connector.credential) throw new Error(`Connector ${connector.id} has credential hooks but no credential slot`);
     const { label, description, fields } = connector.credential;
     return {
       kind: "credential",
@@ -124,9 +151,20 @@ function expectedManage(connector: DescribedConnector, permitted: boolean): Expe
               ...(description === undefined ? {} : { description }),
             })),
           }),
+      actions: [
+        "save" as const,
+        ...(hooks.credential.test ? (["test"] as const) : []),
+        ...(hooks.credential.clear ? (["clear"] as const) : []),
+      ],
     };
   }
-  return connector.auth?.mode === "oauth" ? { kind: "oauth" } : { kind: "none" };
+  if (hooks.oauth) {
+    return {
+      kind: "oauth",
+      actions: ["connect", "restart", ...(hooks.oauth.disconnect ? (["disconnect"] as const) : [])],
+    };
+  }
+  return { kind: "none" };
 }
 
 type Json = Record<string, unknown>;
@@ -158,11 +196,20 @@ function text(value: unknown, path: string): void {
   expect(typeof value, `${path} is a string`).toBe("string");
 }
 
+function unique(values: unknown[], path: string): void {
+  expect(new Set(values.map((v) => JSON.stringify(v))).size, `${path} repeats an entry`).toBe(values.length);
+}
+
 function grantShape(value: unknown, path: string): void {
   const grant = exact(value, path, ["connectorId", "tools"]);
   text(grant.connectorId, `${path}.connectorId`);
   if (grant.tools === "all") return;
-  list(grant.tools, `${path}.tools`).forEach((tool, i) => {
+  const tools = list(grant.tools, `${path}.tools`);
+  unique(
+    tools.map((t) => (t as Json)?.name),
+    `${path}.tools`,
+  );
+  tools.forEach((tool, i) => {
     const entry = exact(tool, `${path}.tools[${i}]`, ["name", "requireReadOnly"]);
     text(entry.name, `${path}.tools[${i}].name`);
     oneOf(entry.requireReadOnly, [true, false], `${path}.tools[${i}].requireReadOnly`);
@@ -182,7 +229,12 @@ function manageShape(value: unknown, path: string): void {
     text(manage.label, `${path}.label`);
     if ("description" in manage) text(manage.description, `${path}.description`);
     if ("fields" in manage) {
-      list(manage.fields, `${path}.fields`).forEach((field, i) => {
+      const fields = list(manage.fields, `${path}.fields`);
+      unique(
+        fields.map((f) => (f as Json)?.name),
+        `${path}.fields`,
+      );
+      fields.forEach((field, i) => {
         const f = exact(field, `${path}.fields[${i}]`, ["name", "label"], ["description"]);
         text(f.name, `${path}.fields[${i}].name`);
         text(f.label, `${path}.fields[${i}].label`);
@@ -192,7 +244,7 @@ function manageShape(value: unknown, path: string): void {
   }
   if (kind === "none") return;
   const actions = list(manage.actions, `${path}.actions`);
-  expect(new Set(actions).size, `${path}.actions repeats an action`).toBe(actions.length);
+  unique(actions, `${path}.actions`);
   for (const action of actions) oneOf(action, MANAGE_ACTIONS[kind as keyof typeof MANAGE_ACTIONS], `${path}.actions`);
 }
 
@@ -200,9 +252,16 @@ function connectorShape(value: unknown, path: string): Json {
   const connector = exact(value, path, ["id", "title", "pools", "authScope", "tools", "connection", "manage"]);
   text(connector.id, `${path}.id`);
   text(connector.title, `${path}.title`);
-  list(connector.pools, `${path}.pools`).forEach((pool, i) => text(pool, `${path}.pools[${i}]`));
+  const pools = list(connector.pools, `${path}.pools`);
+  unique(pools, `${path}.pools`);
+  pools.forEach((pool, i) => text(pool, `${path}.pools[${i}]`));
   oneOf(connector.authScope, ["shared", "personal"], `${path}.authScope`);
-  list(connector.tools, `${path}.tools`).forEach((tool, i) => {
+  const tools = list(connector.tools, `${path}.tools`);
+  unique(
+    tools.map((t) => (t as Json)?.address),
+    `${path}.tools`,
+  );
+  tools.forEach((tool, i) => {
     const entry = exact(tool, `${path}.tools[${i}]`, ["address", "classification"]);
     text(entry.address, `${path}.tools[${i}].address`);
     oneOf(entry.classification, ["read", "write"], `${path}.tools[${i}].classification`);
@@ -250,7 +309,12 @@ export function expectMemberViewWithholds(response: unknown, expected: MemberVie
   expect(body.matrix, "matrix").toEqual([]);
   oneOf(exact(body.you, "you", ["interactive"]).interactive, [true, false], "you.interactive");
 
-  const pools = list(body.pools, "pools").map((value, i) => {
+  const pools = list(body.pools, "pools");
+  unique(
+    pools.map((p) => (p as Json)?.name),
+    "pools",
+  );
+  pools.forEach((value, i) => {
     const pool = exact(value, `pools[${i}]`, [
       "name",
       "humanPath",
@@ -264,23 +328,63 @@ export function expectMemberViewWithholds(response: unknown, expected: MemberVie
     expect(pool.members, `pools[${i}].members`).toEqual([]);
     oneOf(pool.readOnly, [true, false], `pools[${i}].readOnly`);
     for (const key of ["name", "humanPath", "agentPath"]) text(pool[key], `pools[${i}].${key}`);
-    list(pool.tools, `pools[${i}].tools`).forEach((grant, j) => grantShape(grant, `pools[${i}].tools[${j}]`));
-    const { owner: _owner, members: _members, ...visible } = pool;
-    return visible;
+    const grants = list(pool.tools, `pools[${i}].tools`);
+    unique(
+      grants.map((g) => (g as Json)?.connectorId),
+      `pools[${i}].tools`,
+    );
+    grants.forEach((grant, j) => grantShape(grant, `pools[${i}].tools[${j}]`));
   });
-  const connectors = list(body.connectors, "connectors").map((value, i) => {
-    const { connection: _connection, manage, ...visible } = connectorShape(value, `connectors[${i}]`);
-    const { actions: _actions, ...declared } = manage as Json;
-    return { ...visible, manage: declared };
-  });
-
-  // Order discloses nothing, so compare as sets keyed by name and id.
-  const by = (key: string) => (a: object, b: object) =>
-    String((a as Json)[key]).localeCompare(String((b as Json)[key]));
-  const byName = by("name");
-  const byId = by("id");
-  expect(pools.sort(byName), "pools differ from the member's admitted pools").toEqual([...expected.pools].sort(byName));
-  expect(connectors.sort(byId), "connectors differ from the member's projection").toEqual(
-    [...expected.connectors].sort(byId),
+  const connectors = list(body.connectors, "connectors");
+  unique(
+    connectors.map((c) => (c as Json)?.id),
+    "connectors",
   );
+  connectors.forEach((value, i) => connectorShape(value, `connectors[${i}]`));
+
+  expect(canonicalPools(body.pools), "pools differ from the member's admitted pools").toEqual(
+    canonicalPools(expected.pools),
+  );
+  expect(canonicalConnectors(body.connectors), "connectors differ from the member's projection").toEqual(
+    canonicalConnectors(expected.connectors),
+  );
+}
+
+// Order discloses nothing, and duplicates were refused above, so every
+// unordered collection compares as a sorted set.
+const sortBy = <T>(values: readonly T[], key: (value: T) => string) =>
+  [...values].sort((a, b) => key(a).localeCompare(key(b)));
+
+function canonicalPools(value: unknown): unknown {
+  // Owner and members were checked null and empty above; the rest is the projection.
+  return sortBy(value as MemberViewExpectation["pools"], (p) => p.name).map(
+    ({ name, humanPath, agentPath, readOnly, tools }) => ({
+      name,
+      humanPath,
+      agentPath,
+      readOnly,
+      tools: sortBy(tools, (g) => g.connectorId).map((grant) => ({
+        ...grant,
+        tools: grant.tools === "all" ? "all" : sortBy(grant.tools, (t) => t.name),
+      })),
+    }),
+  );
+}
+
+function canonicalConnectors(value: unknown): unknown {
+  return sortBy(value as OperatorMemberConnector[], (c) => c.id).map((connector) => ({
+    ...connector,
+    pools: [...connector.pools].sort(),
+    tools: sortBy(connector.tools, (t) => t.address),
+    manage:
+      connector.manage.kind === "none"
+        ? connector.manage
+        : {
+            ...connector.manage,
+            actions: [...connector.manage.actions].sort(),
+            ...("fields" in connector.manage && connector.manage.fields
+              ? { fields: sortBy(connector.manage.fields, (f) => f.name) }
+              : {}),
+          },
+  }));
 }

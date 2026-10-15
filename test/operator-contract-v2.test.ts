@@ -4,8 +4,15 @@ import {
   OPERATOR_V2_MAINTAINER,
   OPERATOR_V2_MEMBER,
   OPERATOR_V2_MEMBER_EXPECTED,
+  OPERATOR_V2_PARTITIONS,
+  operatorV2MemberSource,
 } from "./fixtures/operator-contract-v2.js";
-import { expectMemberViewWithholds, memberViewExpectation } from "./helpers/operator-member-view.js";
+import {
+  expectMemberViewWithholds,
+  memberViewExpectation,
+  type MemberViewExpectation,
+  type MemberViewSource,
+} from "./helpers/operator-member-view.js";
 
 type View = OperatorUiContractV2;
 const connector = (view: View, id: string) => view.connectors.find((c) => c.id === id)!;
@@ -13,10 +20,22 @@ const credential = (view: View) =>
   connector(view, "notion").manage as Extract<OperatorMemberManage, { kind: "credential" }>;
 const pool = (view: View, name: string) => view.pools.find((p) => p.name === name)!;
 
-function expectRejected(mutate: (view: View) => void): void {
+function linView(mutate: (view: View) => void = () => {}): View {
   const view: View = structuredClone(OPERATOR_V2_MEMBER);
   mutate(view);
-  expect(() => expectMemberViewWithholds(view, OPERATOR_V2_MEMBER_EXPECTED)).toThrow();
+  return view;
+}
+
+function expectRejected(mutate: (view: View) => void, expected = OPERATOR_V2_MEMBER_EXPECTED): void {
+  const view = linView(mutate);
+  expect(() => expectMemberViewWithholds(view, expected)).toThrow();
+}
+
+/** Lin's projection with one trusted input changed. */
+function linExpectation(change: (source: MemberViewSource) => void): MemberViewExpectation {
+  const source = operatorV2MemberSource("user_lin");
+  change(source);
+  return memberViewExpectation(source);
 }
 
 // No route serves v2 yet; these fixtures freeze the shape the UI builds against.
@@ -70,30 +89,21 @@ describe("operator contract v2 fixtures", () => {
     expect(kinds).toEqual(expect.arrayContaining(["personal:oauth", "personal:credential", "shared:none"]));
   });
 
-  it("INV-4: builds the projection from membership and manage permission only", () => {
-    const source = {
-      pools: OPERATOR_V2_MAINTAINER.pools,
-      connectors: OPERATOR_V2_MAINTAINER.config.connectors,
-      catalog: OPERATOR_V2_MAINTAINER.live.connectors.flatMap((c) => c.tools),
-    };
-    expect(
-      memberViewExpectation({ ...source, member: { namespace: "https://other.example", id: "user_lin" } }),
-    ).toEqual({ pools: [], connectors: [] });
-    const ada = memberViewExpectation({
-      ...source,
-      member: { namespace: "https://clerk.example.test", id: "user_ada" },
+  it("INV-4: builds the projection from membership, partition status and manage permission only", () => {
+    expect(linExpectation((source) => (source.member.namespace = "https://other.example"))).toEqual({
+      pools: [],
+      connectors: [],
     });
+    const ada = memberViewExpectation(operatorV2MemberSource("user_ada"));
     expect(ada.pools.map((p) => p.name)).toEqual(["ada", "team"]);
     // A name grant admits that tool only, not the connector's whole catalog.
     expect(ada.connectors.find((c) => c.id === "github")?.tools).toEqual([
       { address: "github.read", classification: "read" },
     ]);
-    const unmanaged = memberViewExpectation({
-      ...source,
-      member: { namespace: "https://clerk.example.test", id: "user_lin" },
-      canManage: () => false,
-    });
+    expect(ada.connectors.find((c) => c.id === "slack")?.connection).toEqual(OPERATOR_V2_PARTITIONS.user_ada.slack);
+    const unmanaged = linExpectation((source) => (source.canManage = () => false));
     expect(unmanaged.connectors.map((c) => c.manage)).toEqual(unmanaged.connectors.map(() => ({ kind: "none" })));
+    expect(() => linExpectation((source) => delete source.personal.slack)).toThrow(/slack/);
   });
 
   it.each<[string, (view: View) => void]>([
@@ -175,4 +185,112 @@ describe("operator contract v2 fixtures", () => {
       (view) => view.connectors.push({ ...connector(view, "github"), id: "gmail", title: "Gmail" }),
     ],
   ])("INV-4 INV-5: the member-view value check rejects %s", (_name, mutate) => expectRejected(mutate));
+
+  describe("member partitions", () => {
+    it("INV-4 INV-5: Lin's view carrying Ada's partition status fails", () => {
+      expect(OPERATOR_V2_PARTITIONS.user_ada.slack).not.toEqual(OPERATOR_V2_PARTITIONS.user_lin.slack);
+      expect(OPERATOR_V2_PARTITIONS.user_ada.notion).not.toEqual(OPERATOR_V2_PARTITIONS.user_lin.notion);
+      expectMemberViewWithholds(linView(), OPERATOR_V2_MEMBER_EXPECTED);
+      expectRejected((view) => (connector(view, "slack").connection = { ...OPERATOR_V2_PARTITIONS.user_ada.slack }));
+      expectRejected((view) => (connector(view, "notion").connection = { ...OPERATOR_V2_PARTITIONS.user_ada.notion }));
+      // Ada's own view carries her state, so the same values pass against her projection.
+      const ada = memberViewExpectation(operatorV2MemberSource("user_ada"));
+      expect(ada.connectors.find((c) => c.id === "notion")?.connection).toEqual({ state: "ok" });
+    });
+
+    it("INV-5: a dropped or added problem code fails", () => {
+      expectRejected((view) => (connector(view, "notion").connection = { state: "credential_required" }));
+      expectRejected((view) => (connector(view, "slack").connection = { state: "ok", problem: "catalog_failed" }));
+    });
+  });
+
+  describe("manage actions match hooks and permission exactly", () => {
+    it("INV-4: a credential connector without a test hook cannot advertise test", () => {
+      const noTest = linExpectation(
+        (source) => (source.personal.notion!.hooks = { credential: { test: false, clear: true } }),
+      );
+      expectRejected(() => {}, noTest);
+      expectMemberViewWithholds(
+        linView((view) => (credential(view).actions = ["save", "clear"])),
+        noTest,
+      );
+    });
+
+    it("INV-4: an OAuth connector without disconnectAuth cannot advertise disconnect", () => {
+      const noDisconnect = linExpectation(
+        (source) => (source.personal.slack!.hooks = { oauth: { disconnect: false } }),
+      );
+      expectRejected(() => {}, noDisconnect);
+    });
+
+    it("INV-4: a supported action cannot go missing", () => {
+      expectRejected((view) => (connector(view, "slack").manage = { kind: "oauth", actions: ["connect", "restart"] }));
+      expectRejected((view) => credential(view).actions.splice(1, 1));
+    });
+
+    it("INV-4: a member without manage permission sees manage none", () => {
+      expectRejected(
+        () => {},
+        linExpectation((source) => (source.canManage = (id) => id !== "slack")),
+      );
+    });
+
+    it("accepts an OAuth-capable custom connector whose description omits auth.mode", () => {
+      const custom = linExpectation((source) => {
+        const slack = source.connectors.find((c) => c.id === "slack")!;
+        slack.source = { kind: "custom" };
+        delete slack.auth;
+      });
+      expect(custom.connectors.find((c) => c.id === "slack")?.manage).toEqual({
+        kind: "oauth",
+        actions: ["connect", "restart", "disconnect"],
+      });
+      expectMemberViewWithholds(linView(), custom);
+      // Without hooks it has nothing to manage, whatever its description says.
+      expectRejected(
+        () => {},
+        linExpectation((source) => (source.personal.slack!.hooks = {})),
+      );
+    });
+  });
+
+  describe("unordered collections compare as sets", () => {
+    it("accepts a connector admitted through two pools in either order", () => {
+      expect(connector(linView(), "github").pools).toEqual(["support", "team"]);
+      expectMemberViewWithholds(
+        linView((view) => connector(view, "github").pools.reverse()),
+        OPERATOR_V2_MEMBER_EXPECTED,
+      );
+    });
+
+    it("accepts every unordered collection reversed", () => {
+      const view = linView((view) => {
+        view.pools.reverse();
+        view.connectors.reverse();
+        for (const pool of view.pools) {
+          pool.tools.reverse();
+          for (const grant of pool.tools) if (grant.tools !== "all") grant.tools.reverse();
+        }
+        for (const c of view.connectors) {
+          c.pools.reverse();
+          c.tools.reverse();
+          if (c.manage.kind !== "none") c.manage.actions.reverse();
+          if (c.manage.kind === "credential") c.manage.fields?.reverse();
+        }
+      });
+      expectMemberViewWithholds(view, OPERATOR_V2_MEMBER_EXPECTED);
+    });
+
+    it.each<[string, (view: View) => void]>([
+      ["a repeated pool", (view) => view.pools.push(structuredClone(pool(view, "team")))],
+      ["a repeated connector", (view) => view.connectors.push(structuredClone(connector(view, "drive")))],
+      ["a repeated connector pool", (view) => connector(view, "github").pools.push("team")],
+      [
+        "a repeated tool",
+        (view) => connector(view, "slack").tools.push({ address: "slack.post", classification: "write" }),
+      ],
+      ["a repeated grant", (view) => pool(view, "team").tools.push({ connectorId: "slack", tools: "all" })],
+      ["a repeated field", (view) => credential(view).fields!.push({ name: "token", label: "Token" })],
+    ])("INV-4: rejects %s", (_name, mutate) => expectRejected(mutate));
+  });
 });

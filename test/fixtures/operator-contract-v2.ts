@@ -15,7 +15,12 @@ import type {
   OperatorUiContractV2,
 } from "../../src/operator-ui/contract.js";
 import type { ConnectaConfigDescription, DescribedConnector, DescribedLimit } from "../../src/describe-config.js";
-import { memberViewExpectation } from "../helpers/operator-member-view.js";
+import {
+  memberViewExpectation,
+  type MemberConnectorHooks,
+  type MemberPartition,
+  type MemberViewSource,
+} from "../helpers/operator-member-view.js";
 
 const NOW = "2026-10-08T12:00:00.000Z";
 const EARLIER = "2026-10-01T09:30:00.000Z";
@@ -76,7 +81,7 @@ const config: ConnectaConfigDescription = {
   pools: [
     { name: "ada", path: "/mcp/ada", tools: ["gmail", "github.read"], hasGrant: true, readOnly: false },
     { name: "support", path: "/mcp/support", tools: ["github.read", "drive.search"], hasGrant: true, readOnly: true },
-    { name: "team", path: "/mcp/team", tools: ["slack", "notion"], hasGrant: true, readOnly: false },
+    { name: "team", path: "/mcp/team", tools: ["slack", "notion", "github.read"], hasGrant: true, readOnly: false },
   ],
   modules: {
     ui: { enabled: true },
@@ -159,6 +164,8 @@ const pools: OperatorPoolV2[] = [
     tools: [
       { connectorId: "slack", tools: "all" },
       { connectorId: "notion", tools: "all" },
+      // GitHub also reaches Lin through support, so it lists two pools.
+      { connectorId: "github", tools: [{ name: "read", requireReadOnly: false }] },
     ],
     members: [ada, lin],
   },
@@ -173,6 +180,7 @@ const matrix: OperatorConnectorPoolCell[] = [
   { connectorId: "github", pool: null, tools: "all", runsAs: { kind: "shared", savedAt: EARLIER } },
   { connectorId: "github", pool: "ada", tools: ["read"], runsAs: { kind: "shared", savedAt: EARLIER } },
   { connectorId: "github", pool: "support", tools: ["read"], runsAs: { kind: "shared", savedAt: EARLIER } },
+  { connectorId: "github", pool: "team", tools: ["read"], runsAs: { kind: "shared", savedAt: EARLIER } },
   // Plain /mcp admits no agents, so the mapping has no agent subject there.
   { connectorId: "gmail", pool: null, tools: "all", runsAs: { kind: "workspace", humans: "self", agents: null } },
   {
@@ -196,8 +204,8 @@ const matrix: OperatorConnectorPoolCell[] = [
   },
   { connectorId: "slack", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
   { connectorId: "slack", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
-  { connectorId: "notion", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 0, members: 2 } },
-  { connectorId: "notion", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 0, members: 2 } },
+  { connectorId: "notion", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
+  { connectorId: "notion", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
 ];
 
 export const OPERATOR_V2_MAINTAINER = {
@@ -246,7 +254,7 @@ const memberConnectors: OperatorMemberConnector[] = [
   {
     id: "github",
     title: "GitHub",
-    pools: ["support"],
+    pools: ["support", "team"],
     authScope: "shared",
     tools: [{ address: "github.read", classification: "read" }],
     connection: null,
@@ -271,7 +279,7 @@ const memberConnectors: OperatorMemberConnector[] = [
       { address: "slack.post", classification: "write" },
     ],
     connection: { state: "ok" },
-    manage: { kind: "oauth", actions: ["restart", "disconnect"] },
+    manage: { kind: "oauth", actions: ["connect", "restart", "disconnect"] },
   },
   {
     id: "notion",
@@ -287,7 +295,7 @@ const memberConnectors: OperatorMemberConnector[] = [
         { name: "workspace", label: "Workspace" },
         { name: "token", label: "Token", description: "An internal integration secret" },
       ],
-      actions: ["save", "test"],
+      actions: ["save", "test", "clear"],
     },
   },
 ];
@@ -309,13 +317,36 @@ export const OPERATOR_V2_MEMBER = {
   you: { interactive: true },
 } satisfies OperatorUiContractV2;
 
+const hooks = {
+  slack: { oauth: { disconnect: true } },
+  notion: { credential: { test: true, clear: true } },
+} satisfies Record<string, MemberConnectorHooks>;
+
+/** Each member's own partition status. Ada's and Lin's differ, so neither may see the other's. */
+export const OPERATOR_V2_PARTITIONS = {
+  user_lin: { slack: { state: "ok" }, notion: { state: "credential_required", problem: "credential_required" } },
+  user_ada: { slack: { state: "auth_required", problem: "oauth_required" }, notion: { state: "ok" } },
+} satisfies Record<string, Record<keyof typeof hooks, MemberPartition["connection"]>>;
+
 /**
- * What Lin's view must carry, built from config, catalog and membership the
- * way P6b builds it from a real deployment, never from the member fixture.
+ * The trusted inputs for one member's view: config, catalog, membership,
+ * that member's partition status and each connector's hooks, gathered the way
+ * P6b gathers them from a real deployment, never from a member response.
  */
-export const OPERATOR_V2_MEMBER_EXPECTED = memberViewExpectation({
-  member: { namespace: CLERK, id: "user_lin" },
-  pools,
-  connectors: config.connectors,
-  catalog: OPERATOR_V2_MAINTAINER.live.connectors.flatMap((connector) => connector.tools),
-});
+export function operatorV2MemberSource(id: keyof typeof OPERATOR_V2_PARTITIONS): MemberViewSource {
+  const connections: Record<keyof typeof hooks, MemberPartition["connection"]> = OPERATOR_V2_PARTITIONS[id];
+  return {
+    member: { namespace: CLERK, id },
+    pools: structuredClone(pools),
+    connectors: structuredClone(config.connectors),
+    catalog: OPERATOR_V2_MAINTAINER.live.connectors.flatMap((connector) => connector.tools),
+    personal: {
+      slack: { connection: { ...connections.slack }, hooks: structuredClone(hooks.slack) },
+      notion: { connection: { ...connections.notion }, hooks: structuredClone(hooks.notion) },
+    },
+    canManage: () => true,
+  };
+}
+
+/** What Lin's view must carry. */
+export const OPERATOR_V2_MEMBER_EXPECTED = memberViewExpectation(operatorV2MemberSource("user_lin"));
