@@ -41,6 +41,8 @@ function installTransport() {
   }) as typeof fetch;
 }
 type Row = Record<string, any>;
+const sameTargets = (a: unknown, b: unknown) =>
+  Array.isArray(a) && Array.isArray(b) && [...a].sort().join() === [...b].sort().join();
 const text = (value: string) => [{ type: "text", text: { content: value }, plain_text: value }];
 const page = (id: string, title: string, status?: string) => ({
   object: "page",
@@ -343,6 +345,17 @@ export class FakeRestService {
         if (method === "PATCH") {
           const children = (body.children ?? []).map((b: Row, i: number) => ({
             ...b,
+            ...(b[b.type]?.rich_text
+              ? {
+                  [b.type]: {
+                    ...b[b.type],
+                    rich_text: b[b.type].rich_text.map((r: Row) => ({
+                      ...r,
+                      plain_text: r.text?.content ?? r.plain_text ?? "",
+                    })),
+                  },
+                }
+              : {}),
             id: `block-${this.state.blocks[block[1]!]!.length + i + 1}`,
             object: "block",
             has_children: false,
@@ -403,6 +416,8 @@ export class FakeRestService {
         return ok(cf({ id: "purged" }));
       }
       if (method === "POST" && path === "/graphql") {
+        if (!/\bhttpRequests1dGroups\b/.test(String(body.query)))
+          return ok({ errors: [{ message: "Unknown analytics field. This fixture supports httpRequests1dGroups." }] });
         const correct = JSON.stringify(body).includes(ZONE);
         return ok({
           data: {
@@ -410,12 +425,14 @@ export class FakeRestService {
               zones: [
                 {
                   zoneTag: correct ? ZONE : OTHER_ZONE,
-                  httpRequests1dGroups: [
-                    {
-                      dimensions: { date: "2026-10-01" },
-                      sum: { requests: correct ? 120000 : 777777, cachedRequests: correct ? 90000 : 666666 },
-                    },
-                  ],
+                  httpRequests1dGroups: JSON.stringify(body).includes("2026-10-01")
+                    ? [
+                        {
+                          dimensions: { date: "2026-10-01" },
+                          sum: { requests: correct ? 120000 : 777777, cachedRequests: correct ? 90000 : 666666 },
+                        },
+                      ]
+                    : [],
                 },
               ],
             },
@@ -433,7 +450,7 @@ export class FakeRestService {
           state: "READY",
           readyState: "READY",
           target: "production",
-          created: 3000,
+          created: 2000,
         },
         {
           uid: "dpl_fail2",
@@ -444,7 +461,7 @@ export class FakeRestService {
           readyState: "ERROR",
           target: "production",
           errorCode: "BUILD_FAILED",
-          created: 2000,
+          created: 3000,
         },
         {
           uid: "dpl_fail0",
@@ -458,12 +475,19 @@ export class FakeRestService {
         },
       ];
       if (method === "GET" && path === "/v2/teams") return ok({ teams: [{ id: "team_fake", slug: "fake" }] });
-      if (method === "GET" && path === "/v9/projects")
+      if (method === "GET" && ["/v9/projects", "/v10/projects"].includes(path))
         return ok({ projects: [{ id: "web", name: "web" }], pagination: { next: null } });
       if (method === "GET" && /^\/v\d+\/projects\/web$/.test(path)) return ok({ id: "web", name: "web" });
       if (method === "GET" && /^\/v[67]\/deployments$/.test(path))
         return ok({
-          deployments: deployments.filter((d) => !query.state || d.state === query.state),
+          deployments: deployments
+            .filter(
+              (d) =>
+                (!query.state || d.state === query.state) &&
+                (!query.projectId || d.projectId === query.projectId) &&
+                (!query.target || d.target === query.target),
+            )
+            .sort((a, b) => b.created - a.created),
           pagination: { next: null },
         });
       if (method === "GET" && /^\/v\d+\/deployments\/[^/]+$/.test(path))
@@ -480,6 +504,16 @@ export class FakeRestService {
           { type: "exit", created: 2001, text: "Command exited with code 1" },
         ]);
       if (method === "GET" && /^\/v10\/projects\/web\/env$/.test(path)) return ok({ envs: this.state.envs });
+      if (method === "POST" && path === "/v10/projects/web/env" && query.upsert === "true") {
+        const env = this.state.envs.find((e) => e.key === body.key && sameTargets(e.target, body.target));
+        if (env) {
+          Object.assign(env, body);
+          return ok(env);
+        }
+        const created = { id: `env_created_${this.state.envs.length}`, ...body };
+        this.state.envs.push(created);
+        return ok(created);
+      }
       if (method === "GET" && path.startsWith("/v1/projects/web/env/"))
         return ok(this.state.envs.find((e) => path.endsWith(e.id)) ?? {});
       if (method === "PATCH" && path.startsWith("/v9/projects/web/env/")) {

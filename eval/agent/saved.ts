@@ -109,7 +109,15 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
   if (state.rest) {
     for (const key of ["refunds", "dns", "purges", "createdPages", "envs"] as const)
       requireEvidence(Array.isArray(state.rest[key]), `rest.${key}`);
-    requireEvidence(state.rest.dns.length === 3 && state.rest.envs.length === 2, "rest.seed-records");
+    for (const [family, seeded] of [
+      ["dns", world.rest.dns],
+      ["envs", world.rest.envs],
+    ] as const)
+      for (const record of seeded)
+        requireEvidence(
+          state.rest[family].filter((r) => r.id === record.id).length === 1,
+          `rest.${family}.${record.id}`,
+        );
     requireEvidence(
       state.rest.blocks && ["page-q3", "page-retro"].every((id) => Array.isArray(state.rest!.blocks[id])),
       "rest.blocks",

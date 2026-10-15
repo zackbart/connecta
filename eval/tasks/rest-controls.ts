@@ -11,6 +11,7 @@ export async function restTransportControls() {
   const before = globalThis.fetch;
   const ledgers = [new Ledger(), new Ledger()];
   const services = ledgers.map((ledger) => new FakeRestService("stripe_sandbox", "stripe", ledger, restState()));
+  const analytics = new FakeRestService("cloudflare_prod", "cloudflare", new Ledger(), restState());
   const request = (token?: string, host = "api.stripe.com") =>
     fetch(`https://${host}/v1/payment_intents/pi_3Pfail0000`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -40,8 +41,17 @@ export async function restTransportControls() {
     await services[0]!.stop();
     if (!(await request(services[1]!.token)).ok || ledgers[1]!.calls.length !== 2)
       throw new Error("Stopping one fake world broke another");
+    await analytics.start();
+    const invalidQuery = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${analytics.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "{ viewer { zones { httpRequests1d { sum { requests } } } } }" }),
+    });
+    const rejected = (await invalidQuery.json()) as { errors?: unknown[]; data?: unknown };
+    if (!rejected.errors?.length || rejected.data)
+      throw new Error("Fake analytics answered a query for an unsupported field");
   } finally {
-    await Promise.all(services.map((s) => s.stop()));
+    await Promise.all([...services, analytics].map((s) => s.stop()));
   }
   if (globalThis.fetch !== before) throw new Error("Fake vendor transport was not restored");
 }
