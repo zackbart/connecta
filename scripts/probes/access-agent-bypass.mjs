@@ -35,6 +35,8 @@ const tokenHeaders = join(temp, "service-token.headers");
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const failures = [];
 const created = { apps: [], serviceToken: undefined, worker: false };
+// Every id ever created, kept after deletion so the final inventory can check each one.
+const ever = { apps: new Set(), tokens: new Set() };
 const record = { testedAt: new Date().toISOString(), name, profile, tools: {}, inventory: {}, api: [], phases: [] };
 let origin;
 const audDigests = new Map();
@@ -44,18 +46,42 @@ async function rememberAud(label, aud) {
   audDigests.set(Array.from(bytes.slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join(""), label);
 }
 
-async function cf(args, { body } = {}) {
+// API messages the probe may record verbatim. Every other part of CLI output
+// is discarded: only these constants, numeric API codes, error slugs, and HTTP
+// statuses survive into errors or observations.
+const KNOWN_MESSAGES = ["destination belongs to another application"];
+
+function summarize(text, { sensitive }) {
+  const status = text.match(/\b([1-5]\d\d) [A-Z][A-Za-z ]+? · HTTP\b/)?.[1];
+  // A command that creates credentials may have printed them before failing,
+  // so its summary keeps the HTTP status alone.
+  if (sensitive)
+    return { status: status ? Number(status) : undefined, error: `failed${status ? ` (HTTP ${status})` : ""}` };
+  const codes = [...new Set([...text.matchAll(/\[(\d{3,6})\]/g)].map((match) => match[1]))];
+  const slugs = [...new Set([...text.matchAll(/\b(access\.api\.error\.[a-z_.]+)/g)].map((match) => match[1]))];
+  const messages = KNOWN_MESSAGES.filter((message) => text.includes(message));
+  const parts = [...codes.map((code) => `[${code}]`), ...slugs, ...messages, ...(status ? [`HTTP ${status}`] : [])];
+  return { status: status ? Number(status) : undefined, error: parts.join(" ") || "failed (unrecognized output)" };
+}
+
+// `sensitive` marks commands that create credentials; nothing they print is kept.
+async function cf(args, { body, sensitive = false } = {}) {
   const full = ["--profile", profile, ...args, ...(body ? ["--body", JSON.stringify(body)] : [])];
+  let stdout;
   try {
     // cf caches the account under ./.cloudflare; keep that out of the checkout.
-    const { stdout } = await exec(cfBin, full, { cwd: temp, maxBuffer: 2 ** 24 });
-    const parsed = stdout.trim() ? JSON.parse(stdout) : null;
-    return { ok: true, value: parsed && typeof parsed === "object" && "result" in parsed ? parsed.result : parsed };
+    ({ stdout } = await exec(cfBin, full, { cwd: temp, maxBuffer: 2 ** 24 }));
   } catch (error) {
-    // CLI errors carry API messages; keep only the message text, never request bodies.
-    const text = `${error.stderr ?? ""}${error.stdout ?? ""}`.replace(/\s+/g, " ").trim();
-    return { ok: false, error: text.slice(0, 600) || String(error.message).slice(0, 600) };
+    return { ok: false, ...summarize(`${error.stderr ?? ""} ${error.stdout ?? ""}`, { sensitive }) };
   }
+  let parsed;
+  try {
+    parsed = stdout.trim() ? JSON.parse(stdout) : null;
+  } catch {
+    // JSON.parse messages quote the input; report only that parsing failed.
+    return { ok: false, error: "unparsable CLI output" };
+  }
+  return { ok: true, value: parsed && typeof parsed === "object" && "result" in parsed ? parsed.result : parsed };
 }
 
 async function listApps() {
@@ -89,7 +115,10 @@ function redact(text) {
 
 async function createApp(label, body) {
   const response = await cf(["zero-trust", "access", "applications", "create"], { body });
-  if (response.ok && response.value?.id) created.apps.push(response.value.id);
+  if (response.ok && response.value?.id) {
+    created.apps.push(response.value.id);
+    ever.apps.add(response.value.id);
+  }
   const entry = {
     label,
     request: JSON.parse(redact(JSON.stringify({ ...body, policies: body.policies?.map((p) => p.decision) }))),
@@ -108,18 +137,46 @@ async function createApp(label, body) {
   return response.ok ? response.value : undefined;
 }
 
-// Without --force, cf asks for confirmation and exits 0 without deleting when
-// stdin is not a terminal, so every delete is forced and then verified.
-async function deleteApp(id) {
-  const response = await cf(["zero-trust", "access", "applications", "delete", id, "--force"]);
-  if (!response.ok) return response;
-  for (let attempt = 0; ; attempt++) {
-    if (!(await cf(["zero-trust", "access", "applications", "get", id])).ok) break;
-    if (attempt === 4) return { ok: false, error: "application still exists after delete" };
+// Retries `present` until a successful lookup confirms absence. A failed lookup
+// is retried, never taken as proof that the resource is gone.
+async function confirmGone(present) {
+  let last = "not checked";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      if (!(await present())) return { ok: true };
+      last = "still exists after delete";
+    } catch (error) {
+      last = `lookup failed: ${error.message}`;
+    }
     await wait(1000);
   }
+  return { ok: false, error: last };
+}
+
+// Without --force, cf asks for confirmation and exits 0 without deleting when
+// stdin is not a terminal, so every delete is forced and then verified. The
+// delete's own result is not trusted either way; only a confirmed absence is.
+async function deleteApp(id) {
+  const response = await cf(["zero-trust", "access", "applications", "delete", id, "--force"]);
+  const gone = await confirmGone(async () => (await listApps()).some((app) => app.id === id));
+  if (!gone.ok) return { ok: false, error: response.ok ? gone.error : `${response.error}; ${gone.error}` };
   created.apps = created.apps.filter((app) => app !== id);
-  return response;
+  return { ok: true };
+}
+
+async function listProbeTokens() {
+  const response = await cf(["zero-trust", "access", "service-tokens", "list", "--search", name]);
+  if (!response.ok) throw new Error(`Could not list service tokens: ${response.error}`);
+  return (Array.isArray(response.value) ? response.value : []).filter(
+    (token) => token.name === `${name}-token` || ever.tokens.has(token.id),
+  );
+}
+
+async function deleteToken(id) {
+  const response = await cf(["zero-trust", "access", "service-tokens", "delete", id, "--force"]);
+  const gone = await confirmGone(async () => (await listProbeTokens()).some((token) => token.id === id));
+  if (!gone.ok) return { ok: false, error: response.ok ? gone.error : `${response.error}; ${gone.error}` };
+  return { ok: true };
 }
 
 const source = `
@@ -194,7 +251,7 @@ function deploy() {
     child.on("exit", (code) => {
       clearTimeout(timer);
       if (/Deploy complete/.test(text)) resolve(text);
-      else reject(new Error(`cf deploy exited ${code}: ${redact(text.slice(-400))}`));
+      else reject(new Error(`cf deploy exited ${code}`));
     });
   });
 }
@@ -381,18 +438,16 @@ try {
   await until("worker reachable at /agent/x", "/agent/x", "none", (row) => row.outcome === "worker");
   await phase("baseline: no Access application", [{ path: "/mcp" }, { path: "/agent/x" }]);
 
-  const token = await cf([
-    "zero-trust",
-    "access",
-    "service-tokens",
-    "create",
-    "--name",
-    `${name}-token`,
-    "--duration",
-    "1h",
-  ]);
-  if (!token.ok || !token.value?.client_id) throw new Error(`Could not create service token: ${token.error}`);
-  created.serviceToken = token.value.id;
+  const token = await cf(
+    ["zero-trust", "access", "service-tokens", "create", "--name", `${name}-token`, "--duration", "1h"],
+    { sensitive: true },
+  );
+  if (token.ok && token.value?.id) {
+    created.serviceToken = token.value.id;
+    ever.tokens.add(token.value.id);
+  }
+  if (!token.ok || !token.value?.client_id || !token.value?.client_secret)
+    throw new Error(`Could not create service token: ${token.error ?? "response lacked credentials"}`);
   await writeFile(
     tokenHeaders,
     `CF-Access-Client-Id: ${token.value.client_id}\nCF-Access-Client-Secret: ${token.value.client_secret}\n`,
@@ -503,10 +558,18 @@ try {
   } catch (error) {
     failures.push(error);
   }
-  if (created.serviceToken) {
-    const response = await cf(["zero-trust", "access", "service-tokens", "delete", created.serviceToken, "--force"]);
-    if (!response.ok)
-      failures.push(new Error(`Could not delete service token ${created.serviceToken}: ${response.error}`));
+  // Look tokens up by their exact name as well as the captured id, so a token
+  // whose create response was lost is still deleted.
+  try {
+    const ids = new Set(created.serviceToken ? [created.serviceToken] : []);
+    for (const token of await listProbeTokens()) ids.add(token.id);
+    for (const id of ids) {
+      ever.tokens.add(id);
+      const response = await deleteToken(id);
+      if (!response.ok) failures.push(new Error(`Could not delete service token ${id}: ${response.error}`));
+    }
+  } catch (error) {
+    failures.push(error);
   }
   if (created.worker) {
     let deletionError = "not attempted";
@@ -533,19 +596,28 @@ try {
   try {
     const after = await listApps();
     const workers = await cf(["workers", "scripts", "search", "--name", name]);
-    const tokens = await cf(["zero-trust", "access", "service-tokens", "list", "--search", name]);
+    // Also check the tracked Worker id, in case the name lookup misses it.
+    const byId = workerId ? await cf(["workers", "scripts", "search", "--id", workerId]) : { ok: true, value: [] };
+    let tokensRemaining = "unknown";
+    try {
+      tokensRemaining = (await listProbeTokens()).length;
+    } catch (error) {
+      failures.push(error);
+    }
     const afterIds = new Set(after.map((app) => app.id));
     record.inventory.after = {
       count: after.length,
       nonProbeIdsUnchanged:
         beforeIds !== undefined && afterIds.size === beforeIds.size && [...beforeIds].every((id) => afterIds.has(id)),
-      probeApplicationsRemaining: after.filter((app) => String(app.name).startsWith("connecta-probe-")).length,
-      probeWorkersRemaining: workers.ok
-        ? workers.value.filter((s) => (s.script_name ?? s.name) === name).length
-        : "unknown",
-      probeServiceTokensRemaining: tokens.ok
-        ? tokens.value.filter((t) => String(t.name).startsWith(name)).length
-        : "unknown",
+      probeApplicationsRemaining: after.filter(
+        (app) => ever.apps.has(app.id) || String(app.name).startsWith("connecta-probe-"),
+      ).length,
+      probeWorkersRemaining:
+        workers.ok && byId.ok
+          ? workers.value.filter((w) => (w.script_name ?? w.name) === name).length +
+            (Array.isArray(byId.value) ? byId.value.length : 0)
+          : "unknown",
+      probeServiceTokensRemaining: tokensRemaining,
     };
     const inventory = record.inventory;
     if (

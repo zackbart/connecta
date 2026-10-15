@@ -359,11 +359,13 @@ three consecutive matching responses.
   protection still covers the `workers.dev` hostname.
 - **`ctx.access` on a bypassed request is present, not absent.** Its `aud` is
   nonempty and is the _path_ application's AUD, not the Worker-level one.
-  `getIdentity()` resolves to `undefined`. The result was the same without
-  credentials, with a valid service token, with a bearer token, and with a
-  forged `Cf-Access-Jwt-Assertion`. A service token on a protected path also
-  gave `undefined` identity, carrying the Worker-level AUD. No human identity
-  was tested; a bypass policy does not evaluate one.
+  `getIdentity()` resolved to `undefined` for every credential tested: none, a
+  valid service token, a `cta_`-style bearer token, and a forged
+  `Cf-Access-Jwt-Assertion`. A service token on a protected path also gave
+  `undefined` identity, carrying the Worker-level AUD. A human
+  `CF_Authorization` cookie on a bypassed path was not tested, so what
+  `getIdentity()` returns there is unknown. That is one more reason the agent
+  route ignores Access context rather than relying on its contents.
 - **API shape.** A Worker destination is exclusive to one application. A
   second application with `{ "type": "worker", "worker_id" }` plus `uri` or
   `path` was refused with 409 `destination belongs to another application`. The
@@ -402,8 +404,10 @@ three consecutive matching responses.
 
 Access matches after resolving dot segments, including `%2e` forms. It matches
 case-insensitively, decodes unreserved escapes such as `%61`, collapses a
-leading `//`, and treats `%2f` as data, not a separator. The Worker receives
-the raw path except for dot segments, which arrive resolved. Every path that
+leading `//`, and treats `%2f` as data, not a separator. The effective Worker
+pathname, `new URL(request.url).pathname`, is the raw request path with case,
+escapes, and slashes untouched, except that dot segments arrive resolved:
+`/mcp/../agent/x` arrives as `/agent/x`. Every path that
 resolves outside `/agent/*`, including every `/mcp` form, stayed protected. The
 inverse is the risk: Access bypasses paths
 that connecta must not treat as an agent pool. Connecta's router compares raw
@@ -431,8 +435,14 @@ domain to that hostname and path to `agent/*`, with one policy whose action is
 ```
 
 Only the `workers.dev` hostname was probed. A Custom Domain application is the
-same documented hostname-and-path form, but it was not observed here. Allow
-about 20 seconds for each change to settle before testing.
+same documented hostname-and-path form, but it was not observed here. Do not
+rely on a fixed wait after a change. Changes settled in 15–19 seconds, yet one
+earlier round still saw a 403 on a bypassed path more than 30 seconds after
+the change.
+Test only after positive and negative controls have each converged, as the
+script does: the bypassed path reaches the Worker with the path AUD, and a
+protected path returns the Access refusal, each for several consecutive
+requests.
 
 To repeat from a repository checkout, run
 `node scripts/probes/access-agent-bypass.mjs [--profile <name>] [output.json]`.
@@ -453,7 +463,11 @@ the script passes `--force`. `cf deploy` printed `Deploy complete` and then
 kept running, so the script stops it after that line. The recorded run deployed
 with Wrangler 4.114.0 and used `cf` for Access. A standalone deploy and delete
 verified the `cf` deploy and delete path. The full probe has not been rerun on
-that path.
+that path. The later teardown hardening was not exercised live either. It
+covers token lookup by exact name, absence confirmed only by a successful
+lookup, and lookup of the tracked ids in the final inventory. CLI output is
+reduced to allowlisted API codes, error slugs, known messages, and HTTP
+statuses, and only the HTTP status for credential-creating commands.
 
 ## Storage, credentials, and connectors
 
