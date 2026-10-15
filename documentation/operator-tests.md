@@ -95,7 +95,11 @@ traffic. No credentials enter visual fixtures or screenshot baselines.
 operator routes with a trusted Worker Access context. It covers transient and
 rejected identity reads, missing shell context, delayed OAuth grant commits,
 catalog/auth reconciliation, and unreadable credential metadata, all without
-reloading the document. Store tests defend bounded recovery and OAuth polling,
+reloading the document. The repeated-refusal browser case drives ten focus and visibility returns
+160 ms apart with a controlled clock, checks the shared backoff and exhausted
+retry budget, then recovers without reloading. Store tests cover the same
+state transitions for 401, 403, and 503 refusals and debounced explicit Retry.
+Store tests defend bounded recovery and OAuth polling,
 atomic refresh publication, identity cancellation, and late-response fencing.
 Multi-connector browser cases assert scoped polling and cancellation after
 navigation, successful authorization, and failed status. The Clerk browser

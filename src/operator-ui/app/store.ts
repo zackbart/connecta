@@ -114,7 +114,6 @@ function gate(notice: Notice | null = null): void {
   stopOAuthPolling();
   clearTimeout(returnTimer);
   returnTimer = undefined;
-  lastReturnPass = 0;
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
   state = resetIdentity(state, notice);
@@ -837,9 +836,14 @@ function loadCurrent(): Promise<void> {
  * that held the button is about to go, so focus moves to the heading of the
  * region being reloaded instead of dropping to the page.
  */
+let lastExplicitRetry = -Infinity;
+
 export function retryLoad(): Promise<void> {
-  if (signedOut) return Promise.resolve();
+  const now = Date.now();
+  if (signedOut || now - lastExplicitRetry < RETURN_DEBOUNCE_MS) return Promise.resolve();
+  lastExplicitRetry = now;
   resetRecovery();
+  lastReturnPass = now;
   set({
     pendingFocus: `${state.page}Heading`,
   });
@@ -885,7 +889,7 @@ export function signOut(): void {
  * pass, and a pass that ran a moment ago is not repeated.
  */
 let returnTimer: ReturnType<typeof setTimeout> | undefined;
-let lastReturnPass = 0;
+let lastReturnPass = -Infinity;
 const RETURN_DEBOUNCE_MS = 150;
 const RETURN_MIN_INTERVAL_MS = 2000;
 
@@ -897,41 +901,71 @@ function onReturn(): void {
   returnTimer = setTimeout(() => {
     returnTimer = undefined;
     if (!current() || signedOut) return;
-    const now = Date.now();
-    if (now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
-    lastReturnPass = now;
     recheckAuthorization();
   }, RETURN_DEBOUNCE_MS);
 }
 
-const RECOVERY_DELAYS_MS = [1000, 2000, 4000, 8000];
+const RECOVERY_DELAYS_MS = [2000, 2000, 4000, 8000];
 let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
 let recoveryAttempt = 0;
+let recoveryNotBefore = 0;
+let recoveryRead: Promise<void> | undefined;
 
 function resetRecovery(): void {
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
   recoveryAttempt = 0;
+  recoveryNotBefore = 0;
+  recoveryRead = undefined;
+  lastReturnPass = -Infinity;
+}
+
+/** All passive admission reads share the deadline, budget and in-flight read. */
+function recover(): void {
+  const now = Date.now();
+  if (signedOut || recoveryRead || now < recoveryNotBefore || now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
+  clearTimeout(recoveryTimer);
+  recoveryTimer = undefined;
+  lastReturnPass = now;
+  const pending = loadCurrent();
+  recoveryRead = pending;
+  void pending.finally(() => {
+    if (recoveryRead === pending) recoveryRead = undefined;
+  });
 }
 
 function scheduleRecovery(): void {
   if (signedOut) return;
-  if (recoveryTimer !== undefined || recoveryAttempt >= RECOVERY_DELAYS_MS.length) return;
+  if (recoveryTimer !== undefined) return;
+  // Refusals keep the attempt count. Even after the automatic budget is spent,
+  // focus must wait through the final backoff before requesting admission.
+  const delay = RECOVERY_DELAYS_MS[Math.min(recoveryAttempt, RECOVERY_DELAYS_MS.length - 1)]!;
+  recoveryNotBefore = Math.max(Date.now() + delay, lastReturnPass + RETURN_MIN_INTERVAL_MS);
+  if (recoveryAttempt >= RECOVERY_DELAYS_MS.length) return;
+  recoveryAttempt++;
   const current = fence();
   recoveryTimer = setTimeout(() => {
     recoveryTimer = undefined;
-    if (current() && !signedOut) void loadCurrent();
-  }, RECOVERY_DELAYS_MS[recoveryAttempt++]);
+    if (current() && !signedOut) recover();
+  }, recoveryNotBefore - Date.now());
 }
 
 function recheckAuthorization(): void {
   if (signedOut) return;
   // Focus is also a way out of a refusal. It only re-requests admission.
-  resetRecovery();
-  if (state.session !== "ready" || !state.data || state.loadFailure || state.contractPhase === "error") {
-    void loadCurrent();
+  if (
+    recoveryAttempt > 0 ||
+    state.session !== "ready" ||
+    !state.data ||
+    state.loadFailure ||
+    state.contractPhase === "error"
+  ) {
+    recover();
     return;
   }
+  const now = Date.now();
+  if (now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
+  lastReturnPass = now;
   if (awaitingAuthorization.size > 0) {
     if (!state.oauthBusy) for (const id of awaitingAuthorization.keys()) void pollOAuthConnector(id);
     return;

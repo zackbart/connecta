@@ -118,9 +118,13 @@ stays behind `./ui`, outside the root import graph. The identity-fenced store
 owns authenticated reads and existing mutations. An Access-only shell selects
 Access even when the HTML request has no trusted context; only authenticated
 API responses establish the session. A gated Access session offers Retry.
-Focus and visibility returns recheck gated or failed reads, and failed reads
-also retry after 1, 2, 4, and 8 seconds. After those four automatic retries,
-Retry or a later focus return starts another bounded attempt. Identity changes
+Focus, visibility, and timer-driven recovery share one admission-read schedule
+with at least two seconds between passive attempts. Failed reads retry after
+2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
+those four automatic retries, a focus return can request one more read after
+the eight-second backoff, without replenishing the automatic budget. Retry
+resets the budget with a 150 ms click debounce. Successful reads and explicit
+identity transitions also reset recovery. Identity changes
 cancel pending retries and fence out responses from the previous identity.
 Queued focus callbacks carry the same identity fence. Explicit sign-out
 suppresses passive reads until an intentional sign-in or a new Clerk session.

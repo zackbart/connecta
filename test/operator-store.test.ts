@@ -435,6 +435,8 @@ describe("operator store load failures", () => {
     await store.retryLoad();
     expect(store.getState()).toMatchObject({ session: "ready", loadFailure: "network" });
 
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(150);
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.retryLoad();
     expect(store.getState()).toMatchObject({ session: "ready", loadFailure: null });
@@ -570,6 +572,8 @@ describe("operator recovery races", () => {
     fetchMock.mockReturnValueOnce(old.promise);
     const first = store.retryLoad();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(150);
     fetchMock.mockResolvedValueOnce(Response.json(uiData("newer deployment state")));
     await store.retryLoad();
     old.resolve(Response.json(uiData("older deployment state")));
@@ -856,6 +860,35 @@ describe("operator recovery bounds and snapshot ordering", () => {
       expect(attempts).toHaveLength(8);
     },
   );
+
+  it("INV-4 INV-10: coalesces passive returns during an in-flight recovery and resets after success", async () => {
+    const { store, fetchMock, windowListeners } = await loadStore(
+      { id: "unused", getToken: async () => "unused" },
+      { kind: "cloudflare-access" },
+    );
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+    await store.boot();
+    const pending = deferred<Response>();
+    fetchMock.mockReturnValueOnce(pending.promise);
+    await vi.advanceTimersByTimeAsync(2000);
+    for (let i = 0; i < 5; i++) {
+      windowListeners.get("focus")?.();
+      await vi.advanceTimersByTimeAsync(10_000);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    pending.resolve(Response.json(uiData("recovered")));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().session).toBe("ready");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mockImplementation(async () => Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+    await store.retryLoad();
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
 
   it("INV-4: bounds gated Access retries and resumes admission checks on focus", async () => {
     const { store, fetchMock, windowListeners } = await loadStore(

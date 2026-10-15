@@ -127,34 +127,32 @@ test("INV-4 INV-10: bounds repeated focus and visibility returns during Access r
   const start = new Date("2026-01-01T00:00:00Z");
   await page.clock.install({ time: start });
   await page.clock.pauseAt(start);
+  const initial = page.waitForResponse((res) => res.url().endsWith("/ui/data"));
   await open(page);
+  expect((await initial).status()).toBe(503);
   await expect(page.locator("#gate")).toBeVisible();
-  await page.waitForLoadState("networkidle");
   const documentCount = reads.filter((path) => path === "/connectors/oauth").length;
   for (let i = 0; i < 10; i++) {
-    await page.evaluate(() => {
-      window.dispatchEvent(new Event("blur"));
+    await page.evaluate(`window.dispatchEvent(new Event("blur"));
       window.dispatchEvent(new Event("focus"));
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
+      document.dispatchEvent(new Event("visibilitychange"));`);
     await page.clock.runFor(160);
-    await page.waitForLoadState("networkidle");
   }
   expect(reads.filter((path) => path === "/ui/data")).toHaveLength(1);
   for (const delay of [400, 2000, 4000, 8000]) {
     const response = page.waitForResponse((res) => res.url().endsWith("/ui/data"));
     await page.clock.runFor(delay);
-    expect((await response).status()).toBe(503);
-    await page.waitForLoadState("networkidle");
+    const refusal = await response;
+    expect(refusal.status()).toBe(503);
+    await expect(page.locator("#gate")).toContainText("Cloudflare Access identity is unavailable");
   }
   expect(reads.filter((path) => path === "/ui/data")).toHaveLength(5);
   await page.clock.runFor(60_000);
-  await page.waitForLoadState("networkidle");
   expect(reads.filter((path) => path === "/ui/data")).toHaveLength(5);
   await expect(page.locator("#gate")).toBeVisible();
   persistIdentityFailure = false;
   const recovered = page.waitForResponse((res) => res.url().endsWith("/ui/data"));
-  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.evaluate("window.dispatchEvent(new Event('focus'))");
   await page.clock.runFor(160);
   expect((await recovered).status()).toBe(200);
   await expect(page.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
