@@ -358,6 +358,487 @@ function sanitizeUrl(value: string): string {
   return changed ? url.toString() : value;
 }
 
+// Pre-signed links inside free text. The key-name heuristic sees a URL only
+// when a whole string is one; a vendor whose text embeds the links it signs
+// (Notion's page Markdown) scans its strings with these instead. The secret
+// in scope is a link the vendor minted. A link a person wrote (a rich-text
+// href, an external file, a URL property) is their content and comes back as
+// written unless it names a signing parameter. Not in scope, so withheld
+// only incidentally: a signed URL a person pasted into text, and one split
+// across separate strings (rich-text runs), each scanned alone. Nor is an
+// escape inside a host or signing parameter's name (`file&#46;notion.so`,
+// `X%2DAmz%2DSignature`): a vendor writes the hosts and names it signs with
+// literally, so only a person's own text spells them that way. Two passes,
+// each one linear scan:
+//
+// 1. Host-anchored. Each link at one of the vendor's file hosts loses
+//    everything from its query or fragment opener (literal, or percent-,
+//    entity-, or `\u`-encoded) to the next whitespace, quote, or angle
+//    bracket. A file host is one of its reviewed domains, whole or as a
+//    subdomain, or an S3 endpoint naming a reviewed bucket: virtual-hosted
+//    (`bucket.s3.us-west-2.amazonaws.com`) or as the first path segment
+//    (`s3.us-west-2.amazonaws.com/bucket/`, the segment exactly). The name
+//    must be the authority's host: after `//` however spelled (`https://`,
+//    `https:\/\/`, `https:&#47;&#47;`, `%2F%2F`, scheme-less `//`) and only
+//    subdomain labels, and before a port, path, query, fragment, or the
+//    link's end. So `file.notion.so.example.com`, `my-bucket.example.com`,
+//    `example.com/x.file.notion.so`, `example.com/bucket`, and
+//    `file.notion.so@evil.com` are other people's hosts and paths. Notion
+//    writes its links with a scheme, so a bare `file.notion.so/…` in prose,
+//    and a link with userinfo, are a person's and come back as written.
+//    Quoted and angle-delimited filenames may contain unmatched brackets;
+//    inline Markdown filenames respect balanced and escaped parentheses.
+//    Redaction continues past closing parentheses after a query opens.
+//    Trailing punctuation comes back, since it can carry no secret, so
+//    `![a](…?[redacted])` keeps its close.
+// 2. Signing parameters. AWS Signature Version 4 and Google Cloud Storage V4
+//    names are a credential in any URL, whatever its host: their values go
+//    wherever they appear. Generic names (`code`, `token`, `sig`) are not
+//    withheld in text: there they are as likely a person's own link.
+
+/** Where a vendor stores the files it signs. */
+export interface FileHosts {
+  /** Hosts matched whole or as a parent domain: `file.notion.so` covers `img.file.notion.so`. */
+  readonly domains: readonly string[];
+  /** S3 buckets, virtual-hosted or as the first path segment on an S3 endpoint. Never all of S3. */
+  readonly buckets: readonly string[];
+}
+
+/** Signing parameters that are a credential in any URL, with their `=` plain or encoded. */
+const SIGNING_PARAM =
+  /x-(?:amz|goog)-(?:signature|credential|security-token)(?:=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d)/gi;
+/**
+ * One encoded character at the start of link text: a percent escape, an HTML
+ * character reference, a `\u` or `\x` escape, or a Markdown backslash escape.
+ */
+const LEADING_ESCAPE =
+  /^(?:%([0-9a-f]{2})|&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|(amp|quot|apos|lt|gt|quest|num|semi|equals|sol|percnt|bsol));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\)/i;
+/** One encoded character just before a host: the same escapes, read backwards over a few characters. */
+const TRAILING_ESCAPE =
+  /(?:%(?:25){0,4}([0-9a-f]{2})|&(?:#0{0,6}(\d{1,7})|#x0{0,6}([0-9a-f]{1,6})|([a-z]{2,6}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\)$/i;
+/** Every escape in link text, decoded together; an unknown entity name stays as written. */
+const ESCAPES =
+  /%([0-9a-f]{2})|&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|([a-z]{2,8}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\(?=[^a-z0-9])/gi;
+/** One slash however it is spelled, read forwards. */
+const SLASH = /\/|\\\/|%(?:25){0,4}2f|&#0{0,6}47;?|&#x0{0,6}2f;?|&sol;?|\\u002f|\\x2f/iy;
+/** An S3 endpoint host: global, regional, dual-stack, or accelerated. */
+const S3_ENDPOINT = String.raw`s3(?:[.-](?:dualstack|accelerate|external-1|[a-z]{2}(?:-[a-z]{1,12}){1,3}-\d{1,2})){0,2}\.amazonaws\.com`;
+const NAMED: Readonly<Record<string, string>> = {
+  amp: "&",
+  colon: ":",
+  quot: '"',
+  apos: "'",
+  lt: "<",
+  gt: ">",
+  quest: "?",
+  num: "#",
+  semi: ";",
+  equals: "=",
+  sol: "/",
+  percnt: "%",
+  bsol: "\\",
+  lbrack: "[",
+  rbrack: "]",
+  lsqb: "[",
+  rsqb: "]",
+  period: ".",
+};
+/** A host name's label character: the subdomain labels before a reviewed name are these alone. */
+const LABEL = /[a-z0-9.-]/i;
+/** The longest host name DNS allows: the bound on authority inspection. */
+const MAX_HOST = 253;
+/** The longest scheme read back from its `:`. */
+const MAX_SCHEME = 32;
+const SCHEME_CHAR = /[a-z0-9+.-]/i;
+/** What may open a scheme-less `//host`: whitespace or punctuation that opens a link, value, or attribute. */
+const OPENS_LINK = /[\s"'`(<[{=,;|]/;
+/** Punctuation that may close the syntax around a link; it carries no secret, so it comes back. */
+const TRAILING = /[)\]}.,;:!*_~`\\]/;
+
+/** Code points past Unicode's range decode to nothing rather than throw. */
+function codePoint(value: number): string {
+  return value <= 0x10ffff ? String.fromCodePoint(value) : "";
+}
+
+/** The character an escape's groups spell: percent, decimal, hex, name, `\u`, `\x`; a bare backslash spells nothing. */
+function unescaped(groups: ReadonlyArray<string | undefined>): string | undefined {
+  const [percent, decimal, hex, name, unicode, byte] = groups;
+  if (percent !== undefined) return String.fromCharCode(Number.parseInt(percent, 16));
+  if (decimal !== undefined) return codePoint(Number(decimal));
+  if (hex !== undefined) return codePoint(Number.parseInt(hex, 16));
+  if (name !== undefined) return NAMED[name.toLowerCase()];
+  if (unicode !== undefined || byte !== undefined) return String.fromCharCode(Number.parseInt((unicode ?? byte)!, 16));
+  return "";
+}
+
+/**
+ * Whether link text opens its query or fragment here once decoded as a
+ * browser, a Markdown renderer, or a JSON parser would: `%3F`, `%253F`,
+ * `&#63;`, `&amp;#35;`, `?`. Only the leading character matters, so
+ * each round decodes one escape there: constant work.
+ */
+function opener(text: string, at: number): "?" | "#" | undefined {
+  let current = text.slice(at, at + 32);
+  for (let round = 0; round < 4; round++) {
+    if (current[0] === "?" || current[0] === "#") return current[0];
+    const escape = LEADING_ESCAPE.exec(current);
+    if (!escape) return undefined;
+    current = (unescaped(escape.slice(1)) ?? "") + current.slice(escape[0].length);
+  }
+  return current[0] === "?" || current[0] === "#" ? current[0] : undefined;
+}
+
+/** The character ending just before `at`, decoded if it is escaped, and how many characters spell it. */
+function charBefore(text: string, at: number): { char: string; length: number } {
+  const escape = TRAILING_ESCAPE.exec(text.slice(Math.max(0, at - 16), at));
+  const char = escape ? unescaped(escape.slice(1)) : undefined;
+  if (escape && char) return { char, length: escape[0].length };
+  // A JSON-escaped slash, `\/`, is one slash.
+  if (text[at - 1] === "/" && text[at - 2] === "\\") return { char: "/", length: 2 };
+  return { char: text[at - 1]!, length: 1 };
+}
+
+/**
+ * Where the link whose authority opens at `at` starts, or `-1` when no
+ * authority opens there: `//` however spelled, after a scheme's `:`
+ * (`https:`, `https%3A`), the text's start, or what opens a scheme-less
+ * link (`src=//`, ` //`). A `//` after anything else (`example.com//`) is
+ * part of a path.
+ */
+function authorityAt(text: string, at: number): number {
+  if (at === 0) return -1;
+  const second = charBefore(text, at);
+  const between = at - second.length;
+  if (second.char !== "/" || between <= 0) return -1;
+  const first = charBefore(text, between);
+  const slashes = between - first.length;
+  if (first.char !== "/" || slashes < 0) return -1;
+  if (slashes === 0) return 0;
+  const before = charBefore(text, slashes);
+  if (before.char !== ":") return OPENS_LINK.test(before.char) ? slashes : -1;
+  const colon = slashes - before.length;
+  let start = colon;
+  while (start > 0 && colon - start < MAX_SCHEME && SCHEME_CHAR.test(text[start - 1]!)) start--;
+  return start < colon && (start === 0 || OPENS_LINK.test(text[start - 1]!)) ? start : -1;
+}
+
+/** Where a host's optional trailing dot and port end after `at`, or `-1` when a `:` holds no port (userinfo's password). */
+function afterPort(text: string, at: number): number {
+  if (text[at] === ".") at++;
+  if (text[at] !== ":") return at;
+  let digits = at + 1;
+  while (digits - at <= 5 && /\d/.test(text[digits] ?? "")) digits++;
+  return digits > at + 1 ? digits : -1;
+}
+
+/**
+ * Whether a host or path segment ends at `at`: a slash, query, or fragment
+ * however spelled, or the link's end. Never another
+ * name character or an `@`: `file.notion.so@evil.com` names userinfo, and
+ * `prod-files-secure@other` and `prod-files-securex` are other segments.
+ */
+function boundary(text: string, at: number): boolean {
+  if (at < 0) return false;
+  if (at >= text.length) return true;
+  if (endsLink(text.charCodeAt(at), text[at]!)) return true;
+  SLASH.lastIndex = at;
+  return SLASH.test(text) || opener(text, at) !== undefined;
+}
+
+/** Whether the `#` at `at` belongs to a numeric character reference (`&#38;`) rather than opening a fragment. */
+function reference(text: string, at: number): boolean {
+  return text.charCodeAt(at - 1) === 0x26 && /[0-9x]/i.test(text[at + 1] ?? "");
+}
+
+/** Whitespace, a quote, or an angle bracket: where a link in text ends, read fail-closed. */
+function endsLink(code: number, char: string): boolean {
+  if (code <= 0x20 || code === 0x22 || code === 0x27 || code === 0x3c || code === 0x3e) return true;
+  return code > 0x7f && /\s/.test(char);
+}
+
+/** Where a signing parameter's value ends: its link's end, or the next parameter or closing bracket. */
+function endsValue(text: string, at: number): boolean {
+  const code = text.charCodeAt(at);
+  if (endsLink(code, text[at]!)) return true;
+  if (code === 0x26 || code === 0x23 || code === 0x29 || code === 0x5d || code === 0x60) return true;
+  // `\/` is a JSON-escaped slash inside the value; any other backslash escapes what follows it.
+  return code === 0x5c && text.charCodeAt(at + 1) !== 0x2f;
+}
+
+interface HostMatcher {
+  readonly endpoint: RegExp;
+  readonly domains: readonly string[];
+  readonly buckets: readonly string[];
+}
+
+const HOST_MATCHERS = new WeakMap<FileHosts, HostMatcher>();
+
+function hostMatcher(hosts: FileHosts): HostMatcher {
+  let matcher = HOST_MATCHERS.get(hosts);
+  if (!matcher) {
+    matcher = {
+      endpoint: new RegExp(`^${S3_ENDPOINT}$`, "i"),
+      domains: hosts.domains.map((host) => host.toLowerCase()),
+      buckets: hosts.buckets.map((bucket) => bucket.toLowerCase()),
+    };
+    HOST_MATCHERS.set(hosts, matcher);
+  }
+  return matcher;
+}
+
+/** The end of a reviewed file authority, read only at the current URL's host. */
+function fileHost(text: string, start: number, matcher: HostMatcher): number | undefined {
+  let end = start;
+  while (end < text.length && end - start <= MAX_HOST && LABEL.test(text[end]!)) end++;
+  if (end === start || end - start > MAX_HOST) return undefined;
+  const port = afterPort(text, end);
+  if (!boundary(text, port)) return undefined;
+  const name = text.slice(start, end).toLowerCase().replace(/\.$/, "");
+  if (matcher.domains.some((domain) => name === domain || name.endsWith(`.${domain}`))) return end;
+  if (
+    matcher.buckets.some(
+      (bucket) => name.startsWith(`${bucket}.`) && matcher.endpoint.test(name.slice(bucket.length + 1)),
+    )
+  ) {
+    return end;
+  }
+  if (!matcher.endpoint.test(name)) return undefined;
+  SLASH.lastIndex = port;
+  if (!SLASH.test(text)) return undefined;
+  const segment = SLASH.lastIndex;
+  for (const bucket of matcher.buckets) {
+    const after = segment + bucket.length;
+    if (text.slice(segment, after).toLowerCase() === bucket && boundary(text, after)) return after;
+  }
+  return undefined;
+}
+
+/** The authority immediately after a destination's scheme and slashes, however escaped. */
+function destinationHost(text: string, start: number): number | undefined {
+  // A scheme and three escaped characters (colon and slashes), each bounded
+  // as in charBefore. Never search a destination's path or query for another.
+  for (let at = start; at < Math.min(text.length, start + MAX_SCHEME + 48); at++) {
+    SLASH.lastIndex = at;
+    if (!SLASH.test(text)) continue;
+    const next = SLASH.lastIndex;
+    SLASH.lastIndex = next;
+    if (!SLASH.test(text)) return undefined;
+    const host = SLASH.lastIndex;
+    return authorityAt(text, host) === start ? host : undefined;
+  }
+  return undefined;
+}
+
+/** CommonMark permits spaces/tabs and at most one line ending before a destination. */
+function markdownStart(text: string, at: number): number | undefined {
+  let line = false;
+  for (; at < text.length; at++) {
+    const char = text[at];
+    if (char === " " || char === "\t") continue;
+    if (char !== "\r" && char !== "\n") return at;
+    if (line) return undefined;
+    line = true;
+    if (char === "\r" && text[at + 1] === "\n") at++;
+  }
+  return at;
+}
+
+interface LinkSpan {
+  cut: number;
+  open: string;
+  end: number;
+}
+
+/**
+ * Read a destination once. Admission ends at its actual CommonMark close,
+ * counting balanced and escaped parentheses. Redaction with a query keeps
+ * its separate fail-closed span through whitespace, a quote, or an angle
+ * bracket, since parentheses can also be part of a signed value.
+ */
+function linkSpan(text: string, start: number, host: number | undefined, inline: boolean, redact: boolean): LinkSpan {
+  let depth = 0;
+  let escaped = false;
+  let cut = -1;
+  let open = "?";
+  let end = start;
+  for (; end < text.length; end++) {
+    const code = text.charCodeAt(end);
+    if (endsLink(code, text[end]!)) break;
+    if (inline) {
+      if (escaped) escaped = false;
+      else if (code === 0x5c) escaped = true;
+      else if (code === 0x28) depth++;
+      else if (code === 0x29 && depth-- === 0) break;
+    }
+    if (host === undefined || end < host || cut >= 0) continue;
+    if (code === 0x3f || (code === 0x23 && !reference(text, end))) {
+      cut = end;
+      open = text[end]!;
+    } else if (code === 0x25 || code === 0x26 || code === 0x5c) {
+      const opens = opener(text, end);
+      if (opens) {
+        cut = end;
+        open = opens;
+      }
+    }
+  }
+  if (redact && cut >= 0) {
+    while (end < text.length && !endsLink(text.charCodeAt(end), text[end]!)) end++;
+  }
+  return { cut, open, end };
+}
+
+/**
+ * Scan destinations, including ones at other hosts, so an outer URL owns
+ * every byte of its path and query. A nested scheme or // cannot re-anchor
+ * file-host matching. Each consumed span is skipped in full; admission and
+ * redaction choose their own span boundary, and both stay linear.
+ */
+function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<LinkSpan> {
+  const matcher = hostMatcher(hosts);
+  // The first URL delimiter in the current text run also protects relative
+  // paths/queries such as /proxy/https://… and image?url=//… .
+  let firstReference = -1;
+  for (let at = 0; at < text.length; at++) {
+    const char = text[at]!;
+    if (endsLink(text.charCodeAt(at), char)) {
+      firstReference = -1;
+      continue;
+    }
+    if (char === "]" && text[at + 1] === "(") {
+      const destination = markdownStart(text, at + 2);
+      if (destination !== undefined) {
+        const angle = text[destination] === "<";
+        const start = destination + (angle ? 1 : 0);
+        const authority = destinationHost(text, start);
+        const host = authority === undefined ? undefined : fileHost(text, authority, matcher);
+        const span = linkSpan(text, start, host, !angle, redact);
+        at = Math.max(destination, span.end) - 1;
+        firstReference = -1;
+        if (host !== undefined) yield span;
+        continue;
+      }
+    }
+    if (char === "/" || char === "\\" || char === "%" || char === "&") {
+      SLASH.lastIndex = at;
+      if (SLASH.test(text)) {
+        const next = SLASH.lastIndex;
+        SLASH.lastIndex = next;
+        if (SLASH.test(text)) {
+          const authority = SLASH.lastIndex;
+          const start = authorityAt(text, authority);
+          if (start >= 0 && (firstReference < 0 || firstReference >= start)) {
+            const host = fileHost(text, authority, matcher);
+            const span = linkSpan(text, authority, host, false, redact);
+            at = span.end - 1;
+            firstReference = -1;
+            if (host !== undefined) yield span;
+            continue;
+          }
+        }
+        if (firstReference < 0) firstReference = at;
+      }
+    }
+    if (firstReference < 0 && (char === ":" || char === "?" || (char === "#" && !reference(text, at)))) {
+      firstReference = at;
+    }
+  }
+}
+
+/**
+ * `text` with every pre-signed link withheld: at one of `hosts` (Notion's
+ * file storage, say), its whole query and fragment; anywhere, a signing
+ * parameter's value. Everything else comes back byte for byte.
+ */
+export function withholdSignedLinks(text: string, hosts: FileHosts): string {
+  let out = "";
+  let copied = 0;
+  for (const { cut, open, end } of hostLinks(text, hosts, true)) {
+    if (cut < 0) continue;
+    let keep = end;
+    while (keep > cut + 1 && TRAILING.test(text[keep - 1]!)) keep--;
+    // A query with nothing in it.
+    if (keep <= cut + 1) continue;
+    out += `${text.slice(copied, cut)}${open}${REDACTED}`;
+    copied = keep;
+  }
+  const anchored = copied === 0 ? text : out + text.slice(copied);
+
+  out = "";
+  copied = 0;
+  SIGNING_PARAM.lastIndex = 0;
+  for (let match = SIGNING_PARAM.exec(anchored); match; match = SIGNING_PARAM.exec(anchored)) {
+    const start = match.index + match[0].length;
+    let end = start;
+    while (end < anchored.length && !endsValue(anchored, end)) end++;
+    SIGNING_PARAM.lastIndex = end;
+    if (end === start || anchored.startsWith(REDACTED, start)) continue;
+    out += `${anchored.slice(copied, start)}${REDACTED}`;
+    copied = end;
+  }
+  return copied === 0 ? anchored : out + anchored.slice(copied);
+}
+
+/** Every string inside a JSON value through `withholdSignedLinks`; unchanged values keep their identity. */
+export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 0): unknown {
+  if (typeof value === "string") return withholdSignedLinks(value, hosts);
+  if (typeof value !== "object" || value === null) return value;
+  // Deeper than any vendor's shape: withheld, as the heuristic does.
+  if (depth > MAX_DEPTH) return REDACTED;
+  if (Array.isArray(value)) {
+    let changed = false;
+    const items = value.map((item) => {
+      const clean = withholdSignedLinksIn(item, hosts, depth + 1);
+      if (clean !== item) changed = true;
+      return clean;
+    });
+    return changed ? items : value;
+  }
+  let changed = false;
+  const entries = Object.entries(value).map(([key, item]) => {
+    const clean = withholdSignedLinksIn(item, hosts, depth + 1);
+    if (clean !== item) changed = true;
+    return [key, clean] as const;
+  });
+  return changed ? Object.fromEntries(entries) : value;
+}
+
+/**
+ * Link text decoded as a browser, a Markdown renderer, or a JSON parser
+ * would, through up to four layers of escaping (`%255B`, `&amp;#91;`). Each
+ * round is one linear pass.
+ */
+function decodeLinkText(text: string): string {
+  for (let round = 0; round < 4; round++) {
+    const next = text.replace(ESCAPES, (token, ...groups: Array<string | undefined>) =>
+      token === "\\" ? "" : (unescaped(groups.slice(0, 6)) ?? token),
+    );
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
+/**
+ * Whether a request value carries a link at one of `hosts` whose query or
+ * fragment holds the exact `[redacted]` placeholder, plain or encoded: a
+ * withheld read copied into a write, which would store the placeholder.
+ * Only the link's own destination is read: a Markdown link ends at its
+ * closing `)`, so `[f](…?a=1)[redacted]` is ordinary text after it.
+ * The word alone (`unredacted`) or the placeholder away from a file link is
+ * a person's text.
+ */
+export function carriesWithheldLink(value: unknown, hosts: FileHosts, depth = 0): boolean {
+  if (typeof value === "string") {
+    for (const { cut, end } of hostLinks(value, hosts, false)) {
+      if (cut >= 0 && decodeLinkText(value.slice(cut, end)).includes(REDACTED)) return true;
+    }
+    return false;
+  }
+  if (typeof value !== "object" || value === null || depth > MAX_DEPTH) return false;
+  return Object.values(value).some((item) => carriesWithheldLink(item, hosts, depth + 1));
+}
+
 /**
  * A destination URL reduced to its origin: webhook, drain, and bearer URLs
  * can carry a secret in the path itself (`hooks.slack.com/services/…`), so
