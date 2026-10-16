@@ -136,9 +136,7 @@ export function ActorChip({ actor }: { actor?: UiActivityActor | undefined }) {
           <Icon name="user" size={11} />
         </span>
       ) : (
-        <MemberMark
-          chip={shape.kind === "human" ? shape : { kind: "agent", initials: "", hue: 0 }}
-        />
+        <MemberMark chip={shape.kind === "human" ? shape : { kind: "agent", initials: "", hue: 0 }} />
       )}
       <span className="actor-chip-text">{shape.text}</span>
     </span>
