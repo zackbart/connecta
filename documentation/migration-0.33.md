@@ -215,7 +215,9 @@ freezes the shape. `OperatorUiContract` now names v2, and `OperatorViewer` and
 `OperatorPool` are removed. `connecta doctor --config` reads v2 and prints a
 maintainer's `config`; a member's view has none.
 
-The connector auth routes accept exactly what `manage` lists.
+The connector auth routes accept what `manage` lists, with one recovery
+exception: a stored credential that cannot be read can still be cleared,
+although `manage` lists only `save` in that state.
 `/ui/oauth/<id>` gates each verb on its own hooks: connecting needs
 `startAuth`, `finishAuth`, and `verifyState`, and disconnecting needs only
 `disconnectAuth`. A custom connector that offered connect with `startAuth`

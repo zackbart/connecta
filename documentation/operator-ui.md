@@ -190,7 +190,9 @@ partition. `/ui/oauth/<id>` gates each verb on its own hooks: a connect needs
 the caller's own for a personal connector or the shared slot, with 409
 `{ "error": "no credential is stored to clear", "problem": "credential_required" }`,
 as its test route refuses to test one; a value that cannot be read can still be
-cleared. The routes thus accept exactly what `manage` lists. Public HTML shells and static assets carry no catalog data.
+cleared. The routes thus accept what `manage` lists, with one recovery
+exception: clearing a stored value that cannot be read is accepted although
+`manage` lists only `save` in that state. Public HTML shells and static assets carry no catalog data.
 Access-token management also requires an interactive session.
 
 The browser store reads only v2 and checks `role` before reading a
