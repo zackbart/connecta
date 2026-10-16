@@ -713,11 +713,13 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       { id: "bob", email: "bob@org.example" },
     ];
 
-    async function deployment(options: { executor?: Parameters<typeof createTestConnecta>[0]["executor"] } = {}) {
+    async function deployment(
+      options: { executor?: Parameters<typeof createTestConnecta>[0]["executor"]; extra?: Connector[] } = {},
+    ) {
       const storage = memoryStorage();
       const mapping = vi.fn((who: AuthenticatedIdentity) => DIRECTORY[who.principal?.id ?? ""]);
       const connecta = createTestConnecta({
-        connectors: [mailbox({ subject: mapping })],
+        connectors: [mailbox({ subject: mapping }), ...(options.extra ?? [])],
         auth: people(),
         maintainers: ["alice"],
         agents: ["assistant"],
@@ -733,7 +735,10 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           // Alice assists Bob: Bob owns it, and Alice still acts as herself.
           "assist-bob": { tools: ["mail"], owner: "bob@org.example", members: ["alice"] },
           // A group pool names no owner, so its agents have no mailbox.
-          group: { tools: ["mail"], members: ["alice", "bob", "agent:assistant"] },
+          group: {
+            tools: ["mail", ...(options.extra ?? []).map((connector) => connector.id)],
+            members: ["alice", "bob", "agent:assistant"],
+          },
         },
         ...(options.executor ? { executor: options.executor } : {}),
         logger: silentLogger,
@@ -793,13 +798,77 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       await connecta.close();
     });
 
-    it("INV-3: an agent in an ownerless pool gets auth_required with no outbound request", async () => {
-      const { connecta, mapping, assistant } = await deployment();
-      const result = await callOver(connecta, assistant, "group");
-      expect(result.isError).toBe(true);
-      const text = JSON.stringify(result);
-      expect(text).toContain("auth_required");
-      for (const person of team) expect(text).not.toContain(person.email);
+    it("INV-4: an agent in an ownerless pool does not see a mapping Workspace connector anywhere, and a call fails as for a missing connector", async () => {
+      // A fixed subject is the shared-account exception and stays visible.
+      const shared = gmail("shared_mail", {
+        purpose: "Shared inbox",
+        serviceAccount: account(),
+        subject: "shared-inbox@org.example",
+      } as Parameters<typeof gmail>[1]);
+      const code = (error: unknown) => String((error as { code?: string }).code ?? error);
+      const { connecta, mapping, assistant } = await deployment({
+        extra: [shared],
+        executor: scriptedExecutor(async (fns) => ({
+          search: ((await fns.search!({ query: "labels" })) as { tools: { address: string }[] }).tools.map(
+            (tool) => tool.address,
+          ),
+          describe: await fns.describe!({ address: "mail.list_labels" }).catch(code),
+          describeGhost: await fns.describe!({ address: "ghost.list_labels" }).catch(code),
+          call: await fns.call!("mail.list_labels", {}).catch(code),
+          callGhost: await fns.call!("ghost.list_labels", {}).catch(code),
+        })),
+      });
+      const rpc = async (token: string, endpoint: { pool?: string; agentPool?: string }, name: string, args: object) =>
+        (
+          await readJsonRpc(
+            await connecta.fetch(mcpRpc("tools/call", { name, arguments: args }, { token, ...endpoint })),
+          )
+        ).result;
+      const addresses = (result: { structuredContent: { tools: { address: string }[] } }) =>
+        result.structuredContent.tools.map((tool) => tool.address);
+      const group = { agentPool: "group" };
+
+      expect(addresses(await rpc(assistant, group, "search_tools", { query: "labels" }))).toEqual([
+        "shared_mail.list_labels",
+      ]);
+      const called = await rpc(assistant, group, "call_tool", { address: "mail.list_labels", args: {} });
+      const ghost = await rpc(assistant, group, "call_tool", { address: "ghost.list_labels", args: {} });
+      expect(called.isError).toBe(true);
+      expect(called.structuredContent.error).toEqual({
+        ...ghost.structuredContent.error,
+        message: 'Unknown address "mail.list_labels"',
+      });
+      expect(called.structuredContent.error).toMatchObject({
+        code: "unknown_address",
+        configuredConnectors: ["shared_mail"],
+      });
+      const written = await rpc(assistant, group, "call_destructive_tool", { address: "mail.list_labels", args: {} });
+      expect(written.structuredContent.error.code).toBe("unknown_address");
+      const authorize = await rpc(assistant, group, "authorize_connector", { connector: "mail" });
+      expect(authorize.content[0].text).toBe('Unknown connector "mail"');
+      const skills = await rpc(assistant, group, "skills", {});
+      expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).not.toContain(
+        "connector:mail",
+      );
+      expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).toContain(
+        "connector:shared_mail",
+      );
+      const program = (await rpc(assistant, group, "execute_code", { code: "async () => null" })).structuredContent
+        .result;
+      expect(program.search).toEqual(["shared_mail.list_labels"]);
+      // Byte-for-byte what a connector that never existed gets, name aside.
+      const asGhost = (value: unknown) => JSON.stringify(value).replaceAll('"mail.', '"ghost.');
+      expect(asGhost(program.describe)).toBe(JSON.stringify(program.describeGhost));
+      expect(asGhost(program.call)).toBe(JSON.stringify(program.callGhost));
+
+      // People in the same pool, and the agent in an owned pool, still see it.
+      expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "labels" }))).toEqual([
+        "mail.list_labels",
+        "shared_mail.list_labels",
+      ]);
+      expect(
+        addresses(await rpc(assistant, { agentPool: "assistant-alice" }, "search_tools", { query: "labels" })),
+      ).toEqual(["mail.list_labels"]);
       expect(mapping).not.toHaveBeenCalled();
       expect(tokenCalls).toEqual([]);
       expect(apiCalls).toEqual([]);

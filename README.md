@@ -98,7 +98,8 @@ has the full layout.
   maintainer.
 - **Personal**: each person's own account. Agents never see these.
 - **Google Workspace**: the signed-in person's account; for an agent, the
-  owner of a person's pool, or one fixed shared account.
+  owner of a person's pool, or one fixed shared account. Without an owner,
+  mapping connections are absent for agents.
 
 ## Reads and writes
 

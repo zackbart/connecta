@@ -1259,8 +1259,10 @@ service-account token as whatever Workspace address it returns. The caller
 carries whether an inbound provider _authenticated_ it: an open deployment
 admits everyone as the anonymous actor, and the function is never asked about
 them. It also carries the admitted pool's `owner`, which core copies from
-config: an agent acts as it, before and instead of the function, and an agent
-in a pool without one fails closed. A fixed `subject` address is every
+config: an agent acts as it, before and instead of the function. In a pool
+without one, the scoped registry view omits a mapping-subject connector for an
+agent (`src/registry.ts`, keyed on the tag in `src/workspace-subject.ts`), as it
+omits a personal connector, and the provider still fails closed if reached. A fixed `subject` address is every
 caller's. No caller, an unauthenticated one, or no address fails
 `auth_required` before any request leaves. The provider never chooses the account and a
 deployment's own connector still cannot read the caller (PRINCIPLES.md, INV-3; `test/google-workspace-delegation.test.ts`). Its tokens live in a

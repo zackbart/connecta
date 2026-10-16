@@ -297,8 +297,9 @@ const pool = {
    * The Google Workspace address agents in this pool act as, on a Workspace
    * connector whose `subject` is a mapping function. Humans always act as
    * themselves through that mapping, and a fixed `subject` address applies to
-   * everyone. Without an owner, an agent's Workspace calls fail
-   * `auth_required`.
+   * everyone. Without an owner, a mapping-subject Workspace connector is
+   * absent for this pool's agents, as a personal connector is; people in the
+   * pool still see it.
    */
   owner: opaque<string>({
     check: (value, path) => {

@@ -733,7 +733,16 @@ mapping function, the caller decides whose account a call opens:
 | ----------------------------- | ------------------------------------------------------------------------------- |
 | A person, in any pool         | Their own account, through the `subject` mapping. A pool `owner` never applies. |
 | An agent in a pool            | The pool's `owner`, resolved before the mapping, which never sees the agent.    |
-| An agent, pool has no `owner` | Nothing: the call fails `auth_required` before any request leaves.              |
+| An agent, pool has no `owner` | Nothing. The connector is absent for the agent, as a personal connector is.     |
+
+In a pool without an `owner`, a mapping-subject Workspace connector is absent
+for agents, just as an `authScope: "personal"` connector is: `search_tools`,
+`connecta.search`, `connecta.describe`, `skills`, and connector discovery omit
+it, `authorize_connector` answers "Unknown connector", and a call by address
+fails `unknown_address`, the same as for a connector that does not exist.
+People in the same pool still see it and act as themselves. This is what lets
+one pool be a team pool for people, each acting as themselves on Workspace, and
+also list an agent that reaches only the pool's shared connectors.
 
 `owner` is a Workspace email address, checked at construction and listed in
 `describeConfig()` (`null` when unset). Over HTTP, `/ui/api/config` serves it
@@ -823,7 +832,7 @@ section holds the complete rules.
    checked as an address at construction, and it makes Workspace connectors
    act as that user for the agent ([pool owners](#pool-owners-for-google-workspace)).
    Tiers have no owner, so a Workspace connector with a mapping `subject`
-   never acts for the agent there.
+   is absent for the agent there.
 6. **A user's own account is its own connector id.** Agents have no
    principal, so `authScope: "personal"` connectors never appear for them.
    Give each user's account its own connector id with shared auth, which a
@@ -850,12 +859,12 @@ section holds the complete rules.
    goes through their own pools or plain `/mcp`.
 10. **People in a tier are cleared for it.** A tier can also be a human team
     pool: list the people cleared for that tier in its `members` beside the
-    agent. They use it at `/mcp/<pool>`, the agent at `/agent/<pool>`, and
-    each sees exactly the tier's tools. List no one else: a member reaches
+    agent. They use it at `/mcp/<pool>`, the agent at `/agent/<pool>`.
+    List no one else: a member reaches
     every shared connector the tier holds, on the deployment's account. Such a
     pool may also list Workspace mapping connectors or `authScope: "personal"`
-    connectors for its people, who act as themselves on them; the agent never
-    acts as anyone there, since a tier has no owner and an agent has no
+    connectors for its people, who act as themselves on them; those connectors
+    are absent for the agent, since a tier has no owner and an agent has no
     principal.
 
 **Choosing the pool each turn**

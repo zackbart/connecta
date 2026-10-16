@@ -48,6 +48,8 @@ import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
 import { attachCaller, type ConnectorCaller } from "./connector-caller.js";
+import { isWorkspaceAddress } from "./workspace-address.js";
+import { workspaceSubjectOf } from "./workspace-subject.js";
 import { runEdge } from "./runtime/run.js";
 import { SharedRead } from "./runtime/shared-read.js";
 import { type Storage } from "./runtime/services.js";
@@ -1307,8 +1309,20 @@ class ScopedRegistryView implements RegistryView {
     if (!this.allowed.has(id)) return undefined;
     const connector = this.root.getConnector(id);
     if (!connector) return undefined;
+    // An agent has no Workspace account: on a mapping-subject Workspace
+    // connector it acts as the pool's owner. Without one there is no account
+    // to act as, so the connector is absent, as a personal connector is.
+    if (this.agentWithoutOwner && workspaceSubjectOf(connector)?.kind === "mapping") return undefined;
     if (connector.authScope !== "personal") return this.root;
     return admission ? this.admissionPersonal : this.personal;
+  }
+
+  /** An agent admitted through a pool that names no Workspace owner. */
+  private get agentWithoutOwner(): boolean {
+    const caller = this.scope.caller;
+    if (caller?.identity.agent === undefined) return false;
+    // The same test the Workspace provider applies before acting as the owner.
+    return caller.pool === undefined || !isWorkspaceAddress(caller.poolOwner);
   }
 
   listConnectors(): Connector[] {

@@ -194,7 +194,8 @@ The maintainer view carries:
   pool that serves it, with that endpoint's tool names or `"all"` and
   `runsAs`. A Workspace connector with a subject mapping is
   `{ kind: "workspace", humans: "self", agents }`, `agents` being the pool's
-  owner, or `null` on plain `/mcp` and in an ownerless pool; a fixed subject is
+  owner, or `null` on plain `/mcp` and in an ownerless pool, where agents do
+  not see the connector at all; a fixed subject is
   `{ kind: "workspaceFixed", subject }`. A personal connector counts the
   endpoint's people (the maintainers on plain `/mcp`) and how many have
   connected in their own partition: a stored credential of the declared shape,
