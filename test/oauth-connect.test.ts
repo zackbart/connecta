@@ -365,45 +365,65 @@ for (const provider of ["clerk", "access"] as const) {
       });
     });
   }
-  it.each(["personal", "shared"] as const)(
-    `INV-4: ${provider} starts a pool member's %s link directly, while a maintainer's hops through the UI`,
-    async (scope) => {
-      const flow = setup(provider, scope, { bobMember: true, bobAdmin: true });
-      // A member is not a maintainer: plain /mcp answers it with the 404.
-      const plain = await flow.app.fetch(
-        mcpRpc(
-          "tools/call",
-          { name: "authorize_connector", arguments: { connector: "service" } },
-          provider === "clerk" ? { token: "bob" } : {},
-        ),
-        undefined,
-        flow.runtime("bob"),
-      );
-      expect(plain.status).toBe(404);
-      const member = await flow.authorize("bob");
-      // The operator UI serves maintainers only until the member view (#837 P6b),
-      // so the member's link starts the flow without the /connectors hop.
-      const direct = await flow.app.fetch(
-        new Request(member.authorizationUrl, { headers: flow.headers("bob") }),
-        undefined,
-        flow.runtime("bob"),
-      );
-      expect(direct.status).toBe(302);
-      expect(direct.headers.get("Location")).toContain(AS);
-      expect(flow.startAuth).toHaveBeenCalledOnce();
-      expect((await flow.callback("bob")).status).toBe(200);
-      expect(flow.finishAuth).toHaveBeenCalledOnce();
-      const maintainer = await flow.authorize("alice");
-      const hop = await flow.app.fetch(
-        new Request(maintainer.authorizationUrl, { headers: flow.headers("alice") }),
-        undefined,
-        flow.runtime("alice"),
-      );
-      expect(hop.status).toBe(302);
-      expect(new URL(hop.headers.get("Location")!, BASE).pathname).toBe("/connectors/service");
-      expect(flow.startAuth).toHaveBeenCalledOnce();
-    },
-  );
+  it(`INV-4: ${provider} starts a pool member's personal link directly, while a maintainer's hops through the UI`, async () => {
+    const flow = setup(provider, "personal", { bobMember: true, bobAdmin: true });
+    // A member is not a maintainer: plain /mcp answers it with the 404.
+    const plain = await flow.app.fetch(
+      mcpRpc(
+        "tools/call",
+        { name: "authorize_connector", arguments: { connector: "service" } },
+        provider === "clerk" ? { token: "bob" } : {},
+      ),
+      undefined,
+      flow.runtime("bob"),
+    );
+    expect(plain.status).toBe(404);
+    const member = await flow.authorize("bob");
+    // The operator UI serves maintainers only until the member view (#837 P6b),
+    // so the member's link starts the flow without the /connectors hop.
+    const direct = await flow.app.fetch(
+      new Request(member.authorizationUrl, { headers: flow.headers("bob") }),
+      undefined,
+      flow.runtime("bob"),
+    );
+    expect(direct.status).toBe(302);
+    expect(direct.headers.get("Location")).toContain(AS);
+    expect(flow.startAuth).toHaveBeenCalledOnce();
+    expect((await flow.callback("bob")).status).toBe(200);
+    expect(flow.finishAuth).toHaveBeenCalledOnce();
+    const maintainer = await flow.authorize("alice");
+    const hop = await flow.app.fetch(
+      new Request(maintainer.authorizationUrl, { headers: flow.headers("alice") }),
+      undefined,
+      flow.runtime("alice"),
+    );
+    expect(hop.status).toBe(302);
+    expect(new URL(hop.headers.get("Location")!, BASE).pathname).toBe("/connectors/service");
+    expect(flow.startAuth).toHaveBeenCalledOnce();
+  });
+  it(`INV-4 INV-5: ${provider} refuses a pool member every step of shared auth, even with credentialAdministration`, async () => {
+    const flow = setup(provider, "shared", { bobMember: true, bobAdmin: true });
+    // Issuance: no link for the member.
+    expect((await flow.authorize("bob")).recovery).toBe("unavailable");
+    // Start and completion of a maintainer's link, signed in as the member.
+    const link = await flow.authorize("alice");
+    const start = new URL(link.authorizationUrl);
+    start.searchParams.set("start", "1");
+    const refused = await flow.app.fetch(
+      new Request(start, { headers: flow.headers("bob") }),
+      undefined,
+      flow.runtime("bob"),
+    );
+    expect(refused.status).toBe(403);
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    expect((await flow.browser(link.authorizationUrl, "alice")).status).toBe(302);
+    expect(flow.startAuth).toHaveBeenCalledOnce();
+    expect((await flow.callback("bob")).status).toBe(400);
+    expect(flow.finishAuth).not.toHaveBeenCalled();
+    // The maintainer still completes their own flow.
+    expect((await flow.callback("alice")).status).toBe(200);
+    expect(flow.finishAuth).toHaveBeenCalledOnce();
+  });
   it(`${provider} requires shared credential administration`, async () => {
     const flow = setup(provider, "shared");
     expect((await flow.authorize("bob")).recovery).toBe("unavailable");

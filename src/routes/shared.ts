@@ -473,15 +473,26 @@ export function validateAuthPermissions(authz: AuthorizedIdentity, registry: Reg
   }
 }
 
+/**
+ * Whether this identity may start, finish, or remove a connector's auth.
+ * Shared auth is deployment-wide, so only a maintainer may change it (#837);
+ * a pool member may manage only a personal connector in one of their pools,
+ * always in their own partition, which callers bind by principal. Every path
+ * that issues a link, starts, completes, or disconnects auth, or writes a
+ * credential, asks this, and the management permissions still apply on top
+ * until P2.
+ */
 export function mayManageConnector(
   opts: ServerOptions,
   authz: AuthorizedIdentity,
   connector: { id: string; authScope?: "shared" | "personal" },
 ): boolean {
   if (!authz.identity.interactive) return false;
+  const personal = connector.authScope === "personal";
+  if (!personal && !admitsMaintainer(opts, authz)) return false;
   const visible = manageableConnectors(opts, authz);
   if (visible !== "all" && !visible.has(connector.id)) return false;
-  const permission = connector.authScope === "personal" ? authz.personalConnection : authz.credentialAdministration;
+  const permission = personal ? authz.personalConnection : authz.credentialAdministration;
   return permission === "all" || (permission !== "none" && permission.includes(connector.id));
 }
 

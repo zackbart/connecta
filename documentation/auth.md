@@ -293,9 +293,14 @@ agent matches by `identity.agent`, which only the built-in token adapter sets.
 Construction throws (INV-11) on a bare id without exactly one interactive
 provider, a bare id containing `:`, an undeclared agent, a repeated reference,
 an empty or missing pool `members`, an agent in `maintainers`, `maintainers`
-missing or empty when any inbound auth is configured, and `maintainers` on a
-deployment without inbound auth. `describeConfig()` lists `maintainers` as
-`{ namespace, id }` and each pool's resolved `members`.
+missing or empty when a provider that admits people is configured (any
+provider other than the built-in agent-token adapter), and a non-empty
+`maintainers` on a deployment with no such provider. With agents alone
+(`accessTokens` as the only inbound auth), `maintainers` stays empty, nobody
+can be a maintainer, and plain `/mcp` and every operator API admit nobody; the
+agents reach only the pools that list them. With no inbound auth at all, the
+deployment is open (see [pools](#pools)). `describeConfig()` lists
+`maintainers` as `{ namespace, id }` and each pool's resolved `members`.
 
 Pool tools are enforced in the scoped registry view, below the catalog service,
 so `search_tools`, `describe_tools`, both call tools, a program's
@@ -911,11 +916,16 @@ anything, so SDK hook order cannot mix servers or cross a reset.
 ## Management permissions
 
 Management permissions still exist until #837 P2 folds them into
-maintainers. Every operator route first requires a maintainer. Connecting a
-personal account through a `/connect/<id>` link (from `authorize_connector`)
-and its OAuth callback need visibility, which is every connector for a
-maintainer and otherwise the connectors of the caller's pools, so a member can
-connect their own personal connector in their pool. A maintainer's link
+maintainers. Every operator route first requires a maintainer. Shared auth is
+deployment-wide, so every action on a shared connector requires a maintainer,
+with `credentialAdministration` checked on top: issuing a link through
+`authorize_connector`, a program's or a failed call's auth handoff, or an
+elicitation; starting it at `/connect/<id>`; completing the OAuth callback,
+which re-checks at completion; and `/ui/oauth` and `/ui/credentials`. A pool
+member may manage only a personal connector in one of their pools, always in
+their own principal partition, with `personalConnection` on top: the
+`/connect/<id>` link and its callback are bound to the principal that
+requested them. A maintainer's link
 continues in the operator UI; a member's link starts the authorization
 directly, as it does on a deployment without the UI. A personal credential
 handoff needs the operator UI and so a maintainer for now.

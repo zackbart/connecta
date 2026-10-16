@@ -1,6 +1,7 @@
 import { machineAuth } from "./helpers/machine-auth.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { InvocationFailure } from "../src/invocation.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { accessTokens } from "../src/access-tokens.js";
@@ -533,6 +534,116 @@ function personalOAuth(id = "oauth"): Connector {
     },
   };
 }
+
+/** A shared OAuth connector whose one grant lives in deployment storage. */
+function sharedOAuth(): Connector {
+  return {
+    ...personalOAuth("shared"),
+    description: "Shared OAuth connection",
+    authScope: "shared",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      if (!(await ctx.storage.get("token"))) throw new ConnectorCallError("auth_required", "Sign in first.");
+      return { ok: true };
+    },
+  };
+}
+
+describe("shared auth is maintainers' alone", () => {
+  it("INV-4 INV-5: a member of a pool with a shared OAuth connector cannot issue, start, or complete its auth", async () => {
+    const storage = memoryStorage();
+    const starts = { count: 0 };
+    const shared = sharedOAuth();
+    const startAuth = shared.startAuth!.bind(shared);
+    shared.startAuth = async (ctx, options) => {
+      starts.count++;
+      return startAuth(ctx, options);
+    };
+    const c = createTestConnecta({
+      connectors: [shared, personalOAuth()],
+      auth: users(),
+      maintainers: ["alice"],
+      // Both permissions are "all", as the templates set them; membership alone must not reach shared auth.
+      identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
+      pools: { team: { tools: ["shared.read", "oauth"], members: ["bob"] } },
+      vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
+      storage,
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    const grant = async () =>
+      (await c.registry.scoped({ connectorIds: ["shared"] }).statusFor("shared", BASE, {})).state;
+    const text = (body: any) => JSON.stringify(body);
+
+    // Issuance: an explicit authorize_connector, forced or not, and the
+    // handoff a failed call carries both withhold a link from the member.
+    for (const force of [false, true]) {
+      const issued = await rpc(c, "/mcp/team", "bob", "authorize_connector", { connector: "shared", force });
+      expect(text(issued)).not.toContain("/connect/");
+      expect(JSON.parse(issued.result.content[0].text)).toMatchObject({ recovery: "unavailable" });
+    }
+    const failed = await rpc(c, "/mcp/team", "bob", "call_tool", { address: "shared.read", args: {} });
+    expect(failed.result.isError).toBe(true);
+    expect(text(failed)).not.toContain("/connect/");
+
+    // A link a maintainer minted: the member can neither start nor complete it.
+    const link = JSON.parse(
+      (await rpc(c, "/mcp", "alice", "authorize_connector", { connector: "shared", force: true })).result.content[0]
+        .text,
+    ).authorizationUrl as string;
+    const start = new URL(link);
+    start.searchParams.set("start", "1");
+    expect((await c.fetch(new Request(start, { headers: { Authorization: "Bearer bob" } }))).status).toBe(403);
+    expect(starts.count).toBe(0);
+    const consent = await c.fetch(new Request(start, { headers: { Authorization: "Bearer alice" } }));
+    expect(consent.status).toBe(302);
+    const state = new URL(consent.headers.get("Location")!).searchParams.get("state");
+    const hijack = await c.fetch(request(`/oauth/callback/shared?code=code&state=${state}`, "bob"));
+    expect(hijack.status).toBe(400);
+    expect(await grant()).toBe("auth_required");
+
+    // The maintainer still manages shared auth, and the member still connects their own personal connector.
+    expect((await c.fetch(request(`/oauth/callback/shared?code=code&state=${state}`, "alice"))).status).toBe(200);
+    expect(await grant()).toBe("ok");
+    const own = JSON.parse(
+      (await rpc(c, "/mcp/team", "bob", "authorize_connector", { connector: "oauth" })).result.content[0].text,
+    );
+    expect(own.authorizationUrl).toMatch(new RegExp(`^${BASE}/connect/oauth\\?h=`));
+    const personal = await c.fetch(new Request(own.authorizationUrl, { headers: { Authorization: "Bearer bob" } }));
+    expect(personal.status).toBe(302);
+    expect(new URL(personal.headers.get("Location")!).origin).toBe("https://provider.test");
+    await c.close();
+  });
+
+  it("INV-4 INV-5: a member's elicited auth handoff never carries a shared connector's link", async () => {
+    const storage = memoryStorage();
+    const c = createTestConnecta({
+      connectors: [sharedOAuth()],
+      auth: users(),
+      maintainers: ["alice"],
+      identity: { credentialAdministration: () => "all" },
+      pools: { team: { tools: ["shared"], members: ["bob"] } },
+      vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
+      storage,
+      publicUrl: BASE,
+      logger: silentLogger,
+      executor: scriptedExecutor(async (fns) => {
+        try {
+          return await fns.call!("shared.read", {});
+        } catch (error) {
+          return error instanceof InvocationFailure ? error.details : String(error);
+        }
+      }),
+    });
+    const program = await rpc(c, "/mcp/team", "bob", "execute_code", { code: "return 1" });
+    expect(JSON.stringify(program)).not.toContain("/connect/");
+    const maintainer = await rpc(c, "/mcp", "alice", "call_tool", { address: "shared.read", args: {} });
+    expect(JSON.stringify(maintainer)).toContain("/connect/shared");
+    await c.close();
+  });
+});
 
 describe("pool members connect their own personal connectors", () => {
   it("INV-4 INV-5: a member connects a personal connector from their pool through /connect without the operator UI", async () => {
