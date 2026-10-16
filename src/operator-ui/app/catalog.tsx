@@ -1,10 +1,9 @@
 import { useRef, useState } from "react";
 import type { OperatorTool } from "../contract.js";
-import type { UiToolSafety } from "../model.js";
 import { Badge, StateBlock } from "./parts.js";
 import { Dialog, Input, SegmentedControl } from "./primitives.js";
 
-type CatalogRow = OperatorTool & { connectorId: string; safety?: UiToolSafety };
+type CatalogRow = OperatorTool & { connectorId: string };
 type Kind = "all" | "read" | "write";
 
 /** Read or write, as the deployment resolved it. */
@@ -12,11 +11,10 @@ function ClassBadge({ classification }: { classification: OperatorTool["classifi
   return <Badge tone={classification === "read" ? "ok" : "warn"}>{classification === "read" ? "Read" : "Write"}</Badge>;
 }
 
-/** What the host does before a call, and what the tool says about itself. */
-function SafetyBadges({ tool }: { tool: CatalogRow }) {
+/** What the tool says about itself; approval belongs to the host. */
+function AnnotationBadges({ tool }: { tool: CatalogRow }) {
   return (
     <>
-      {tool.safety === "needs_approval" ? <Badge>Asks first</Badge> : null}
       {tool.annotations?.destructiveHint ? <Badge tone="danger">Destructive</Badge> : null}
       {tool.annotations?.openWorldHint ? <Badge>Open world</Badge> : null}
     </>
@@ -73,7 +71,7 @@ export function Catalog({ tools }: { tools: CatalogRow[] }) {
                 {tool.description ? <p className="tool-description">{tool.description}</p> : null}
               </div>
               <div className="tool-row-badges">
-                <SafetyBadges tool={tool} />
+                <AnnotationBadges tool={tool} />
                 <ClassBadge classification={tool.classification} />
               </div>
             </li>
@@ -96,7 +94,7 @@ export function Catalog({ tools }: { tools: CatalogRow[] }) {
           <div className="schema-drawer">
             <div className="schema-badges">
               <ClassBadge classification={selected.classification} />
-              <SafetyBadges tool={selected} />
+              <AnnotationBadges tool={selected} />
             </div>
             {selected.description ? <p className="schema-description">{selected.description}</p> : null}
             <SchemaBlock title="Input schema" value={selected.inputSchema} />

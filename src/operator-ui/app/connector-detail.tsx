@@ -73,14 +73,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
               {
                 value: "tools",
                 label: "Tools",
-                content: (
-                  <Catalog
-                    tools={live.tools.map((tool) => {
-                      const safety = rawAuth?.tools.find((t) => t.address === tool.address)?.safety;
-                      return { ...tool, connectorId: id, ...(safety ? { safety } : {}) };
-                    })}
-                  />
-                ),
+                content: <Catalog tools={live.tools.map((tool) => ({ ...tool, connectorId: id }))} />,
               },
               {
                 value: "connection",

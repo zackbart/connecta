@@ -198,14 +198,35 @@ test("tool filters use resolved classification and schema catalog text stays ine
   await expect(page.getByRole("button", { name: "github.read", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "github.write", exact: true })).toHaveCount(0);
   await classification.getByRole("button", { name: /^Write/ }).click();
+  const writeRow = page
+    .getByRole("listitem")
+    .filter({ has: page.getByRole("button", { name: "github.write", exact: true }) });
+  await expect(writeRow.getByText("Write", { exact: true })).toBeVisible();
+  await expect(writeRow.getByText("Asks first", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "github.write", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "github.write", exact: true });
+  await expect(dialog.getByText("Write", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Asks first", { exact: true })).toHaveCount(0);
   await expect(dialog.getByRole("heading", { name: "Input schema" })).toBeVisible();
   await expect(dialog.locator("p").filter({ hasText: CATALOG_TEXT })).toBeVisible();
   await expect(page.locator('img[src="x"]')).toHaveCount(0);
   expect(await page.evaluate("window.__catalogExecuted")).toBeUndefined();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "github.write", exact: true })).toBeFocused();
+  await clean(page);
+});
+
+test("connector Connection keeps Configuration tiles in the redesigned layout", async ({ page }) => {
+  await session(page);
+  await page.goto(origin + "/connectors/github#connection");
+  await expect(page.locator(".conn-head")).toContainText("GitHub");
+  const sections = page.locator(".connection-sections");
+  await expect(sections.getByRole("region", { name: "Authentication", exact: true })).toBeVisible();
+  await expect(sections.getByRole("region", { name: "Diagnostics", exact: true })).toBeVisible();
+  const config = sections.getByRole("region", { name: "Connector configuration", exact: true });
+  await expect(config.getByRole("heading", { name: "Configuration", exact: true })).toBeVisible();
+  await expect(config.getByRole("list", { name: "GitHub setup", exact: true })).toBeVisible();
+  await expect(config.locator(".stat-grid")).toBeVisible();
   await clean(page);
 });
 
