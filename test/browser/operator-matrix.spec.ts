@@ -508,7 +508,7 @@ for (const [path, heading] of [
     await page.goto(VISUAL_ORIGIN + path);
     const content =
       path === "/tokens"
-        ? page.getByRole("heading", { name: "simon-ada", exact: true })
+        ? page.getByRole("rowheader", { name: "simon-ada", exact: true })
         : page.getByText("No connector tool calls recorded yet.", { exact: true });
     await expect(content).toBeVisible();
     const banner = page.locator("#recoveryBanner");
@@ -524,6 +524,22 @@ for (const [path, heading] of [
     await expect(page.locator("#app")).toHaveAttribute("inert", "");
     await expect(content).toBeAttached();
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(1);
+    if (path === "/tokens") {
+      // Tokens' own Refresh and list retry give way to the banner: one Retry, no slot actions.
+      await expect(page.locator("#refreshTokens")).toHaveCount(0);
+      await expect(page.getByText("Try loading access tokens again", { exact: true })).toHaveCount(0);
+      // The rows sit inside the inert page: clicking them confirms nothing and sends nothing.
+      let prompted = 0;
+      page.on("dialog", (dialog) => {
+        prompted += 1;
+        void dialog.dismiss();
+      });
+      for (const action of await page.locator("#app[inert] tr[data-agent] button").all())
+        await action.click({ force: true });
+      await page.clock.runFor(100);
+      expect(prompted).toBe(0);
+      expect(watched.filter((p) => p.startsWith("/ui/access-tokens/"))).toEqual([]);
+    }
 
     // The passive retry stalls, and the deadline passes: Retry is still there.
     config = "stall";

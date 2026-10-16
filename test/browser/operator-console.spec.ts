@@ -676,6 +676,9 @@ test.describe("member page", () => {
     await expect(failed).toBeVisible();
     // The Disconnect button that had focus is gone: focus lands on the page's heading, not <body>.
     await expect(page.locator("#memberHeading")).toBeFocused();
+    // A member's own error, never the maintainer recovery banner, and the page stays live.
+    await expect(page.locator("#recoveryBanner")).toHaveCount(0);
+    await expect(page.locator("#app")).not.toHaveAttribute("inert");
     // Still the member's page and chrome: no Settings heading, Search, Appearance or palette.
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Your connections");
     await expect(page.getByRole("heading", { name: "Settings" })).toHaveCount(0);

@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { agentRows, lastSeenLabel, slotBadge, slotSince, type AgentRow } from "../agents.js";
-import { accessTokenUnavailableCopy, formatDate, type OperatorState } from "../view.js";
+import { accessTokenUnavailableCopy, contractRecovering, formatDate, type OperatorState } from "../view.js";
 import { Badge, CopyButton, Empty, NoticeLine, StateBlock, Unavailable } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
 import { dismissCreatedToken, loadAccessTokens, revokeAgentToken, rotateAgentToken } from "./store.js";
@@ -119,6 +119,8 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
 
 export function TokensPage({ state }: { state: OperatorState }) {
   const available = state.data?.accessTokenManagement === "available";
+  // While the shell's recovery banner owns Retry, this page offers none of its own.
+  const recovering = contractRecovering(state);
   const rows = agentRows(state.contract, state.tokens, state.unresolvedSlots);
   return (
     <section id="tokensView">
@@ -131,7 +133,7 @@ export function TokensPage({ state }: { state: OperatorState }) {
             One Bearer token per agent. Agents are declared in code; only their tokens change here.
           </p>
         </div>
-        {available ? (
+        {available && !recovering ? (
           <div className="page-actions">
             <Button
               id="refreshTokens"
@@ -153,7 +155,9 @@ export function TokensPage({ state }: { state: OperatorState }) {
           ) : state.tokenPhase === "error" ? (
             <StateBlock
               tone="error"
-              action={{ label: "Try loading access tokens again", onClick: () => void loadAccessTokens() }}
+              {...(recovering
+                ? {}
+                : { action: { label: "Try loading access tokens again", onClick: () => void loadAccessTokens() } })}
             >
               Access tokens could not be loaded.
             </StateBlock>
