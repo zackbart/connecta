@@ -68,13 +68,19 @@ function parseClaim(raw: string): string {
  */
 type StoredSlot =
   | { version: 1; agent: string; state: "issued"; tokenId: string; issuedAt: string }
-  | { version: 1; agent: string; state: "revoked"; revokedAt: string };
+  // `revokedTokenId` names the record the revocation stopped, so no two
+  // revocations store the same slot. Slots revoked before it carry none.
+  | { version: 1; agent: string; state: "revoked"; revokedAt: string; revokedTokenId?: string };
 
-/** One declared agent's token slot as management sees it. Never secret material. */
+/**
+ * One declared agent's token slot as management sees it. Never secret
+ * material. `revision` is opaque: it changes on every commit to the slot and
+ * is what `expect` names to make an operation conditional on this view.
+ */
 export type AgentTokenSlot =
-  | { name: string; state: "none" }
-  | { name: string; state: "issued"; issuedAt: string }
-  | { name: string; state: "revoked"; revokedAt: string };
+  | { name: string; state: "none"; revision: string }
+  | { name: string; state: "issued"; issuedAt: string; revision: string }
+  | { name: string; state: "revoked"; revokedAt: string; revision: string };
 
 /** A newly issued secret, returned once, and the slot that now admits it. */
 export interface IssuedAgentToken {
@@ -86,7 +92,7 @@ export interface IssuedAgentToken {
 export class AccessTokenError extends Error {
   override readonly name = "AccessTokenError";
   constructor(
-    readonly code: "unknown_agent" | "conflict" | "not_adoptable" | "aborted" | "outcome_unknown",
+    readonly code: "unknown_agent" | "conflict" | "slot_changed" | "not_adoptable" | "aborted" | "outcome_unknown",
     message: string,
   ) {
     super(message);
@@ -108,6 +114,14 @@ export interface AccessTokenOperationOptions {
    * starts.
    */
   deadline?: number;
+  /**
+   * The slot `revision` the caller decided from. When set, the operation
+   * refuses with `slot_changed` before minting or writing anything if the
+   * slot's current revision differs, and its commit compare-and-sets from
+   * exactly the slot with that revision, so a change that lands between the
+   * read and the commit refuses the same way instead of being overwritten.
+   */
+  expect?: string;
 }
 
 /** What each operation tells its caller when its outcome cannot be settled. */
@@ -119,6 +133,10 @@ const UNKNOWN = {
 
 const isOutcomeUnknown = (error: unknown): boolean =>
   error instanceof AccessTokenError && error.code === "outcome_unknown";
+
+function slotChanged(): AccessTokenError {
+  return new AccessTokenError("slot_changed", "The agent's token slot changed since it was read; reload and retry");
+}
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new AccessTokenError("aborted", "The request ended before the token operation finished");
@@ -201,8 +219,8 @@ class OperationWindow {
   }
 }
 
-function revokedSlot(agent: string): StoredSlot {
-  return { version: 1, agent, state: "revoked", revokedAt: new Date().toISOString() };
+function revokedSlot(agent: string, tokenId: string): StoredSlot {
+  return { version: 1, agent, state: "revoked", revokedAt: new Date().toISOString(), revokedTokenId: tokenId };
 }
 
 const recordKey = accessTokenKeys.record;
@@ -222,6 +240,30 @@ function bytesToHex(bytes: Uint8Array): string {
 
 async function hashToken(token: string): Promise<string> {
   return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(token))));
+}
+
+const REVISION_RE = /^[A-Za-z0-9_-]{22}$/u;
+
+/** Whether `value` has the shape of a slot revision. */
+export function isSlotRevision(value: unknown): value is string {
+  return typeof value === "string" && REVISION_RE.test(value);
+}
+
+/**
+ * A slot's revision: the first 128 bits of a domain-separated SHA-256 of the
+ * agent's name and its raw stored slot, base64url. Every commit stores a new
+ * value (a fresh record id, or the revocation of one), so the revision
+ * changes on each and never otherwise. The raw slot names a record id, which
+ * only reaches out hashed; the slot holds no secret or digest to begin with.
+ */
+async function slotRevision(agent: string, raw: string | null): Promise<string> {
+  const input = `connecta:access-token-slot-revision:v1\n${agent}\n${raw === null ? "none" : `slot:${raw}`}`;
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(input)));
+  return bytesToBase64Url(digest.slice(0, 16));
+}
+
+async function matchesExpected(agent: string, raw: string | null, expect: string | undefined): Promise<boolean> {
+  return expect === undefined || (await slotRevision(agent, raw)) === expect;
 }
 
 const isTime = (value: unknown): value is string =>
@@ -283,11 +325,12 @@ function parseSlot(raw: string, agent: string): StoredSlot {
   }
 }
 
-function slotView(name: string, slot: StoredSlot | null): AgentTokenSlot {
-  if (!slot) return { name, state: "none" };
+async function slotView(name: string, raw: string | null, slot: StoredSlot | null): Promise<AgentTokenSlot> {
+  const revision = await slotRevision(name, raw);
+  if (!slot) return { name, state: "none", revision };
   return slot.state === "issued"
-    ? { name, state: "issued", issuedAt: slot.issuedAt }
-    : { name, state: "revoked", revokedAt: slot.revokedAt };
+    ? { name, state: "issued", issuedAt: slot.issuedAt, revision }
+    : { name, state: "revoked", revokedAt: slot.revokedAt, revision };
 }
 
 function unauthorized(): AuthResult {
@@ -369,20 +412,28 @@ export class AccessTokenManager {
 
   /** One slot per declared agent, in declaration order. */
   async list(): Promise<AgentTokenSlot[]> {
-    return Promise.all(this.agentOrder.map(async (name) => slotView(name, (await this.readSlot(name)).slot)));
+    return Promise.all(
+      this.agentOrder.map(async (name) => {
+        const { raw, slot } = await this.readSlot(name);
+        return slotView(name, raw, slot);
+      }),
+    );
   }
 
   /**
    * Issue the agent's first token, or replace its current one.
    *
-   * 1. The new record and its lookup are written. They are inert: admission
+   * 1. The slot is read. With `expect`, a slot whose revision differs refuses
+   *    with `slot_changed` before any secret is minted.
+   * 2. The new record and its lookup are written. They are inert: admission
    *    requires the slot to name the record.
-   * 2. `signal` is checked.
-   * 3. One compare-and-set of the slot, from what was read to `issued` with
-   *    the new record, is the only commit point. From it the new secret admits
-   *    and the previous one refuses. Of concurrent rotations exactly one
-   *    commits; the others publish nothing and refuse with a conflict.
-   * 4. If the request has ended once the commit is decided, the secret cannot
+   * 3. `signal` is checked.
+   * 4. One compare-and-set of the slot, from exactly what was read to
+   *    `issued` with the new record, is the only commit point. From it the
+   *    new secret admits and the previous one refuses. Of concurrent
+   *    rotations exactly one commits; the others publish nothing and refuse
+   *    with `slot_changed` when they named `expect`, a conflict otherwise.
+   * 5. If the request has ended once the commit is decided, the secret cannot
    *    be delivered, so the slot moves forward to `revoked`. Everything after
    *    the commit runs inside one `OperationWindow`; if it cannot settle in
    *    time this rejects with `outcome_unknown` ("rotate again"), never success.
@@ -396,10 +447,19 @@ export class AccessTokenManager {
     issuedBy = "operator",
     options: AccessTokenOperationOptions = {},
   ): Promise<IssuedAgentToken> {
-    const { signal } = options;
+    const { signal, expect } = options;
     throwIfAborted(signal);
     const agent = this.declared(name);
     const window = new OperationWindow(options.deadline, UNKNOWN.rotate);
+    let raw: string | null;
+    try {
+      ({ raw } = await window.run(() => this.readSlot(agent)));
+    } catch (error) {
+      // Nothing was written: a caller that left hears `aborted`.
+      if (isOutcomeUnknown(error)) throwIfAborted(signal);
+      throw error;
+    }
+    if (!(await matchesExpected(agent, raw, expect))) throw slotChanged();
     const token = TOKEN_PREFIX + bytesToBase64Url(crypto.getRandomValues(new Uint8Array(TOKEN_BYTES)));
     const hash = await hashToken(token);
     const record: StoredAccessToken = {
@@ -415,6 +475,8 @@ export class AccessTokenManager {
     const recordRaw = JSON.stringify(record);
     const lookupRaw = JSON.stringify({ version: 1, id: record.id } satisfies TokenLookup);
     const next: StoredSlot = { version: 1, agent, state: "issued", tokenId: record.id, issuedAt: record.createdAt };
+    const nextRaw = JSON.stringify(next);
+    const view = await slotView(agent, nextRaw, next);
     // This call's own record and lookup, while known to be uncommitted: one
     // conditional delete each, matching exactly what was written, inside the
     // window like everything else.
@@ -424,9 +486,7 @@ export class AccessTokenManager {
       await window.run(() => this.storage.compareAndSet(lookupKey(hash), lookupRaw, null)).catch(() => false);
       await window.run(() => this.storage.compareAndSet(recordKey(record.id), recordRaw, null)).catch(() => false);
     };
-    let raw: string | null;
     try {
-      ({ raw } = await window.run(() => this.readSlot(agent)));
       if (await window.run(() => this.storage.get(lookupKey(hash)))) {
         throw new AccessTokenError("conflict", "Access token collision; rotate again");
       }
@@ -442,7 +502,7 @@ export class AccessTokenManager {
     }
     let committed: boolean;
     try {
-      committed = await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, JSON.stringify(next)));
+      committed = await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, nextRaw));
     } catch (error) {
       // No acknowledgement by the deadline: unknown, and the records stay.
       if (isOutcomeUnknown(error)) throw error;
@@ -453,9 +513,10 @@ export class AccessTokenManager {
     }
     if (!committed) {
       await discard();
+      if (expect !== undefined) throw slotChanged();
       throw new AccessTokenError("conflict", "The agent's token changed during rotation; retry");
     }
-    if (!signal?.aborted) return window.settle({ token, agent: slotView(agent, next) });
+    if (!signal?.aborted) return window.settle({ token, agent: view });
     // Committed, but the response cannot carry the secret.
     await this.revokeIfNamed(window, agent, record.id);
     throw new AccessTokenError("aborted", "The request ended after the rotation committed; the token is revoked");
@@ -484,7 +545,7 @@ export class AccessTokenManager {
       try {
         const { raw, slot } = await window.run(() => this.readSlot(agent));
         if (slot?.state !== "issued" || slot.tokenId !== tokenId) return;
-        const revoked = JSON.stringify(revokedSlot(agent));
+        const revoked = JSON.stringify(revokedSlot(agent, tokenId));
         if (await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, revoked))) return;
       } catch (error) {
         if (isOutcomeUnknown(error)) throw error;
@@ -497,10 +558,13 @@ export class AccessTokenManager {
   /**
    * Revoke the agent's token. One compare-and-set of the slot to `revoked` is
    * the commit; `signal` is checked after the read and before it. The record
-   * and lookup stay behind, inert.
+   * and lookup stay behind, inert. With `expect`, a slot whose revision
+   * differs refuses with `slot_changed` before anything is written, and so
+   * does a slot that changes between the read and the commit; without it,
+   * whatever the slot names by then is revoked instead.
    */
   async revoke(name: string, options: AccessTokenOperationOptions = {}): Promise<AgentTokenSlot> {
-    const { signal } = options;
+    const { signal, expect } = options;
     throwIfAborted(signal);
     const agent = this.declared(name);
     const window = new OperationWindow(options.deadline, UNKNOWN.revoke);
@@ -513,30 +577,45 @@ export class AccessTokenManager {
       throw error;
     }
     const { raw, slot } = read;
-    if (slot?.state !== "issued") return window.settle(slotView(agent, slot));
+    if (!(await matchesExpected(agent, raw, expect))) throw slotChanged();
+    if (slot?.state !== "issued") return window.settle(await slotView(agent, raw, slot));
     throwIfAborted(signal);
-    const next = revokedSlot(agent);
+    const next = revokedSlot(agent, slot.tokenId);
+    const nextRaw = JSON.stringify(next);
     let committed: boolean;
     try {
-      committed = await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, JSON.stringify(next)));
+      committed = await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, nextRaw));
     } catch (error) {
       if (isOutcomeUnknown(error)) throw error;
       // Ambiguous: settled below, inside the window.
       committed = false;
     }
-    if (committed) return window.settle(slotView(agent, next));
-    // Unanswered, or a concurrent change won the slot: whatever it names now
-    // is revoked the same way, inside the window.
+    if (committed) return window.settle(await slotView(agent, nextRaw, next));
+    // Unanswered, or a concurrent change won the slot, settled inside the
+    // window. Under `expect` only this call's own revocation counts, and only
+    // from the slot it read; otherwise whatever the slot names now is revoked
+    // the same way.
     for (let attempt = 0; attempt < RECONCILE_ATTEMPTS && window.open; attempt++) {
       try {
         const current = await window.run(() => this.readSlot(agent));
-        if (current.slot?.state !== "issued") return window.settle(slotView(agent, current.slot));
-        const revoked = revokedSlot(agent);
-        if (await window.run(() => this.storage.compareAndSet(slotKey(agent), current.raw, JSON.stringify(revoked)))) {
-          return window.settle(slotView(agent, revoked));
+        if (expect !== undefined) {
+          if (current.raw === nextRaw) return window.settle(await slotView(agent, nextRaw, next));
+          if (current.raw !== raw) throw slotChanged();
+          if (await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, nextRaw))) {
+            return window.settle(await slotView(agent, nextRaw, next));
+          }
+          continue;
+        }
+        if (current.slot?.state !== "issued") {
+          return window.settle(await slotView(agent, current.raw, current.slot));
+        }
+        const revoked = revokedSlot(agent, current.slot.tokenId);
+        const revokedRaw = JSON.stringify(revoked);
+        if (await window.run(() => this.storage.compareAndSet(slotKey(agent), current.raw, revokedRaw))) {
+          return window.settle(await slotView(agent, revokedRaw, revoked));
         }
       } catch (error) {
-        if (isOutcomeUnknown(error)) throw error;
+        if (error instanceof AccessTokenError) throw error;
       }
     }
     throw window.unknown();
@@ -563,11 +642,13 @@ export class AccessTokenManager {
    *
    * The commit and everything after it run inside one `OperationWindow`.
    * Retrying an adoption whose slot already names a record with this digest
-   * completes step 5 and succeeds. Human-bound, revoked, and claimed tokens are
+   * completes step 5 and succeeds. With `expect`, a slot whose revision
+   * differs refuses with `slot_changed` before the claim, and so does a
+   * commit that loses its compare-and-set. Human-bound, revoked, and claimed tokens are
    * refused, as is an agent whose slot names anything else.
    */
   async adopt(tokenId: string, name: string, options: AccessTokenOperationOptions = {}): Promise<AgentTokenSlot> {
-    const { signal } = options;
+    const { signal, expect } = options;
     throwIfAborted(signal);
     const agent = this.declared(name);
     const window = new OperationWindow(options.deadline, UNKNOWN.adopt);
@@ -593,10 +674,11 @@ export class AccessTokenManager {
       }
       const current = await run(() => this.readSlot(agent));
       slotRaw = current.raw;
+      if (!(await matchesExpected(agent, slotRaw, expect))) throw slotChanged();
       const slot = current.slot;
       if (slot) {
         if (slot.state === "issued" && (await run(() => this.read(slot.tokenId)))?.tokenHash === digest) {
-          return window.settle(await this.completeAdoption(window, agent, slot, legacy));
+          return window.settle(await this.completeAdoption(window, agent, slot, current.raw, legacy));
         }
         throw refused(
           claimant === agent
@@ -652,24 +734,27 @@ export class AccessTokenManager {
     const own = record;
     const discard = () => run(() => this.storage.compareAndSet(recordKey(own.id), recordRaw, null)).catch(() => false);
     const next: StoredSlot = { version: 1, agent, state: "issued", tokenId: own.id, issuedAt: legacy.createdAt };
+    const nextRaw = JSON.stringify(next);
     let committed: boolean;
     try {
-      committed = await run(() => this.storage.compareAndSet(slotKey(agent), slotRaw, JSON.stringify(next)));
+      committed = await run(() => this.storage.compareAndSet(slotKey(agent), slotRaw, nextRaw));
     } catch (error) {
       if (isOutcomeUnknown(error)) throw error;
       if (!(await this.slotNames(window, agent, own.id))) throw error;
       committed = true;
     }
-    if (committed) return window.settle(await this.completeAdoption(window, agent, next, legacy));
-    // Someone else committed first. A concurrent adoption of this same token
-    // by this agent is completed, anything else refused; ours is uncommitted
-    // and removed.
+    if (committed) return window.settle(await this.completeAdoption(window, agent, next, nextRaw, legacy));
+    // Someone else committed first, and ours is uncommitted and removed. A
+    // caller that named `expect` hears that the slot changed; otherwise a
+    // concurrent adoption of this same token by this agent is completed, and
+    // anything else refused.
     await discard();
-    const { slot: current } = await run(() => this.readSlot(agent));
+    if (expect !== undefined) throw slotChanged();
+    const { raw: currentRaw, slot: current } = await run(() => this.readSlot(agent));
     if (current?.state === "issued") {
       const named = await run(() => this.read(current.tokenId));
       if (named?.tokenHash === legacy.tokenHash) {
-        return window.settle(await this.completeAdoption(window, agent, current, legacy));
+        return window.settle(await this.completeAdoption(window, agent, current, currentRaw, legacy));
       }
     }
     throw new AccessTokenError("conflict", "That agent's token slot changed during adoption; retry");
@@ -685,6 +770,7 @@ export class AccessTokenManager {
     window: OperationWindow,
     agent: string,
     slot: Extract<StoredSlot, { state: "issued" }>,
+    slotRaw: string | null,
     legacy: StoredAccessToken,
   ): Promise<AgentTokenSlot> {
     const pointer = JSON.stringify({ version: 1, id: slot.tokenId } satisfies TokenLookup);
@@ -693,7 +779,7 @@ export class AccessTokenManager {
       try {
         const current = await window.run(() => this.storage.get(key));
         const id = current === null ? null : parseLookup(current)?.id;
-        if (id === slot.tokenId) return slotView(agent, slot);
+        if (id === slot.tokenId) return await slotView(agent, slotRaw, slot);
         if (current === null || id !== legacy.id) {
           await this.revokeIfNamed(window, agent, slot.tokenId);
           throw new AccessTokenError(
@@ -702,7 +788,7 @@ export class AccessTokenManager {
           );
         }
         if (await window.run(() => this.storage.compareAndSet(key, current, pointer))) {
-          return slotView(agent, slot);
+          return await slotView(agent, slotRaw, slot);
         }
       } catch (error) {
         if (error instanceof AccessTokenError) throw error;

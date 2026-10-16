@@ -4,47 +4,12 @@ import { claimConnectorScopeCleanup, closeConnectorScope } from "../connector-sc
 import { credentialTestRule, describeCredentialTestMismatch, storedCredentialShape } from "../credential-rules.js";
 import type { ConnectorCredentialConfig, ConnectorCredentialValues } from "../types.js";
 import { authorizedPerson, refuse, serveOperator, managementRegistry, type Answer } from "./operator.js";
-import { mayManageConnector, isSameOrigin, msg, privateJson, type RouteContext } from "./shared.js";
+import { boundedText, mayManageConnector, isSameOrigin, msg, privateJson, type RouteContext } from "./shared.js";
 
 type CredentialInput = { kind: "single"; value: string } | { kind: "multiple"; values: ConnectorCredentialValues };
 
 /** The longest body, in characters, a credential write accepts. */
 const MAX_BODY_CHARS = 20_000;
-
-/**
- * The most UTF-8 a body within MAX_BODY_CHARS can take. No UTF-16 unit costs
- * more than three bytes, and a malformed sequence decodes to one U+FFFD per
- * at most three bytes, so a body past this many bytes is past the character
- * limit too — and reading stops there, instead of buffering whatever a client
- * cares to send before measuring it.
- */
-const MAX_BODY_BYTES = MAX_BODY_CHARS * 3;
-
-/** The body as text, or undefined once it is longer than MAX_BODY_CHARS. */
-async function boundedText(request: Request): Promise<string | undefined> {
-  if (!request.body) return "";
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
-      reader.cancel().catch(() => {});
-      return undefined;
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  const text = new TextDecoder().decode(bytes);
-  return text.length > MAX_BODY_CHARS ? undefined : text;
-}
 
 /** Field-by-field checks, in words the Credentials page shows as written. */
 function credentialInput(
@@ -85,7 +50,7 @@ function readCredentialInput(
     if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
       return yield* refuse("Content-Type must be application/json", 415);
     }
-    const raw = yield* Effect.promise(() => boundedText(request));
+    const raw = yield* Effect.promise(() => boundedText(request, MAX_BODY_CHARS));
     if (raw === undefined) return yield* refuse("request body is too large", 413);
     let body: { value?: unknown; values?: unknown } | null;
     try {

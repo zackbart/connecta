@@ -1277,10 +1277,11 @@ export function refreshConnector(id: string, quiet = false): Promise<void> {
 /* Access tokens ----------------------------------------------------------- */
 
 /** One declared agent's token slot, as /ui/access-tokens returns it. */
-export type UiAgentSlot =
+export type UiAgentSlot = (
   | { name: string; state: "none" }
   | { name: string; state: "issued"; issuedAt: string }
-  | { name: string; state: "revoked"; revokedAt: string };
+  | { name: string; state: "revoked"; revokedAt: string }
+) & { revision?: string };
 
 /**
  * Operator state still holds token rows (#834 replaces it). Each slot rides in
@@ -1295,7 +1296,14 @@ function slotRow(slot: UiAgentSlot): UiAccessToken {
     tokenPrefix: "",
     createdAt: slot.state === "issued" ? slot.issuedAt : "",
     ...(slot.state === "revoked" ? { revokedAt: slot.revokedAt } : {}),
+    ...(slot.revision ? { revision: slot.revision } : {}),
   };
+}
+
+/** The body naming the slot revision this agent's row was read at, which every token mutation requires. */
+function expectedSlot(name: string): { expect?: string } {
+  const revision = state.tokens.find((token) => token.id === name)?.revision;
+  return revision ? { expect: revision } : {};
 }
 
 /** The slot state one token row encodes. */
@@ -1354,7 +1362,8 @@ export function rotateAgentToken(name: string): Promise<void> {
     return Promise.resolve();
   }
   return mutate({
-    request: (current) => operatorRequest(`/ui/access-tokens/${encodeURIComponent(name)}`, "POST", current),
+    request: (current) =>
+      operatorRequest(`/ui/access-tokens/${encodeURIComponent(name)}`, "POST", current, expectedSlot(name)),
     busy: { tokenBusy: true, tokenNotice: null },
     done: (payload) => {
       const slot = payload?.agent;
@@ -1380,7 +1389,8 @@ export function dismissCreatedToken(): void {
 export function revokeAgentToken(name: string): Promise<void> {
   if (!window.confirm(`Revoke ${name}'s token? The agent will immediately lose access.`)) return Promise.resolve();
   return mutate({
-    request: (current) => operatorRequest(`/ui/access-tokens/${encodeURIComponent(name)}`, "DELETE", current),
+    request: (current) =>
+      operatorRequest(`/ui/access-tokens/${encodeURIComponent(name)}`, "DELETE", current, expectedSlot(name)),
     busy: { tokenBusy: true, tokenNotice: null },
     done: (payload) => {
       const slot = payload?.agent;

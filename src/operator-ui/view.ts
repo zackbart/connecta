@@ -353,6 +353,8 @@ export interface UiAccessToken {
   tokenPrefix: string;
   createdAt: string;
   revokedAt?: string;
+  /** The slot revision the row was read at; token mutations send it as `expect`. */
+  revision?: string;
 }
 
 export function accessTokenUnavailableCopy(capability?: string): string {

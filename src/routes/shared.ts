@@ -62,6 +62,39 @@ export function privateJson(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), { ...init, headers });
 }
 
+/**
+ * The body as text, or undefined once it is longer than `maxChars`. No UTF-16
+ * unit costs more than three bytes, and a malformed sequence decodes to one
+ * U+FFFD per at most three bytes, so a body past three bytes per character is
+ * past the limit too — and reading stops there, instead of buffering whatever
+ * a client cares to send before measuring it.
+ */
+export async function boundedText(request: Request, maxChars: number): Promise<string | undefined> {
+  if (!request.body) return "";
+  const maxBytes = maxChars * 3;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      reader.cancel().catch(() => {});
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const text = new TextDecoder().decode(bytes);
+  return text.length > maxChars ? undefined : text;
+}
+
 const MAX_LOGGED_VALUE_LENGTH = 64;
 
 /**

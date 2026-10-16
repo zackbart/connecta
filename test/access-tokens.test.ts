@@ -10,6 +10,10 @@ import fixture from "./fixtures/access-tokens-v023.json";
 import type { AuthResult, Connector, InboundAuth, KVStorage } from "../src/types.js";
 
 const BASE = "https://connecta.test";
+/** Any slot revision: opaque, 22 base64url characters. */
+const REVISION = expect.stringMatching(/^[A-Za-z0-9_-]{22}$/u);
+/** Well-formed, and the revision of no slot. */
+const UNKNOWN_REVISION = "A".repeat(22);
 const NAMESPACE = "connecta:access-tokens:v1";
 const owner = { namespace: "clerk:test", id: "owner" };
 const human = { ...fakeClerkAuth({ userId: "owner" }), activityActorNamespace: owner.namespace };
@@ -131,33 +135,37 @@ describe("agent token slots", () => {
       expect(response.headers.get("cache-control")).toContain("no-store");
       return { text: await response.clone().text(), body: (await response.json()) as { agents: unknown[] } };
     };
+    // Each mutation names the revision the list shows for the slot it decides from.
+    const send = async (method: "POST" | "DELETE", name = "simon") => {
+      const { agents } = (await list()).body as { agents: Array<{ name: string; revision: string }> };
+      const revision = agents.find((agent) => agent.name === name)?.revision ?? UNKNOWN_REVISION;
+      return app.fetch(request("clerk-operator", `/ui/access-tokens/${name}`, method, { expect: revision }));
+    };
     try {
       expect((await list()).body).toEqual({
         agents: [
-          { name: "simon", state: "none" },
-          { name: "ci", state: "none" },
+          { name: "simon", state: "none", revision: REVISION },
+          { name: "ci", state: "none", revision: REVISION },
         ],
       });
 
-      const issued = await app.fetch(request("clerk-operator", "/ui/access-tokens/simon", "POST"));
+      const issued = await send("POST");
       expect(issued.status).toBe(200);
       expect(issued.headers.get("cache-control")).toContain("no-store");
       const first = (await issued.json()) as { token: string; agent: { name: string; issuedAt: string } };
       expect(first.token).toMatch(/^cta_[A-Za-z0-9_-]{43}$/);
-      expect(first.agent).toEqual({ name: "simon", state: "issued", issuedAt: expect.any(String) });
+      expect(first.agent).toEqual({ name: "simon", state: "issued", issuedAt: expect.any(String), revision: REVISION });
       expect(await admits(manager, first.token)).toBe(true);
 
-      const rotated = (await (
-        await app.fetch(request("clerk-operator", "/ui/access-tokens/simon", "POST"))
-      ).json()) as { token: string };
+      const rotated = (await (await send("POST")).json()) as { token: string };
       expect(rotated.token).not.toBe(first.token);
       expect(await admits(manager, first.token)).toBe(false);
       expect(await admits(manager, rotated.token)).toBe(true);
 
       const listed = await list();
       const [simon, ci] = listed.body.agents as Array<Record<string, unknown>>;
-      expect(Object.keys(simon!).sort()).toEqual(["issuedAt", "name", "state"]);
-      expect(ci).toEqual({ name: "ci", state: "none" });
+      expect(Object.keys(simon!).sort()).toEqual(["issuedAt", "name", "revision", "state"]);
+      expect(ci).toEqual({ name: "ci", state: "none", revision: REVISION });
       for (const secret of [
         first.token,
         rotated.token,
@@ -173,26 +181,21 @@ describe("agent token slots", () => {
         expect(value).not.toContain(rotated.token);
       }
 
-      const revoked = await app.fetch(request("clerk-operator", "/ui/access-tokens/simon", "DELETE"));
+      const revoked = await send("DELETE");
       expect(await revoked.json()).toEqual({
-        agent: { name: "simon", state: "revoked", revokedAt: expect.any(String) },
+        agent: { name: "simon", state: "revoked", revokedAt: expect.any(String), revision: REVISION },
       });
       expect(await admits(manager, rotated.token)).toBe(false);
-      const reissued = (await (
-        await app.fetch(request("clerk-operator", "/ui/access-tokens/simon", "POST"))
-      ).json()) as { token: string };
+      const reissued = (await (await send("POST")).json()) as { token: string };
       expect(await admits(manager, reissued.token)).toBe(true);
 
       // Agents come from code: nothing creates, renames or rebinds one here.
-      expect((await app.fetch(request("clerk-operator", "/ui/access-tokens/nobody", "POST"))).status).toBe(404);
+      expect((await send("POST", "nobody")).status).toBe(404);
       expect((await app.fetch(request("clerk-operator", "/ui/access-tokens", "POST", { name: "x" }))).status).toBe(405);
       expect(
         (await app.fetch(request("clerk-operator", "/ui/access-tokens/simon", "PUT", { name: "renamed" }))).status,
       ).toBe(405);
-      expect(
-        (await app.fetch(request("clerk-operator", `/ui/access-tokens/${fixture.unbound.accessToken.id}`, "DELETE")))
-          .status,
-      ).toBe(404);
+      expect((await send("DELETE", fixture.unbound.accessToken.id)).status).toBe(404);
     } finally {
       await app.close();
     }
@@ -224,7 +227,7 @@ describe("agent token slots", () => {
         expect((await app.fetch(request(token, "/ui/access-tokens/simon", "DELETE"))).status, token).toBe(status);
       }
       expect(await new AccessTokenManager(storage, { agents: ["simon"] }).list()).toEqual([
-        { name: "simon", state: "issued", issuedAt: expect.any(String) },
+        { name: "simon", state: "issued", issuedAt: expect.any(String), revision: REVISION },
       ]);
       expect((await app.fetch(request("clerk-operator", "/ui/access-tokens"))).status).toBe(200);
       const foreign = request("clerk-operator", "/ui/access-tokens/simon", "POST");
@@ -232,7 +235,7 @@ describe("agent token slots", () => {
       expect((await app.fetch(foreign)).status).toBe(403);
       expect((await app.fetch(request("clerk-operator", "/ui/access-tokens", "OPTIONS"))).status).toBe(403);
       expect(await new AccessTokenManager(storage, { agents: ["simon"] }).list()).toEqual([
-        { name: "simon", state: "issued", issuedAt: expect.any(String) },
+        { name: "simon", state: "issued", issuedAt: expect.any(String), revision: REVISION },
       ]);
     } finally {
       await app.close();
@@ -301,7 +304,9 @@ describe("rotation and revocation", () => {
     if (rotated.status === "fulfilled") expect(await admits(seed, rotated.value.token)).toBe(false);
     // Every lookup that survives is inert: no secret admits.
     expect(await admits(seed, first.token)).toBe(false);
-    expect(await seed.list()).toEqual([{ name: "simon", state: "revoked", revokedAt: expect.any(String) }]);
+    expect(await seed.list()).toEqual([
+      { name: "simon", state: "revoked", revokedAt: expect.any(String), revision: REVISION },
+    ]);
   });
 
   it("INV-4: revocation is one slot commit and deletes nothing", async () => {
@@ -447,6 +452,7 @@ describe("tokens issued before agents", () => {
       name: "legacy",
       state: "issued",
       issuedAt: fixture.unbound.accessToken.createdAt,
+      revision: REVISION,
     });
     const authz = await authorize(request(fixture.unbound.token), BASE, [manager.auth]);
     expect(authz).toMatchObject({ ok: true, identity: { agent: "legacy" } });

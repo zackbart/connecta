@@ -1,5 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
+import { isSlotRevision } from "../src/access-tokens.js";
 import type {
+  OperatorAgent,
   OperatorMemberManage,
   OperatorRunsAs,
   OperatorSharedSource,
@@ -61,6 +63,9 @@ describe("operator contract v2 fixtures", () => {
     expect(pools.some((p) => p.owner === null)).toBe(true);
     expect(agents.map((a) => a.token.state)).toEqual(["issued", "none"]);
     expect(agents.find((a) => a.token.state === "issued")?.lastSeenAt).not.toBeNull();
+    // Every slot state carries the revision GET /ui/access-tokens lists (#837 P3b).
+    expectTypeOf<OperatorAgent["token"]>().toExtend<{ revision: string }>();
+    for (const agent of agents) expect(isSlotRevision(agent.token.revision), agent.name).toBe(true);
     const kinds: Record<OperatorRunsAs["kind"], boolean> = {
       shared: false,
       personal: false,
