@@ -101,6 +101,13 @@ async function providerChallenge(
   auth: readonly InboundAuth[],
   refusingProvider?: InboundAuth,
 ): Promise<Response> {
+  const privateHeaders = new Headers(response.headers);
+  privateHeaders.set("Cache-Control", "no-store");
+  response = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: privateHeaders,
+  });
   if (response.status !== 401) return response;
   if (!response.headers.has("WWW-Authenticate")) {
     const headers = new Headers(response.headers);

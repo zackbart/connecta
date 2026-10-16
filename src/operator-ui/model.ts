@@ -39,7 +39,8 @@ interface UiCredentialField {
   description?: string;
   placeholder?: string;
   inputType: "email" | "password" | "text";
-  configured: boolean;
+  /** null when metadata could not be read. */
+  configured: boolean | null;
   lastFour?: string;
   updatedAt?: string;
 }
@@ -49,7 +50,8 @@ interface UiCredential {
   description?: string;
   placeholder?: string;
   fields?: UiCredentialField[];
-  configured: boolean;
+  /** null when metadata could not be read. */
+  configured: boolean | null;
   /** A stored value exists and may be deleted even if it cannot be decrypted. */
   removable?: boolean;
   lastFour?: string;

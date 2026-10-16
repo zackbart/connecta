@@ -113,18 +113,96 @@ describe("cloudflareAccessAuth", () => {
     },
   );
 
-  it("fails closed when Access or its identity is unavailable", async () => {
+  it("INV-4: distinguishes unavailable identity lookup from missing or rejected identity", async () => {
     const auth = cloudflareAccessAuth();
     const missing = await auth.authorize(request, BASE);
     expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.response.status).toBe(401);
+    if (!missing.ok) {
+      expect(missing.response.status).toBe(401);
+      expect(missing.response.headers.get("Cache-Control")).toBe("no-store");
+    }
 
     const getIdentity = vi.fn().mockRejectedValue(new Error("Access failed"));
     const failed = await auth.authorize(request, BASE, {
       access: { aud: "access-app", getIdentity },
     });
     expect(failed.ok).toBe(false);
-    if (!failed.ok) expect(failed.response.status).toBe(401);
+    if (!failed.ok) {
+      expect(failed.response.status).toBe(503);
+      expect(failed.response.headers.get("Cache-Control")).toBe("no-store");
+      expect(failed.response.headers.get("Retry-After")).toBe("1");
+      expect(failed.response.headers.has("WWW-Authenticate")).toBe(false);
+      await expect(failed.response.json()).resolves.toEqual({
+        error: "Cloudflare Access identity unavailable",
+        problem: "identity_unavailable",
+      });
+    }
+    const rejected = await auth.authorize(request, BASE, runtime({ service_token_id: "service" }));
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      expect(rejected.response.status).toBe(403);
+      expect(rejected.response.headers.get("Cache-Control")).toBe("no-store");
+    }
+  });
+
+  it("INV-4: bounds an unavailable Access lookup and never admits its late result", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolve!: (identity: Record<string, unknown>) => void;
+      const pending = cloudflareAccessAuth().authorize(request, BASE, {
+        access: {
+          aud: "access-app",
+          getIdentity: () =>
+            new Promise((done) => {
+              resolve = done;
+            }),
+        },
+      });
+      await vi.advanceTimersByTimeAsync(5001);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(503);
+        expect(result.response.headers.get("Cache-Control")).toBe("no-store");
+      }
+      resolve({ user_uuid: "late-human" });
+      await Promise.resolve();
+      expect(result.ok).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([401, 403, 503])(
+    "INV-4: applies no-store to provider refusal %s on protected operator routes",
+    async (status) => {
+      const deployment = makeDeployment({
+        auth: {
+          kind: "test",
+          interactiveOperator: true,
+          authorize: async () => ({ ok: false, response: Response.json({ error: "refused" }, { status }) }),
+        },
+      });
+      try {
+        for (const path of ["/ui/data", "/ui/api/config", "/ui/connectors/hidden"]) {
+          const response = await deployment.fetch(new Request(`${BASE}${path}`));
+          expect(response.status).toBe(status);
+          expect(response.headers.get("Cache-Control")).toBe("no-store");
+        }
+      } finally {
+        await deployment.close();
+      }
+    },
+  );
+
+  it("selects Access for an Access-only shell even before trusted context is available", async () => {
+    const deployment = makeDeployment({ auth: cloudflareAccessAuth() });
+    try {
+      const shell = await deployment.fetch(new Request(`${BASE}/`));
+      expect(await shell.text()).toContain('"auth":{"kind":"cloudflare-access"}');
+    } finally {
+      await deployment.close();
+    }
   });
 
   it("refuses Access-only machine MCP calls and operator mutation", async () => {

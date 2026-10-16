@@ -100,7 +100,8 @@ export async function routeUi(context: RouteContext): Promise<Response | null> {
         : undefined;
     const uiAuth =
       ambient ??
-      opts.config.auth.find((provider) => provider.uiAuth && provider.uiAuth.kind !== "cloudflare-access")?.uiAuth;
+      opts.config.auth.find((provider) => provider.uiAuth && provider.uiAuth.kind !== "cloudflare-access")?.uiAuth ??
+      opts.config.auth.find((provider) => provider.uiAuth?.kind === "cloudflare-access")?.uiAuth;
     const mcpUrl = new URL("/mcp", baseUrl).toString();
     const clerkOrigin =
       uiAuth?.kind === "clerk" && isSafeHttpsUrl(uiAuth.frontendApiUrl)

@@ -90,3 +90,23 @@ The flows cover Clerk sign-in/reload/sign-out; OAuth connect/consent/callback/
 connected reread/reload; and credential save/test/replace/remove. They collect
 CSP violations across every document and popup, and fail on unexpected network
 traffic. No credentials enter visual fixtures or screenshot baselines.
+
+`test/browser/operator-auth-recovery.spec.ts` serves the production UI and real
+operator routes with a trusted Worker Access context. It covers transient and
+rejected identity reads, missing shell context, delayed OAuth grant commits,
+catalog/auth reconciliation, and unreadable credential metadata, all without
+reloading the document. The repeated-refusal browser case drives ten focus and visibility returns
+160 ms apart with a controlled clock, checks the shared backoff and exhausted
+retry budget, then recovers without reloading. Store tests cover the same
+state transitions for 401, 403, and 503 refusals and debounced explicit Retry.
+Delayed config/detail cases in both runtimes and Chromium keep returning focus
+every 2.1 seconds, require eventual catalog/auth publication, and assert one
+recovery cycle. Store cases also preserve explicit Retry and sign-out while
+that cycle is pending. The Retry focus browser case uses a controlled clock to
+check click coalescing inside 150 ms and heading focus after a later Retry.
+Store tests defend bounded recovery and OAuth polling,
+atomic refresh publication, identity cancellation, and late-response fencing.
+Multi-connector browser cases assert scoped polling and cancellation after
+navigation, successful authorization, and failed status. The Clerk browser
+fixture holds sign-out pending to check that queued focus and later passive
+returns cannot restore operator data.

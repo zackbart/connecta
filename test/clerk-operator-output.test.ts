@@ -267,7 +267,7 @@ describe("Clerk operator output with the real SDK", () => {
       await assertDenialSinks(
         cloudflareAccessAuth(),
         request,
-        ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403,
+        denial === "identity-failed" ? 503 : ["invalid-aud", "explicit-header"].includes(denial) ? 401 : 403,
         spies,
         context,
       );
@@ -282,7 +282,7 @@ describe("Clerk operator output with the real SDK", () => {
           },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
         }),
-        ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403,
+        denial === "identity-failed" ? 503 : ["invalid-aud", "explicit-header"].includes(denial) ? 401 : 403,
         spies,
         context,
       );

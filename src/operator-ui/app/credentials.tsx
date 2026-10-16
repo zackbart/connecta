@@ -126,9 +126,11 @@ export function CredentialCard({
             <div key={field.name}>
               <span>{field.label}</span>
               <span className="meta">
-                {field.configured
-                  ? `configured${field.updatedAt ? ` · updated ${formatDate(field.updatedAt)}` : ""}`
-                  : "not configured"}
+                {field.configured === null
+                  ? "unavailable"
+                  : field.configured
+                    ? `configured${field.updatedAt ? ` · updated ${formatDate(field.updatedAt)}` : ""}`
+                    : "not configured"}
               </span>
             </div>
           ))}

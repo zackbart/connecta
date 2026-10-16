@@ -99,6 +99,12 @@ and `test/helpers/operator-member-view.ts` checks a member response's exact
 shape and compares its values with a projection built from config, membership,
 the member's own partition status, and each personal connector's exact `manage`.
 
+`GET /ui/api/config?connector=<id>` narrows the same contract to one admitted
+connector before status and catalog probes. Config, provenance, grants, pool
+tools, management permissions and live rows contain only that connector's
+facts. An unknown or invisible id receives a no-store 404. The selector never
+widens identity grants.
+
 `connecta doctor --config` fetches this authenticated contract and prints only
 `config` as indented JSON. It requires the UI module and the existing doctor
 authentication environment variables; it runs no diagnostic program, follows
@@ -111,7 +117,49 @@ and Workers. HTML contains only mount points and escaped inert configuration;
 it remains uncached. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
-owns authenticated reads and existing mutations. Endpoints, Connectors, connector
+owns authenticated reads and existing mutations. An Access-only shell selects
+Access even when the HTML request has no trusted context; only authenticated
+API responses establish the session. A gated Access session offers Retry.
+Focus, visibility, and timer-driven recovery share one admission-read schedule
+with at least two seconds between passive attempts. An in-flight passive attempt
+coalesces returns until its summary and matching catalog/auth cycle finish,
+so slow successful reads can publish. Each admission summary and its matching
+config/auth cycle share a 15-second deadline, including token acquisition,
+fetches and response bodies. This is an admission deadline, not a request
+lifetime limit: it releases the recovery guard and exposes Retry without aborting
+the pending read or invalidating its identity/revision fence. A late healthy
+response still publishes if that cycle is current. Passive timers and returns
+coalesce onto the pending cycle, including after its deadline; they never start
+duplicate summary, token, config, detail or body reads. The passive retry schedule
+stays bounded and does not reset its budget on a deadline. Retry remains available
+during recovery configuration loading and supersedes and aborts the old cycle;
+identity changes, navigation and connector-page unmount also cancel it. Navigation
+that cancels pending data schedules a bounded reread for the destination. Failed reads retry after
+2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
+those four automatic retries, a focus return can request one more read after
+the eight-second backoff, without replenishing the automatic budget. Retry
+resets the budget with a 150 ms click debounce. Successful reads and explicit
+identity transitions also reset recovery. Identity changes
+cancel pending retries and fence out responses from the previous identity.
+Queued focus callbacks carry the same identity fence. Explicit sign-out
+suppresses passive reads until an intentional sign-in or a new Clerk session.
+
+Catalog and connector auth details share one revisioned refresh cycle. Each
+completed connector publishes its catalog facts and auth controls together,
+while a slow provider leaves other rows usable.
+Catalog refresh, connector refresh, and mutation follow-up reads update both
+consumers together. A later refresh or mutation invalidates an older cycle's publication fence
+without aborting its read, and a failed contract read clears its old snapshot. After an explicit OAuth
+start, visible tabs poll only that connector's read-only catalog and auth facts
+every two seconds for up to 30 seconds. The scoped result replaces only that
+connector's matching live row and auth controls. Success, a failed read or status,
+disconnect, navigation away from the connector, unmount, or identity reset ends
+polling and aborts its in-flight reads. The deadline also aborts a stalled read.
+A later focus return can request another status read. Recovery never starts OAuth
+or replays a mutation.
+Unreadable credential metadata uses `configured: null`, including named fields,
+and renders as unavailable with a retry prompt. It does not claim that the slot
+is empty. Endpoints, Connectors, connector
 detail, and Settings consume the typed contract. Activity retains
 its authenticated data routes. Connector detail tabs live
 in the URL hash; Activity filters live in the query string and apply to loaded
