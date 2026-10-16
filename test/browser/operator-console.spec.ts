@@ -121,8 +121,8 @@ test.describe("who can use each endpoint", () => {
     await page.goto(VISUAL_ORIGIN + "/");
     const who = (path: string) => page.getByRole("group", { name: `Who can use ${path}`, exact: true });
     await expect(who("/mcp").locator(".access-chip-text")).toHaveText(["Ada Lovelace", "user_grace"]);
-    await expect(who("/mcp/ada").locator(".access-chip-text")).toHaveText(["Ada Lovelace", "agent:simon-ada"]);
-    await expect(who("/mcp/support").locator(".access-chip-text")).toHaveText(["Lin Chen", "agent:triage"]);
+    await expect(who("/mcp/ada").locator(".access-chip-text")).toHaveText(["Ada Lovelace", "simon-ada"]);
+    await expect(who("/mcp/support").locator(".access-chip-text")).toHaveText(["Lin Chen", "triage"]);
     // People get an avatar with initials; agents get the token mark instead.
     await expect(who("/mcp/ada").locator(".access-chip.human .avatar")).toHaveText(["AL"]);
     await expect(who("/mcp/ada").locator(".access-chip.agent .agent-mark")).toHaveCount(1);

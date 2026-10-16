@@ -14,6 +14,7 @@ import {
 } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
 import { useCloseOnRecovery } from "./contract-state.js";
+import { Icon } from "./icons.js";
 import {
   cancelTokenAction,
   confirmTokenAction,
@@ -100,8 +101,10 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
     <tr data-agent={row.name} className={row.slot.state === "revoked" ? "revoked" : undefined}>
       <th scope="row">
         <span className="agent-name">
-          <span className="agent-mark" aria-hidden="true" />
-          <span className="mono">{row.name}</span>
+          <span className="agent-mark" aria-hidden="true">
+            <Icon name="agent" size={12} />
+          </span>
+          <span>{row.name}</span>
         </span>
       </th>
       <td>

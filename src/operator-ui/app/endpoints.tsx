@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from "react";
+import { Fragment, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   endpointRows,
   runsAsLabel,
@@ -13,6 +13,7 @@ import { mcpUrl } from "./config.js";
 import { Badge, CopyButton, StateBlock } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
 import { ContractState, maintainerContract, useCloseOnRecovery } from "./contract-state.js";
+import { Icon } from "./icons.js";
 
 /** What the client setup drawer needs: a path, its absolute URL, and the name a client files it under. */
 export interface SetupTarget {
@@ -26,7 +27,7 @@ export function EndpointLine({ url, label, kind }: { url: string; label: string;
   return (
     <div className={kind ? "endpoint endpoint-agent" : "endpoint"}>
       {kind ? <span className="endpoint-kind">Agents</span> : null}
-      <code>{url}</code>
+      <code>{breakable(url)}</code>
       <CopyButton
         value={url}
         label="Copy URL"
@@ -35,6 +36,16 @@ export function EndpointLine({ url, label, kind }: { url: string; label: string;
       />
     </div>
   );
+}
+
+/** A URL that wraps only after a slash, never inside a word. */
+function breakable(url: string): ReactNode[] {
+  return url.split(/(?<=\/)(?!\/)/).map((part, index) => (
+    <Fragment key={index}>
+      {index ? <wbr /> : null}
+      {part}
+    </Fragment>
+  ));
 }
 
 /** Absolute URL for an endpoint path, on the deployment's own origin. */
@@ -112,12 +123,17 @@ function ConnectorName({ group, state }: { group: EndpointGroup; state: Operator
   );
 }
 
-/** A person by avatar and name, or an agent with its token mark. */
+/** A person by avatar and name, or an agent by name with an agent mark. */
 function Chip({ chip }: { chip: AccessChip }) {
   return (
     <li className={`access-chip ${chip.kind}`}>
       {chip.kind === "agent" ? (
-        <span className="agent-mark" aria-hidden="true" />
+        <>
+          <span className="agent-mark" aria-hidden="true">
+            <Icon name="agent" size={12} />
+          </span>
+          <span className="visually-hidden">Agent </span>
+        </>
       ) : (
         <span className={`avatar hue-${chip.hue}`} aria-hidden="true">
           {chip.initials}
@@ -284,9 +300,11 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                     <span className="visually-hidden">Tools: </span>
                     {endpoint.toolCount}
                   </span>
-                  <Badge tone={endpoint.readOnly ? "accent" : "neutral"}>
-                    {endpoint.readOnly ? "read-only" : "rw"}
-                  </Badge>
+                  {endpoint.readOnly ? (
+                    <Badge tone="accent">read-only</Badge>
+                  ) : (
+                    <span className="endpoint-mode" aria-hidden="true" />
+                  )}
                   <Button
                     size="sm"
                     className="endpoint-setup"

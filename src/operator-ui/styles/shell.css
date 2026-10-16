@@ -106,9 +106,9 @@
 }
 .account-avatar {
   align-items: center;
-  background: var(--text);
+  background: var(--avatar-fill);
   border-radius: 50%;
-  color: var(--bg);
+  color: var(--avatar-ink);
   display: inline-grid;
   font-size: var(--text-xs);
   font-weight: var(--weight-bold);
@@ -276,12 +276,9 @@
   font-size: 1.875rem;
 }
 .gate-mark {
-  background:
-    conic-gradient(from 45deg, var(--text) 0 90deg, transparent 0),
-    radial-gradient(circle, transparent 0 7.6px, var(--bg) 8.4px 13px, transparent 13.8px), var(--text);
-  border-radius: 13px;
+  border-radius: var(--radius-md);
   height: 2.75rem;
-  margin-bottom: var(--space-6);
+  margin: 0 0 var(--space-6);
   width: 2.75rem;
 }
 .gate-mark.locked {
@@ -290,10 +287,6 @@
   color: var(--text-2);
   display: inline-grid;
   justify-content: center;
-}
-.gate-lede {
-  color: var(--text-2);
-  margin: 0.625rem 0 var(--space-6);
 }
 .gate-card {
   background: var(--surface);
@@ -306,9 +299,6 @@
   padding: var(--space-6);
   text-align: left;
   width: 100%;
-}
-.gate-lede + .gate-card {
-  margin-top: 0;
 }
 .gate-card > .state-block {
   border: 0;
@@ -343,14 +333,22 @@
   .deployment-name {
     display: none;
   }
+  /* The row's edges fade inside its padding, so a section cut off at either
+     end reads as more to scroll to. */
   .page-nav {
     border-top: 1px solid var(--line);
     flex: 1 0 100%;
+    gap: 0;
     margin: 0 calc(-1 * var(--pad));
+    mask-image: linear-gradient(to right, transparent, #000 var(--pad), #000 calc(100% - var(--pad)), transparent);
     order: 3;
     overflow-x: auto;
-    padding: var(--space-2) var(--pad);
+    padding: 0.375rem var(--pad);
     scrollbar-width: none;
+  }
+  .page-nav .navlink {
+    font-size: var(--text-sm);
+    padding: 0.375rem 0.5rem;
   }
   .command-trigger {
     border: 0;

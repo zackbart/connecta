@@ -505,7 +505,7 @@ test("INV-4: queued focus and later passive returns cannot restore data during d
 test("keeps the shell open and loads private data only after authentication", async ({ page }) => {
   await page.goto(origin + "/");
 
-  await expect(page.getByRole("heading", { name: "Endpoints" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page.getByText("CRM")).toHaveCount(0);
   expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(0);
 

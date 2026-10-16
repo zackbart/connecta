@@ -64,6 +64,28 @@ const PATHS = {
   ),
   check: <path d="M20 6 9 17l-5-5" />,
   back: <path d="m15 18-6-6 6-6" />,
+  page: (
+    <>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+    </>
+  ),
+  plug: (
+    <>
+      <path d="M9 3v5M15 3v5" />
+      <path d="M6 8h12v3a6 6 0 0 1-12 0z" />
+      <path d="M12 17v4" />
+    </>
+  ),
+  tool: (
+    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
+  ),
+  agent: (
+    <>
+      <rect x="4" y="8" width="16" height="12" rx="3" />
+      <path d="M12 8V4.5M9.5 13.5v1M14.5 13.5v1" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 type IconName = keyof typeof PATHS;

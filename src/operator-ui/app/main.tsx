@@ -5,7 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./query.js";
 import { AccountMenu, ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
-import { useEffect, useSyncExternalStore, useState } from "react";
+import { useEffect, useRef, useSyncExternalStore, useState } from "react";
 import {
   activityAllowed,
   activityReadable,
@@ -22,7 +22,7 @@ import {
   type OperatorPage,
   type OperatorState,
 } from "../view.js";
-import { auth, productDescription, productName, titleSuffix } from "./config.js";
+import { auth, brandMark, productDescription, productName, titleSuffix } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
 import { SettingsPage } from "./config-page.js";
 import { EndpointsPage } from "./endpoints.js";
@@ -119,6 +119,19 @@ function Account({ role }: { role: "maintainer" | "member" }) {
 
 function OperatorNav() {
   const state = useOperatorState();
+  const nav = useRef<HTMLElement | null>(null);
+  // On a narrow screen the sections scroll sideways; keep the current one in
+  // view after every route change, without moving the page itself.
+  useEffect(() => {
+    const row = nav.current;
+    const link = row?.querySelector('[aria-current="page"]');
+    if (!row || !link || row.scrollWidth <= row.clientWidth) return;
+    const bounds = row.getBoundingClientRect();
+    const current = link.getBoundingClientRect();
+    const inset = parseFloat(getComputedStyle(row).paddingLeft) || 0;
+    if (current.left < bounds.left + inset) row.scrollLeft += current.left - bounds.left - inset;
+    else if (current.right > bounds.right - inset) row.scrollLeft += current.right - bounds.right + inset;
+  }, [state.page, state.session]);
   // A member's top bar is branding, their account and the way out: no tabs,
   // no search over pages they cannot open.
   // The last confirmed role, not the contract on screen: a failed refresh
@@ -137,7 +150,7 @@ function OperatorNav() {
   return (
     <div className="mast-actions">
       <DeploymentName state={state} />
-      <nav className="page-nav" aria-label="Operator pages">
+      <nav className="page-nav" aria-label="Operator pages" ref={nav}>
         {(state.session === "ready" ? visiblePages(state) : []).map((page) => (
           <PageLink
             key={page}
@@ -159,10 +172,17 @@ function OperatorNav() {
   );
 }
 
+/** The top bar's mark, larger: the same rule decides whether there is one. */
+function GateMark() {
+  if (brandMark === "connecta") return <span className="brand-mark gate-mark" aria-hidden="true" />;
+  if (brandMark === "favicon") return <img className="brand-mark gate-mark" src="/favicon.svg" alt="" />;
+  return null;
+}
+
 /**
- * The page before the session is known, laid out as the page it guards: the
- * same heading, the same description, the same column. Signing in swaps the
- * form for the content without moving anything above it.
+ * The page before the session is known: the mark, "Sign in", and the way in
+ * on one card. While the session is checked the card shows the same busy
+ * block a signed-in page shows while it loads.
  */
 function Gate({ state }: { state: OperatorState }) {
   const [token, setToken] = useState("");
@@ -170,11 +190,10 @@ function Gate({ state }: { state: OperatorState }) {
   const loading = state.session === "loading";
   return (
     <section id="gate" className="gate" aria-busy={loading ? "true" : "false"}>
-      <span className="gate-mark" aria-hidden="true" />
+      <GateMark />
       <h1 id="gateHeading" tabIndex={-1}>
-        {PAGE_META[state.page].label}
+        Sign in
       </h1>
-      <p className="gate-lede">{pageDescription(state.page, productDescription)}</p>
       <div className="gate-card">
         {/* While the session is checked, the same block the signed-in page
               shows while it loads, so the words and the shape do not change

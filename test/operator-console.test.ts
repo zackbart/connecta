@@ -26,8 +26,8 @@ describe("who can use an endpoint", () => {
     const rows = endpointRows(maintainer());
     expect(rows.map((row) => [row.path, row.access.map((chip) => chip.text)])).toEqual([
       ["/mcp", ["Ada Lovelace", "user_grace"]],
-      ["/mcp/ada", ["Ada Lovelace", "agent:simon-ada"]],
-      ["/mcp/support", ["Lin Chen", "agent:triage"]],
+      ["/mcp/ada", ["Ada Lovelace", "simon-ada"]],
+      ["/mcp/support", ["Lin Chen", "triage"]],
       ["/mcp/team", ["Ada Lovelace", "Lin Chen"]],
     ]);
   });
@@ -43,7 +43,7 @@ describe("who can use an endpoint", () => {
     expect(chips.map(({ kind, text, initials }) => [kind, text, initials])).toEqual([
       ["human", "Ada Lovelace", "AL"],
       ["human", "user_grace", "GR"],
-      ["agent", "agent:nightly", ""],
+      ["agent", "nightly", ""],
     ]);
     expect(new Set(chips.map((chip) => chip.key)).size).toBe(3);
     const again = accessChips([{ kind: "human", namespace: CLERK, id: "user_ada", label: "Renamed" }]);

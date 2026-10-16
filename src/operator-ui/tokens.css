@@ -8,6 +8,9 @@
  * to retheme every page. It sets `--accent`, `--radius`, `--sans` and
  * `--mono`; every accent tint and every smaller radius is mixed or derived
  * from those, so one configured value keeps the rest consistent with it.
+ * A configured accent also sets `--custom-on-accent` and
+ * `--custom-accent-text`: text on its fill, and a lightened accent for text
+ * on dark surfaces, both picked from its own lightness.
  */
 
 :root {
@@ -46,8 +49,8 @@
 
   /* Shape: one configured radius; the smaller ones follow it. */
   --radius: 14px;
-  --radius-md: max(calc(var(--radius) - 4px), 2px);
-  --radius-sm: max(calc(var(--radius) - 7px), 2px);
+  --radius-md: min(var(--radius), max(calc(var(--radius) - 4px), 2px));
+  --radius-sm: min(var(--radius), max(calc(var(--radius) - 7px), 2px));
   --radius-pill: 999px;
 
   /* Surfaces */
@@ -58,10 +61,15 @@
   --hover: #f5f2ec;
   --line: #e9e4da;
   --line-strong: #dcd5c8;
+  /* A field's edge: at least 3:1 against every surface it sits on. */
+  --line-field: #938b7d;
   --text: #1d1a16;
   --text-2: #5c564c;
   --text-3: #756e61;
   --scrim: rgb(20 16 8 / 0.38);
+  /* The signed-in account's initial in the top bar. */
+  --avatar-fill: var(--text);
+  --avatar-ink: var(--bg);
 
   /* One accent. The tints mix from it, so a configured accent recolors them. */
   --default-accent: #4c44e0;
@@ -69,7 +77,7 @@
   --accent-strong: color-mix(in srgb, var(--accent) 84%, #000000);
   --accent-soft: color-mix(in srgb, var(--accent) 9%, var(--surface));
   --accent-line: color-mix(in srgb, var(--accent) 26%, var(--surface));
-  --on-accent: #ffffff;
+  --on-accent: var(--custom-on-accent, #ffffff);
   /* Accent as text reads differently from accent as a fill; both derive. */
   --link: var(--accent);
 
@@ -113,16 +121,19 @@ html[data-scheme="dark"] {
     --hover: #24221e;
     --line: #2c2925;
     --line-strong: #3a3631;
+    --line-field: #757064;
     --text: #f3efe7;
     --text-2: #b5aea2;
     --text-3: #8a8378;
     --scrim: rgb(0 0 0 / 0.6);
+    --avatar-fill: #34312c;
+    --avatar-ink: #e9e4da;
     --default-accent: #8c86ff;
     --accent-strong: color-mix(in srgb, var(--accent) 80%, #ffffff);
     --accent-soft: color-mix(in srgb, var(--accent) 17%, var(--surface));
     --accent-line: color-mix(in srgb, var(--accent) 38%, var(--surface));
-    --on-accent: #0f0e1f;
-    --link: color-mix(in srgb, var(--accent) 80%, #ffffff);
+    --on-accent: var(--custom-on-accent, #0f0e1f);
+    --link: var(--custom-accent-text, color-mix(in srgb, var(--accent) 80%, #ffffff));
     --ok: #5bd08f;
     --ok-soft: #173326;
     --ok-line: #24513a;
@@ -145,16 +156,19 @@ html[data-scheme="dark"] {
   --hover: #24221e;
   --line: #2c2925;
   --line-strong: #3a3631;
+  --line-field: #757064;
   --text: #f3efe7;
   --text-2: #b5aea2;
   --text-3: #8a8378;
   --scrim: rgb(0 0 0 / 0.6);
+  --avatar-fill: #34312c;
+  --avatar-ink: #e9e4da;
   --default-accent: #8c86ff;
   --accent-strong: color-mix(in srgb, var(--accent) 80%, #ffffff);
   --accent-soft: color-mix(in srgb, var(--accent) 17%, var(--surface));
   --accent-line: color-mix(in srgb, var(--accent) 38%, var(--surface));
-  --on-accent: #0f0e1f;
-  --link: color-mix(in srgb, var(--accent) 80%, #ffffff);
+  --on-accent: var(--custom-on-accent, #0f0e1f);
+  --link: var(--custom-accent-text, color-mix(in srgb, var(--accent) 80%, #ffffff));
   --ok: #5bd08f;
   --ok-soft: #173326;
   --ok-line: #24513a;

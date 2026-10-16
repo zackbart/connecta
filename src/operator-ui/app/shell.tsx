@@ -89,14 +89,18 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
       <button
         type="button"
         className="command-trigger"
+        aria-label="Search"
+        aria-keyshortcuts="Meta+K Control+K"
         onClick={() => {
           commandReturnFocus.current = document.activeElement as HTMLElement;
           setCommandOpen(true);
         }}
       >
         <Icon name="search" size={15} />
-        <span className="command-label">Search</span>
-        <kbd>⌘K</kbd>
+        <span className="command-label" aria-hidden="true">
+          Search
+        </span>
+        <kbd aria-hidden="true">⌘K</kbd>
       </button>
       <button
         type="button"
@@ -133,6 +137,7 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
         )}
       </Dialog>
       <Dialog
+        palette
         returnFocusTo={commandReturnFocus}
         open={commandOpen}
         onOpenChange={setCommandOpen}
@@ -140,12 +145,16 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
         description="Search pages, connectors, tools and actions."
       >
         <Command label="Operator commands" loop>
-          <Command.Input className="command-input" placeholder="Search pages, connectors, tools…" autoFocus />
+          <div className="command-field">
+            <Icon name="search" size={16} />
+            <Command.Input className="command-input" placeholder="Search pages, connectors, tools…" autoFocus />
+          </div>
           <Command.List className="command-list">
-            <Command.Empty>No matching pages, connectors, tools or actions.</Command.Empty>
+            <Command.Empty>No matches</Command.Empty>
             <Command.Group heading="Pages">
               {pages.map((page) => (
                 <Command.Item key={page} value={PAGE_META[page].label} onSelect={() => go(page)}>
+                  <Icon name="page" size={15} />
                   {PAGE_META[page].label}
                 </Command.Item>
               ))}
@@ -159,6 +168,7 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
                       value={`connector ${connector.id} ${connector.title ?? ""}`}
                       onSelect={() => go("connector", `/connectors/${encodeURIComponent(connector.id)}#tools`)}
                     >
+                      <Icon name="plug" size={15} />
                       {connector.title ?? connector.id}
                     </Command.Item>
                   ))}
@@ -171,7 +181,8 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
                         value={`tool ${tool.address} ${tool.description ?? ""}`}
                         onSelect={() => go("connector", `/connectors/${encodeURIComponent(connector.id)}#tools`)}
                       >
-                        {tool.address}
+                        <Icon name="tool" size={15} />
+                        <code>{tool.address}</code>
                       </Command.Item>
                     )),
                   )}
@@ -191,6 +202,7 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
                   setAppearanceOpen(true);
                 }}
               >
+                <Icon name="sun" size={15} />
                 Appearance
               </Command.Item>
             </Command.Group>
@@ -204,7 +216,8 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
 /**
  * The account in the top bar: who is signed in, and the way out. A
  * disclosure, not a menu widget: its contents are a line of text and one or
- * two plain buttons, reachable with Tab. Escape and a click elsewhere close it.
+ * two plain buttons, reachable with Tab. Escape, a click elsewhere, and focus
+ * leaving it close it.
  */
 export function AccountMenu({
   account,
@@ -240,12 +253,21 @@ export function AccountMenu({
   }, [open]);
   const initial = account?.trim().charAt(0).toUpperCase();
   return (
-    <div className="account-menu" ref={root}>
+    <div
+      className="account-menu"
+      ref={root}
+      onBlur={(event) => {
+        // Tabbing past the panel's last button closes it, as a click elsewhere does.
+        const next = event.relatedTarget as Node | null;
+        if (open && next && !root.current?.contains(next)) setOpen(false);
+      }}
+    >
       <button
         ref={trigger}
         type="button"
         className="account-trigger"
         aria-label="Account"
+        title="Account"
         aria-expanded={open}
         aria-controls={panel}
         onClick={() => setOpen((value) => !value)}

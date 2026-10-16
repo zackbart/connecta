@@ -47,7 +47,7 @@ export interface AccessChip {
   /** Unique within one endpoint. */
   key: string;
   kind: "human" | "agent";
-  /** A person's label or raw id; an agent's `agent:<name>`. */
+  /** A person's label or raw id; an agent's bare name (its key is `agent:<name>`). */
   text: string;
   /** Up to two letters for a person's avatar; empty for an agent. */
   initials: string;
@@ -77,7 +77,7 @@ function hueOf(key: string): number {
 function accessChip(member: OperatorMember): AccessChip {
   if (member.kind === "agent") {
     const key = `agent:${member.name}`;
-    return { key, kind: "agent", text: key, initials: "", hue: hueOf(key) };
+    return { key, kind: "agent", text: member.name, initials: "", hue: hueOf(key) };
   }
   const key = `${member.namespace}:${member.id}`;
   const text = member.label ?? member.id;

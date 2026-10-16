@@ -963,7 +963,7 @@ export function gateCopy(kind: string, signedIn: boolean): string {
     return "Checking Cloudflare Access identity failed. Retry to check whether this browser can open operator pages.";
   }
   if (kind !== "clerk") {
-    return "Paste an operator bearer token to open this page. Nothing is requested until you do.";
+    return "Paste an operator bearer token.";
   }
   return signedIn
     ? "Signed in with Clerk, but this account cannot open deployment-wide operator pages."

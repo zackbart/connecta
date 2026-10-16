@@ -78,18 +78,24 @@
   z-index: 1;
 }
 
-/* A URL a person copies: mono text with a copy button beside it. */
+/* A URL a person copies: mono text with a copy button beside it. It wraps
+   only after a slash, and the button stays level with its first line. */
 .endpoint {
-  align-items: center;
+  align-items: flex-start;
   display: flex;
   gap: var(--space-2);
   min-width: 0;
+}
+.endpoint code,
+.endpoint .endpoint-kind {
+  line-height: 1.125rem;
+  padding-block: 0.25rem;
 }
 .endpoint code {
   color: var(--text-2);
   font-size: var(--text-xs);
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .endpoint-name .endpoint {
   gap: 0.25rem;

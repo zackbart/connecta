@@ -34,12 +34,15 @@ export function Dialog({
   children,
   returnFocusTo,
   drawer,
+  palette,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   description: string;
   drawer?: boolean;
+  /** A command palette: the field leads, the title is for screen readers, Esc closes. */
+  palette?: boolean;
   children: ReactNode;
   returnFocusTo: RefObject<HTMLElement | null>;
 }) {
@@ -48,7 +51,7 @@ export function Dialog({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="dialog-overlay" />
         <DialogPrimitive.Content
-          className={drawer ? "dialog-content drawer-content" : "dialog-content"}
+          className={classes("dialog-content", drawer ? "drawer-content" : undefined, palette ? "palette" : undefined)}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             // While the recovery banner is up its Retry is the one way on; the
@@ -58,12 +61,16 @@ export function Dialog({
             else if (returnFocusTo.current?.isConnected) returnFocusTo.current.focus();
           }}
         >
-          <DialogPrimitive.Title className="dialog-title">{title}</DialogPrimitive.Title>
-          <DialogPrimitive.Description className="dialog-description">{description}</DialogPrimitive.Description>
+          <DialogPrimitive.Title className={palette ? "visually-hidden" : "dialog-title"}>
+            {title}
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className={palette ? "visually-hidden" : "dialog-description"}>
+            {description}
+          </DialogPrimitive.Description>
           {children}
           <DialogPrimitive.Close asChild>
             <Button variant="quiet" className="dialog-close" aria-label="Close dialog">
-              <Icon name="close" size={18} />
+              {palette ? <kbd>esc</kbd> : <Icon name="close" size={18} />}
             </Button>
           </DialogPrimitive.Close>
         </DialogPrimitive.Content>

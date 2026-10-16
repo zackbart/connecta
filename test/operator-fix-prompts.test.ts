@@ -369,7 +369,7 @@ describe("OAuth callback page", () => {
       const body = await (await connecta.fetch(new Request(`${BASE}${path}`))).text();
       expect(body, reason).toContain(`data-oauth-callback="${reason}"`);
       expect(body, reason).toContain('<html lang="en" data-scheme="dark">');
-      expect(body, reason).toContain(":root{--accent:#0a7d55}");
+      expect(body, reason).toContain(":root{--accent:#0a7d55;");
       expect(body, reason).toContain("--surface-2:");
       expect(body, reason).toContain('<header class="masthead shell">');
       expect(body, reason).toContain('<span class="brand">Acme Tools</span>');

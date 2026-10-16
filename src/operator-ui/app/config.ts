@@ -47,12 +47,15 @@ interface ShellConfig {
   schemePinned: boolean;
   titleSuffix: string;
   productName: string;
+  /** The mark beside the brand: connecta's drawn "C", the served SVG favicon, or none. */
+  brandMark: "connecta" | "favicon" | "none";
   productDescription: string;
   productOperatorLabel: string;
 }
 
 const config = JSON.parse(document.getElementById("operatorConfig")!.textContent!) as ShellConfig;
-export const { auth, mcpUrl, initialPage, schemePinned, titleSuffix, productName, productDescription } = config;
+export const { auth, mcpUrl, initialPage, schemePinned, titleSuffix, productName, productDescription, brandMark } =
+  config;
 
 /** Where a bearer operator's token lives between visits. */
 export const TOKEN_KEY = "connecta:token";

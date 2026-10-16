@@ -857,14 +857,18 @@ export interface ConnectaBranding {
    * elsewhere (it replaces the `/favicon.svg` link in the page head; the
    * `/favicon.*` routes still serve whatever `svg`/`ico` provide). `href` must
    * be an absolute `http(s)` URL or a root-relative path; anything else falls
-   * back to the default mark.
+   * back to the default mark. With `svg` set, the top bar shows it beside the
+   * name; the drawn mark shows only when no branding is set.
    */
   favicon?: {
     svg?: string;
     ico?: Uint8Array;
     href?: string;
   };
-  /** `theme-color` meta value. Defaults to "#ffffff". */
+  /**
+   * `theme-color` meta value. Unset, pages follow the page background:
+   * `#f6f4ef` in light and `#12110f` in dark.
+   */
   themeColor?: string;
   /**
    * Operator-page appearance. Every field is optional, and a rejected value
@@ -886,18 +890,25 @@ export interface ConnectaBranding {
 export interface ConnectaTheme {
   /**
    * The brand color: links, focus rings, primary actions, the active nav item.
-   * Hex only (`#rgb`, `#rrggbb`, or `#rrggbbaa`). Defaults to `#2f5fe0`.
+   * Hex only (`#rgb`, `#rrggbb`, or `#rrggbbaa`). Defaults to `#4c44e0`
+   * (`#8c86ff` in dark). Text on it and accent text in dark derive from it.
    */
   accent?: string;
   /**
    * Corner rounding for cards, inputs, and buttons. A CSS length (`10px`,
    * `0.5rem`) or a bare number read as pixels. `0` restores square corners.
-   * Defaults to `10px`.
+   * Defaults to `14px`.
    */
   radius?: string | number;
-  /** Body font stack. A plain CSS font-family list. Defaults to a system stack. */
+  /**
+   * Body font stack. A plain CSS font-family list. Defaults to Hanken
+   * Grotesk, served with the operator UI, then a system stack.
+   */
   fontFamily?: string;
-  /** Monospace font stack for addresses, ids, and the endpoint URL. */
+  /**
+   * Monospace font stack for addresses, ids, and the endpoint URL. Defaults
+   * to JetBrains Mono, served with the operator UI, then a system stack.
+   */
   monoFamily?: string;
   /**
    * `"system"` (the default) follows the operator's OS setting; `"light"` and

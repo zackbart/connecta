@@ -25,10 +25,10 @@ explicit optional import and stays outside the root package import graph.
 
 Endpoints, Connectors, Activity, Tokens, and Settings are the maintainer's
 pages. Endpoints is the default page at `/`: one row for `/mcp` and each pool,
-with a copyable URL, who can use it, tool count, endpoint mode, and client
-setup. Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
+with a copyable URL, who can use it, tool count, a read-only pill on a
+read-only endpoint, and client setup. Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
 elsewhere: a person by label, or by raw id when the label is null, beside their
-initials, and an agent as `agent:<name>` with a token mark. A row shows four
+initials, and an agent by its bare name beside an agent mark. A row shows four
 and a "+N more" button that reveals the rest. A pool with
 agent members also shows its agent URL, muted. Expanding a row lists each
 connector on that endpoint with what it runs as and its tools, marking write
@@ -365,12 +365,15 @@ id and typed actor when available, otherwise a fresh id and system actor. No
 names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
-The top bar is one row: deployment branding and the deployment name, the
+The top bar is one row: the mark, deployment branding and the deployment name, the
 section links (Endpoints, Connectors, Activity, Tokens, and Settings), then
 Search (the command palette, also ⌘K or Ctrl+K), Appearance, and **Account**,
 which opens the signed-in account and the session action (Change token or Sign
-out). Below 820 px wide the section links move to a second row that scrolls
-sideways, and Search shrinks to its icon. A member's top bar has only branding
+out). The mark is connecta's drawn "C" only when no product name, owner or
+favicon is configured; with `branding.favicon.svg` it is that SVG; otherwise
+there is none. The sign-in gate shows the same mark above "Sign in". Below
+820 px wide the section links move to a second row that scrolls sideways and
+keeps the current section in view, and Search shrinks to its icon. A member's top bar has only branding
 and Account. Activity and Tokens keep their permission gates; a gated
 viewer sees no operator navigation. The command palette searches visible pages,
 connectors and tools, opening connector results on Tools. `/access` redirects

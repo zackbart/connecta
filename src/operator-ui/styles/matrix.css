@@ -16,7 +16,7 @@
   gap: 0.375rem;
 }
 .matrix-swatch {
-  border-radius: 4px;
+  border-radius: min(4px, var(--radius-sm));
   height: 0.75rem;
   width: 0.75rem;
 }
