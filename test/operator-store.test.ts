@@ -690,7 +690,9 @@ describe("operator collection ordering", () => {
   });
 
   it("sends the listed slot revision as expect, then the one each mutation returns", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
     const listed = "listedRevision00000000";
     const afterRotate = "rotatedRevision0000000";
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ ...issued("simon"), revision: listed }] }));
