@@ -124,7 +124,6 @@ describe("agent token slots", () => {
       maintainers,
       agents: ["simon", "ci"],
       accessTokens: accessTokens(storage),
-      identity: { accessTokenManagement: () => true },
     });
     const manager = new AccessTokenManager(storage, { agents: ["simon", "ci"] });
     const list = async () => {
@@ -199,35 +198,35 @@ describe("agent token slots", () => {
     }
   });
 
-  it("INV-4: denies machine token management, missing permission and cross-origin writes", async () => {
+  it("INV-4: token management is interactive-maintainer only; agents, machines and members are refused", async () => {
     const storage = memoryStorage();
     const agentToken = (await new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon")).token;
-    let permission = false;
+    const member = { ...fakeClerkAuth({ token: "member", userId: "member" }), activityActorNamespace: owner.namespace };
     const app = createTestConnecta({
-      connectors: [],
+      connectors: [calcApi()],
       vault: new CredentialVault(storage, btoa("x".repeat(32))),
-      auth: [human, machineAuth("static")],
+      auth: [human, member, machineAuth("static")],
       // The machine principal is a maintainer too, so its refusal is the
       // interactive-user requirement, not the maintainer gate.
       maintainers: [owner, { namespace: TEST_MACHINE_NAMESPACE, id: "machine" }],
       agents: ["simon"],
       accessTokens: accessTokens(storage),
-      identity: { accessTokenManagement: () => permission },
+      pools: { team: { tools: ["calc"], members: [{ ...owner, id: "member" }, "agent:simon"] } },
     });
     try {
-      // Operator routes admit interactive people only; an agent (never a
-      // maintainer) and a machine are refused before any maintainer check.
-      const expected: Record<string, number> = { "clerk-operator": 403, static: 403, [agentToken]: 403 };
+      // An agent (never a maintainer) and a machine maintainer are refused as
+      // non-interactive; a pool member who is not a maintainer gets the
+      // private 404 every operator route gives them.
+      const expected: Record<string, number> = { static: 403, [agentToken]: 403, member: 404 };
       for (const [token, status] of Object.entries(expected)) {
-        const res = await app.fetch(request(token, "/ui/access-tokens/simon", "POST"));
-        expect(res.status, token).toBe(status);
+        expect((await app.fetch(request(token, "/ui/access-tokens/simon", "POST"))).status, token).toBe(status);
+        expect((await app.fetch(request(token, "/ui/access-tokens"))).status, token).toBe(status);
+        expect((await app.fetch(request(token, "/ui/access-tokens/simon", "DELETE"))).status, token).toBe(status);
       }
-      permission = true;
-      for (const token of ["static", agentToken]) {
-        const status = expected[token]!;
-        expect((await app.fetch(request(token, "/ui/access-tokens"))).status).toBe(status);
-        expect((await app.fetch(request(token, "/ui/access-tokens/simon", "DELETE"))).status).toBe(status);
-      }
+      expect(await new AccessTokenManager(storage, { agents: ["simon"] }).list()).toEqual([
+        { name: "simon", state: "issued", issuedAt: expect.any(String) },
+      ]);
+      expect((await app.fetch(request("clerk-operator", "/ui/access-tokens"))).status).toBe(200);
       const foreign = request("clerk-operator", "/ui/access-tokens/simon", "POST");
       foreign.headers.set("Origin", "https://evil.test");
       expect((await app.fetch(foreign)).status).toBe(403);
@@ -553,8 +552,6 @@ describe("agent identity", () => {
     expect(authz.actor).toEqual({ kind: "access_token", id: "simon", namespace: NAMESPACE });
     expect(authz.subjectKey).toEqual(expect.any(String));
     expect(authz.principalKey).toBeUndefined();
-    expect(authz.accessTokenManagement).toBe(false);
-    expect(authz.credentialAdministration).toBe("none");
     expect(await manager.auth.activityActorLabel?.("simon")).toBe("simon");
     expect(await manager.auth.activityActorLabel?.(fixture.unbound.accessToken.id)).toBeUndefined();
   });

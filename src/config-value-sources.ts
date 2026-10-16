@@ -67,8 +67,6 @@ export function describeConfigSources(
     else if (group === "maintainers") source = provided(raw.maintainers);
     else if (group === "readOnly") source = provided(raw.readOnly);
     else if (group === "agents") source = provided(raw.agents);
-    else if (group === "identity")
-      source = provided(raw.identity?.[key as keyof NonNullable<ConnectaConfig["identity"]>]);
     else if (group === "storage") source = provided(raw.storage);
     else if (group === "deploymentInfo") source = provided(raw.deploymentInfo);
     else if (group === "classification") source = provided(raw.classification);

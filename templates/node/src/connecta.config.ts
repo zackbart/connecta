@@ -79,8 +79,9 @@ export default defineConfig((env: Env) => {
     auth: clerk ? [clerk] : [],
     // Required with Clerk: the Clerk user ids (comma-separated in
     // CONNECTA_MAINTAINERS) who use plain /mcp, which serves every connector,
-    // and the operator UI. Everyone else uses a pool that lists them. Agents
-    // are never maintainers.
+    // and the operator UI. They alone administer shared credentials, manage
+    // agent tokens, and read activity. Everyone else uses a pool that lists
+    // them. Agents are never maintainers.
     maintainers: clerk
       ? (set("CONNECTA_MAINTAINERS") ?? "")
           .split(",")
@@ -88,27 +89,20 @@ export default defineConfig((env: Env) => {
           .filter(Boolean)
       : [],
     // Each pool serves exactly its tools at /mcp/<name> to its members: Clerk
-    // user ids, or "agent:<name>" for a declared agent. `npm run doctor`
-    // checks this one with the local-machine token.
+    // user ids, or "agent:<name>" for a declared agent. A member connects their
+    // own account on the pool's personal connectors. `npm run doctor` checks
+    // this one with the local-machine token.
     pools: { local: { tools: ["time"], members: ["agent:local-machine"] } },
     // Machine clients are agents declared here by name, each with one cta_
     // token. Issue or rotate one locally with
-    // `npm run --silent rotate-token -- local-machine`, or grant an interactive
-    // human `identity.accessTokenManagement` to do it from the operator UI.
-    // Removing a name stops its token on the next request.
+    // `npm run --silent rotate-token -- local-machine`, or as a signed-in
+    // maintainer from the operator UI. Removing a name stops its token on the
+    // next request.
     agents: ["local-machine"],
     // Always installed: a slot with no issued token refuses every request.
     // Tokens from before agents stop admitting until `npm run adopt-token`
     // binds each machine's token to an agent; human-bound tokens never do.
     accessTokens: accessTokens(storage),
-    // Connection management permissions default to none, so the template
-    // grants them to maintainers, who alone reach the operator UI. Narrow them
-    // with `activityAccess` and `accessTokenManagement`, each derived from the
-    // authenticated identity and never from an MCP argument.
-    identity: {
-      credentialAdministration: () => "all",
-      personalConnection: () => "all",
-    },
     vault: credentialKey ? encryptedCredentialVault(storage, credentialKey) : undefined,
     // Payload-free activity history at /activity: who called what, when, how
     // long it took, and whether it worked. Each write prunes rows older than

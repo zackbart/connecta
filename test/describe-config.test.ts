@@ -213,12 +213,6 @@ describe("describeConfig", () => {
           { namespace: "connecta:test-machine", id: "operator" },
           { namespace: "https://clerk.example.com", id: "user_operator" },
         ],
-        identity: {
-          activityAccess: "default",
-          credentialAdministration: "custom",
-          accessTokenManagement: "default",
-          personalConnection: "default",
-        },
         agents: ["release-bot"],
         pools: [
           {
@@ -243,17 +237,11 @@ describe("describeConfig", () => {
         deploymentInfo: ["token"],
       });
       // The access model is maintainers and pool members (#837): no grant
-      // fact survives at the root or in a pool, and identity has no
-      // connector-access hook.
+      // fact survives at the root or in a pool, and no management resolver
+      // remains to describe.
       expect(snapshot).not.toHaveProperty("hasGrant");
       expect(snapshot.pools[0]).not.toHaveProperty("hasGrant");
-      expect(snapshot.identity).not.toHaveProperty("connectorAccess");
-      expect(Object.keys(snapshot.identity).sort()).toEqual([
-        "accessTokenManagement",
-        "activityAccess",
-        "credentialAdministration",
-        "personalConnection",
-      ]);
+      expect(snapshot).not.toHaveProperty("identity");
       expect(snapshot.limits.discovery.concurrency).toEqual({ value: 2, source: "config" });
       expect(snapshot.limits.discovery.probeTimeoutMs).toEqual({ value: 30_000, source: "default" });
       expect(snapshot.limits.calls.defaultTimeoutMs).toEqual({ value: 9_000, source: "config" });

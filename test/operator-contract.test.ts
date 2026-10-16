@@ -128,10 +128,6 @@ describe("operator config contract", () => {
       logger: "silent",
       classification: { shared: { read: "read", write: "write" }, hidden: { read: "read" } },
       readOnly: true,
-      identity: {
-        credentialAdministration: () => "all",
-        personalConnection: () => ["personal"],
-      },
       pools: {
         support: { tools: ["shared", "hidden"], readOnly: false, members: ["bob"] },
         reader: { tools: ["shared.read"], members: ["alice"] },
@@ -372,10 +368,13 @@ describe("operator config contract", () => {
             }),
       });
       const data = await read(app, { Authorization: "Bearer token" });
-      expect(data.live.activity).toBe(mode === "machine" || mode === "gate_throws" ? "forbidden" : mode);
+      // A non-interactive maintainer principal reads activity too (#837), so
+      // its failing store is unavailable, never a wider view.
+      const reads = mode === "unavailable" || mode === "machine";
+      expect(data.live.activity).toBe(mode === "gate_throws" ? "forbidden" : reads ? "unavailable" : mode);
       expect(data.live.connectors[0]?.lastCall).toBeNull();
-      expect(data.you.permissions.activity).toBe(mode === "unavailable");
-      expect(calls).toBe(mode === "unavailable" ? 1 : 0);
+      expect(data.you.permissions.activity).toBe(reads);
+      expect(calls).toBe(reads ? 1 : 0);
       expect(JSON.stringify(data)).not.toContain("SENTINEL");
     },
   );

@@ -20,7 +20,7 @@ import {
   type LabelLookup,
 } from "./actor-labels.js";
 import { authorized, refuse, serveOperator, type Answer, visibleRegistry } from "./operator.js";
-import { privateJson, type RouteContext } from "./shared.js";
+import { privateJson, readsActivity, type RouteContext } from "./shared.js";
 
 /**
  * Add display-only actor labels to one authorized activity page. Resolution is
@@ -99,8 +99,10 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
   const { url, opts } = context;
   return Effect.gen(function* () {
     const authz = yield* authorized(context);
+    // A maintainer principal, interactive or not (#837); members and agents
+    // get the private 404 every operator route gives them.
+    if (!readsActivity(context.opts, authz)) return yield* refuse("not found", 404);
     const registry = yield* visibleRegistry(context, authz);
-    if (!authz.operator) return yield* refuse("activity access required", 403);
     if (
       opts.config.activity?.readGate &&
       !(yield* Effect.promise(async () => opts.config.activity?.readGate!(authz.actor)))

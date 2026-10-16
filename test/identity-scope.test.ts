@@ -274,7 +274,6 @@ describe("maintainers and plain /mcp", () => {
       vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
       publicUrl: BASE,
       logger: silentLogger,
-      identity: { activityAccess: () => true, accessTokenManagement: () => true },
       activity: (await import("../src/activity.js")).activityHistory({
         store: { record: async () => {}, list: async () => ({ events: [] }) },
       }),
@@ -289,9 +288,6 @@ describe("maintainers and plain /mcp", () => {
       ["/ui/api/activity", "GET"],
       ["/ui/access-tokens", "GET"],
       ["/ui/access-tokens/bot", "POST"],
-      ["/ui/oauth/service", "POST"],
-      ["/ui/oauth/service", "DELETE"],
-      ["/ui/credentials/vaulted", "PUT", { value: "secret-value-1234" }],
     ];
     const send = (user: User, [path, method, body]: [string, string, object?]) =>
       c.fetch(
@@ -311,6 +307,14 @@ describe("maintainers and plain /mcp", () => {
       expect(admitted.status, route.join(" ")).toBe(200);
       await admitted.arrayBuffer();
     }
+    // Bob's pool holds both connectors (#837): he manages his own account on
+    // the personal one, and the shared credential stays a maintainer's.
+    expect((await send("bob", ["/ui/oauth/service", "POST"])).status).toBe(200);
+    expect((await send("bob", ["/ui/oauth/service", "DELETE"])).status).toBe(204);
+    const shared = await send("bob", ["/ui/credentials/vaulted", "PUT", { value: "secret-value-1234" }]);
+    expect(shared.status).toBe(403);
+    expect(await shared.text()).not.toContain("secret-value-1234");
+    expect((await storage.list("")).filter((key) => key.includes("credential:v1"))).toEqual([]);
     await c.close();
   });
 
@@ -431,9 +435,6 @@ describe("maintainers and plain /mcp", () => {
       connectors: [personal, shared],
       auth: users(),
       maintainers: ["alice", "bob"],
-      identity: {
-        activityAccess: (principal) => principal.id === "alice",
-      },
       vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
       storage: memoryStorage(),
       publicUrl: BASE,
@@ -470,7 +471,6 @@ describe("maintainers and plain /mcp", () => {
       auth: users(),
       maintainers: ["alice", "bob"],
       vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
-      identity: { activityAccess: () => false },
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -565,8 +565,7 @@ describe("shared auth is maintainers' alone", () => {
       connectors: [shared, personalOAuth()],
       auth: users(),
       maintainers: ["alice"],
-      // Both permissions are "all", as the templates set them; membership alone must not reach shared auth.
-      identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
+      // Membership alone must never reach shared auth; only maintainers administer it.
       pools: { team: { tools: ["shared.read", "oauth"], members: ["bob"] } },
       vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
       storage,
@@ -623,7 +622,6 @@ describe("shared auth is maintainers' alone", () => {
       connectors: [sharedOAuth()],
       auth: users(),
       maintainers: ["alice"],
-      identity: { credentialAdministration: () => "all" },
       pools: { team: { tools: ["shared"], members: ["bob"] } },
       vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
       storage,
@@ -987,7 +985,7 @@ describe("member references at construction", () => {
     ]);
     expect(described).not.toHaveProperty("hasGrant");
     expect(described.pools[0]).not.toHaveProperty("hasGrant");
-    expect(described.identity).not.toHaveProperty("connectorAccess");
+    expect(described).not.toHaveProperty("identity");
   });
 
   it.each([

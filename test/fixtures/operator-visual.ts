@@ -1,7 +1,7 @@
 import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
 import type { UiActivityEvent } from "../../src/operator-ui/view.js";
-import type { Connector } from "../../src/types.js";
+import type { Connector, InboundAuth } from "../../src/types.js";
 import { activityHistory, type ToolCallActivityEvent } from "../../src/activity.js";
 import { accessTokens } from "../../src/access-tokens.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
@@ -44,6 +44,20 @@ const events: ToolCallActivityEvent[] = [
   { schemaVersion: 1, id: "legacy", requestId: "", occurredAt: VISUAL_NOW, actor: call.actor, connectorId: "github", toolName: "read", address: "github.read", source: "call_tool", outcome: "success", durationMs: 12, attempts: 1, serverName: "Production", serverVersion: "1" },
 ];
 
+const ALICE = { namespace: "https://clerk.example.test", id: "alice" };
+
+/** The fake Clerk provider, admitting alice by principal alone: a non-interactive bearer session. */
+function bearerMaintainer(): InboundAuth {
+  const clerk = fakeClerkAuth({ token: VISUAL_TOKEN, userId: "alice" });
+  return {
+    ...clerk,
+    authorize: async (request, baseUrl, runtimeContext) => {
+      const result = await clerk.authorize(request, baseUrl, runtimeContext);
+      return result.ok ? { ok: true, principal: ALICE } : result;
+    },
+  };
+}
+
 export async function createOperatorVisualFixture(state: VisualState, keepEmptyConnector = false): Promise<OperatorVisualFixture> {
   const empty = state === "empty";
   const restricted = state === "restricted";
@@ -57,19 +71,19 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
   { ...github, id: "broken", title: "Hosted proxy", staticTools: [], status: async () => ({ state: "error" }) }];
   // Operator routes serve maintainers only (#837), and a maintainer sees every
   // connector whole. The restricted state keeps its old view (GitHub's read
-  // tool and the credential slot) by declaring only those, and stays a
-  // maintainer without management, activity, or token permissions.
+  // tool and the credential slot) by declaring only those. Its maintainer is
+  // a bearer session, not an interactive sign-in, so it manages nothing
+  // (#837), and the activity read gate refuses it.
   const readOnlyGithub: Connector = { ...github, staticTools: catalog.filter(t => t.name === "read"), listTools: async () => catalog.filter(t => t.name === "read") };
   const restrictedConnectors: Connector[] = [readOnlyGithub, connectors[2]!];
   const app = createTestConnecta({
     connectors: empty ? keepEmptyConnector ? [github] : [] : restricted ? restrictedConnectors : connectors, publicUrl: VISUAL_ORIGIN,
-    serverInfo: { name: "Production", version: "1" }, auth: fakeClerkAuth({ token: VISUAL_TOKEN, userId: "alice" }),
+    serverInfo: { name: "Production", version: "1" }, auth: restricted ? bearerMaintainer() : fakeClerkAuth({ token: VISUAL_TOKEN, userId: "alice" }),
+    ...(restricted ? { maintainers: [ALICE] } : {}),
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
-    // alice, the fake Clerk operator, is the default maintainer.
-    identity: { activityAccess: () => !restricted,
-      credentialAdministration: () => restricted ? [] : "all", personalConnection: () => restricted ? [] : "all", accessTokenManagement: () => !restricted },
+    // Otherwise alice, the fake Clerk operator, is the default maintainer.
     pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, members: ["alice"] }, automation: { tools: ["github"], readOnly: false, members: ["alice"] } },
-    activity: activityHistory({ store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),
+    activity: activityHistory({ readGate: () => !restricted, store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),
     accessTokens: accessTokens(storage),
     calls: { maxResultBytes: 1_000_000 },
   });

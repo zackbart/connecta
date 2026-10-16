@@ -148,8 +148,8 @@ const service = remoteMcp("service", {
   description: "Our team's hosted service",
   auth: { type: "credential" },
 });
-// Add service to connectors. Configure the vault and permitted operators
-// before supplying its credential through the operator UI.
+// Add service to connectors. Configure the vault; a signed-in maintainer
+// supplies its credential through the operator UI.
 ```
 
 Credential auth defaults to an `Authorization: Bearer` header. Choose framing

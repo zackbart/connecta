@@ -76,12 +76,6 @@ const config: ConnectaConfigDescription = {
   ],
   classification: {},
   auth: [{ kind: "clerk", interactive: true, ui: "clerk" }],
-  identity: {
-    activityAccess: "default",
-    credentialAdministration: "default",
-    accessTokenManagement: "default",
-    personalConnection: "default",
-  },
   agents: ["simon-ada", "triage"],
   pools: [
     {

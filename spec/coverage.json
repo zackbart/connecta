@@ -22,7 +22,7 @@
         },
         {
           "file": "test/mcp-core.test.ts",
-          "title": "INV-4: returns a payload-free JSON-RPC forbidden error for invalid admitted permissions"
+          "title": "INV-4: returns a payload-free JSON-RPC forbidden error for a refused origin"
         },
         {
           "file": "test/request-admission.test.ts",

@@ -95,8 +95,9 @@ existing-record migration.
 One deployment serves one tenant and may admit several people. Node uses Clerk
 for human auth; Access is Workers-only. With inbound auth, `maintainers` is
 required: only they reach plain `/mcp` and the operator UI. Everyone else
-reaches a pool that lists them in `members`. Keep credential administration,
-personal connection, token management, and activity access explicit.
+reaches a pool that lists them in `members`. Maintainers alone administer
+shared credentials, manage agent tokens, and read activity; members connect
+their own accounts on personal connectors in their pools.
 [Auth](./auth.md#principals-visibility-and-operators) owns maintainers and members;
 [Clerk setup](./auth.md#clerk-oauth-tokens-and-operator-sessions) owns resource-bound
 tokens and `aud_claim_enabled`. A person's operator session is not an MCP token.

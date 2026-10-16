@@ -92,19 +92,14 @@ createConnecta({
   ui: operatorUi(),
   maintainers: ["your-operator-id"],
   pools: { ci: { tools: ["github"], members: ["agent:ci"] } },
-  identity: {
-    accessTokenManagement: ({ principal }) =>
-      principal?.namespace === "clerk:your-existing-namespace" &&
-      principal.id === "your-operator-id",
-  },
   connectors, executor,
   readOnly: false, // required: true refuses every write call
 });
 ```
 
 **Slots.** Each declared agent has one slot: `none`, `issued`, or `revoked`.
-Nothing outside code adds, renames, or rebinds an agent. A permitted operator
-issues the first token, rotates it, or revokes it; `AccessTokenManager` exposes
+Nothing outside code adds, renames, or rebinds an agent. An interactive
+maintainer issues the first token, rotates it, or revokes it; `AccessTokenManager` exposes
 the same `rotate(name)` and `revoke(name)` to trusted provisioning, and the
 Node template wraps rotation as `npm run --silent rotate-token -- <agent>`.
 Secrets carry 256 random bits and are returned once, on issue or rotate; only
@@ -130,7 +125,7 @@ request without any storage write. An admitted agent's identity is:
 `identity.agent` is set only by the built-in adapter; a result from any other
 inbound provider that carries `agent` is refused like an unknown token. An
 agent has no principal, so personal connectors are absent for it and it never
-qualifies for `activityAccess`. Its subject partitions result handles per
+reads activity. Its subject partitions result handles per
 agent. Activity attributes its calls to the agent name. Pools list an agent as
 `"agent:<name>"`; an agent is never a maintainer, so plain `/mcp` refuses it
 with the pool 404. Until agent endpoints ship (#837 P4), an agent member
@@ -377,7 +372,7 @@ secrets. Declare each machine as an agent instead:
 1. Configure the existing D1 or SQLite store as `storage`, and install
    `accessTokens(storage)`. Keep its existing keys and namespaces.
 2. Add the machine's name to `agents`. Issue its token from the Access tokens
-   page as a maintainer granted `identity.accessTokenManagement`, or from trusted
+   page as a signed-in maintainer, or from trusted
    deployment code with
    `new AccessTokenManager(storage, { agents }).rotate("machine-name", "deployment-provisioning")`.
    The Node template provides `npm run --silent rotate-token -- machine-name`.
@@ -915,48 +910,51 @@ anything, so SDK hook order cannot mix servers or cross a reset.
 
 ## Management permissions
 
-Management permissions still exist until #837 P2 folds them into
-maintainers. Every operator route first requires a maintainer. Shared auth is
-deployment-wide, so every action on a shared connector requires a maintainer,
-with `credentialAdministration` checked on top: issuing a link through
-`authorize_connector`, a program's or a failed call's auth handoff, or an
-elicitation; starting it at `/connect/<id>`; completing the OAuth callback,
-which re-checks at completion; and `/ui/oauth` and `/ui/credentials`. A pool
-member may manage only a personal connector in one of their pools, always in
-their own principal partition, with `personalConnection` on top: the
-`/connect/<id>` link and its callback are bound to the principal that
-requested them. A maintainer's link
-continues in the operator UI; a member's link starts the authorization
-directly, as it does on a deployment without the UI. A personal credential
-handoff needs the operator UI and so a maintainer for now.
+Management follows `maintainers` and pool `members` (#837,
+[decisions/0006](../decisions/0006-pools-are-the-access-model.md)); no
+resolver configures it. The former `identity.credentialAdministration`,
+`identity.personalConnection`, `identity.accessTokenManagement`, and
+`identity.activityAccess` each fail construction naming their replacement.
 
-Visibility grants no authentication-management permission. Two resolvers take
-`Readonly<AuthenticatedIdentity>` and return `"all"`, `"none"` (the default),
-or connector ids: `credentialAdministration` for shared credentials and OAuth
-grants, `personalConnection` for a human's own grants on personal connectors.
-Each action needs visibility _and_ the permission; both run only for an
-interactive identity, and personal actions also need a stable namespaced
-principal, whose partition they always use. Exceptions and unknown ids fail
-closed; permissions come from authenticated identity, never caller input.
+| Action                                    | Who may                                                                                                                                        |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared credentials and OAuth grants       | An interactive maintainer                                                                                                                      |
+| A personal connector's own account        | An interactive person with a stable principal who is a maintainer, or a member of a pool containing that connector; always their own partition |
+| Agent tokens: list, issue, rotate, revoke | An interactive maintainer                                                                                                                      |
+| Activity reads                            | A maintainer principal, interactive or not, within the optional `readGate`                                                                     |
 
-`identity.activityAccess` takes `Readonly<IdentityReference>` — `id` and
-`namespace` — and controls reading activity among maintainers, who alone reach
-the activity routes. When configured, an authenticated maintainer principal
-may pass it without an interactive session. This includes a
-non-interactive API principal; agents, subject-only callers, and anonymous
-requests have no principal and cannot qualify. The optional activity `readGate`
-also applies. Reads remain GET-only and filter connector/tool grants, personal
-ownership and recorded pool access before any actor-label lookup. Personal rows
-use the admitted principal in the existing typed actor id and namespace fields;
-rows without a provable owner are withheld. Non-interactive
-reads return typed actors without directory labels. Old rows without a pool
-remain subject to connector, tool and owner checks. A maintainer sees rows
-from plain `/mcp` and from every declared pool within that pool's tools; rows
-from a pool no longer declared are withheld. Undeclared, it admits every
-interactive maintainer, the one default here that is open, because a
-single-operator deployment would otherwise be locked out of its own event stream. Team
-deployments should set it. There is no general administrator role and no
-implicit token-management authority. `identity.accessTokenManagement` is a separate boolean permission, false by default, evaluated only for interactive humans. Lifecycle routes also require a stable principal; they issue, rotate, and revoke declared agents' tokens, and never create, rename, or bind one.
+Agents and other machine credentials manage nothing. Shared auth is
+deployment-wide, so every step on a shared connector takes an interactive
+maintainer: issuing a link through `authorize_connector`, a program's or a
+failed call's auth handoff, or an elicitation; starting it at `/connect/<id>`;
+completing the OAuth callback, which re-checks at completion; and
+`/ui/oauth/<id>` and `/ui/credentials/<id>`. A pool member may connect and
+disconnect only a personal connector in one of their pools: through
+`authorize_connector` at `/mcp/<pool>`, the `/connect/<id>` link and its
+callback, which are bound to the principal that requested them, and
+`/ui/oauth/<id>` and `/ui/credentials/<id>`, which resolve only their pools'
+connectors and refuse a shared one with 403. A person who is neither gets the
+private 404 every operator route gives. A maintainer also manages their own
+personal connectors, which plain `/mcp` includes, in their own partition. A
+maintainer's link continues in the operator UI; a member's link starts the
+authorization directly, as it does on a deployment without the UI. A personal
+credential handoff needs the operator UI, which serves maintainers only until
+the member view ships (#837 P6b).
+
+Activity is read by maintainers alone. An authenticated maintainer principal
+reads it without an interactive session, including a non-interactive API
+principal; pool members, agents, subject-only callers, and anonymous requests
+get the private 404. The optional activity `readGate` still narrows it. Reads
+remain GET-only and filter connector/tool grants, personal ownership and
+recorded pool access before any actor-label lookup. Personal rows use the
+admitted principal in the existing typed actor id and namespace fields; rows
+without a provable owner are withheld. Non-interactive reads return typed
+actors without directory labels. Old rows without a pool remain subject to
+connector, tool and owner checks. A maintainer sees rows from plain `/mcp` and
+from every declared pool within that pool's tools; rows from a pool no longer
+declared are withheld. Agent token lifecycle routes require an interactive
+maintainer with a stable principal; they issue, rotate, and revoke declared
+agents' tokens, and never create, rename, or bind one.
 
 Personal activity rows must carry the checked `principal` actor basis as well as
 a matching principal ID and namespace. Legacy subject actors cannot prove
@@ -968,14 +966,10 @@ boundary reads returns 503 without a cursor; cancellation starts no further read
 ```ts
 createConnecta({
   auth: cloudflareAccessAuth(),
+  // Administers shared credentials, agent tokens, and activity.
   maintainers: ["owner-id"],
+  // Each member connects their own account on personal_linear.
   pools: { team: { tools: ["shared_docs", "personal_linear", "notion.search_pages"], members: team } },
-  identity: {
-    credentialAdministration: ({ principal }) =>
-      principal?.id === "owner-id" ? "all" : "none",
-    personalConnection: () => ["personal_linear"],
-    activityAccess: ({ id }) => id === "owner-id",
-  },
   connectors, executor,
   readOnly: false, // required: true refuses every write call
 });
@@ -1010,7 +1004,7 @@ and an unavailable lookup never falls back to another provider. The operator
 UI can re-request admission after a failure without a browser reload. It does not support Node, a `cloudflared` origin, or a Service Binding
 hop. [Decision 0003](https://github.com/zackbart/connecta/blob/main/decisions/0003-inbound-auth.md) records that boundary
 and replaces #506's provisional verdict with supported Worker Access.
-Connecta configuration still decides connector and management permissions.
+Connecta configuration still decides connector access and management: `maintainers` and pool `members`.
 
 Protect the Worker with a Worker-level Access application whose destination is
 `{ "type": "worker", "worker_id": "<the Worker script tag>" }`. A traditional
@@ -1260,8 +1254,8 @@ Clerk sign-in returns to the same link. Expired session cookies use Clerk's hand
 identity checks or code exchange; responses preserve session cookies. Access supplies trusted Worker identity
 at the edge. Protect `/connect/*` and `/oauth/callback/*` with the MCP endpoint's Access application.
 
-For both connector scopes, the browser must match the initiating principal and retain `personalConnection` or
-shared `credentialAdministration` permission. Connecta saves that principal against downstream state. The
+For both connector scopes, the browser must match the initiating principal and still be permitted to manage the
+connector: a maintainer for shared auth, or for personal auth a maintainer or a member of a pool containing it. Connecta saves that principal against downstream state. The
 callback checks state, identity, permission, and RFC 9207 `iss` before consuming
 the handoff, interpreting an error, or exchanging a code. A supplied issuer must
 exactly match the consent. A server advertising issuer-response support also

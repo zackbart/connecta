@@ -2,7 +2,7 @@ import { OAuthRevocationError } from "../auth/downstream-revocation.js";
 import { Effect, Result } from "effect";
 import { closeScope } from "../runtime/connector-scope.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
-import { authorizedPerson, refuse, serveOperator, visibleRegistry, Answer } from "./operator.js";
+import { authorizedPerson, refuse, serveOperator, managementRegistry, Answer } from "./operator.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { mayManageConnector, isSameOrigin, privateJson, type RouteContext } from "./shared.js";
 
@@ -21,7 +21,7 @@ function oauthManagementRequest(context: RouteContext, connectorId: string): Eff
       return yield* refuse("same-origin request required", 403);
     }
     const authz = yield* authorizedPerson(context, "OAuth management");
-    const registry = yield* visibleRegistry(context, authz);
+    const registry = yield* managementRegistry(context, authz);
 
     const connector = registry.getConnector(connectorId);
     const disconnectAuth = connector?.disconnectAuth?.bind(connector);

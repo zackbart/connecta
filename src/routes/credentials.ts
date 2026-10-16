@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { claimConnectorScopeCleanup, closeConnectorScope } from "../connector-scope.js";
 import { credentialTestRule, describeCredentialTestMismatch, storedCredentialShape } from "../credential-rules.js";
 import type { ConnectorCredentialConfig, ConnectorCredentialValues } from "../types.js";
-import { authorizedPerson, refuse, serveOperator, visibleRegistry, type Answer } from "./operator.js";
+import { authorizedPerson, refuse, serveOperator, managementRegistry, type Answer } from "./operator.js";
 import { mayManageConnector, isSameOrigin, msg, privateJson, type RouteContext } from "./shared.js";
 
 type CredentialInput = { kind: "single"; value: string } | { kind: "multiple"; values: ConnectorCredentialValues };
@@ -112,7 +112,7 @@ function credentialRequest(
       return yield* refuse("same-origin request required", 403);
     }
     const authz = yield* authorizedPerson(context, "credential management");
-    const registry = yield* visibleRegistry(context, authz);
+    const registry = yield* managementRegistry(context, authz);
 
     const connector = registry.getConnector(connectorId);
     const credential = connector?.credential;

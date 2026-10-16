@@ -472,15 +472,13 @@ describe("Clerk operator output with the real SDK", () => {
       vi.fn(async () => Response.json(jwks)),
     );
     const storage = memoryStorage();
-    const permission = vi.fn(({ principal }) => principal?.id === "header_user");
     const app = createTestConnecta({
       connectors: [],
       publicUrl: BASE,
       auth: auth(),
       accessTokens: accessTokens(storage),
-      // Both are maintainers, so only the permission decides which principal wins.
-      maintainers: ["header_user", "cookie_user"],
-      identity: { accessTokenManagement: permission },
+      // Only the header principal is a maintainer; the cookie principal would get the private 404.
+      maintainers: ["header_user"],
       logger: "silent",
     });
     try {
@@ -493,9 +491,6 @@ describe("Clerk operator output with the real SDK", () => {
         }),
       );
       expect(response.status).toBe(200);
-      expect(permission).toHaveBeenCalledWith(
-        expect.objectContaining({ principal: { namespace: FRONTEND, id: "header_user" } }),
-      );
     } finally {
       await app.close();
     }

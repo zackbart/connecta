@@ -1308,7 +1308,6 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
     maintainers: [{ namespace: "clerk:test", id: "user_operator" }],
     agents: ["desktop-client", "ci"],
     accessTokens: accessTokens(storage),
-    identity: { accessTokenManagement: () => true },
   });
   const paths = new Set(["/ui/access-tokens", "/ui/access-tokens/desktop-client"]);
   realRoutes = { connecta, paths, answered: [] };

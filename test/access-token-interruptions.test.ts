@@ -216,7 +216,6 @@ describe("cancelled rotations", () => {
       auth: fakeClerkAuth(),
       agents: ["simon"],
       accessTokens: accessTokens(storage),
-      identity: { accessTokenManagement: () => true },
       logger: "silent",
     });
     const secret = predictableSecret();

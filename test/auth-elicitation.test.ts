@@ -65,7 +65,8 @@ function setup(
     ...(options.vault === false ? {} : { vault }),
     ...(options.uiPath ? { ui: { ...operatorUi(), credentialHandoffUrl: () => options.uiPath! } } : {}),
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
-    identity: { credentialAdministration: () => (options.manage === false ? "none" : "all") },
+    // Without management alice is only a pool member; bob stays the maintainer.
+    ...(options.manage === false ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
     pools: {
       trusted: {
         tools: ["service"],
@@ -199,7 +200,8 @@ describe("auth URL elicitation", () => {
   it("INV-4: refuses elicitation without management, vault, or configured public URL", async () => {
     for (const options of [{ manage: false }, { vault: false }, { publicUrl: false }]) {
       const flow = setup(options);
-      const result = (await flow.rpc()).result;
+      // Without management alice reaches only her pool, as a member (#837).
+      const result = (await flow.rpc(undefined, undefined, "manage" in options ? { pool: "trusted" } : {})).result;
       expect(result.resultType).not.toBe("input_required");
       expect(result.isError).toBe(true);
     }

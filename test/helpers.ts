@@ -48,7 +48,6 @@ export function createTestConnecta(
     ...(maintainers.length > 0 ? { maintainers } : {}),
     ...config,
     readOnly: config.readOnly ?? false,
-    identity: { credentialAdministration: () => "all", personalConnection: () => "all", ...config.identity },
     executor: customExecutor(config.executor ?? stubExecutor, { lifecycle: "self-managed" }),
   });
 }

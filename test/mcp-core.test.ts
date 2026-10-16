@@ -170,9 +170,9 @@ describe("2026-07-28 core", () => {
     }
   });
 
-  it("INV-4: activity API is read-only and retains the operator and read gates", async () => {
-    for (const [operator, gate, status] of [
-      [false, true, 403],
+  it("INV-4: activity API is read-only and retains the maintainer and read gates", async () => {
+    for (const [maintainer, gate, status] of [
+      [false, true, 404],
       [true, false, 403],
       [true, true, 200],
     ] as const) {
@@ -186,8 +186,7 @@ describe("2026-07-28 core", () => {
           interactiveOperator: true,
           authorize: () => ({ ok: true, userId: "operator" }),
         },
-        maintainers: ["operator"],
-        identity: { activityAccess: () => operator },
+        maintainers: [maintainer ? "operator" : "someone_else"],
         activity: activityHistory({
           readGate: () => gate,
           store: {
@@ -261,7 +260,7 @@ describe("2026-07-28 core", () => {
     }
   });
 
-  it("INV-4: returns a payload-free JSON-RPC forbidden error for invalid admitted permissions", async () => {
+  it("INV-4: returns a payload-free JSON-RPC forbidden error for a refused origin", async () => {
     const c = createTestConnecta({
       connectors: [],
       logger: silentLogger,
@@ -272,10 +271,11 @@ describe("2026-07-28 core", () => {
         authorize: () => ({ ok: true, userId: "operator" }),
       },
       maintainers: ["operator"],
-      identity: { credentialAdministration: () => ["missing"] },
     });
     try {
-      const response = await c.fetch(modern("tools/list"));
+      const request = modern("tools/list");
+      request.headers.set("Origin", "https://attacker.example");
+      const response = await c.fetch(request);
       expect(response.status).toBe(403);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
       const body = await response.json();

@@ -39,7 +39,6 @@ function setup(
     publicUrl: BASE,
     logger: "silent",
     auth: [fakeClerkAuth({ token: "alice", userId: "alice" })],
-    identity: { credentialAdministration: () => "all" },
     ...(options.catalogTtlSeconds === undefined ? {} : { discovery: { catalogTtlSeconds: options.catalogTtlSeconds } }),
     pools: { trusted: { tools: connectors.map((item) => item.id), members: ["alice"], readOnly: false } },
     executor: {

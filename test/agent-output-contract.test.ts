@@ -134,7 +134,6 @@ it.each(["rpc-error", "http-400", "isError", "structuredContent", "paging", "ser
 
 it.each([
   "origin-403",
-  "access-403",
   "pool-404",
   "pool-refused-404",
   "not-maintainer-404",
@@ -193,7 +192,6 @@ it.each([
           // The caller is a maintainer except where the refusal is that it is not one (#837).
           maintainers: [kind === "not-maintainer-404" ? "other" : "caller"],
         }),
-    ...(kind === "access-403" ? { identity: { credentialAdministration: () => ["missing"] } } : {}),
     pools: { refused: { tools: ["calc"], members: [{ namespace: "connecta:test", id: "other" }] } },
   });
   let occupied: Promise<Response> | undefined;

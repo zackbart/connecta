@@ -104,10 +104,6 @@ export interface ConnectaConfigDescription {
   classification: Record<string, Record<string, "read" | "write">>;
   /** Inbound auth providers in the order they are tried. */
   auth: Array<{ kind: string; interactive: boolean; ui?: string }>;
-  identity: Record<
-    "activityAccess" | "credentialAdministration" | "accessTokenManagement" | "personalConnection",
-    "default" | "custom"
-  >;
   /** Agents declared in code, by name, in declaration order. Never token state. */
   agents: string[];
   /**
@@ -347,13 +343,6 @@ function describeConnector(
   } as DescribedConnector;
 }
 
-const IDENTITY_KEYS = [
-  "activityAccess",
-  "credentialAdministration",
-  "accessTokenManagement",
-  "personalConnection",
-] as const;
-
 /** A shipped adapter's own kind; anything else is `"custom"`, so a description carries no free text. */
 type DescribedStoreKind = "memory" | "d1" | "sqlite" | "custom";
 const STORE_KINDS: ReadonlySet<string> = new Set(["memory", "d1", "sqlite"]);
@@ -436,9 +425,6 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       interactive: provider.interactiveOperator === true,
       ...(str(provider.uiAuth?.kind) !== undefined ? { ui: provider.uiAuth!.kind } : {}),
     })),
-    identity: Object.fromEntries(
-      IDENTITY_KEYS.map((key) => [key, typeof config.identity[key] === "function" ? "custom" : "default"]),
-    ) as ConnectaConfigDescription["identity"],
     agents: [...config.agents],
     pools: Object.entries(config.pools ?? {}).map(([name, pool]) => ({
       readOnly: pool.readOnly ?? config.readOnly,

@@ -111,7 +111,7 @@ describe("Phase 4 behavior fixes", () => {
     expect((await makeRegistry([c]).statusFor("slot", BASE)).state).toBe("credential_required");
   });
 
-  it("INV-4 INV-6: permits maintainers only through activityAccess and filters connectors, pool tools, owners and undeclared pools", async () => {
+  it("INV-4 INV-6: permits maintainers only and filters connectors, pool tools, owners and undeclared pools", async () => {
     const storage = memoryStorage();
     const principal = { namespace: "directory", id: "owner" };
     const agentToken = (await new AccessTokenManager(storage, { agents: ["machine"] }).rotate("machine")).token;
@@ -125,7 +125,6 @@ describe("Phase 4 behavior fixes", () => {
         return { ok: false, response: new Response(null, { status: 401 }) };
       },
     };
-    let permitted = true;
     let readGate = true;
     const own = { kind: "api", id: principal.id, namespace: principal.namespace };
     const read = vi.fn(async () => ({
@@ -151,7 +150,6 @@ describe("Phase 4 behavior fixes", () => {
       agents: ["machine"],
       accessTokens: accessTokens(storage),
       logger: "silent",
-      identity: { activityAccess: () => permitted },
       pools: {
         others: { tools: ["visible"], members: [{ namespace: "directory", id: "member" }] },
         narrow: { tools: ["visible.read"], members: [principal, { namespace: "directory", id: "member" }] },
@@ -160,8 +158,8 @@ describe("Phase 4 behavior fixes", () => {
     });
     const request = (method = "GET", token = "reader") =>
       new Request(BASE + "/ui/api/activity", { method, headers: { Authorization: `Bearer ${token}` } });
-    // Activity access is not enough: a pool member that is not a maintainer,
-    // and an agent (never one), get the operator routes' private 404.
+    // A pool member that is not a maintainer, and an agent (never one), get
+    // the operator routes' private 404.
     for (const token of ["member", agentToken]) {
       const refused = await deployment.fetch(request("GET", token));
       expect(refused.status, token).toBe(404);
@@ -177,22 +175,17 @@ describe("Phase 4 behavior fixes", () => {
       "personal-own",
     ]);
     expect((await deployment.fetch(request("POST"))).status).toBe(405);
-    permitted = false;
-    expect((await deployment.fetch(request())).status).toBe(403);
-    permitted = true;
     readGate = false;
     expect((await deployment.fetch(request())).status).toBe(403);
     expect(read).toHaveBeenCalledOnce();
   });
 
-  it("INV-4: permits a non-interactive API principal and denies missing principals or missing activityAccess", async () => {
-    for (const [id, hasGate, expected] of [
-      ["reader", true, 200],
+  it("INV-4: permits a non-interactive maintainer principal and denies missing principals or non-maintainers", async () => {
+    for (const [id, expected] of [
+      ["reader", 200],
       // Without a principal no one can be a maintainer.
-      [undefined, true, 404],
-      ["reader", false, 403],
-      // A principal activityAccess admits is still not a maintainer.
-      ["other", true, 404],
+      [undefined, 404],
+      ["other", 404],
     ] as const) {
       const auth: InboundAuth = {
         kind: "api",
@@ -203,7 +196,6 @@ describe("Phase 4 behavior fixes", () => {
         auth,
         maintainers: [{ namespace: "api", id: "reader" }],
         logger: "silent",
-        identity: hasGate ? { activityAccess: () => true } : {},
         activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
       });
       expect((await deployment.fetch(new Request(BASE + "/ui/activity"))).status).toBe(expected);
@@ -375,7 +367,6 @@ describe("Phase 4 behavior fixes", () => {
         logger: "silent",
         // Both read activity as maintainers, so the drift row's owner decides.
         maintainers: [alice, bob],
-        identity: { activityAccess: () => true },
         pools: { support: { tools: ["partitioned"], members: [alice, bob] } },
         activity: activityHistory({
           store: {
@@ -439,7 +430,6 @@ describe("Phase 4 behavior fixes", () => {
         auth,
         maintainers: [alice, bob],
         logger: "silent",
-        identity: { activityAccess: () => true },
         activity: activityHistory({
           store: {
             record: (e) => {
@@ -491,7 +481,6 @@ describe("Phase 4 behavior fixes", () => {
       auth,
       maintainers: [bob],
       logger: "silent",
-      identity: { activityAccess: () => true },
       activity: activityHistory({
         store: {
           record: () => {},
@@ -540,7 +529,6 @@ describe("Phase 4 behavior fixes", () => {
       connectors: [connector("visible")],
       auth: { kind: "api", authorize: () => ({ ok: true, principal: { namespace: "directory", id: "reader" } }) },
       maintainers: [{ namespace: "directory", id: "reader" }],
-      identity: { activityAccess: () => true },
       logger: "silent",
       activity: activityHistory({ store: { record() {}, list } }),
     });
@@ -580,7 +568,6 @@ describe("Phase 4 behavior fixes", () => {
         connectors: [c],
         auth,
         maintainers: [alice, bob],
-        identity: { activityAccess: () => true },
         logger: "silent",
         discovery: { catalogTtlSeconds: 0 },
         activity: activityHistory({
@@ -625,7 +612,6 @@ describe("Phase 4 behavior fixes", () => {
       auth,
       maintainers: [bob],
       logger: "silent",
-      identity: { activityAccess: () => true },
       pools: { [pool]: { tools: ["visible.read"], members: [alice] } },
       activity: activityHistory({
         store: {
