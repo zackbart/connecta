@@ -12,6 +12,7 @@ import {
 } from "../endpoints.js";
 import type { OperatorState } from "../view.js";
 import { ConnectorStatus } from "./problems.js";
+import { useCloseOnRecovery } from "./contract-state.js";
 
 export type MatrixRow = OperatorConnectorOverlay & { title: string };
 
@@ -192,6 +193,7 @@ export function ConnectorMatrix({
   link: (row: MatrixRow) => ReactNode;
 }) {
   const [open, setOpen] = useState<OpenCell | null>(null);
+  useCloseOnRecovery(state, () => setOpen(null));
   const [inline] = useState(() => !anchorsSupported());
   const columns = matrixColumns(contract);
   const close = (restoreFocus: boolean) => {

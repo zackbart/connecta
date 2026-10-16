@@ -5,7 +5,7 @@ import { clientServerName, clientSetupCommands } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
 import { Badge, CopyButton, StateBlock } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
-import { ContractState, maintainerContract } from "./contract-state.js";
+import { ContractState, maintainerContract, useCloseOnRecovery } from "./contract-state.js";
 
 /** What the client setup drawer needs: a path, its absolute URL, and the name a client files it under. */
 export interface SetupTarget {
@@ -148,6 +148,7 @@ function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: Oper
 
 export function EndpointsPage({ state }: { state: OperatorState }) {
   const [setup, setSetup] = useState<SetupTarget | null>(null);
+  useCloseOnRecovery(state, () => setSetup(null));
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const returnFocus = useRef<HTMLElement | null>(null);
   const contract = maintainerContract(state);

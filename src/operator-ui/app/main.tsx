@@ -34,6 +34,7 @@ import { ContractState } from "./contract-state.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import {
   boot,
+  closeForRecovery,
   focusHandled,
   forgetBearer,
   getState,
@@ -310,6 +311,13 @@ function OperatorApp() {
   // rendered at all, so a request for a page heading lands on the gate's own h1
   // — the only visible heading — rather than dropping focus to <body>.
   const recovering = ready && contractRecovering(state);
+  // Recovery starts: page-owned overlays close (see useCloseOnRecovery), and
+  // focus moves to the one control that can bring the page back.
+  useEffect(() => {
+    if (!recovering) return;
+    closeForRecovery();
+    document.getElementById("recoveryRetry")?.focus();
+  }, [recovering]);
   useEffect(() => {
     if (!state.pendingFocus && !state.focusIfLost) return;
     if (state.pendingFocus) {

@@ -560,3 +560,43 @@ for (const [path, heading] of [
     await noCsp(page);
   });
 }
+
+test("INV-4: a failed refresh closes an open client setup drawer and hands focus to Retry", async ({ page }) => {
+  // One connector in error, so a focus return refreshes the catalog.
+  const contract = structuredClone(maintainer.contract) as OperatorUiContractV2;
+  contract.live.connectors = contract.live.connectors.map((c) => (c.id === "slack" ? { ...c, status: "error" } : c));
+  const data = structuredClone(maintainer.data);
+  data.connectors = data.connectors.map((c) => (c.id === "slack" ? { ...c, status: "error" } : c));
+  await install(page, contract, data, "controlled");
+  let failing = false;
+  await page.route(`${VISUAL_ORIGIN}/ui/api/config`, (route) =>
+    failing ? route.fulfill({ status: 503, json: { error: "unavailable" } }) : route.fulfill({ json: contract }),
+  );
+  await page.goto(VISUAL_ORIGIN + "/");
+  await page
+    .getByRole("button", { name: /^Client setup for / })
+    .first()
+    .click();
+  const drawer = page.getByRole("dialog", { name: "Client setup", exact: true });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole("button", { name: /Copy/ }).first()).toBeVisible();
+
+  failing = true;
+  await page.evaluate("window.dispatchEvent(new Event('focus'))");
+  await page.clock.runFor(300);
+  const banner = page.locator("#recoveryBanner");
+  await expect(banner).toContainText("Configuration couldn't be loaded");
+  // The drawer, its copy controls and its focus trap are gone, the page stays
+  // mounted under the banner, and Retry has focus.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator("#endpointsView")).toBeAttached();
+  await expect(banner.getByRole("button", { name: "Retry", exact: true })).toBeFocused();
+  // Nothing in the operator page outside the banner can be reached.
+  expect(
+    await page.evaluate(`[...document.querySelectorAll(
+      "#operatorContent :is(a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1']))",
+    )].filter((el) => !el.closest("[inert]") && !el.closest("#recoveryBanner") && !el.disabled).length`),
+  ).toBe(0);
+  expect(await page.evaluate("document.querySelectorAll('[data-state=open], .dialog-overlay').length")).toBe(0);
+  await noCsp(page);
+});

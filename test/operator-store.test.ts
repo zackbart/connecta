@@ -378,10 +378,12 @@ describe("operator store action notices", () => {
     // Stands in for an older or hostile server: every answer below carries a
     // downstream's words where the current routes send fixed ones or none.
     const SECRET = "sk_live_store_leak";
-    const { store, fetchMock } = await loadStore({
+    const { store, fetchMock, declare } = await loadStore({
       id: "sess_a",
       getToken: async () => "token-a",
     });
+    // Writes go out only for a connector the maintainer's contract shows.
+    declare(["svc"]);
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.boot();
 
@@ -495,10 +497,12 @@ describe("operator store action notices", () => {
   });
 
   it("asks the route to continue or restart through the mode parameter", async () => {
-    const { store, fetchMock } = await loadStore({
+    const { store, fetchMock, declare } = await loadStore({
       id: "sess_a",
       getToken: async () => "token-a",
     });
+    // Writes go out only for a connector the maintainer's contract shows.
+    declare(["svc"]);
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.boot();
     fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
@@ -1772,5 +1776,79 @@ describe("operator privileged requests", () => {
     expect(paths.filter((path) => path.startsWith("/ui/access-tokens"))).toEqual([]);
     expect(store.getState().tokens).toEqual([]);
     expect(store.getState().tokenPhase).toBe("error");
+  });
+});
+
+describe("operator connection writes", () => {
+  const writes = (paths: string[]) =>
+    paths.filter((path) => path.startsWith("/ui/credentials/") || path.startsWith("/ui/oauth/"));
+
+  it.each(["credential save", "OAuth connect"] as const)(
+    "INV-4: withholds the %s whose contract failed while its session token was read",
+    async (kind) => {
+      // The first token lookup after boot is held; every other one answers at once.
+      let held: ReturnType<typeof deferred<string>> | null = null;
+      const loaded = await loadStore({
+        id: "session",
+        getToken: () => {
+          const hold = held;
+          held = null;
+          return hold ? hold.promise : Promise.resolve("token");
+        },
+      });
+      const { store, fetchMock, configMock, paths } = loaded;
+      loaded.declare(["svc"]);
+      await bootMaintainer(loaded);
+      fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+
+      const token = deferred<string>();
+      held = token;
+      const write =
+        kind === "credential save"
+          ? store.saveCredential("svc", { value: "typed" })
+          : store.startOAuth("svc", "continue");
+      expect(held).toBeNull();
+      // A refresh answers 503 while the write waits on its session token.
+      configMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
+      await store.loadOperatorContract();
+      expect(store.getState()).toMatchObject({ contract: null, contractPhase: "error", role: "maintainer" });
+
+      token.resolve("token");
+      await write;
+      expect(writes(paths)).toEqual([]);
+      // Not sent, and the row says so.
+      const notice = kind === "credential save" ? store.getState().credentialNotice : store.getState().oauthNotice;
+      expect(notice?.tone).toBe("error");
+    },
+  );
+
+  it("INV-4: sends a maintainer's write on a connector the contract shows, and nothing else", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, paths } = loaded;
+    loaded.declare(["svc"]);
+    await bootMaintainer(loaded);
+    fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+    await store.saveCredential("svc", { value: "typed" });
+    await store.saveCredential("unlisted", { value: "typed" });
+    expect(writes(paths)).toEqual(["/ui/credentials/svc"]);
+    expect(store.getState().credentialNotice?.tone).toBe("error");
+  });
+
+  it("INV-4: a member writes only to their own personal connectors, with the actions manage names", async () => {
+    const { store, fetchMock, configMock, paths } = await loadStore({ id: "session", getToken: async () => "token" });
+    configMock.mockImplementation(async () => contract("member"));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "ready", role: "member" });
+    fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+    // Personal, and the action is in `manage.actions`: sent.
+    await store.startOAuth("slack", "continue");
+    await store.saveCredential("notion", { values: { token: "typed" } });
+    // Calendar may only disconnect; GitHub is shared; nothing else is listed.
+    await store.startOAuth("calendar", "continue");
+    await store.saveCredential("github", { value: "typed" });
+    await store.disconnectOAuth("drive");
+    expect(writes(paths)).toEqual(["/ui/oauth/slack?mode=continue", "/ui/credentials/notion"]);
+    expect(store.getState().oauthNotice?.tone).toBe("error");
+    expect(store.getState().credentialNotice?.tone).toBe("error");
   });
 });

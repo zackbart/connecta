@@ -58,8 +58,13 @@ returns included. Until a role is confirmed, the page shows its loading or
 error state and no navigation. The store keeps the last confirmed role through
 a failed refresh: a maintainer's page stays mounted, inert and dimmed, under
 one shell banner with Retry, whichever page it is, and sends nothing
-maintainer-only until a contract confirms the role again, and
-an answer with a different role clears everything read under the old one and
+maintainer-only until a contract confirms the role again. Recovery closes the
+page's dialogs, drawers and popovers and the command palette, and moves focus
+to Retry. Credential and OAuth writes also wait for a contract that agrees
+with the confirmed role: a maintainer's for a connector it shows, a member's
+for a personal connector their contract lists with that action in `manage`;
+otherwise the write is not sent and its row says so. An
+answer with a different role clears everything read under the old one and
 admits the viewer again. A
 pool member sees one page on every path, until UI-3 of
 [#834](https://github.com/zackbart/connecta/issues/834): their pools with each

@@ -185,16 +185,62 @@ function factsOf(error: unknown): RequestFailureFacts {
 /** Routes only a maintainer may call; a member's page never sends them. */
 const MAINTAINER_ONLY = ["/ui/data", "/ui/connectors/", "/ui/api/activity", "/ui/access-tokens"];
 
+type ConnectionAction = "connect" | "restart" | "disconnect" | "save" | "test" | "clear";
+
 /**
- * The last step before an operator request reaches the network. A
- * maintainer-only route is withheld (null) unless a maintainer is confirmed
- * right now: checked here, after every await its caller made, because a
- * contract refresh can fail or change the role while a session token is
- * being read. Callers treat null as a request that was never sent.
+ * A credential or OAuth write as the contract's `manage` names it: which
+ * connector, which kind of management, and which action. Null for any other
+ * path.
+ */
+function connectionWrite(
+  path: string,
+  method: string,
+): { connectorId: string; kind: "oauth" | "credential"; action: ConnectionAction } | null {
+  const url = new URL(path, "http://operator.invalid");
+  const oauth = /^\/ui\/oauth\/([^/]+)$/.exec(url.pathname);
+  if (oauth) {
+    const action =
+      method === "DELETE" ? "disconnect" : url.searchParams.get("mode") === "continue" ? "connect" : "restart";
+    return { connectorId: decodeURIComponent(oauth[1]!), kind: "oauth", action };
+  }
+  const credential = /^\/ui\/credentials\/([^/]+)(\/test)?$/.exec(url.pathname);
+  if (credential) {
+    const action = credential[2] ? "test" : method === "DELETE" ? "clear" : "save";
+    return { connectorId: decodeURIComponent(credential[1]!), kind: "credential", action };
+  }
+  return null;
+}
+
+/**
+ * Whether this viewer may send a credential or OAuth write right now. Only a
+ * contract on screen that agrees with the confirmed role decides: a maintainer
+ * acts on any connector it shows; a member only on a personal connector their
+ * contract lists, with an action its `manage` names.
+ */
+function connectionWriteAllowed(write: NonNullable<ReturnType<typeof connectionWrite>>): boolean {
+  const contract = state.contract;
+  if (!contract || state.role !== contract.role) return false;
+  if (contract.role === "maintainer") {
+    return Boolean(contract.config?.connectors.some((connector) => connector.id === write.connectorId));
+  }
+  const connector = contract.connectors.find((c) => c.id === write.connectorId);
+  if (!connector || connector.authScope !== "personal" || connector.manage.kind !== write.kind) return false;
+  return (connector.manage.actions as readonly string[]).includes(write.action);
+}
+
+/**
+ * The last step before an operator request reaches the network, checked here
+ * after every await its caller made, because a contract refresh can fail or
+ * change the role while a session token is being read. A maintainer-only
+ * route needs a confirmed maintainer; a credential or OAuth write needs a
+ * contract that allows it (see `connectionWriteAllowed`). Anything else is
+ * withheld (null), and callers treat null as a request that was never sent.
  */
 function send(path: string, init: RequestInit): Promise<Response> | null {
   const privileged = MAINTAINER_ONLY.some((route) => path === route || path.startsWith(route));
   if (privileged && !maintainerNow()) return null;
+  const write = connectionWrite(path, init.method ?? "GET");
+  if (write && !connectionWriteAllowed(write)) return null;
   return fetch(path, init);
 }
 
@@ -704,6 +750,11 @@ export function forgetBearer(): void {
  */
 export function askConfirm(connectorId: string, action: PendingConfirm["action"]): void {
   set({ confirming: { connectorId, action }, pendingFocus: `confirm-cancel-${connectorId}` });
+}
+
+/** Recovery started: close the page's in-row confirmation; the page is stale. */
+export function closeForRecovery(): void {
+  if (state.confirming) set({ confirming: null });
 }
 
 export function cancelConfirm(returnFocusTo: string): void {

@@ -3,6 +3,7 @@ import { Command } from "cmdk";
 import { Button, Dialog, Tabs } from "./primitives.js";
 import { PAGE_META, type OperatorPage, type OperatorState } from "../view.js";
 import { navigate } from "./store.js";
+import { useCloseOnRecovery } from "./contract-state.js";
 
 const THEME_KEY = "connecta:scheme";
 type Scheme = "light" | "dark" | "system";
@@ -24,6 +25,11 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
   const appearanceReturnFocus = useRef<HTMLElement | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  // Neither modal may hold focus away from the recovery banner's Retry.
+  useCloseOnRecovery(state, () => {
+    setCommandOpen(false);
+    setAppearanceOpen(false);
+  });
   const activeDialogs = useRef({ command: false, appearance: false });
   useLayoutEffect(() => {
     activeDialogs.current = { command: commandOpen, appearance: appearanceOpen };
