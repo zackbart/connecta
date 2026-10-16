@@ -122,7 +122,9 @@ async function setup() {
     return app.fetch(new Request(`${BASE}${path}`, { ...init, headers }));
   };
   const authorizeConnector = async (user: string, connector: string, pool?: string) => {
-    const response = await send(user, `/mcp${pool ? `/${pool}` : ""}`, {
+    // Agents use /agent/<pool>; human endpoints refuse their cta_ token (#837).
+    const endpoint = user.startsWith("cta_") && pool ? `/agent/${pool}` : `/mcp${pool ? `/${pool}` : ""}`;
+    const response = await send(user, endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
       body: JSON.stringify({
@@ -295,17 +297,21 @@ describe("management collapses to maintainers", () => {
     expect(await flow.state("personal", "alice")).toBe("auth_required");
   });
 
-  it("INV-4: activity reads take a maintainer principal, interactive or not; members and agents get the private 404", async () => {
+  it("INV-4: activity reads take a maintainer principal, interactive or not; members get the private 404 and agents a 401", async () => {
     const flow = await setup();
     for (const user of ["alice", "machine"]) {
       expect((await flow.send(user, "/ui/api/activity")).status, user).toBe(200);
     }
-    for (const user of ["bob", "carol", "dave", flow.bot]) {
+    for (const user of ["bob", "carol", "dave"]) {
       for (const path of ["/ui/activity", "/ui/api/activity"]) {
         const refused = await flow.send(user, path);
         expect(refused.status, `${user} ${path}`).toBe(404);
         expect(await refused.json()).toEqual({ error: "not found" });
       }
+    }
+    // Operator routes are human routes: an agent token is refused outright (#837).
+    for (const path of ["/ui/activity", "/ui/api/activity"]) {
+      expect((await flow.send(flow.bot, path)).status, path).toBe(401);
     }
   });
 

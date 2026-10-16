@@ -56,7 +56,7 @@ export async function startNodeDeployment(
 ): Promise<Deployment> {
   const { pool: selected, pools: taskPools, ...passthrough } = extra;
   // Plain /mcp serves maintainers only and an agent is never one (#837): the
-  // agent token reaches every connector through the `eval` pool instead.
+  // agent token reaches every connector at the `eval` pool's /agent endpoint.
   const ids = [...(oauth ? ["oauth"] : []), ...connectors.map((spec) => spec.id)];
   const pool = typeof selected === "string" ? selected : oauth ? undefined : "eval";
   const dir = await mkdtemp(join(tmpdir(), "connecta-eval-"));
@@ -135,7 +135,11 @@ export async function startNodeDeployment(
     kind: "node-template-shape",
     programs: observed.programs,
     origin,
-    mcpUrl: `${origin}/mcp${typeof pool === "string" ? `/${pool}` : ""}`,
+    // Agents use /agent/<pool>; human endpoints refuse their cta_ token (#837).
+    mcpUrl:
+      !oauth && typeof pool === "string"
+        ? `${origin}/agent/${pool}`
+        : `${origin}/mcp${typeof pool === "string" ? `/${pool}` : ""}`,
     token: oauth?.token ?? token,
     openConnect: async (url) => {
       const target = new URL(url);

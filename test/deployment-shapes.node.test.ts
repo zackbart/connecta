@@ -291,7 +291,7 @@ describe("deployment shapes", () => {
     const env = { CONNECTA_DATABASE: join(dir, "state.sqlite"), CONNECTA_TOKEN: staticToken };
     const config = nodeConfig(env);
     const app = createConnecta({ ...config, logger: "silent" });
-    const initialize = async (token?: string, path = "/mcp/local") => {
+    const initialize = async (token?: string, path = "/agent/local") => {
       const response = await app.fetch(
         new Request(`http://localhost:8787${path}`, {
           method: "POST",
@@ -325,8 +325,9 @@ describe("deployment shapes", () => {
       const { token } = await manager.rotate("local-machine", "local-provisioning");
       expect(token).toMatch(/^cta_[A-Za-z0-9_-]{43}$/);
       expect((await initialize(token)).status).toBe(200);
-      // Plain /mcp serves maintainers only; an agent is never one (#837).
-      expect((await initialize(token, "/mcp")).status).toBe(404);
+      // Agents reach pools only at /agent/<pool>; human endpoints refuse cta_ (#837).
+      expect((await initialize(token, "/mcp")).status).toBe(401);
+      expect((await initialize(token, "/mcp/local")).status).toBe(401);
       const { token: rotated } = await manager.rotate("local-machine", "local-provisioning");
       expect((await initialize(token)).status).toBe(401);
       expect((await initialize(rotated)).status).toBe(200);

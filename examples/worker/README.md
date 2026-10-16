@@ -81,10 +81,10 @@ attempt and add the narrowest matching entry rather than allowing its entire
 origin.
 
 Access then serves OAuth discovery and turns the client's opaque token into the
-trusted human `ctx.access` identity connecta reads. A cron job or CI client
-needs Access service headers to cross the edge and a stored `cta_` bearer to
-authenticate inside connecta. An Access service identity alone is refused.
-See [Machine tokens](#machine-tokens).
+trusted human `ctx.access` identity connecta reads. A cron job or CI client is
+an agent: it uses `/agent/<pool>` with a stored `cta_` bearer as its only
+credential, once [the agent bypass](#let-agents-through-access) exists. An
+Access service identity alone is refused. See [Machine tokens](#machine-tokens).
 
 Through the API, the relevant part of the application is:
 
@@ -111,6 +111,33 @@ owns client registration, redirect allowlists, and token lifetimes.
 [`AGENTS.md`](./AGENTS.md) repeats the callback invariant for coding agents
 working in a copied deployment. Do not remove the entries there when changing
 the Access policy or application.
+
+### Let agents through Access
+
+Add one more self-hosted Access application for each hostname agents use (the
+`workers.dev` hostname and each custom domain): domain set to that hostname,
+path `agent/*`, and a single policy whose action is **Bypass** and whose include
+rule is **Everyone**. Keep the Worker-level application; it still protects every
+other path. Through the API:
+
+```json
+{
+  "type": "self_hosted",
+  "name": "connecta agents",
+  "destinations": [{ "type": "public", "uri": "connecta.example.com/agent/*" }],
+  "policies": [{ "name": "agents bypass", "decision": "bypass", "include": [{ "everyone": {} }] }]
+}
+```
+
+It must be a hostname-and-path (`public`) destination: a second Worker
+destination is refused because the Worker-level application owns it. Changes
+took 15–19 seconds to settle when probed, occasionally longer, with transient
+edge errors meanwhile. Do not rely on a fixed wait: verify that `/agent/ci`
+without credentials returns connecta's 401 (`WWW-Authenticate: Bearer`) while
+`/mcp` still returns Access's refusal, several times in a row. Connecta ignores Access
+context on `/agent/*` and refuses every other spelling of that namespace before
+auth. [Deploying Connecta](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md#agent-endpoints-behind-cloudflare-access)
+records the untested cases and the propagation details.
 
 The checked-in `access.dev` block gives `wrangler dev` a local operator
 identity. Remove the block to test the missing-Access refusal. It has no effect
@@ -221,8 +248,8 @@ the Clerk path in the Node template.
 
 Then list the maintainers' Access user ids (`user_uuid`, else email) in the
 `CONNECTA_MAINTAINERS` var and point a maintainer's MCP client at
-`<PUBLIC_URL>/mcp`. Agents and other people use `<PUBLIC_URL>/mcp/<pool>` for
-a pool that lists them in `members`. The example explicitly enables
+`<PUBLIC_URL>/mcp`. Other people use `<PUBLIC_URL>/mcp/<pool>`, and agents
+`<PUBLIC_URL>/agent/<pool>`, for a pool that lists them in `members`. The example explicitly enables
 `ui: operatorUi()`; open `<PUBLIC_URL>/` for Connections and each connection's
 authentication controls. The page labels tool safety, offers fixed repair
 prompts for classified failures, and shows client setup commands for endpoints
@@ -233,10 +260,11 @@ declared agent, is available to permitted interactive operators.
 ## Select optional modules
 
 `cloudflareAccessAuth()` reads trusted identity after Access admits the Worker
-request. Maintainers use plain `/mcp` and the operator pages; pool members use
-`/mcp/<pool>`, which serves exactly that pool's tools.
-Machines authenticate with `accessTokens(storage)` over the same D1 database;
-Access service headers alone never grant MCP access or interactive authority.
+request. Maintainers use plain `/mcp` and the operator pages; people in a pool
+use `/mcp/<pool>`, and agents in it `/agent/<pool>`, which serve exactly that
+pool's tools. Agents authenticate with `accessTokens(storage)` over the same D1
+database; human endpoints refuse their tokens, and Access service headers alone
+never grant MCP access or interactive authority.
 Keep users, groups, and admission in Access. Connector visibility and management
 permissions belong in `src/connecta.config.ts`.
 
@@ -263,18 +291,18 @@ recognize it by `identity.agent` on every request. It never has interactive
 operator authority. Removing a name from `agents` stops its token on the next
 request.
 
-A machine sends all three headers:
+An agent connects to `<PUBLIC_URL>/agent/<pool>` for a pool that lists it and
+sends one header:
 
 ```text
-CF-Access-Client-Id: <access-service-client-id>
-CF-Access-Client-Secret: <access-service-client-secret>
 Authorization: Bearer <stored-cta-token>
 ```
 
-Permit the service credentials in the Worker-level Access application's policy.
-The service headers admit the request at the edge; connecta verifies the bearer
-against D1. Neither credential works alone for machine access. Doctor uses
-the same three credentials; see [Client authentication and activity](#client-authentication-and-activity).
+[The agent bypass](#let-agents-through-access) lets the request past the edge;
+connecta verifies the bearer against D1 and ignores any Access context or
+headers there. `/mcp` and `/mcp/<pool>` refuse the token. Doctor also reads
+`/health`, which stays behind Access, so it needs Access service credentials
+too; see [Client authentication and activity](#client-authentication-and-activity).
 
 For programmatic bootstrap, trusted provisioning code that already holds this
 deployment's D1 binding can use the published API against that same storage:
@@ -330,13 +358,13 @@ does not create credentials or permissions by itself.
 
 ### Client authentication and activity
 
-Interactive MCP clients use Access Managed OAuth. Machine clients need both
-Access service credentials and a declared agent's `cta_` bearer, issued as
-described in [Machine tokens](#machine-tokens). `accessTokens(storage)` is always
+Interactive MCP clients use Access Managed OAuth. Agents send only a declared
+agent's `cta_` bearer to `/agent/<pool>`, issued as described in
+[Machine tokens](#machine-tokens). `accessTokens(storage)` is always
 enabled, and every signed-in maintainer manages agent tokens.
-Keep maintainers, pools, and their members in deployment code. Until agent
-endpoints ship, an agent reaches only `/mcp/<pool>` for a pool that lists it
-(the example's `ci` pool lists `agent:ci-client`); plain `/mcp` refuses it.
+Keep maintainers, pools, and their members in deployment code. An agent reaches
+only `/agent/<pool>` for a pool that lists it (the example's `ci` pool lists
+`agent:ci-client`); `/mcp` and `/mcp/<pool>` refuse its token.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.CONNECTA_DB) })`,
 with `activityHistory` from `@zackbart/connecta/activity` and `d1ActivityStore`
@@ -344,7 +372,9 @@ from `@zackbart/connecta/d1`. See [Activity history](#activity-history-optional)
 Omit the module and store wiring to record no history and show no Activity tab. Diagnostics remain independent; `logger: "silent"` suppresses
 them explicitly.
 
-Verify MCP health and the exact six tools with:
+Verify MCP health and the exact six tools with the following. Doctor reads
+`/health` through Access with the service credentials, then checks `/agent/ci`
+with the `cta_` token alone:
 
 ```sh
 CF_ACCESS_CLIENT_ID='REPLACE_WITH_ACCESS_CLIENT_ID' \

@@ -158,13 +158,13 @@ describe("Phase 4 behavior fixes", () => {
     });
     const request = (method = "GET", token = "reader") =>
       new Request(BASE + "/ui/api/activity", { method, headers: { Authorization: `Bearer ${token}` } });
-    // A pool member that is not a maintainer, and an agent (never one), get
-    // the operator routes' private 404.
-    for (const token of ["member", agentToken]) {
-      const refused = await deployment.fetch(request("GET", token));
-      expect(refused.status, token).toBe(404);
-      expect(await refused.json()).toEqual({ error: "not found" });
-    }
+    // A pool member that is not a maintainer gets the operator routes'
+    // private 404, and an agent token is refused outright, since operator
+    // routes are human routes (#837).
+    const refused = await deployment.fetch(request("GET", "member"));
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toEqual({ error: "not found" });
+    expect((await deployment.fetch(request("GET", agentToken))).status).toBe(401);
     const response = await deployment.fetch(request());
     expect(response.status).toBe(200);
     expect(((await response.json()) as { events: ToolCallActivityEvent[] }).events.map((e) => e.id)).toEqual([

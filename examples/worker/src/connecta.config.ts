@@ -31,12 +31,15 @@
  *      Claude's https://claude.ai/api/mcp/auth_callback plus ChatGPT's
  *      https://chatgpt.com/connector_platform_oauth_redirect and
  *      https://chatgpt.com/connector/oauth/* forms (see ../AGENTS.md).
+ *      Then add one self-hosted Access application per hostname for
+ *      `<host>/agent/*` with a single Bypass policy (Everyone), so agents send
+ *      only their cta_ token (README.md § "Let agents through Access").
  *   5. Use the Workers Paid plan required by the `worker_loaders` binding.
  *   6. List the maintainers' Access user ids (the identity's user_uuid, else
  *      its email) in the CONNECTA_MAINTAINERS var, comma-separated.
  *   7. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
  *      lives. Point a maintainer's MCP client at `<PUBLIC_URL>/mcp`, and an
- *      agent's at `<PUBLIC_URL>/mcp/ci`.
+ *      agent's at `<PUBLIC_URL>/agent/ci`.
  */
 import { api, defineConfig, remoteMcp } from "@zackbart/connecta";
 import { activityHistory } from "@zackbart/connecta/activity";
@@ -82,8 +85,9 @@ export default defineConfig((env: Env) => {
     // Required adapter owns each run's handles; direct upstream construction throws.
     executor: workerExecutor({ loader: env.LOADER }),
     // Access owns edge admission and proves human identity for MCP and the
-    // operator pages. Machines need Access service headers at the edge plus a
-    // stored cta_ bearer inside connecta; a service identity alone is refused.
+    // operator pages. Agents use /agent/<pool>, which Access bypasses and
+    // connecta authenticates with the cta_ bearer alone; a service identity
+    // alone is refused everywhere.
     auth: [cloudflareAccessAuth()],
     // Machine clients are agents declared here by name, each with one cta_
     // token. An Access-authenticated operator issues, rotates, and revokes it
@@ -99,8 +103,9 @@ export default defineConfig((env: Env) => {
     maintainers: env.CONNECTA_MAINTAINERS.split(",")
       .map((id) => id.trim())
       .filter(Boolean),
-    // Everyone else, agents included, uses a pool that lists them: exactly
-    // its tools at /mcp/<name>. Members are Access user ids or "agent:<name>".
+    // Everyone else uses a pool that lists them, which serves exactly its
+    // tools: people at /mcp/<name>, agents at /agent/<name>. Members are
+    // Access user ids or "agent:<name>".
     pools: { ci: { tools: ["echo"], members: ["agent:ci-client"] } },
     // Connectors that declare a `credential` slot become editable by a
     // maintainer (shared) or by the member it belongs to (personal),

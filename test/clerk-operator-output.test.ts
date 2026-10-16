@@ -142,7 +142,7 @@ describe("Clerk operator output with the real SDK", () => {
   it("INV-6: checks inbound denial reasons against the operator record allowlist", () => {
     expect(failureRecord({ reason: "email_domain_denied" })).toEqual({ reason: "email_domain_denied" });
     expect(failureRecord({ reason: SENTINEL as never })).toEqual({});
-    for (const reason of ["not_maintainer", "agent_not_maintainer", "pool_not_declared", "not_pool_member"] as const) {
+    for (const reason of ["not_maintainer", "pool_not_declared", "not_pool_member"] as const) {
       expect(failureRecord({ reason })).toEqual({ reason });
     }
     expect(failureRecord({ userId: "denied-canary@example.test" } as never)).toEqual({});
@@ -435,12 +435,11 @@ describe("Clerk operator output with the real SDK", () => {
           },
         }),
       );
-      if (isMcp) {
-        expect(machineResult.ok).toBe(true);
-        if (machineResult.ok) expect(machineResult.actor).toMatchObject({ kind: "access_token", id: "machine" });
-      } else {
-        expect(machineResult.ok).toBe(false);
-        if (!machineResult.ok) expect(machineResult.response.status).toBe(403);
+      // Human endpoints refuse an agent token (#837), never falling back to the
+      // cookie or Access identity: 401 at MCP endpoints, 403 at UI identity routes.
+      expect(machineResult.ok).toBe(false);
+      if (!machineResult.ok) expect(machineResult.response.status).toBe(isMcp ? 401 : 403);
+      if (!isMcp) {
         const cookieResult = await authorizeUiIdentity(
           new Request(`${BASE}${path}`, {
             headers: { Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },

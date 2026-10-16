@@ -8,7 +8,7 @@ credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 
 | Task                                                                | Sections                                                                                                                                                                      |
 | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connect a machine or migrate an old client                          | [Agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens), [static bearer migration](#migrating-static-bearer-clients)                                                  |
+| Connect a machine or migrate an old client                          | [Agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens), [agent endpoints](#agent-endpoints), [static bearer migration](#migrating-static-bearer-clients)             |
 | Configure caller visibility, read-only endpoints, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                      |
 | Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [management](#human-authentication-management)    |
 | Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                         |
@@ -52,8 +52,14 @@ The `cta_` syntax is reserved even without the optional token verifier: it
 refuses rather than becoming an ambient human or an open anonymous request.
 Async recognition hooks fail at construction; unexpected rejected promises
 are consumed before refusal so their text cannot reach runtime output.
-Human routes reject recognized machine credentials without consulting token
-storage, then ask only interactive providers. Replace custom `final` and
+Agents reach pools only at [agent endpoints](#agent-endpoints). Every human
+route (`/mcp`, `/mcp/<pool>`, operator pages and APIs, `/connect`, OAuth
+starts and callbacks) refuses a `cta_` token before any recognition hook,
+token storage read, cookie, session, or Access context is consulted: 401 with
+the endpoint's challenge on MCP endpoints and operator data routes, and 403 on
+routes that require an interactive person. The built-in `cta_` adapter is
+never a candidate there, so a refused `cta_` token cannot fall back to an
+ambient identity. Human routes then ask only human providers. Replace custom `final` and
 `finalRefusals` handling with recognition; handshake redirects and admission
 policy refusals are provider verdicts too. Recognition grants no identity.
 
@@ -63,7 +69,8 @@ provider that actually answers the endpoint's protected-resource metadata
 request. Its `challenge(request, baseUrl)` supplies `WWW-Authenticate`, including
 `scope`; an unrelated metadata hook does not own resource discovery. Machine-only
 endpoints challenge with `Bearer` and advertise no authorization server. With
-Clerk, even a refused `cta_` token receives Clerk's resource metadata challenge.
+Clerk, a `cta_` token refused at `/mcp` or `/mcp/<pool>` still receives Clerk's
+resource metadata challenge.
 An open deployment with connectors warns at construction.
 
 Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
@@ -169,10 +176,9 @@ inbound provider that carries `agent` is refused like an unknown token. An
 agent has no principal, so personal connectors are absent for it and it never
 reads activity. Its subject partitions result handles per
 agent. Activity attributes its calls to the agent name. Pools list an agent as
-`"agent:<name>"`; an agent is never a maintainer, so plain `/mcp` refuses it
-with the pool 404. Until agent endpoints ship (#837 P4), an agent member
-reaches `/mcp/<pool>` with its `cta_` token; that path is interim and moves to
-`/agent/<pool>`. An agent never becomes an interactive operator: machine
+`"agent:<name>"`, and the agent reaches each such pool at `/agent/<pool>`
+only. An agent is never a maintainer, and every human endpoint refuses its
+token. An agent never becomes an interactive operator: machine
 tokens manage neither tokens nor connection credentials.
 
 **The slot is the only authority.** A token admits iff its digest's lookup
@@ -274,7 +280,8 @@ that matched token record ids with `actor.id` match agent names through
 ## Origins
 
 `allowedOrigins?: readonly string[] | "*"` bounds which browsers may speak to
-the MCP endpoint. A disallowed `Origin` on `/mcp` or any `/mcp/<pool>` gets a
+the MCP endpoint. A disallowed `Origin` on `/mcp`, any `/mcp/<pool>`, or any
+path in the agent namespace gets a
 fixed 403 before HTTPS redirects, admission, auth, and CORS preflight — the
 check cannot depend on anything a caller has yet proved. The default admits the
 `publicUrl` origin plus HTTP(S) loopback at any port; a supplied list replaces
@@ -315,8 +322,8 @@ Access is read from one place, deployment code
 ([decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)). Top-level
 `maintainers` lists the people who reach plain `/mcp`, which serves the whole
 catalog with the deployment's `readOnly`, and the operator routes. Each pool's
-`members` lists who reaches `/mcp/<pool>`, which serves exactly that pool's
-`tools`. A maintainer opens no pool implicitly; list them as a member to use
+`members` lists who reaches that pool, people at `/mcp/<pool>` and agents at
+`/agent/<pool>`, which serve exactly that pool's `tools`. A maintainer opens no pool implicitly; list them as a member to use
 one. Nothing intersects these lists with anything else, and a request never
 names its own scope.
 
@@ -339,7 +346,7 @@ provider other than the built-in agent-token adapter), and a non-empty
 `maintainers` on a deployment with no such provider. With agents alone
 (`accessTokens` as the only inbound auth), `maintainers` stays empty, nobody
 can be a maintainer, and plain `/mcp` and every operator API admit nobody; the
-agents reach only the pools that list them. With no inbound auth at all, the
+agents reach only `/agent/<pool>` for the pools that list them. With no inbound auth at all, the
 deployment is open (see [pools](#pools)). `describeConfig()` lists
 `maintainers` as `{ namespace, id }` and each pool's resolved `members`.
 
@@ -425,9 +432,10 @@ secrets. Declare each machine as an agent instead:
 3. List `"agent:machine-name"` in the `members` of each pool it uses. Agents
    are never maintainers, so a machine that used plain `/mcp` moves to a pool
    holding its tools.
-4. Save the once-returned secret in the client's secret store and send
-   `Authorization: Bearer cta_…`. Behind Worker Access, also satisfy the edge
-   with Access service credentials; an Access-only machine no longer admits.
+4. Save the once-returned secret in the client's secret store and point the
+   client at `/agent/<pool>` with `Authorization: Bearer cta_…`. Behind Worker
+   Access, add the [agent bypass application](./deploying.md#agent-endpoints-behind-cloudflare-access)
+   so that token is the only credential; an Access-only machine no longer admits.
 5. Verify MCP initialization and the intended grants. Confirm the old static
    secret refuses, then remove its environment secret and the old import.
    Remove `X-Connecta-Principal`. An agent has no principal, so a client that
@@ -439,9 +447,9 @@ and reports.
 
 ## Pools
 
-A pool is a named slice of the deployment served at `/mcp/<pool>` to its
-members: a support team that sees three Notion tools and Linear, a calendar
-bot that sees one tool, both over the same credentials. Private remote catalog
+A pool is a named slice of the deployment served to its members: people at
+`/mcp/<pool>` and agents at `/agent/<pool>`. A support team sees three Notion
+tools and Linear, a calendar bot sees one tool, both over the same credentials. Private remote catalog
 cache entries remain partitioned by the admitted pool.
 
 ```ts
@@ -463,16 +471,52 @@ createConnecta({
 
 Without configured `auth`, an open deployment has one anonymous, non-interactive
 identity. It keeps plain `/mcp` with the whole catalog, as the construction
-warning says, and every pool path answers the 404: nobody can be a member.
+warning says, every pool path answers the 404 because nobody can be a member,
+and every agent endpoint answers the machine-only 401 because no agent can be
+admitted.
 
-| Rule         | Contract                                                                                                                                                                                                                                                                                                                                      |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scope        | `/mcp/<pool>` serves exactly the pool's `tools` (connector ids or exact `connector.tool` addresses) to its members. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                                                                                                                         |
-| Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `agent_not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
-| Agents       | An agent member reaches `/mcp/<pool>` with its `cta_` token. This is interim: agent endpoints (`/agent/<pool>`, #837 P4) replace it, and human endpoints will then refuse `cta_`.                                                                                                                                                             |
-| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.       |
-| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                          |
-| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                             |
+| Rule         | Contract                                                                                                                                                                                                                                                                                                                                |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                              |
+| Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                   |
+| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                               |
+| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
+| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                    |
+| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                       |
+
+### Agent endpoints
+
+`/agent/<pool>` is where agents use a pool. It exists for deployments behind
+Cloudflare Access, which [bypasses `/agent/*`](./deploying.md#agent-endpoints-behind-cloudflare-access)
+at the edge so an agent sends one credential, and it behaves the same on Node.
+
+- **Path.** Only a raw request pathname byte-equal to `/agent/` plus a
+  well-formed pool name (`[a-z0-9_-]+`) is an agent endpoint. Connecta routes
+  the agent namespace before every other route: any path that starts with
+  `/agent` once escapes are decoded, case is folded, and slashes are
+  collapsed (`/agent`, `/agent/`, `/agent/x/`, `/agent/x/y`, `/AGENT/x`,
+  `/%61gent/x`, `//agent/x`, `/agent/%2f..`, `/agentx`) answers the pool 404
+  before any admission or auth, so a path Access bypasses never reaches a
+  human route. The query string is not part of the match.
+- **Auth.** Only the built-in `cta_` adapter is consulted. Clerk and Access
+  adapters never run; `ctx.access`, which Access attaches even to a bypassed
+  path, is never read or passed on; cookies, Clerk handshake parameters,
+  `Cf-Access-Jwt-Assertion`, and Access service headers are ignored. A
+  missing, malformed, unknown, revoked, or non-`cta_` credential gets 401 with
+  `WWW-Authenticate: Bearer` and no `resource_metadata`.
+- **Membership.** An admitted agent must be listed in that pool's `members`.
+  A non-member agent, a pool that lists no agents, and an undeclared but
+  well-formed pool name get the identical pool 404 after auth, logged as
+  `not_pool_member` or `pool_not_declared`. Unauthenticated callers get the
+  same 401 for declared and undeclared names, so pool names are not
+  anonymously enumerable.
+- **Discovery.** Agent endpoints publish no protected-resource metadata:
+  `/.well-known/oauth-protected-resource/agent/<pool>` is the ordinary 404,
+  declared or not. Agents hold a provisioned token and never run OAuth
+  discovery, so there is no authorization server to name and no resource URL
+  worth advertising.
+- **Handles.** Result handles are bound to `/agent/<pool>`, so one minted
+  there pages nowhere else, including `/mcp/<pool>` and another agent pool.
 
 Protected-resource metadata stays public at both default aliases,
 `/.well-known/oauth-protected-resource` and
@@ -1094,7 +1138,8 @@ the token against the Worker-level Access application's AUD. A nonempty trusted
 `ctx.access.getIdentity()` supplies `user_uuid`, with `email` as fallback, in the
 stable `cloudflare-access` principal namespace. Missing identity, service
 identity, or unusable user ids refuse. Access service credentials can admit the
-request at the edge, but connecta requires a `cta_` token for machine identity.
+request at the edge, but connecta requires a `cta_` token at `/agent/<pool>`
+for machine identity.
 
 It never reads `Cf-Access-Jwt-Assertion`, fetches signing keys, or accepts a
 caller's JWT. Missing or malformed trusted context returns 401. A rejected
@@ -1130,13 +1175,16 @@ covers. For another client add its exact URI or the narrowest wildcard covering
 it, never its whole origin. A missing entry lets discovery succeed and
 registration fail later, which looks like a broken MCP server, not a setting.
 
-Do not add a bypass for the discovery routes; a fully automated client uses a
+Do not add a bypass for the discovery routes or any human path. The one
+bypass connecta expects is the [agent application for `/agent/*`](./deploying.md#agent-endpoints-behind-cloudflare-access),
+behind which an agent's `cta_` token is its only credential. Worker-level
+Access runs before every other connecta route, so `/health`, operator pages,
+downstream OAuth callbacks, `/mcp`, and `/mcp/<pool>` all require Access, and a
+`cta_` token is not a standalone edge credential there because Cloudflare
+rejects the request before connecta sees it. Unattended tools that need those
+paths, such as `connecta doctor` reading `/health`, use a
 [service token](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)
-through `CF-Access-Client-Id` and `CF-Access-Client-Secret` instead. Worker-level
-Access runs before every connecta route, so `/health`, operator pages, downstream
-OAuth callbacks, and `/mcp` all require Access unless a more-specific policy says
-otherwise, and a `cta_` token is not a standalone edge credential
-because Cloudflare rejects the request before connecta sees it. Custom public
+through `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Custom public
 webhooks live outside connecta and need their own Access routing policy. The
 [Worker example](../examples/worker/) carries the whole deployment shape.
 

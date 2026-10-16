@@ -371,7 +371,7 @@ describe("connecta doctor --config", () => {
     expect(executed).toBe(0);
   });
 
-  it("INV-4: --pool checks a pool that lists its agent, which plain /mcp refuses", async () => {
+  it("INV-4: --pool checks /agent/<pool> for a pool that lists its agent, and an agent token needs one", async () => {
     const storage = memoryStorage();
     const app = createConnecta({
       readOnly: false,
@@ -392,7 +392,9 @@ describe("connecta doctor --config", () => {
     const env = { ...process.env, CONNECTA_TOKEN: token, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" };
     const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "bots"], { env });
     expect(stdout).toContain("Connecta doctor passed");
-    await expect(run(process.execPath, [CLI, "doctor", "--url", url], { env })).rejects.toThrow();
+    await expect(run(process.execPath, [CLI, "doctor", "--url", url], { env })).rejects.toThrow(
+      "An agent token reaches only /agent/<pool>",
+    );
     await expect(run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "Bad/Name"], { env })).rejects.toThrow(
       "--pool must be a pool name",
     );

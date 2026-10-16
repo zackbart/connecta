@@ -57,11 +57,14 @@ This repository is deployment configuration, not a copy of Connecta itself.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability set;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
-- Unattended clients and `connecta doctor` need Access service credentials
-  plus a stored `cta_` bearer. Set `CF_ACCESS_CLIENT_ID`,
-  `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN` together for doctor, and
-  pass `--pool ci`: an agent reaches only the pools that list it, never plain
-  `/mcp`, which serves `maintainers` alone.
+- Agents (unattended clients) use `<PUBLIC_URL>/agent/<pool>` with a stored
+  `cta_` bearer as their only credential. That needs one self-hosted Access
+  application per hostname for `<host>/agent/*` with a single Bypass policy,
+  beside the Worker-level application (README.md § "Let agents through
+  Access"). Never bypass any other path. `/mcp` and `/mcp/<pool>` refuse `cta_`.
+  `connecta doctor` also reads `/health` behind Access: set
+  `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN`
+  together, and pass `--pool ci`, a pool that lists the agent.
   Machine clients are the `agents` declared in `src/connecta.config.ts`. Issue
   or rotate a token through the Access-authenticated operator page or trusted
   `AccessTokenManager.rotate` tooling against this same D1 storage, as README
