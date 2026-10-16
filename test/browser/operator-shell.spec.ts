@@ -134,7 +134,9 @@ test("operator shell admits ambient Access without sending a stored token", asyn
   const request = await dataRequest;
   expect(request.headers()["authorization"]).toBeUndefined();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-  await expect(page.locator("section[aria-labelledby=inboundHeading] .list-rows")).toContainText("cloudflare-access");
+  await expect(page.locator("section[aria-labelledby=signInHeading] .identity-grid")).toContainText(
+    "Cloudflare Access",
+  );
   await expect(page.getByText("Checking your session…")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
 });

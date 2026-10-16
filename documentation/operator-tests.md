@@ -13,7 +13,10 @@ or browser evidence. Read the [operator UI contract](./operator-ui.md) first.
 `test/fixtures/operator-visual.ts` owns the visual data. It builds the
 maintainer's contract v2, live overlay, and legacy auth details through the
 current server routes, using the types in `src/operator-ui/contract.ts` and
-`model.ts`; its people carry labels from a fake directory. Its Tokens agents
+`model.ts`; its people carry labels from a fake directory. It sets a few
+limits, an activity retention, one classification override and a GitHub call
+admission rule in code, so Settings and the connector Configuration card show
+set values beside defaults. Its Tokens agents
 (`claude-desktop` issued, `triage` none, `nightly` revoked) are real slots
 committed through the deployment's own store, so the contract's `agents` and
 `GET /ui/access-tokens` agree, revisions included; only their timestamps and
@@ -61,8 +64,8 @@ agent per slot state, with pools and last seen.
 Another 60 screenshots cover the Overview map on the frozen v2 maintainer, its
 hover trace for Lin, and the narrow map list; configured, mismatched, unreadable and multifield
 credentials; all three OAuth client mechanisms; clean and unobserved drift;
-historical Activity; client setup; schema dialog; read/write filters; expanded
-config provenance; narrow sign-in and Connection; deployment branding; `/mcp`
+historical Activity; client setup; schema dialog; read/write filters; narrow
+Settings; narrow sign-in and Connection; deployment branding; `/mcp`
 and an agent pool expanded with every runs-as kind; command search; narrow
 endpoints; the connector × endpoint matrix, one cell's open popover, and the
 narrow matrix; a new token's one-time secret dialog; and the member page, wide

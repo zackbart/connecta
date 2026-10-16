@@ -252,17 +252,14 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
 test("Config provenance recognizes explicit defaults and the access model", async ({ page }) => {
   await session(page);
   await page.goto(origin + "/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: /^calls$/ })
-    .click();
-  const explicit = page
-    .locator(".snapshot-value")
-    .filter({ has: page.locator('code[title="config.limits.calls.maxResultBytes"]') });
-  await expect(explicit).toContainText("config");
-  const defaulted = page
-    .locator(".snapshot-value")
-    .filter({ has: page.locator('code[title="config.limits.calls.defaultTimeoutMs"]') });
+  // A value set in code carries the set mark, even when it equals the default.
+  const explicit = page.locator('[data-config-path="config.limits.calls.maxResultBytes"]');
+  await expect(explicit).toHaveClass(/\bset\b/);
+  await expect(explicit.locator(".set-dot")).toHaveCount(1);
+  await expect(explicit).toContainText("set in code");
+  const defaulted = page.locator('[data-config-path="config.limits.calls.defaultTimeoutMs"]');
+  await expect(defaulted).not.toHaveClass(/\bset\b/);
+  await expect(defaulted.locator(".set-dot")).toHaveCount(0);
   await expect(defaulted).toContainText("default");
   const contract = await page.request.get(origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
   const facts = (await contract.json()) as OperatorUiContract;
