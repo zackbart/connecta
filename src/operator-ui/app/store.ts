@@ -1807,8 +1807,9 @@ function contractSlotsRefreshed(contract: OperatorUiContractV2): Partial<Operato
   const previous = new Set([...confirmedAgents, ...state.tokens.map((slot) => slot.name)]);
   confirmedAgents = new Set(next.keys());
   const changed = new Set([...previous].filter((name) => !next.has(name)));
-  const stamp = (token: { state: string; issuedAt?: string; revokedAt?: string }) =>
-    `${token.state}:${token.issuedAt ?? ""}:${token.revokedAt ?? ""}`;
+  // Field by field, revision included: the same state at another revision is another slot.
+  const stamp = (token: { state: string; issuedAt?: string; revokedAt?: string; revision?: string }) =>
+    `${token.state}:${token.issuedAt ?? ""}:${token.revokedAt ?? ""}:${token.revision ?? ""}`;
   for (const slot of state.tokens) {
     const token = next.get(slot.name);
     if (token && stamp(token) !== stamp(slot)) changed.add(slot.name);
@@ -1820,8 +1821,8 @@ function contractSlotsRefreshed(contract: OperatorUiContractV2): Partial<Operato
 interface SlotChecked {
   action: SlotAction;
   generation: number;
-  /** The route's own slot revision, when the list carried one. */
-  expect: string | undefined;
+  /** The route's own slot revision, sent as `expect`. A slot without one is never acted on. */
+  expect: string;
 }
 
 /**
@@ -1834,20 +1835,18 @@ function slotCheck(name: string, actions: SlotAction[]): SlotChecked | null {
   const resolved = resolveSlot(state.contract, state.tokens, name);
   if (!resolved?.live) return null;
   const action = slotActions(resolved.slot).find((candidate) => actions.includes(candidate));
-  return action ? { action, generation: generationOf(name), expect: resolved.slot.revision } : null;
+  // No revision to send as `expect`: unresolved until a list read supplies one.
+  if (!action || !resolved.slot.revision) return null;
+  return { action, generation: generationOf(name), expect: resolved.slot.revision };
 }
 
 /**
- * The compare-and-swap body for a token mutation: the route's slot revision
- * the operator confirmed against. The route refuses a mismatch with 409
- * `slot_changed` before minting or writing anything.
- *
- * TODO(P3b): #837 adds `revision` to every slot and requires `expect`. Until it
- * merges, a list read without revisions sends no body; drop this fallback when
- * P6b rebases onto it.
+ * The compare-and-swap body every token mutation sends, POST and DELETE
+ * alike: the route's slot revision the operator confirmed against. The route
+ * refuses a mismatch with 409 `slot_changed` before minting or writing.
  */
-function expectBody(checked: SlotChecked): { expect: string } | undefined {
-  return checked.expect === undefined ? undefined : { expect: checked.expect };
+function expectBody(checked: SlotChecked): { expect: string } {
+  return { expect: checked.expect };
 }
 
 /** One mutation's claim on its slot, from dispatch to settlement. */

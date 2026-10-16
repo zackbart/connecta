@@ -191,8 +191,16 @@ test.describe("agent tokens", () => {
     const match = /^\/ui\/access-tokens\/([a-z0-9_-]+)$/.exec(path);
     if (!match) return undefined;
     const name = match[1]!;
-    if (method === "POST") return { json: { token: SECRET, agent: { name, state: "issued", issuedAt: VISUAL_NOW } } };
-    if (method === "DELETE") return { json: { agent: { name, state: "revoked", revokedAt: VISUAL_NOW } } };
+    if (method === "POST")
+      return {
+        json: {
+          token: SECRET,
+          agent: { name, state: "issued", issuedAt: VISUAL_NOW, revision: `${name}IssuedRevision` },
+        },
+      };
+    if (method === "DELETE") {
+      return { json: { agent: { name, state: "revoked", revokedAt: VISUAL_NOW, revision: `${name}RevokedRevision` } } };
+    }
     return undefined;
   };
 
@@ -334,7 +342,7 @@ test.describe("agent token slot agreement", () => {
     // The contract says simon-ada is issued; the live list knows only triage.
     const sent = await install(page, crowdedMaintainer(), ({ method, path }) =>
       method === "GET" && path === "/ui/access-tokens"
-        ? { json: { agents: [{ name: "triage", state: "none" }] } }
+        ? { json: { agents: [{ name: "triage", state: "none", revision: "triageNoneRevision0000" }] } }
         : undefined,
     );
     let prompted = 0;
@@ -360,7 +368,7 @@ test.describe("agent token slot agreement", () => {
   });
 
   test("a truncated 200 to an issue leaves the slot unresolved: no unconfirmed second POST", async ({ page }) => {
-    let slots: unknown = { agents: [{ name: "triage", state: "none" }] };
+    let slots: unknown = { agents: [{ name: "triage", state: "none", revision: "triageNoneRevision0000" }] };
     const sent = await install(page, crowdedMaintainer(), ({ method, path }) => {
       if (method === "GET" && path === "/ui/access-tokens") return { json: slots };
       // Issuance committed, but the body breaks off before the secret.
@@ -383,7 +391,7 @@ test.describe("agent token slot agreement", () => {
     expect(mutations(sent)).toEqual(["POST /ui/access-tokens/triage"]);
     await expect(page.getByRole("dialog")).toHaveCount(0);
     // A refresh shows what happened: it committed, so the next step is a confirmed rotation.
-    slots = { agents: [{ name: "triage", state: "issued", issuedAt: VISUAL_NOW }] };
+    slots = { agents: [{ name: "triage", state: "issued", issuedAt: VISUAL_NOW, revision: "triageIssuedRevision00" }] };
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(page.getByRole("button", { name: "Rotate triage's token", exact: true })).toBeEnabled();
     expect(prompted).toBe(0);
@@ -415,7 +423,7 @@ test.describe("agent token slot agreement", () => {
 
   test("an unknown outcome disables that slot until a refresh, and a second click sends nothing", async ({ page }) => {
     let issueAnswer: { status: number; json: unknown } = { status: 503, json: { error: "unknown" } };
-    let slots: unknown = { agents: [{ name: "triage", state: "none" }] };
+    let slots: unknown = { agents: [{ name: "triage", state: "none", revision: "triageNoneRevision0000" }] };
     const sent = await install(page, crowdedMaintainer(), ({ method, path }) => {
       if (method === "GET" && path === "/ui/access-tokens") return { json: slots };
       if (method === "POST" && path === "/ui/access-tokens/triage") return issueAnswer;
@@ -438,10 +446,13 @@ test.describe("agent token slot agreement", () => {
     await page.waitForTimeout(300);
     expect(mutations(sent)).toEqual(["POST /ui/access-tokens/triage"]);
     // A refresh settles it: the slot did commit, so the row now offers Rotate, which confirms.
-    slots = { agents: [{ name: "triage", state: "issued", issuedAt: VISUAL_NOW }] };
+    slots = { agents: [{ name: "triage", state: "issued", issuedAt: VISUAL_NOW, revision: "triageIssuedRevision00" }] };
     issueAnswer = {
       status: 200,
-      json: { token: SECRET, agent: { name: "triage", state: "issued", issuedAt: VISUAL_NOW } },
+      json: {
+        token: SECRET,
+        agent: { name: "triage", state: "issued", issuedAt: VISUAL_NOW, revision: "triageIssuedRevision00" },
+      },
     };
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     const rotate = page.getByRole("button", { name: "Rotate triage's token", exact: true });
@@ -853,9 +864,11 @@ test("review: a delayed revoke must not permit an unconfirmed issue after a newe
 }) => {
   let current = crowdedMaintainer();
   current.agents = current.agents.map((agent) =>
-    agent.name === "triage" ? { ...agent, token: { state: "issued", issuedAt: VISUAL_NOW } } : agent,
+    agent.name === "triage"
+      ? { ...agent, token: { state: "issued", issuedAt: VISUAL_NOW, revision: "triageIssuedRevision00" } }
+      : agent,
   );
-  const initial = { name: "triage", state: "issued", issuedAt: VISUAL_NOW };
+  const initial = { name: "triage", state: "issued", issuedAt: VISUAL_NOW, revision: "triageIssuedRevision00" };
   const sent = await install(page, current, ({ method, path }) => {
     if (path === "/ui/api/config") return { json: current };
     if (path === "/ui/access-tokens") return { json: { agents: [initial] } };
@@ -869,7 +882,9 @@ test("review: a delayed revoke must not permit an unconfirmed issue after a newe
   await page.route(`${VISUAL_ORIGIN}/ui/access-tokens/triage`, async (route) => {
     if (route.request().method() !== "DELETE") return route.fallback();
     await responseGate;
-    await route.fulfill({ json: { agent: { name: "triage", state: "revoked", revokedAt: VISUAL_NOW } } });
+    await route.fulfill({
+      json: { agent: { name: "triage", state: "revoked", revokedAt: VISUAL_NOW, revision: "triageRevokedRevision0" } },
+    });
   });
   let confirmations = 0;
   page.on("dialog", (dialog) => {
@@ -888,7 +903,12 @@ test("review: a delayed revoke must not permit an unconfirmed issue after a newe
     // The revoke has committed, and someone else has since issued another token.
     current = structuredClone(current);
     current.agents = current.agents.map((agent) =>
-      agent.name === "triage" ? { ...agent, token: { state: "issued", issuedAt: "2026-10-15T12:01:00.000Z" } } : agent,
+      agent.name === "triage"
+        ? {
+            ...agent,
+            token: { state: "issued", issuedAt: "2026-10-15T12:01:00.000Z", revision: "triageReissuedRevision" },
+          }
+        : agent,
     );
     await page.getByRole("link", { name: "Connectors", exact: true }).click();
     const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === "/ui/api/config");

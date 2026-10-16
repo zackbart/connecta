@@ -93,18 +93,29 @@ describe("agent token slots", () => {
   it("shows the contract's own slots before the list has loaded", () => {
     const rows = agentRows(maintainer(), []);
     expect(rows.map((row) => [row.name, row.slot])).toEqual([
-      ["simon-ada", { name: "simon-ada", state: "issued", issuedAt: "2026-10-01T09:30:00.000Z" }],
-      ["triage", { name: "triage", state: "none" }],
+      [
+        "simon-ada",
+        {
+          name: "simon-ada",
+          state: "issued",
+          issuedAt: "2026-10-01T09:30:00.000Z",
+          revision: "simonAdaIssuedRevision",
+        },
+      ],
+      ["triage", { name: "triage", state: "none", revision: "triageNoneRevision0000" }],
     ]);
   });
 
   it("blocks a row the live list lacks or an unknown outcome left unresolved, with the reason", () => {
-    const rows = agentRows(maintainer(), [{ name: "triage", state: "none" }], ["triage"]);
+    const triage = { name: "triage", state: "none" as const, revision: "triageNoneRevision0000" };
+    const rows = agentRows(maintainer(), [triage], ["triage"]);
     expect(rows.map((row) => [row.name, row.live, row.blocked])).toEqual([
       ["triage", true, "Refresh to continue"],
       ["simon-ada", false, "Token state unavailable, refresh"],
     ]);
-    expect(agentRows(maintainer(), [{ name: "triage", state: "none" }])[0]!.blocked).toBeNull();
+    expect(agentRows(maintainer(), [triage])[0]!.blocked).toBeNull();
+    // A slot read without a revision cannot be acted on either (P3b, #837).
+    expect(agentRows(maintainer(), [{ name: "triage", state: "none" }])[0]!.blocked).toBe("Refresh to continue");
   });
 
   it("INV-4: never reads agents from a member contract", () => {

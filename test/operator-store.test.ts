@@ -606,7 +606,9 @@ describe("managed token secret lifetime", () => {
     fetchMock.mockResolvedValueOnce(Response.json(uiData("a")));
     await store.boot();
     // Only a live slot is acted on: seed it, so the POST really goes out.
-    fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ name: "desktop", state: "none" }] }));
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ agents: [{ name: "desktop", state: "none", revision: "desktopNoneRevision000" }] }),
+    );
     await store.loadAccessTokens();
     const slow = deferred<Response>();
     fetchMock.mockImplementationOnce(() => slow.promise);
@@ -633,8 +635,8 @@ describe("managed token secret lifetime", () => {
 });
 
 describe("operator collection ordering", () => {
-  const none = (name: string) => ({ name, state: "none" as const });
-  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW });
+  const none = (name: string) => ({ name, state: "none" as const, revision: `${name}-none` });
+  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW, revision: `${name}-issued` });
 
   it("loads agent slots and keeps an issuance when an earlier list finishes later", async () => {
     const loaded = await loadStore({
@@ -701,13 +703,17 @@ describe("operator collection ordering", () => {
       Response.json({ token: "secret", agent: { ...issued("simon"), revision: afterRotate } }),
     );
     await store.rotateAgentToken("simon");
+    // Rotation asks in the row first.
+    await store.confirmTokenAction();
     const body = (call: number) => JSON.parse(String((fetchMock.mock.calls[call]![1] as RequestInit).body));
     expect(body(1)).toEqual({ expect: listed });
     const revoked = { name: "simon", state: "revoked" as const, revokedAt: NOW, revision: "revokedRevision0000000" };
     fetchMock.mockResolvedValueOnce(Response.json({ agent: revoked }));
     await store.revokeAgentToken("simon");
+    await store.confirmTokenAction();
     expect(body(2)).toEqual({ expect: afterRotate });
-    expect(store.getState().tokens).toEqual([{ ...row("simon", "", NOW), revision: revoked.revision }]);
+    // The revoked slot, at the revision the revocation returned.
+    expect(store.getState().tokens).toEqual([revoked]);
   });
 
   it("refuses an issuance response for another agent and reveals nothing", async () => {
@@ -1927,8 +1933,8 @@ describe("operator connection writes", () => {
 });
 
 describe("actions revalidate at dispatch", () => {
-  const none = (name: string) => ({ name, state: "none" as const });
-  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW });
+  const none = (name: string) => ({ name, state: "none" as const, revision: `${name}-none` });
+  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW, revision: `${name}-issued` });
   /** A session whose next token read waits until released; every other read answers at once. */
   function heldSession() {
     let armed = false;
@@ -2108,10 +2114,20 @@ describe("actions revalidate at dispatch", () => {
 });
 
 describe("a token slot is resolved only by a list read that started after its last change", () => {
-  const none = (name: string) => ({ name, state: "none" as const });
-  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW });
+  // As the frozen contract lists triage, so the two agree until a test says otherwise.
+  const none = (name: string) => ({
+    name,
+    state: "none" as const,
+    revision: name === "triage" ? "triageNoneRevision0000" : `${name}-none`,
+  });
+  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW, revision: `${name}-issued` });
   // simon-ada as the fixture contract reports it, so the two agree.
-  const simon = { name: "simon-ada", state: "issued" as const, issuedAt: "2026-10-01T09:30:00.000Z" };
+  const simon = {
+    name: "simon-ada",
+    state: "issued" as const,
+    issuedAt: "2026-10-01T09:30:00.000Z",
+    revision: "simonAdaIssuedRevision",
+  };
   const posts = (fetchMock: ReturnType<typeof vi.fn>) =>
     fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST").map(([p]) => p);
 
@@ -2176,7 +2192,9 @@ describe("a token slot is resolved only by a list read that started after its la
     // The contract, read later, says triage is issued; the cached list still says none.
     const newer = structuredClone(OPERATOR_V2_MAINTAINER);
     newer.agents = newer.agents.map((agent) =>
-      agent.name === "triage" ? { ...agent, token: { state: "issued" as const, issuedAt: NOW } } : agent,
+      agent.name === "triage"
+        ? { ...agent, token: { state: "issued" as const, issuedAt: NOW, revision: "triageIssuedRevision00" } }
+        : agent,
     );
     configMock.mockResolvedValueOnce(Response.json(newer));
     await store.loadOperatorContract();
@@ -2202,7 +2220,12 @@ describe("a token slot is resolved only by a list read that started after its la
 });
 
 describe("token mutations compare and swap on the slot revision (P3b, #837)", () => {
-  const simon = { name: "simon-ada", state: "issued" as const, issuedAt: "2026-10-01T09:30:00.000Z" };
+  const simon = {
+    name: "simon-ada",
+    state: "issued" as const,
+    issuedAt: "2026-10-01T09:30:00.000Z",
+    revision: "simonAdaIssuedRevision",
+  };
   const calls = (fetchMock: ReturnType<typeof vi.fn>) =>
     fetchMock.mock.calls
       .filter(([, init]) => ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? "GET"))
@@ -2270,39 +2293,84 @@ describe("token mutations compare and swap on the slot revision (P3b, #837)", ()
     expect(calls(fetchMock)).toHaveLength(1);
   });
 
-  it("TODO(P3b): sends no expect while the list carries no revision", async () => {
+  it("never dispatches against a slot read without a revision, and shows it unresolved", async () => {
     const loaded = await loadStore({ id: "session", getToken: async () => "token" });
-    const { store, fetchMock, window } = loaded;
+    const { store, fetchMock } = loaded;
     await bootMaintainer(loaded);
-    fetchMock.mockResolvedValueOnce(Response.json({ agents: [simon, { name: "triage", state: "none" }] }));
+    const bare = { name: "simon-ada", state: "issued" as const, issuedAt: "2026-10-01T09:30:00.000Z" };
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [bare, { name: "triage", state: "none" }] }));
     await store.loadAccessTokens();
-    window.confirm = vi.fn(() => true);
-    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_a", agent: simon }));
+    await store.rotateAgentToken("triage");
     await store.rotateAgentToken("simon-ada");
-    await store.confirmTokenAction();
-    fetchMock.mockResolvedValueOnce(Response.json({ agent: { name: "simon-ada", state: "revoked", revokedAt: NOW } }));
     await store.revokeAgentToken("simon-ada");
     await store.confirmTokenAction();
+    // No question opens and nothing is sent: there is no revision to send as `expect`.
+    expect(store.getState().tokenConfirm).toBeNull();
+    expect(calls(fetchMock)).toEqual([]);
+  });
+
+  it("sends the revision as expect when issuing a none slot, in the body for DELETE as for POST", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ agents: [{ name: "triage", state: "none", revision: "triageNoneRevision0000" }] }),
+    );
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        token: "cta_t",
+        agent: { name: "triage", state: "issued", issuedAt: NOW, revision: "triageIssuedRevision00" },
+      }),
+    );
+    await store.rotateAgentToken("triage");
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        agent: { name: "triage", state: "revoked", revokedAt: NOW, revision: "triageRevokedRevision0" },
+      }),
+    );
+    await store.revokeAgentToken("triage");
+    await store.confirmTokenAction();
     expect(calls(fetchMock)).toEqual([
-      ["POST", "/ui/access-tokens/simon-ada", undefined],
-      ["DELETE", "/ui/access-tokens/simon-ada", undefined],
+      ["POST", "/ui/access-tokens/triage", { expect: "triageNoneRevision0000" }],
+      ["DELETE", "/ui/access-tokens/triage", { expect: "triageIssuedRevision00" }],
     ]);
     const headers = (fetchMock.mock.calls.at(-1)![1] as RequestInit).headers as Record<string, string>;
-    expect(headers["Content-Type"]).toBeUndefined();
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("unresolves a slot whose contract revision differs from the list's, same state and date", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, configMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ agents: [simon, { name: "triage", state: "none", revision: "triageNoneRevision0000" }] }),
+    );
+    await store.loadAccessTokens();
+    expect(store.getState().unresolvedSlots).toEqual([]);
+    // Another operator rotated and revoked meanwhile, landing on "none" again at a new revision.
+    const newer = structuredClone(OPERATOR_V2_MAINTAINER);
+    newer.agents = newer.agents.map((agent) =>
+      agent.name === "triage"
+        ? { ...agent, token: { state: "none" as const, revision: "triageNoneRevision0001" } }
+        : agent,
+    );
+    configMock.mockResolvedValueOnce(Response.json(newer));
+    await store.loadOperatorContract();
+    expect(store.getState().unresolvedSlots).toEqual(["triage"]);
+    await store.rotateAgentToken("triage");
+    expect(calls(fetchMock)).toEqual([]);
   });
 });
 
 describe("review round 4: one generation fence per agent slot", () => {
-  const triageNone = (revision?: string) => ({
-    name: "triage",
-    state: "none",
-    ...(revision === undefined ? {} : { revision }),
-  });
-  const triageIssued = (issuedAt = NOW, revision?: string) => ({
+  // Every slot carries a revision since P3b (#837); the defaults match the frozen contract's triage.
+  const triageNone = (revision = "triageNoneRevision0000") => ({ name: "triage", state: "none", revision });
+  const triageIssued = (issuedAt = NOW, revision = "triageIssuedRevision00") => ({
     name: "triage",
     state: "issued",
     issuedAt,
-    ...(revision === undefined ? {} : { revision }),
+    revision,
   });
   const writes = (mock: ReturnType<typeof vi.fn>) =>
     mock.mock.calls.filter(([, init]) => ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""));
@@ -2382,7 +2450,14 @@ describe("review round 4: one generation fence per agent slot", () => {
     const newer = structuredClone(OPERATOR_V2_MAINTAINER);
     newer.agents = newer.agents.map((agent) =>
       agent.name === "triage"
-        ? { ...agent, token: { state: "revoked" as const, revokedAt: "2026-10-15T12:01:00.000Z" } }
+        ? {
+            ...agent,
+            token: {
+              state: "revoked" as const,
+              revokedAt: "2026-10-15T12:01:00.000Z",
+              revision: "triageRevokedRevision0",
+            },
+          }
         : agent,
     );
     configMock.mockResolvedValueOnce(Response.json(newer));
@@ -2405,7 +2480,9 @@ describe("review round 4: one generation fence per agent slot", () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const newer = structuredClone(OPERATOR_V2_MAINTAINER);
     newer.agents = newer.agents.map((agent) =>
-      agent.name === "triage" ? { ...agent, token: { state: "issued" as const, issuedAt: NOW } } : agent,
+      agent.name === "triage"
+        ? { ...agent, token: { state: "issued" as const, issuedAt: NOW, revision: "triageIssuedRevision00" } }
+        : agent,
     );
     configMock.mockResolvedValueOnce(Response.json(newer));
     await store.loadOperatorContract();
@@ -2740,7 +2817,12 @@ describe("round 6: member refresh deadline and authorization return", () => {
 });
 
 describe("token confirmations live in the row", () => {
-  const simon = { name: "simon-ada", state: "issued" as const, issuedAt: "2026-10-01T09:30:00.000Z" };
+  const simon = {
+    name: "simon-ada",
+    state: "issued" as const,
+    issuedAt: "2026-10-01T09:30:00.000Z",
+    revision: "simonAdaIssuedRevision",
+  };
   const writes = (fetchMock: ReturnType<typeof vi.fn>) =>
     fetchMock.mock.calls.filter(([, init]) =>
       ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""),

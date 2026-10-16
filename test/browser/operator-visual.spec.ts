@@ -109,7 +109,7 @@ async function installFixture(
       const agent = path.split("/").pop()!;
       json = {
         token: "cta_visual_00000000000000000000000000000000",
-        agent: { name: agent, state: "issued", issuedAt: VISUAL_NOW },
+        agent: { name: agent, state: "issued", issuedAt: VISUAL_NOW, revision: `${agent}IssuedRevision` },
       };
     }
     if (json !== undefined) {

@@ -119,9 +119,9 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     }
     // The bridge has no agents; give Tokens one slot in each state, with pools and last seen.
     if (!restricted && !empty) contract.agents = [
-      { name: "claude-desktop", pools: ["automation"], token: { state: "issued", issuedAt: VISUAL_NOW }, lastSeenAt: VISUAL_NOW },
-      { name: "triage", pools: ["support"], token: { state: "none" }, lastSeenAt: null },
-      { name: "nightly", pools: [], token: { state: "revoked", revokedAt: "2026-10-05T08:00:00.000Z" }, lastSeenAt: "2026-10-04T23:10:00.000Z" },
+      { name: "claude-desktop", pools: ["automation"], token: { state: "issued", issuedAt: VISUAL_NOW, revision: "desktopIssuedRevision0" }, lastSeenAt: VISUAL_NOW },
+      { name: "triage", pools: ["support"], token: { state: "none", revision: "triageNoneRevision0000" }, lastSeenAt: null },
+      { name: "nightly", pools: [], token: { state: "revoked", revokedAt: "2026-10-05T08:00:00.000Z", revision: "nightlyRevokedRevision" }, lastSeenAt: "2026-10-04T23:10:00.000Z" },
     ];
     if (contract.config) contract.config.connectaVersion = data.connectaVersion = "0.29.0";
     else data.connectaVersion = "0.29.0";
@@ -132,9 +132,9 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
       contract, data,
       activity: { events: empty ? [] : events, ...(empty ? {} : { nextCursor: "older" }) },
       tokens: { agents: empty ? [] : [
-        { name: "claude-desktop", state: "issued", issuedAt: VISUAL_NOW },
-        { name: "triage", state: "none" },
-        { name: "nightly", state: "revoked", revokedAt: "2026-10-05T08:00:00.000Z" },
+        { name: "claude-desktop", state: "issued", issuedAt: VISUAL_NOW, revision: "desktopIssuedRevision0" },
+        { name: "triage", state: "none", revision: "triageNoneRevision0000" },
+        { name: "nightly", state: "revoked", revokedAt: "2026-10-05T08:00:00.000Z", revision: "nightlyRevokedRevision" },
       ] },
     } satisfies OperatorVisualFixture;
   } finally { await app.close(); }

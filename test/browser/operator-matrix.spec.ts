@@ -502,7 +502,11 @@ for (const [path, heading] of [
         return route.fulfill({ json: contract });
       }
       if (url.pathname === "/ui/access-tokens")
-        return route.fulfill({ json: { agents: [{ name: "simon-ada", state: "issued", issuedAt: VISUAL_NOW }] } });
+        return route.fulfill({
+          json: {
+            agents: [{ name: "simon-ada", state: "issued", issuedAt: VISUAL_NOW, revision: "simonAdaIssuedRevision" }],
+          },
+        });
       return route.fallback();
     });
     await page.goto(VISUAL_ORIGIN + path);
@@ -625,7 +629,10 @@ async function tokensUnderRecovery(page: Page) {
       control.writes.push(`${route.request().method()} ${url.pathname}`);
       const name = url.pathname.split("/").pop()!;
       return route.fulfill({
-        json: { token: "cta_ui834-recovery-secret", agent: { name, state: "issued", issuedAt: VISUAL_NOW } },
+        json: {
+          token: "cta_ui834-recovery-secret",
+          agent: { name, state: "issued", issuedAt: VISUAL_NOW, revision: `${name}IssuedRevision` },
+        },
       });
     }
     return route.fallback();

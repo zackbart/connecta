@@ -13,7 +13,10 @@ export type AgentSlot = (
   | { name: string; state: "issued"; issuedAt: string }
   | { name: string; state: "revoked"; revokedAt: string }
 ) & {
-  /** The route's opaque slot revision; it changes on every slot commit. Absent before P3b (#837). */
+  /**
+   * The route's opaque slot revision; it changes on every slot commit (P3b,
+   * #837). A slot read without one is unresolved and never acted on.
+   */
   revision?: string;
 };
 
@@ -91,7 +94,7 @@ export function agentRows(
       pools: agent?.pools ?? [],
       slot,
       live,
-      blocked: !live ? SLOT_UNAVAILABLE : unresolved.includes(name) ? SLOT_UNRESOLVED : null,
+      blocked: !live ? SLOT_UNAVAILABLE : unresolved.includes(name) || !slot.revision ? SLOT_UNRESOLVED : null,
       lastSeenAt: agent?.lastSeenAt ?? null,
       actions: slotActions(slot),
     };

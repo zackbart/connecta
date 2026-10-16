@@ -28,11 +28,11 @@ export function crowdedMaintainer(): OperatorUiContractV2 {
   return contract;
 }
 
-/** `GET /ui/access-tokens` for the frozen maintainer's agents: simon-ada issued, triage none. */
+/** `GET /ui/access-tokens` for the frozen maintainer's agents, at the revisions its contract lists. */
 export const OPERATOR_V2_SLOTS: { agents: AgentSlot[] } = {
   agents: [
-    { name: "simon-ada", state: "issued", issuedAt: "2026-10-01T09:30:00.000Z" },
-    { name: "triage", state: "none" },
+    { name: "simon-ada", state: "issued", issuedAt: "2026-10-01T09:30:00.000Z", revision: "simonAdaIssuedRevision" },
+    { name: "triage", state: "none", revision: "triageNoneRevision0000" },
   ],
 };
 

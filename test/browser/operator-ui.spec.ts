@@ -322,18 +322,19 @@ test.beforeAll(async () => {
         );
         const { agents = [] } = real.ok
           ? ((await real.json()) as {
-              agents?: Array<{ name: string; state: string; issuedAt?: string; revokedAt?: string }>;
+              agents?: Array<{ name: string; state: string; issuedAt?: string; revokedAt?: string; revision: string }>;
             })
           : {};
-        contract.agents = agents.map(({ name, state, issuedAt, revokedAt }) => ({
+        // Each agent carries its real slot's revision, as P6b's contract will.
+        contract.agents = agents.map(({ name, state, issuedAt, revokedAt, revision }) => ({
           name,
           pools: [],
           token:
             state === "issued"
-              ? { state: "issued" as const, issuedAt: issuedAt! }
+              ? { state: "issued" as const, issuedAt: issuedAt!, revision }
               : state === "revoked"
-                ? { state: "revoked" as const, revokedAt: revokedAt! }
-                : { state: "none" as const },
+                ? { state: "revoked" as const, revokedAt: revokedAt!, revision }
+                : { state: "none" as const, revision },
           lastSeenAt: null,
         }));
       }
@@ -1408,6 +1409,11 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
       .click();
     await expect(card).toHaveClass(/revoked/);
     expect(await authenticate(rotated)).toBe(false);
+    // Every mutation named the real slot revision it was confirmed against, in the body (P3b, #837).
+    const mutations = requests.filter((r) => r.path === "/ui/access-tokens/desktop-client");
+    expect(mutations.map((r) => r.method)).toEqual(["POST", "POST", "DELETE"]);
+    for (const r of mutations) expect((r.body as { expect?: unknown }).expect).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(new Set(mutations.map((r) => (r.body as { expect: string }).expect)).size).toBe(3);
   } finally {
     await connecta.close();
   }
