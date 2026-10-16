@@ -30,9 +30,12 @@ function people(): InboundAuth {
 }
 
 /** A listen-shaped body of `total` bytes that counts every byte pulled from it. */
+const encoder = new TextEncoder();
+/** The JSON prefix every counted body starts with, pulled as its own first chunk. */
+const HEAD = encoder.encode('{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"pad":"');
+
 function countedBody(total: number): { body: ReadableStream<Uint8Array>; pulled: () => number } {
-  const encoder = new TextEncoder();
-  const head = encoder.encode('{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"pad":"');
+  const head = HEAD;
   let pulled = 0;
   const body = new ReadableStream<Uint8Array>(
     {
@@ -133,8 +136,9 @@ describe("MCP request bodies before auth", () => {
           jsonrpc: "2.0",
           error: { code: -33006, message: "MCP request body too large." },
         });
-        // The cap plus the chunk that crossed it, and what a tee may buffer ahead.
-        expect(counted.pulled()).toBeLessThanOrEqual(MAX_LISTEN_CLASSIFICATION_BYTES + 2 * CHUNK);
+        // The cap plus the chunk that crossed it, what a tee may buffer ahead, and
+        // the short JSON prefix pulled as its own first chunk.
+        expect(counted.pulled()).toBeLessThanOrEqual(MAX_LISTEN_CLASSIFICATION_BYTES + 2 * CHUNK + HEAD.byteLength);
         expect(counted.pulled()).toBeLessThan(LARGE);
         expect(await admittedTotal(c)).toBe(0);
       } finally {
