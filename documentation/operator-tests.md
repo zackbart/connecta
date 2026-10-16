@@ -87,7 +87,12 @@ refresh that stalls past its deadline (one focusable Retry, no maintainer
 request until Retry succeeds), an open client setup drawer closed by a failed
 refresh with focus on Retry, Tokens under recovery (an open rotate question
 closes with focus on Retry and nothing sent; an unseen secret dialog stays open
-over the banner until dismissed), payload sentinels, CSP, and the refusal of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
+over the banner until dismissed), payload sentinels, CSP, and the refusal of a v1 body. Matrix coverage excludes retired grants from
+its live counts and pie, keeps their names inspectable in the popover, and
+renders an unavailable catalog as a dashed empty ring with "?" and an unknown
+accessible name. Cell names distinguish equal grants against different live
+catalog sizes. `test/operator-endpoints.test.ts` covers those view-model cases,
+including a known empty catalog versus an unavailable one.
 `test/browser/operator-overview.spec.ts` covers the Overview on the frozen v2
 fixtures: the status pill, stat labels and numbers, map columns, dashed read-only grants and dotted
 tokenless access; attention rows with their fix links, a copied fix prompt equal
