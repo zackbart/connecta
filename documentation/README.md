@@ -1,36 +1,58 @@
 # Agent documentation
 
-Choose a route by the work you are doing. Each route identifies the task guide
-and contracts needed to operate an endpoint, set up a deployment, connect a
-service, or change Connecta itself.
+Start here when operating a deployment installed with `@zackbart/connecta`.
+All operator procedures below are available in the installed package; paths in
+this directory are relative to `node_modules/@zackbart/connecta/documentation/`.
+For an existing endpoint, start with [Operating an endpoint](./operating.md).
+For a new deployment, start with [Deploying Connecta](./deploying.md).
 
-| Your task                                                             | Start here                                                            | Read next when needed                                                                                                                            |
-| --------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Use an existing endpoint to answer a question or perform a task       | [Operating an endpoint](./operating.md)                               | [Meta-tools](./meta-tools.md), [guest API](./code-mode.md)                                                                                       |
-| Set up, configure, upgrade, or diagnose a deployment                  | [Deploying Connecta](./deploying.md)                                  | [Auth](./auth.md), [operator UI](./operator-ui.md), [migration to 0.33](./migration-0.33.md)                                                     |
-| Lay out an agent's pools on a deployment                              | [Organizing an agent's pools](./auth.md#organizing-an-agents-pools)   | [Pool owners](./auth.md#pool-owners-for-google-workspace), [agent endpoints](./auth.md#agent-endpoints)                                          |
-| Add a maintained integration, remote MCP, or HTTP API to a deployment | [Integrating services](./integrating.md)                              | Provider skill, [classification](./architecture.md#providers-and-reviewed-classification), [downstream auth](./auth.md#shared-and-personal-auth) |
-| Change Connecta's source, tests, or published contracts               | [AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md) | [Principles](https://github.com/zackbart/connecta/blob/main/PRINCIPLES.md), [architecture](./architecture.md), then the affected contract        |
+## Operator tasks
+
+| Task                                     | Self-contained procedure                                                                                                            |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Add or remove a connector                | [Change the connector roster](./integrating.md#add-or-remove-a-connector)                                                           |
+| Organize an agent's pools                | [Organizing an agent's pools](./auth.md#organizing-an-agents-pools)                                                                 |
+| Add a person (maintainer or pool member) | [Add a person](./auth.md#add-a-person)                                                                                              |
+| Connect a shared credential              | [Connect a shared credential](./auth.md#connect-a-shared-credential)                                                                |
+| Issue, rotate, or revoke an agent token  | [Manage an agent token](./auth.md#issue-rotate-or-revoke-an-agent-token)                                                            |
+| Upgrade between versions                 | [Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment), including [migration to 0.33](./migration-0.33.md) |
+| Diagnose with `connecta doctor`          | [Verify and diagnose](./deploying.md#verify-and-diagnose)                                                                           |
+
+## Audience rule
+
+Shipped docs (`documentation/`, `templates/`, `examples/worker/`, and the root
+`README.md`) are written first for an agent operating a deployment from the
+installed package. Operator conventions must be self-contained rules plus a
+neutral example. Decision records and issues explain why; no operator task
+requires them, `spec/`, `.claude/`, or the Connecta source checkout. Those
+three directories do not ship. Contributor source maps, INV citations, and
+implementation/test evidence belong under clearly labeled contributor
+headings and are optional for operators. Use `assistant`, `alice`, `bob`,
+`crm`, `tickets`, `notes_alice`, and `alice@example.com` in examples; never
+real deployment, client, person, or organization names. Maintained provider
+product names stay.
 
 ## Contract reference
 
-| Guide                                                       | Owns                                                                                                          |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| [Meta-tools](./meta-tools.md)                               | Six top-level tools, discovery, direct-call results, paging, skills, and recovery                             |
-| [Code mode](./code-mode.md)                                 | JavaScript guest API, executor requirements, output, retries, cancellation, limits, and writes                |
-| [Auth](./auth.md)                                           | Inbound identity, maintainers, pools and members, agents, credential ownership, and downstream OAuth          |
-| [Architecture](./architecture.md)                           | Request lifetimes, routes, storage, configuration, import boundaries, and Effect implementation               |
-| [Operator UI](./operator-ui.md)                             | Optional UI setup, scoped configuration and live-data contract, activity disclosure, and UI implementation    |
-| [Operator UI tests](./operator-tests.md)                    | Browser state matrix, real-server flows, and snapshot maintenance                                             |
-| [Migration to 0.33](./migration-0.33.md)                    | Upgrade actions from 0.32 options to maintainers, members, agents, agent endpoints, and pool owners           |
-| [Provider migration for 0.29](./provider-migration-0.29.md) | Upgrade actions for Notion, Vercel, and Cloudflare; provider reconciliation tables supply exact name mappings |
-| [Provider auth migration](./provider-auth-migration.md)     | Upgrade actions when `auth` selects hosted MCP or Connecta's REST connector, Stripe and Vercel                |
+| Guide                                                            | Owns                                                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| [Meta-tools](./meta-tools.md)                                    | Six top-level tools, discovery, direct-call results, paging, skills, and recovery                             |
+| [Code mode](./code-mode.md)                                      | JavaScript guest API, executor requirements, output, retries, cancellation, limits, and writes                |
+| [Auth](./auth.md)                                                | Inbound identity, maintainers, pools and members, agents, credential ownership, and downstream OAuth          |
+| [Architecture (contributor reference)](./architecture.md)        | Request lifetimes, routes, storage, configuration, import boundaries, and Effect implementation               |
+| [Operator UI](./operator-ui.md)                                  | Optional UI setup, scoped configuration and live-data contract, activity disclosure, and UI implementation    |
+| [Operator UI tests (contributor reference)](./operator-tests.md) | Browser state matrix, real-server flows, and snapshot maintenance                                             |
+| [Migration to 0.33](./migration-0.33.md)                         | Upgrade actions from 0.32 options to maintainers, members, agents, agent endpoints, and pool owners           |
+| [Provider migration for 0.29](./provider-migration-0.29.md)      | Upgrade actions for Notion, Vercel, and Cloudflare; provider reconciliation tables supply exact name mappings |
+| [Provider auth migration](./provider-auth-migration.md)          | Upgrade actions when `auth` selects hosted MCP or Connecta's REST connector, Stripe and Vercel                |
 
 Each long contract starts with task routes. Follow those section links before
-reading the whole guide. Source and test pointers identify where to check a
-claim or implement a change.
+reading the whole guide. Contributor references at the end are optional
+implementation evidence.
 
-## Documentation ownership
+## Contributor reference
+
+### Documentation ownership
 
 The root [README](../README.md) explains the product for people. It owns what
 Connecta offers, how the pieces connect, deployment choices, and the setup

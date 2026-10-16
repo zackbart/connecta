@@ -80,7 +80,7 @@ and cleanup at budget exhaustion, cancellation, and deadlines; the wrapper only 
 
 ## What an executor must implement
 
-The Promise provider/result seam lives in `src/types.ts`. Custom implementations
+The Promise provider/result seam is declared in the installed `dist/types.d.ts`. Custom implementations
 also need the lifecycle wrapper above; structural compatibility alone is insufficient.
 
 ```ts
@@ -737,9 +737,6 @@ and nonzero pad bits are rejected before collection. Size budgets still apply.
 MCP-native output a return value cannot carry: base64 is not projectable, so a
 block that fits the inline call limit (`S5`, `L6`) can use the separate
 emission transport budget instead of the `R2` return guard.
-The earlier alternatives are in [decision history](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md)
-([#267](https://github.com/zackbart/connecta/issues/267),
-[#270](https://github.com/zackbart/connecta/issues/270)).
 
 **M1.** `connecta.emit(result)` accepts a rich result from this program's
 `connecta.call` and forwards its original native content blocks, including
@@ -861,7 +858,7 @@ Programs and direct calls use the same invocation deadline and stages. A call's
 `timeoutMs` wins, then `calls.defaultTimeoutMs`, then `execute.hostCallTimeoutMs`
 (default 15,000). A guest may request a longer individual call, but the sandbox
 and request ceilings still bound the whole run. Timeout details are agent-facing;
-INV-6 operator records retain only checked classifications and numeric facts.
+operator records retain only checked classifications and numeric facts.
 A dispatched write timeout becomes `write_outcome_unknown` and retains its
 deadline details even when the program catches the failure. The final program
 error includes the first timeout in `details`; multiple write timeouts also
@@ -1028,7 +1025,7 @@ createConnecta({
 ```
 
 The removed `trust` option, on the deployment or a pool, fails construction
-with a message naming `readOnly` (`INV-11`).
+with a message naming `readOnly`.
 
 The registry computes one `classifyTool` verdict on each request-scoped
 published catalog entry. It caches and persists only raw downstream facts.
@@ -1194,7 +1191,13 @@ brand check and reads only own string data descriptors for diagnostics; guest
 accessors, serialization hooks, and Proxy traps do not run. Other thrown objects
 receive a fixed description.
 
-## Verification
+## Contributor reference
+
+### Verification
+
+The earlier alternatives are in [decision history](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md)
+([#267](https://github.com/zackbart/connecta/issues/267),
+[#270](https://github.com/zackbart/connecta/issues/270)).
 
 `test/guest-contract-cases.ts` runs on QuickJS in `test/guest-api-contract-quickjs.node.test.ts`
 and on the Worker adapter with a real Miniflare Loader in `test/guest-api-contract.test.ts`.

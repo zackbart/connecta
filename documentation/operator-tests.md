@@ -1,5 +1,11 @@
 # Operator UI tests
 
+## Contributor reference
+
+This guide describes Connecta implementation and repository verification.
+It is optional for deployment operators. Start with the
+[operator task index](./README.md#operator-tasks) for package-local procedures.
+
 Use this repository-maintenance guide when changing operator pages, data routes,
 or browser evidence. Read the [operator UI contract](./operator-ui.md) first.
 [The agent index](./README.md) routes deployment and endpoint tasks.

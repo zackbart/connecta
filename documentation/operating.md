@@ -126,7 +126,9 @@ mean the provider applied it; inspect state or ask for the missing decision
 before issuing it again. [Retry semantics](./code-mode.md#retry-semantics) and
 [writes](./code-mode.md#writes) describe program outcomes and write accounting.
 
-## Implementation and evidence
+## Contributor reference
+
+### Implementation and evidence
 
 The endpoint's built-in [usage skill](https://github.com/zackbart/connecta/blob/main/src/skills.ts)
 is maintained alongside [meta-tools](https://github.com/zackbart/connecta/blob/main/src/meta-tools.ts)

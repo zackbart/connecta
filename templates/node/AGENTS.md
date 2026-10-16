@@ -2,6 +2,12 @@
 
 This repository is deployment configuration, not a copy of Connecta itself.
 
+Start every operator task at
+`node_modules/@zackbart/connecta/documentation/README.md#operator-tasks`.
+That installed index routes adding/removing connectors, organizing agent pools,
+adding people, connecting shared credentials, issuing/rotating/revoking agent
+tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
+
 - Edit `src/connecta.config.ts` for connectors, authentication, storage, public
   URL, and optional modules. `src/index.ts` only starts it.
 - Keep `executor: quickJsExecutor()` for the prescribed six-tool code-first

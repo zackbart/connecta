@@ -87,9 +87,8 @@ interactive credential or token management authority.
 ## Operator data contract
 
 `GET /ui/api/config`, owned by `operatorUi()`, returns `OperatorUiContract`
-(`OperatorUiContractV2`) from `connecta/ui`, `schemaVersion: 2`, frozen by
-[decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract).
-`src/operator-ui/contract.ts` is also the browser's type source. Schema
+(`OperatorUiContractV2`) from `@zackbart/connecta/ui`, `schemaVersion: 2`.
+Its declarations ship in `dist/operator-ui/contract.d.ts` in the installed package. Schema
 version 1 and its `you` and `hasGrant` facts were removed. It is the page's
 only gate: a signed-out caller gets the auth provider's 401 challenge, and a
 `cta_` agent token the machine-only 401 Bearer challenge every human route
@@ -194,14 +193,6 @@ cleared. The routes thus accept what `manage` lists, with one recovery
 exception: clearing a stored value that cannot be read is accepted although
 `manage` lists only `save` in that state. Public HTML shells and static assets carry no catalog data.
 Access-token management also requires an interactive session.
-
-The browser store reads only v2 and checks `role` before reading a
-maintainer-only field. `test/fixtures/operator-contract-v2.ts` holds
-maintainer and member fixtures, and `test/helpers/operator-member-view.ts`
-checks a member response's exact shape and compares its values with a
-projection built from config, membership, the member's own partition status,
-and each personal connector's exact `manage`;
-`test/operator-contract-server.test.ts` runs it against real responses.
 
 `GET /ui/api/config?connector=<id>` narrows the same contract to one connector
 before status and catalog probes. For a maintainer, config, provenance, live
@@ -309,7 +300,17 @@ Token controls retain their existing permission gate.
 Configuration remains in deployment code. The UI mutates only credentials,
 OAuth connections and agent tokens through the existing routes.
 
-## Source and tests
+## Contributor reference
+
+### Source and tests
+
+The browser store reads only v2 and checks `role` before reading a
+maintainer-only field. `test/fixtures/operator-contract-v2.ts` holds
+maintainer and member fixtures, and `test/helpers/operator-member-view.ts`
+checks a member response's exact shape and compares its values with a
+projection built from config, membership, the member's own partition status,
+and each personal connector's exact `manage`;
+`test/operator-contract-server.test.ts` runs it against real responses.
 
 The contract type is [contract.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui/contract.ts).
 [UI routes](https://github.com/zackbart/connecta/blob/main/src/routes/ui.ts) and

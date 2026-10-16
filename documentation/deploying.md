@@ -187,16 +187,39 @@ CONNECTA_TOKEN='<stored-cta-token>' npx connecta doctor --url http://localhost:8
 
 Doctor checks health, the required executor, and the current six-tool set. A
 `cta_` token is checked at `/agent/<pool>` and needs `--pool`.
-For a Worker protected by Access, follow the example's doctor credentials
-and service-header setup. If the operator UI is enabled, authenticated
+For a Worker protected by Access, `/health` still needs edge admission even
+though `/agent/*` bypasses Access. Use an Access service token admitted by the
+Worker-level policy for that check, alongside the agent token:
+
+```sh
+CF_ACCESS_CLIENT_ID='<access-service-id>' CF_ACCESS_CLIENT_SECRET='<access-service-secret>' CONNECTA_TOKEN='<stored-cta-token>' npx connecta doctor --url https://connecta.example.com --pool assistant
+```
+
+The service headers admit the health probe at the edge; only the `cta_` token
+authenticates the agent endpoint inside Connecta. If the operator UI is enabled, maintainer-authenticated
 `connecta doctor --config --url <public-url>` prints the caller-scoped
 configuration snapshot as JSON. It runs no diagnostic program and prints no
 raw HTTP failure body. [Operator UI](./operator-ui.md) describes the returned
-configuration, live facts, and permission rules.
+configuration, live facts, and permission rules. The config route is a human
+endpoint: an agent token cannot authenticate it.
 
 Health success alone does not prove a client can authenticate or reach an
 integration. Check client connection and a bounded read through a chosen
 connector; resolve credentials using [authorization recovery](./meta-tools.md#authorization-recovery).
+
+Use the failed check to choose the next step:
+
+| Symptom                             | Action                                                                                                                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Connection refused or timeout       | Check the public URL, listening process/port, proxy, and Worker deployment.                                                                      |
+| `/health` fails behind Access       | Check the Worker-level Access policy and the two service headers above. Do not broaden the agent bypass.                                         |
+| Executor check fails                | Retain `quickJsExecutor()` and its peer on Node, or `workerExecutor({ loader })`, the codemode peer, and `LOADER` on Workers.                    |
+| MCP 401                             | Check the saved token, declared agent, and slot state; rotated/revoked tokens refuse. Use `/agent/<pool>` with `--pool`.                         |
+| MCP 404                             | Check the pool name and `members: ["agent:assistant"]`; an existing but inaccessible pool is deliberately indistinguishable from a missing one.  |
+| Doctor passes but a connector fails | Discover its tools in that pool, check credential status/account ownership, and perform a bounded read. Doctor does not prove downstream access. |
+
+After a fix, repeat doctor with the same client credentials and pool. Never
+paste a token or raw downstream failure body into a committed diagnostic log.
 
 ## Upgrade an existing deployment
 
@@ -205,13 +228,15 @@ intervening release, and apply the relevant migration before startup. `init`
 does not merge changes into an existing deployment.
 
 - [Migration to 0.33](./migration-0.33.md) maps every removed access option to `maintainers`, pool `members`, and `agents`, moves agents to `/agent/<pool>`, and covers pool owners, token revisions, operator contract v2 with its operator route changes, and the pre-auth listen fix.
-- [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Grants match `identity.agent` instead of token record ids.
+- [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Pool members name `"agent:<name>"` instead of matching token record ids.
 - [Node storage from 0.28](../templates/node/README.md#storage) uses `connecta migrate-state` to copy the JSON state into SQLite. Activity JSONL is not imported.
 - [Worker storage from 0.28](../examples/worker/README.md#upgrading-from-028) copies KV into D1 with a one-shot migration.
 - [Notion, Vercel, and Cloudflare for 0.29](./provider-migration-0.29.md) change defaults and retained API tool names.
 - [Executor wiring](./code-mode.md#deploy-time-capability) requires branded shipped executors or a self-managed custom executor.
 
-## Implementation and evidence
+## Contributor reference
+
+### Implementation and evidence
 
 Check the [CLI](https://github.com/zackbart/connecta/blob/main/bin/connecta.mjs),
 [Node configuration](../templates/node/src/connecta.config.ts), and

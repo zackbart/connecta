@@ -2,17 +2,14 @@
 
 Use this upgrade guide when moving a Stripe, Notion, Vercel, or Cloudflare
 deployment from 0.30 to 0.31, where `auth` selects each provider's
-implementation ([#801](https://github.com/zackbart/connecta/issues/801)).
-The [0.31.0 release notes](https://github.com/zackbart/connecta/blob/main/release-notes/0.31.0.md) summarize the change.
+implementation.
 [Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover other
 version changes; [integrating services](./integrating.md) covers new connectors.
 
 A dual provider requires `auth`. `{ type: "oauth" }` connects the vendor's
 hosted MCP server, OAuth only. A key type connects Connecta's REST connector
 with an operator-managed credential. There is no default, and one connector id
-uses one implementation: configure two ids for both. The
-[decision record](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)
-explains why.
+uses one implementation: configure two ids for both.
 
 ## Stripe
 
@@ -77,9 +74,7 @@ A key whose `sk_live_`/`rk_live_` or `sk_test_`/`rk_test_` prefix contradicts
 Lost on the key path: natural-language Sigma (`stripe_analytics`), metrics,
 documentation search, the implementation planner, reports, and feedback exist
 only on the hosted OAuth connection. Programs calling those tools on a key
-connector need an OAuth connector beside it. The
-[Stripe skill](https://github.com/zackbart/connecta/blob/main/src/providers/stripe/SKILL.md)
-owns the conventions for both.
+connector need an OAuth connector beside it. Read the connector runtime guide with `connecta.skill("connector:<id>")` in `execute_code` for its usage conventions.
 
 ## Notion
 
@@ -132,8 +127,7 @@ duplication, team and skill search, attachment downloads, or page-to-skill
 conversion. An OAuth connector acts as the user, and has none of the generic
 REST tools or the `integration_*` projections and authoring helpers. Configure
 both ids when a deployment needs both; a failed call is never retried on the
-other. The [Notion skill](https://github.com/zackbart/connecta/blob/main/src/providers/notion/SKILL.md)
-owns the conventions for both.
+other. Read the connector runtime guide with `connecta.skill("connector:<id>")` in `execute_code` for its usage conventions.
 
 ## Vercel
 
@@ -169,7 +163,7 @@ variable tools (`list_project_env_vars`, `upsert_project_env_var`,
 (the runtime stream, stopped after `waitMs` or `maxRows`), and
 `vercel_api_upload`.
 
-Value safety follows a reviewed table (`src/providers/vercel/value-safety.ts`).
+Value safety follows a reviewed table bundled with the connector.
 Every operation whose response schema in the pinned spec may carry a credential
 or a stored secret has a verdict: refused (credential minting, Connect
 authorization, decrypted environment values, Global Config items and tokens,
@@ -199,9 +193,7 @@ The hosted connection now lists `filter_project_envs`, `get_project_env`,
 return decrypted values, so they are reviewed as writes, and a `readOnly`
 endpoint refuses them. Vercel admits only reviewed and approved MCP clients to its
 hosted server; if authorization is refused for that reason, the deployment
-needs Vercel's approval or a token connector. The
-[Vercel skill](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/SKILL.md)
-owns the conventions for both.
+needs Vercel's approval or a token connector. Read the connector runtime guide with `connecta.skill("connector:<id>")` in `execute_code` for its usage conventions.
 
 ## Cloudflare
 
@@ -267,9 +259,7 @@ Lost on each path. OAuth has no index validation, named tools, GraphQL tool,
 upload tool, or pin; Cloudflare's OAuth grant is the only boundary. A key has
 no hosted `search` over Cloudflare's live OpenAPI document; the pinned index
 replaces it and `providers:check` reports when it falls behind. A Global API
-Key cannot reach R2, which accepts API tokens only. The
-[Cloudflare skill](https://github.com/zackbart/connecta/blob/main/src/providers/cloudflare/SKILL.md)
-owns the conventions for both.
+Key cannot reach R2, which accepts API tokens only. Read the connector runtime guide with `connecta.skill("connector:<id>")` in `execute_code` for its usage conventions.
 
 ## Value safety on every key connector
 
@@ -308,8 +298,7 @@ one; read or rotate withheld secrets in the vendor's dashboard.
   AWS and Google signing-parameter values are withheld at any host. Writes
   carrying the plain or encoded `[redacted]` placeholder in a Notion file
   link's own query or fragment are refused before dispatch. See the
-  [Notion guide](https://github.com/zackbart/connecta/blob/main/src/providers/notion/SKILL.md)
-  for recognized hosts and scanning limits. Credential-named fields,
+  connector runtime guide through `connecta.skill("connector:<id>")` in `execute_code` for recognized hosts and scanning limits. Credential-named fields,
   including database properties named like credentials, read as
   `"[redacted]"`. Failures of the OAuth, file upload, bot user, and agent
   operations keep Notion's code but not its message.
@@ -324,3 +313,10 @@ one; read or rotate withheld secrets in the vendor's dashboard.
   destinations to their scheme and host. A credential-named field now loses
   its whole value, not only its strings (a `cookies` list, a variable named
   `API_KEY`).
+
+## Contributor reference
+
+[Decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)
+explains why auth selects the implementation. Maintained provider source
+skills and review tables live under `src/providers/` in the repository;
+`src/providers/vercel/value-safety.ts` owns Vercel's reviewed table.
