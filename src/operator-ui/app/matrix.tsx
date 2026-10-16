@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import type { OperatorConnectorOverlay, OperatorUiContractV2 } from "../contract.js";
 import {
   connectorRunsAs,
@@ -24,28 +23,62 @@ interface OpenCell {
   anchor: HTMLButtonElement;
 }
 
+interface Placement {
+  block: "above" | "below";
+  inline: "start" | "end" | "viewport";
+}
+
+/** Room kept between the panel and its cell, and the viewport's edge. */
+const GAP = 8;
+
+/**
+ * Which side of its cell the panel fits on. Below unless it would overflow
+ * the viewport and there is more room above; aligned to the cell's start,
+ * else its end, else the viewport's edge on a screen too narrow for either.
+ * Its height is capped in CSS to fit the larger side, so one side always
+ * holds it.
+ */
+function placement(anchor: DOMRect, panel: { width: number; height: number }): Placement {
+  const below = window.innerHeight - anchor.bottom - GAP;
+  const above = anchor.top - GAP;
+  return {
+    block: panel.height <= below || below >= above ? "below" : "above",
+    inline:
+      anchor.left + panel.width <= window.innerWidth - GAP
+        ? "start"
+        : anchor.right - panel.width >= GAP
+          ? "end"
+          : "viewport",
+  };
+}
+
 /**
  * One cell's tools, beside the cell that opened it. Non-modal: focus moves in
  * so a screen reader reads the list, Escape or Tab returns it to the cell, and
- * a click elsewhere closes it.
+ * a click elsewhere closes it. It renders inside its cell and is positioned by
+ * the stylesheet alone: JS picks a side, never a coordinate, so the page
+ * carries no inline styles.
  */
 function CellPopover({ open, onClose }: { open: OpenCell; onClose: (restoreFocus: boolean) => void }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const focused = useRef(false);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const [side, setSide] = useState<Placement | null>(null);
   const place = () => {
-    const rect = open.anchor.getBoundingClientRect();
-    const width = ref.current?.offsetWidth ?? 280;
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-    setPosition({ top: rect.bottom + 6, left });
+    const panel = ref.current;
+    if (!panel) return;
+    const next = placement(open.anchor.getBoundingClientRect(), {
+      width: panel.offsetWidth,
+      height: panel.offsetHeight,
+    });
+    setSide((current) => (current?.block === next.block && current.inline === next.inline ? current : next));
   };
   useLayoutEffect(place, [open]);
   // Focus once it is placed: a hidden element cannot take focus.
   useEffect(() => {
-    if (!position || focused.current) return;
+    if (!side || focused.current) return;
     focused.current = true;
     ref.current?.focus();
-  }, [position]);
+  }, [side]);
   useEffect(() => {
     const outside = (event: PointerEvent) => {
       const target = event.target as Node;
@@ -61,14 +94,14 @@ function CellPopover({ open, onClose }: { open: OpenCell; onClose: (restoreFocus
     };
   }, [open]);
   const label = `${open.title} on ${open.column.path}`;
-  return createPortal(
+  return (
     <div
       ref={ref}
       role="dialog"
       aria-label={label}
       tabIndex={-1}
       className="matrix-popover"
-      style={position ? { top: position.top, left: position.left } : { visibility: "hidden" }}
+      {...(side ? { "data-placement": side.block, "data-align": side.inline } : {})}
       onKeyDown={(event) => {
         // The popover holds nothing to tab to; Tab and Escape both hand focus
         // back to its cell, so the next Tab continues along the row.
@@ -100,8 +133,7 @@ function CellPopover({ open, onClose }: { open: OpenCell; onClose: (restoreFocus
         <p className="meta">Read-only endpoint: write tools are refused here.</p>
       ) : null}
       <p className="meta">Runs as {runsAsLabel(open.cell.runsAs)}</p>
-    </div>,
-    document.body,
+    </div>
   );
 }
 
@@ -185,19 +217,22 @@ export function ConnectorMatrix({
                             <span className="visually-hidden">{name}</span>
                           </span>
                         ) : (
-                          <button
-                            type="button"
-                            className={`matrix-chip ${cell.kind}${tone}`}
-                            aria-label={name}
-                            aria-haspopup="dialog"
-                            aria-expanded={open?.key === key}
-                            onClick={(event) => {
-                              if (open?.key === key) return close(false);
-                              setOpen({ key, title: row.title, column, cell, anchor: event.currentTarget });
-                            }}
-                          >
-                            {matrixCellText(cell)}
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className={`matrix-chip ${cell.kind}${tone}`}
+                              aria-label={name}
+                              aria-haspopup="dialog"
+                              aria-expanded={open?.key === key}
+                              onClick={(event) => {
+                                if (open?.key === key) return close(false);
+                                setOpen({ key, title: row.title, column, cell, anchor: event.currentTarget });
+                              }}
+                            >
+                              {matrixCellText(cell)}
+                            </button>
+                            {open?.key === key ? <CellPopover open={open} onClose={close} /> : null}
+                          </>
                         )}
                       </td>
                     );
@@ -208,7 +243,6 @@ export function ConnectorMatrix({
           </tbody>
         </table>
       </div>
-      {open ? <CellPopover open={open} onClose={close} /> : null}
     </>
   );
 }
