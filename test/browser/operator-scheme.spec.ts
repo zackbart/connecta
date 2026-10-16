@@ -42,7 +42,8 @@ async function serveHeld(page: Page, deployment: ReturnType<typeof createTestCon
   let bundleRequested = false;
   await page.addInitScript(`window.__csp = []; window.__errors = [];
     document.addEventListener("securitypolicyviolation", event => window.__csp.push(event.effectiveDirective));
-    window.addEventListener("error", event => window.__errors.push(String(event.message)));`);
+    window.addEventListener("error", event => window.__errors.push(String(event.message)));
+    window.addEventListener("unhandledrejection", event => window.__errors.push(String(event.reason)));`);
   await page.route(`${VISUAL_ORIGIN}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/ui/api/config") return route.fulfill({ status: 401, json: { error: "unauthorized" } });
@@ -106,18 +107,35 @@ test("a deployment's pinned scheme overrides the saved one before and after the 
   expect(await page.evaluate("window.__csp")).toEqual([]);
 });
 
-test("unreadable storage leaves the system scheme in place without an error", async ({ page }) => {
+test("unreadable storage keeps the system scheme and the whole page loads to the sign-in gate", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.emulateMedia({ colorScheme: "dark" });
-  // Private browsing: touching storage throws.
-  await page.addInitScript(`Object.defineProperty(window, "localStorage", {
-    get() { throw new DOMException("The operation is insecure.", "SecurityError"); },
-  });`);
+  // Private browsing: touching either storage throws.
+  await page.addInitScript(`for (const name of ["localStorage", "sessionStorage"]) {
+    Object.defineProperty(window, name, {
+      get() { throw new DOMException("The operation is insecure.", "SecurityError"); },
+    });
+  }`);
   const server = await serveHeld(page, app);
   await page.goto(VISUAL_ORIGIN + "/", { waitUntil: "commit" });
   await page.waitForSelector("#operatorContent", { state: "attached" });
   expect(await paintedBackground(page)).toBe(DARK_BG);
   expect(await page.locator("html").getAttribute("data-scheme")).toBeNull();
-  expect(await page.evaluate("window.__errors")).toEqual([]);
-  expect(await page.evaluate("window.__csp")).toEqual([]);
   server.release();
+  // The main bundle reads no stored token, so the bearer gate is the normal
+  // signed-out one, not a session it could not read.
+  await expect(page.getByLabel("Bearer token")).toBeVisible();
+  await expect(page.getByText("Checking your session…")).toHaveCount(0);
+  await expect(page.getByText("couldn't be read")).toHaveCount(0);
+  await page.waitForFunction(`document.readyState === "complete"`);
+  // Signing in keeps nothing, and throws nothing: the gate asks again.
+  await page.getByLabel("Bearer token").fill(VISUAL_TOKEN);
+  await page.getByRole("button", { name: "Open operator pages", exact: true }).click();
+  await expect(page.getByLabel("Bearer token")).toBeVisible();
+  expect(await paintedBackground(page)).toBe(DARK_BG);
+  expect(await page.locator("html").getAttribute("data-scheme")).toBeNull();
+  expect(await page.evaluate("window.__errors")).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(await page.evaluate("window.__csp")).toEqual([]);
 });

@@ -70,7 +70,26 @@ function sessionToken(): Promise<string | null | undefined> {
   if (auth.kind === "cloudflare-access") return Promise.resolve(undefined);
   return auth.kind === "clerk"
     ? Promise.resolve(window.Clerk?.session?.getToken() ?? null)
-    : Promise.resolve(localStorage.getItem(TOKEN_KEY));
+    : Promise.resolve(storedToken());
+}
+
+/** Storage that throws (private browsing) reads as no stored token. */
+function storedToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Keep or forget the bearer token; storage that throws keeps nothing. */
+function storeToken(value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(TOKEN_KEY);
+    else localStorage.setItem(TOKEN_KEY, value);
+  } catch {
+    /* Storage may be unavailable. */
+  }
 }
 
 function requestHeaders(token: string | null | undefined, body = false): Record<string, string> {
@@ -144,7 +163,7 @@ function refuseSession(status: number): void {
     gate(failure("Cloudflare Access did not accept this identity for operator pages. Retry to check again."));
     return scheduleRecovery();
   }
-  localStorage.removeItem(TOKEN_KEY);
+  storeToken(null);
   gate(failure("That token wasn't accepted. Paste a valid operator token."));
 }
 
@@ -892,7 +911,7 @@ export function signInWithBearer(value: string): void {
   resetRecovery();
   gate(null);
   signedOut = false;
-  localStorage.setItem(TOKEN_KEY, value);
+  storeToken(value);
   const current = fence();
   void loadCurrent().then(() => {
     if (!current()) return;
@@ -904,7 +923,7 @@ export function signInWithBearer(value: string): void {
 export function forgetBearer(): void {
   signedOut = true;
   resetRecovery();
-  localStorage.removeItem(TOKEN_KEY);
+  storeToken(null);
   gate(null);
   set({ pendingFocus: "token" });
 }

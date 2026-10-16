@@ -96,7 +96,8 @@ OAuth poll window), plus keyboard, sentinels, CSP and no `style` attributes.
 models. `test/browser/operator-scheme.spec.ts` holds the main bundle and checks the
 first painted background: saved dark on a light system paints dark, a pinned
 light deployment paints light over saved dark, and throwing storage keeps the
-system scheme without an error. The real-route token test in `test/browser/operator-ui.spec.ts` serves
+system scheme while the released bundle settles on the normal bearer gate, and a
+sign-in there raises no error. The real-route token test in `test/browser/operator-ui.spec.ts` serves
 the contract, `/ui/data` and the slot routes from one real v2 deployment and
 checks that each mutation sent a distinct 22-character `expect`.
 `test/operator-store.test.ts` serves `/ui/api/config` from its own mock, so

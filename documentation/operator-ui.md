@@ -284,7 +284,10 @@ from a pinned `branding.theme.colorScheme`, it copies a saved `light` or `dark`
 from local storage key `connecta:scheme` onto that attribute, ignoring storage
 errors, so the first frame already has the viewer's scheme. The deferred bundle
 learns of a pin from `schemePinned` in the inert configuration; Appearance
-writes the key and moves the attribute live, and is read-only under a pin. `generated.ts` is ignored and generated before build and
+writes the key and moves the attribute live, and is read-only under a pin. Every
+local and session storage access in the UI tolerates storage that throws, as in
+private browsing: a read finds nothing stored and a write keeps nothing, so a
+bearer token is not remembered there. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
 owns authenticated reads and existing mutations. An Access-only shell selects
