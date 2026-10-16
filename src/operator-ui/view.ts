@@ -34,13 +34,21 @@ export function connectorSourceLabel(source: { kind: string; provider?: string }
   return `${source.provider} · ${implementation}`;
 }
 
-export type OperatorPage = "endpoints" | "settings" | "connector" | "tokens" | "connections" | "activity";
+export type OperatorPage = "overview" | "endpoints" | "settings" | "connector" | "tokens" | "connections" | "activity";
 
 /** Pages the nav lists, in dashboard order. */
-export const OPERATOR_PAGES: readonly OperatorPage[] = ["endpoints", "connections", "activity", "tokens", "settings"];
+export const OPERATOR_PAGES: readonly OperatorPage[] = [
+  "overview",
+  "endpoints",
+  "connections",
+  "activity",
+  "tokens",
+  "settings",
+];
 
 export const PAGE_META: Readonly<Record<OperatorPage, { path: string; label: string }>> = {
-  endpoints: { path: "/", label: "Endpoints" },
+  overview: { path: "/", label: "Overview" },
+  endpoints: { path: "/endpoints", label: "Endpoints" },
   connector: { path: "/connectors", label: "Connector" },
   settings: { path: "/settings", label: "Settings" },
   tokens: { path: "/tokens", label: "Tokens" },
@@ -50,7 +58,10 @@ export const PAGE_META: Readonly<Record<OperatorPage, { path: string; label: str
 
 /** Legacy links remain valid, with the browser replacing their URL. */
 export function canonicalOperatorPath(path: string): string {
-  return ({ "/access": "/", "/tools": "/connectors", "/config": "/settings" } as Record<string, string>)[path] ?? path;
+  return (
+    ({ "/access": "/endpoints", "/tools": "/connectors", "/config": "/settings" } as Record<string, string>)[path] ??
+    path
+  );
 }
 
 /**
@@ -680,6 +691,60 @@ export function problemTone(problem: UiProblem): "warn" | "danger" {
   return problem === "oauth_required" || problem === "credential_required" || problem === "auth_required"
     ? "warn"
     : "danger";
+}
+
+/** What the page knows about a connector beyond its live status: catalog drift and a failed detail read. */
+export interface ConnectorSignals {
+  drift?: boolean;
+  failed?: boolean;
+}
+
+/** One connector's health everywhere it is shown: badge tone, status word, and the one action beside it. */
+export interface ConnectorVerdict {
+  tone: "ok" | "warn" | "danger" | "neutral";
+  label: string;
+  /** The link to the Connection tab, or null when the connector is fine. */
+  action: "Connect" | "Replace key" | "Inspect" | "Review" | null;
+}
+
+const PROBLEM_LABEL: Readonly<Record<UiProblem, string>> = {
+  connector_unavailable: "Unavailable",
+  oauth_required: "Authorization needed",
+  credential_required: "Credential needed",
+  auth_required: "Authorization needed",
+  credential_mismatch: "Credential mismatch",
+  catalog_failed: "Catalog failed",
+};
+
+function problemAction(problem: UiProblem): NonNullable<ConnectorVerdict["action"]> {
+  if (problem === "credential_mismatch") return "Replace key";
+  return problemTone(problem) === "warn" ? "Connect" : "Inspect";
+}
+
+/**
+ * The verdict the Connectors list, the Overview, Endpoints and a connector's
+ * page all show. The server's problem code comes first, then a failed detail
+ * read on this page, then a non-ok status, then catalog drift. A problem
+ * outranks the status, so a connector whose catalog failed is never
+ * "Connected". A failed read marks its connector `connector_unavailable` in
+ * the store, so that one code beside a failed read is the page's own and
+ * reads "Couldn't load" instead of blaming the downstream.
+ */
+export function connectorVerdict(
+  live: { status: string; problem?: UiProblem },
+  signals: ConnectorSignals = {},
+): ConnectorVerdict {
+  if (live.problem && !(signals.failed && live.problem === "connector_unavailable")) {
+    return { tone: problemTone(live.problem), label: PROBLEM_LABEL[live.problem], action: problemAction(live.problem) };
+  }
+  if (signals.failed) return { tone: "warn", label: "Couldn't load", action: "Inspect" };
+  if (live.status === "loading") return { tone: "neutral", label: connectorStatusLabel(live.status), action: null };
+  if (live.status !== "ok") {
+    const tone = connectorStatusTone(live.status) === "warn" ? "warn" : "danger";
+    return { tone, label: connectorStatusLabel(live.status), action: tone === "warn" ? "Connect" : "Inspect" };
+  }
+  if (signals.drift) return { tone: "warn", label: "Catalog drift", action: "Review" };
+  return { tone: "ok", label: "Connected", action: null };
 }
 
 /**

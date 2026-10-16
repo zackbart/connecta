@@ -23,8 +23,56 @@ and [Worker example](../examples/worker/README.md#select-optional-modules)
 own the runnable configuration, variables, and branding shape. The UI is an
 explicit optional import and stays outside the root package import graph.
 
-Endpoints, Connectors, Activity, Tokens, and Settings are the maintainer's
-pages. Endpoints is the default page at `/`: one row for `/mcp` and each pool,
+Overview, Endpoints, Connectors, Activity, Tokens, and Settings are the
+maintainer's pages. Overview is the default page at `/`; a member sees their
+member page there instead. It reads only the contract and `/ui/data` and has no
+controls of its own:
+
+- **Headline.** A status pill beside the heading ("2 need attention", red when
+  any connector is failing, or "All healthy"; none without connectors) and three
+  cards labeled Connectors, Endpoints, and People · Agents. Connectors shows
+  healthy of total over a bar with one segment per connector in its health
+  color; Endpoints shows the count over a bar split read-only and read-write;
+  People · Agents shows both counts over up to eight avatars and agent marks
+  (a tokenless agent's mark is hollow). A dot legend under each bar counts each
+  segment kind; the first two cards link to their pages.
+- **Needs attention.** One row per connector whose health is not ok, failing
+  ones first, then one per agent in a pool whose token is missing or revoked.
+  Each row is a title naming what is wrong and one short line: the endpoints
+  it affects ("Affects /mcp and /mcp/team"), and links to the
+  fix the Connectors list offers for the same connector (Connect, Replace key,
+  Inspect or Review on its Connection tab), or to Issue token on Tokens when
+  that page is open to the viewer. An agent's line names its agent URL
+  ("Can't connect at /agent/<pool>"). A row with a problem code, or drift,
+  also has Copy fix prompt with the fixed text from the fix-prompt catalogue; a
+  problem keeps its row and prompt when the connector's detail read also failed,
+  and its line starts "Details didn't load". With no rows it reads "All clear".
+- **Who reaches what.** The connection map, an SVG flow of callers (people in
+  the order the contract first lists them, then declared agents) to endpoints
+  (`/mcp`, then pools) to connectors in config order, with each connector's
+  read and write tool counts in a last column. A grant link takes its
+  connector's health color; grants on a read-only endpoint are dashed, and an
+  agent's link to its pool is dotted while it has no issued token. Plain `/mcp`
+  admits no agents, so no agent links to it. A read-only endpoint carries a
+  read-only chip; a read-write one carries none. The card's footer holds the
+  legend. Hovering or focusing a node dims everything off its paths and puts one
+  sentence in the legend's place, such as
+  "alice reaches 5 connectors through /mcp/support and /mcp/team: 6 tools, 1
+  write."; an agent's sentence names its `/agent/<pool>` URLs instead. The same
+  sentence is the node's accessible name. Hover and focus are tracked
+  separately, and hover wins while both are set. The map is one tab stop:
+  arrow keys move up and down a column and left and right to the nearest node
+  in the next column, and Home and End go to the first and last node. A node
+  without a page is a `group` with the same name. Clicking a node, or Enter on it, opens a connector's
+  Tools tab (Connection when it needs attention), an endpoint's row on
+  Endpoints (`/endpoints#mcp/<pool>`, which opens that row), a person's first
+  endpoint, or Tokens for an agent when that page is open. The drawing never
+  scales below 880px wide; a narrower card scrolls it sideways. At 960px and
+  below the map becomes a list with one entry per endpoint: its mode, who uses
+  it as the chips Endpoints draws, and its connectors with health. A deployment with no connectors shows
+  "Nothing to map yet".
+
+Endpoints, at `/endpoints`, has one row for `/mcp` and each pool,
 with a copyable URL, who can use it, tool count, a read-only pill on a
 read-only endpoint, and client setup. Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
 elsewhere: a person by label, or by raw id when the label is null, beside their
@@ -43,8 +91,14 @@ endpoint: a connector that needs attention gets a status dot linking to its
 Connection tab. Counts intersect live tools with the pool's declared tools
 (the `/mcp` matrix cells for the root), guarded grants' live verdicts, and
 read-only mode. Connectors lists each connector with one status badge, auth
-scope, tool count, and last call; a problem adds one action (Connect, Replace
-key, or Inspect) that opens Connection. A List / Matrix toggle (`?view=matrix`)
+scope, tool count, and last call. The badge, the Overview, an endpoint's
+status dot, and a connector's own page share one verdict: the server's problem
+code first (so a failed catalog reads "Catalog failed", never "Connected"),
+then a failed detail read ("Couldn't load"), then a non-ok status, then catalog
+drift. A failed detail read marks its connector unavailable, so
+`connector_unavailable` beside one reads "Couldn't load" and offers no fix
+prompt. A connector that is not fine adds one action (Connect, Replace key,
+Inspect, or Review for drift) that opens Connection. A List / Matrix toggle (`?view=matrix`)
 switches to a table of connectors by endpoint, `/mcp` first: each cell reads
 "all", a tool count, or a dash, read-only columns are tinted, and a Runs as
 column summarizes the `/mcp` cell, else the first pool's. A cell with tools is
@@ -336,7 +390,7 @@ A later focus return can request another status read. Recovery never starts OAut
 or replays a mutation.
 Unreadable credential metadata uses `configured: null`, including named fields,
 and renders as unavailable with a retry prompt. It does not claim that the slot
-is empty. Endpoints, Connectors, connector
+is empty. Overview, Endpoints, Connectors, connector
 detail, Settings, and the member page consume the typed contract; Activity opens
 only to a maintainer whose contract reports readable history. Connector detail
 reads auth permissions from its `/ui/data` connector. Activity retains
@@ -367,7 +421,7 @@ names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
 The top bar is one row: the mark, deployment branding and the deployment name, the
-section links (Endpoints, Connectors, Activity, Tokens, and Settings), then
+section links (Overview, Endpoints, Connectors, Activity, Tokens, and Settings), then
 Search (the command palette, also ⌘K or Ctrl+K), Appearance, and **Account**,
 which opens the signed-in account and the session action (Change token or Sign
 out). The mark is connecta's drawn "C" only when no product name, owner or
@@ -378,7 +432,7 @@ keeps the current section in view, and Search shrinks to its icon. A member's to
 and Account. Activity and Tokens keep their permission gates; a gated
 viewer sees no operator navigation. The command palette searches visible pages,
 connectors and tools, opening connector results on Tools. `/access` redirects
-to `/`, `/tools` to `/connectors`, and `/config` to `/settings` in the browser
+to `/endpoints`, `/tools` to `/connectors`, and `/config` to `/settings` in the browser
 with history replacement. Connector hashes `#config`, `#auth` and `#diagnostics`
 redirect to `#connection`, preserving query parameters such as signed handoffs.
 Token controls retain their existing permission gate.
@@ -396,6 +450,13 @@ checks a member response's exact shape and compares its values with a
 projection built from config, membership, the member's own partition status,
 and each personal connector's exact `manage`;
 `test/operator-contract-server.test.ts` runs it against real responses.
+
+The Overview's map and attention rows are pure functions of the contract in
+[connection-map.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui/connection-map.ts)
+and [overview.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui/overview.ts),
+covered by `test/operator-connection-map.test.ts` and
+`test/operator-overview.test.ts`; `src/operator-ui/styles/overview.css` holds
+the page's styles.
 
 The contract type is [contract.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui/contract.ts).
 [UI routes](https://github.com/zackbart/connecta/blob/main/src/routes/ui.ts) and

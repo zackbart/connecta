@@ -176,11 +176,12 @@ export const VISUAL_VARIANTS = [
   "endpoints-expanded", "command-search", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix",
   "token-secret", "member-page", "narrow-member",
   "client-setup", "schema", "tools-read", "tools-write", "config-provenance", "narrow-gate", "narrow-auth", "branded",
+  "overview-map", "overview-trace", "narrow-overview",
 ] as const;
 export type VisualVariant = typeof VISUAL_VARIANTS[number];
 
 /** Variants that need every runs-as kind, agents and three pools: the frozen v2 maintainer fixture, team crowded. */
-const RICH_VARIANTS: readonly VisualVariant[] = ["endpoints-expanded", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix"];
+const RICH_VARIANTS: readonly VisualVariant[] = ["endpoints-expanded", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix", "overview-map", "overview-trace", "narrow-overview"];
 
 /** `/ui/data` for the frozen maintainer fixture: the same connectors, statuses and tools. */
 function richFixture(base: OperatorVisualFixture): OperatorVisualFixture {

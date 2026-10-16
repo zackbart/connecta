@@ -119,7 +119,7 @@ async function openShell(page: Page, scheme = "light", clerk = false) {
   await page.addInitScript(
     `localStorage.setItem('connecta:token', ${JSON.stringify(TOKEN)}); localStorage.setItem('connecta:scheme', ${JSON.stringify(scheme)});`,
   );
-  await page.goto(origin + (clerk ? "/?clerk" : "/"));
+  await page.goto(origin + (clerk ? "/endpoints?clerk" : "/endpoints"));
   await expect(page.getByRole("heading", { name: "Endpoints", exact: true })).toBeVisible();
   await expect(page.locator(".endpoint-table")).toBeVisible();
   await page.evaluate("document.fonts.ready");

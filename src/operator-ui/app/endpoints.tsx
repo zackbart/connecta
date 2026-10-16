@@ -1,19 +1,13 @@
-import { Fragment, useRef, useState, type ReactNode, type RefObject } from "react";
-import {
-  endpointRows,
-  runsAsLabel,
-  visibleChips,
-  type AccessChip,
-  type EndpointGroup,
-  type EndpointRow,
-} from "../endpoints.js";
-import { connectorStatusLabel, connectorStatusTone, driftState, type OperatorState } from "../view.js";
+import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useLocation } from "@tanstack/react-router";
+import { endpointFromHash } from "../connection-map.js";
+import { endpointRows, runsAsLabel, visibleChips, type EndpointGroup, type EndpointRow } from "../endpoints.js";
+import { connectorVerdict, driftState, type OperatorState } from "../view.js";
 import { clientServerName, clientSetupCommands } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
-import { Badge, CopyButton, StateBlock } from "./parts.js";
+import { Badge, CopyButton, MemberChip, StateBlock } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
 import { ContractState, maintainerContract, useCloseOnRecovery } from "./contract-state.js";
-import { Icon } from "./icons.js";
 
 /** What the client setup drawer needs: a path, its absolute URL, and the name a client files it under. */
 export interface SetupTarget {
@@ -103,16 +97,12 @@ export function ClientSetupDialog({
  */
 function ConnectorName({ group, state }: { group: EndpointGroup; state: OperatorState }) {
   const { config, live } = group;
-  const local = state.connectorFailures[config.id];
-  const drift = driftState(state.data?.connectors.find((c) => c.id === config.id)?.catalogDrift) === "warning";
-  const problem = local
-    ? "Couldn't load"
-    : live.status !== "ok" || live.problem
-      ? connectorStatusLabel(live.status, live.problem)
-      : drift
-        ? "Catalog drift"
-        : null;
-  const tone = local || drift ? "warn" : connectorStatusTone(live.status);
+  const verdict = connectorVerdict(live, {
+    failed: Boolean(state.connectorFailures[config.id]),
+    drift: driftState(state.data?.connectors.find((c) => c.id === config.id)?.catalogDrift) === "warning",
+  });
+  const problem = verdict.tone === "ok" ? null : verdict.label;
+  const tone = verdict.tone;
   const id = encodeURIComponent(config.id);
   return (
     <a className="endpoint-connector-name" href={`/connectors/${id}#${problem ? "connection" : "tools"}`}>
@@ -120,27 +110,6 @@ function ConnectorName({ group, state }: { group: EndpointGroup; state: Operator
       {config.title ?? config.id}
       {problem ? <span className="visually-hidden"> ({problem})</span> : null}
     </a>
-  );
-}
-
-/** A person by avatar and name, or an agent by name with an agent mark. */
-function Chip({ chip }: { chip: AccessChip }) {
-  return (
-    <li className={`access-chip ${chip.kind}`}>
-      {chip.kind === "agent" ? (
-        <>
-          <span className="agent-mark" aria-hidden="true">
-            <Icon name="agent" size={12} />
-          </span>
-          <span className="visually-hidden">Agent </span>
-        </>
-      ) : (
-        <span className={`avatar hue-${chip.hue}`} aria-hidden="true">
-          {chip.initials}
-        </span>
-      )}
-      <span className="access-chip-text">{chip.text}</span>
-    </li>
   );
 }
 
@@ -165,7 +134,7 @@ function WhoCanUse({ endpoint }: { endpoint: EndpointRow }) {
     <div className="endpoint-access" aria-label={label} role="group">
       <ul className="access-chips" ref={list} tabIndex={-1}>
         {shown.map((chip) => (
-          <Chip key={chip.key} chip={chip} />
+          <MemberChip key={chip.key} chip={chip} />
         ))}
       </ul>
       {hidden ? (
@@ -231,10 +200,18 @@ function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: Oper
 export function EndpointsPage({ state }: { state: OperatorState }) {
   const [setup, setSetup] = useState<SetupTarget | null>(null);
   useCloseOnRecovery(state, () => setSetup(null));
-  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  // The Overview map links to one endpoint as `#mcp/<pool>`: that row opens.
+  const linked = endpointFromHash(useLocation().hash);
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(linked ? [linked] : []));
   const returnFocus = useRef<HTMLElement | null>(null);
   const contract = maintainerContract(state);
   const endpoints = contract ? endpointRows(contract) : [];
+  const linkedReady = Boolean(linked && endpoints.some((endpoint) => endpoint.path === linked));
+  useEffect(() => {
+    if (!linkedReady) return;
+    setOpen((current) => (current.has(linked!) ? current : new Set([...current, linked!])));
+    document.querySelector(`[data-endpoint="${CSS.escape(linked!)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [linked, linkedReady]);
   const serverName = contract?.config?.server.name;
   const toggle = (path: string) =>
     setOpen((current) => {
@@ -274,6 +251,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
               <section
                 className={expanded ? "endpoint-entry open" : "endpoint-entry"}
                 key={endpoint.path}
+                data-endpoint={endpoint.path}
                 aria-label={endpoint.path}
               >
                 <div className="endpoint-columns">

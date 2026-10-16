@@ -26,6 +26,7 @@ import { auth, brandMark, productDescription, productName, titleSuffix } from ".
 import { ConnectorsPage } from "./connectors.js";
 import { SettingsPage } from "./config-page.js";
 import { EndpointsPage } from "./endpoints.js";
+import { OverviewPage } from "./overview.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
@@ -342,7 +343,7 @@ function CurrentPage({ state }: { state: OperatorState }) {
   if (state.page === "endpoints") return <EndpointsPage state={state} />;
   if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
-  return <EndpointsPage state={state} />;
+  return <OverviewPage state={state} />;
 }
 
 function OperatorApp() {
@@ -432,6 +433,7 @@ mount("operatorNav", <OperatorNav />);
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
 const routes = [
   "/",
+  "/endpoints",
   "/connectors",
   "/connectors/$id",
   "/tools",

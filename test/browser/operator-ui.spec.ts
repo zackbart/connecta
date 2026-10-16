@@ -779,7 +779,8 @@ test("retries a failed connection without reloading the list", async ({ page }) 
   await expect(row.locator('[data-problem="connector_unavailable"]')).toBeVisible();
   faults.clear();
   await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
-  await expect(row.locator(".conn-head")).toContainText("Connected");
+  // Back to the Connectors list's verdict: its catalog drift, not "Unavailable".
+  await expect(row.locator(".conn-head")).toContainText("Catalog drift");
   await expect(row.locator("[data-problem]")).toHaveCount(0);
   expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(1);
 });

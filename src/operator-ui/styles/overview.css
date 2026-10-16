@@ -1,4 +1,554 @@
 /*
- * The Overview page and its connection map. Reserved for that page (#867),
- * so its styles land here without touching another area's file.
+ * The Overview page: its stat cards, the "Needs attention" card, and the
+ * connection map. Cards, pills, chips and marks come from primitives.css;
+ * this file only places them and draws the map. Every color is a token, so a
+ * branded accent and both schemes carry through.
  */
+
+#overviewView {
+  /* Read tools are quiet; write tools take the same amber as a write chip. */
+  --map-read: var(--line-strong);
+  --map-write: var(--warn);
+  --map-line: color-mix(in srgb, var(--text) 20%, var(--surface));
+  --map-ok: color-mix(in srgb, var(--ok) 60%, var(--map-line));
+}
+
+.overview-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+}
+.overview-section {
+  margin-top: var(--space-6);
+}
+
+/* Stat cards: a label, a number, and the picture that explains it. */
+
+.overview-stats {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.overview-stat > .card-body {
+  gap: var(--space-3);
+}
+.stat-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-height: 1.5rem;
+}
+.stat-label {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+.stat-link {
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  display: inline-grid;
+  height: 1.5rem;
+  place-items: center;
+  width: 1.5rem;
+}
+.stat-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.stat-link .icon {
+  rotate: 180deg;
+}
+.stat-number {
+  font-size: var(--text-3xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.stat-of {
+  color: var(--text-3);
+  font-weight: var(--weight-medium);
+}
+.stat-bar {
+  display: flex;
+  gap: 3px;
+}
+.stat-bar > span {
+  background: var(--sunk);
+  border-radius: var(--radius-pill);
+  flex: 1;
+  height: 0.375rem;
+}
+.stat-bar > .tone-ok {
+  background: var(--ok);
+}
+.stat-bar > .tone-warn {
+  background: var(--warn);
+}
+.stat-bar > .tone-danger {
+  background: var(--danger);
+}
+.stat-bar > .mode-read-only,
+.stat-legend .dot.read-only {
+  background: var(--accent);
+}
+.stat-bar > .mode-read-write,
+.stat-legend .dot.read-write {
+  background: var(--line-strong);
+}
+.stat-legend {
+  color: var(--text-2);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  gap: var(--space-1) var(--space-4);
+  list-style: none;
+  margin: 0;
+  min-height: 1rem;
+  padding: 0;
+}
+.stat-legend li {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.375rem;
+}
+.stat-callers {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.stat-callers li {
+  display: inline-grid;
+}
+.stat-callers .avatar,
+.stat-callers .agent-mark {
+  height: 1.5rem;
+  width: 1.5rem;
+}
+.stat-callers .avatar {
+  font-size: 0.625rem;
+}
+.stat-more {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  padding-left: var(--space-1);
+}
+
+/* Needs attention: one row per problem, its fix on the right. */
+
+.overview-attention > .card-body {
+  padding: 0;
+}
+.attention-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.attention-item,
+.attention-clear {
+  align-items: center;
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-4) 1.375rem;
+}
+.attention-item + .attention-item {
+  border-top: 1px solid var(--line);
+}
+.attention-icon {
+  border-radius: var(--radius-md);
+  display: grid;
+  flex: none;
+  height: 2rem;
+  place-items: center;
+  width: 2rem;
+}
+.attention-icon.tone-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.attention-icon.tone-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.attention-icon.tone-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.attention-text {
+  flex: 1;
+  min-width: 0;
+}
+.attention-text h3,
+.attention-clear h3 {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+}
+.attention-text h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+.attention-text h3 a:hover {
+  color: var(--link);
+}
+.attention-text p {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  margin-top: 0.125rem;
+}
+.attention-actions {
+  align-items: center;
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+.attention-actions .btn {
+  text-decoration: none;
+}
+
+/* The connection map: the drawing on a sunk canvas, a footer below it. */
+
+.overview-map > .card-body {
+  gap: 0;
+  padding: 0;
+}
+.overview-map .state-block {
+  border: 0;
+}
+.map-canvas {
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 8%, transparent) 1px, transparent 1.2px) 0 0 /
+      18px 18px,
+    var(--surface-2);
+  overflow-x: auto;
+  padding: var(--space-4) var(--space-3) var(--space-3);
+}
+/* Below this width the text scales under 12px, so the card scrolls instead. */
+.map-svg {
+  display: block;
+  height: auto;
+  min-width: 880px;
+  overflow: visible;
+  user-select: none;
+  width: 100%;
+}
+.map-svg text {
+  fill: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+}
+.map-svg text.mono,
+.map-svg .mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.map-svg text.map-column {
+  fill: var(--text-2);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+}
+.map-column-count {
+  fill: var(--text-3);
+  font-weight: var(--weight-medium);
+}
+.map-title {
+  font-weight: var(--weight-semibold);
+}
+.map-svg text.map-detail {
+  fill: var(--text-3);
+  font-size: 11px;
+}
+.map-svg .map-detail.tone-warn {
+  fill: var(--warn);
+}
+.map-svg .map-detail.tone-danger {
+  fill: var(--danger);
+}
+.map-count {
+  font-weight: var(--weight-bold);
+}
+
+.map-edge {
+  fill: none;
+  pointer-events: none;
+  stroke: var(--map-line);
+  stroke-width: 1.6;
+  transition:
+    opacity 0.18s,
+    stroke-width 0.18s;
+}
+.map-edge.tone-ok {
+  stroke: var(--map-ok);
+}
+.map-edge.tone-warn {
+  stroke: var(--warn);
+}
+.map-edge.tone-danger {
+  stroke: var(--danger);
+}
+.map-edge.read-only {
+  stroke-dasharray: 5 4;
+}
+.map-edge.no-token {
+  stroke: var(--text-3);
+  stroke-dasharray: 1 5;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.map-node {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 0.18s;
+}
+.map-node .map-box {
+  fill: var(--surface);
+  filter: drop-shadow(0 1px 1px rgb(40 30 10 / 0.04));
+  stroke: var(--line);
+  stroke-width: 1;
+  transition: stroke 0.15s;
+}
+.map-node:hover .map-box,
+.map-node.lit .map-box {
+  stroke: var(--line-strong);
+}
+.map-node:focus-visible .map-box {
+  stroke: var(--link);
+  stroke-width: 2;
+}
+.map-node.problem-warn .map-box {
+  stroke: var(--warn-line);
+}
+.map-node.problem-danger .map-box {
+  stroke: var(--danger-line);
+}
+.map-node .map-box.tools {
+  stroke: var(--line);
+}
+.map-node.no-token .map-box {
+  stroke-dasharray: 4 3;
+}
+.map-svg.tracing .map-node.dim {
+  opacity: 0.25;
+}
+.map-svg.tracing .map-edge:not(.lit) {
+  opacity: 0.1;
+}
+.map-svg.tracing .map-edge.lit {
+  stroke-width: 2.4;
+}
+
+/* The same marks the endpoint chips draw: a solid initial, an agent square. */
+.map-avatar {
+  fill: var(--avatar);
+}
+.map-svg text.map-avatar-text {
+  fill: #ffffff;
+  font-size: 10px;
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.02em;
+}
+.map-agent-mark {
+  fill: var(--text-3);
+}
+.map-agent-glyph {
+  color: var(--surface);
+}
+.no-token .map-agent-mark {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+}
+.no-token .map-agent-glyph {
+  color: var(--text-3);
+}
+.map-mode.read-only {
+  fill: var(--accent-soft);
+}
+.map-svg text.map-mode-text {
+  fill: var(--link);
+  font-size: 10.5px;
+  font-weight: var(--weight-semibold);
+}
+.map-tile {
+  fill: var(--sunk);
+}
+.map-svg text.map-tile-text {
+  fill: var(--text-2);
+  font-size: 10.5px;
+  font-weight: var(--weight-bold);
+}
+.map-health {
+  fill: var(--text-3);
+}
+.map-health.tone-ok {
+  fill: var(--ok);
+}
+.map-health.tone-warn {
+  fill: var(--warn);
+}
+.map-health.tone-danger {
+  fill: var(--danger);
+}
+.map-bar {
+  fill: var(--sunk);
+}
+.map-bar.read {
+  fill: var(--map-read);
+}
+.map-bar.write {
+  fill: var(--map-write);
+}
+
+/* The footer: the legend, or a hovered node's sentence in its place. */
+.map-foot {
+  border-top: 1px solid var(--line);
+  display: grid;
+  min-height: 2.875rem;
+}
+.map-foot > * {
+  align-self: center;
+  grid-area: 1 / 1;
+  padding: var(--space-3) 1.375rem;
+}
+.map-trace {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.map-trace.idle {
+  visibility: hidden;
+}
+.map-trace:not(.idle) + .map-legend {
+  visibility: hidden;
+}
+.map-legend {
+  color: var(--text-3);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  gap: var(--space-1) var(--space-4);
+  list-style: none;
+  margin: 0;
+}
+.map-legend li {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.375rem;
+}
+.map-legend svg {
+  overflow: visible;
+}
+.map-legend .map-edge {
+  stroke-width: 2;
+}
+.map-swatch {
+  border-radius: var(--radius-pill);
+  display: inline-block;
+  height: 0.375rem;
+  width: 1rem;
+}
+.map-swatch.read {
+  background: var(--map-read);
+}
+.map-swatch.write {
+  background: var(--map-write);
+}
+
+/* Narrow screens read the map as a list, one entry per endpoint. */
+
+.map-list {
+  display: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.map-list-entry {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) 1.125rem;
+}
+.map-list-entry + .map-list-entry {
+  border-top: 1px solid var(--line);
+}
+.map-list-head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+.map-list-path {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+.map-list-items {
+  display: grid;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.map-list-items li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  gap: var(--space-1) var(--space-2);
+}
+.map-list-name {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+.map-list-note {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  margin-left: auto;
+}
+.access-chip .map-list-note {
+  margin-left: 0;
+}
+.map-list-note.tone-warn {
+  color: var(--warn);
+}
+
+@media (max-width: 960px) {
+  .map-figure {
+    display: none;
+  }
+  .map-list {
+    display: block;
+  }
+}
+
+@media (max-width: 760px) {
+  .overview-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .attention-item {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .attention-text {
+    flex-basis: calc(100% - 3rem);
+  }
+  .attention-actions {
+    padding-left: 3rem;
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-edge,
+  .map-node,
+  .map-node .map-box {
+    transition: none;
+  }
+}

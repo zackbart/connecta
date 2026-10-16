@@ -73,7 +73,9 @@ describe("status UI filtering", () => {
 
 describe("operator page routing and capabilities", () => {
   it("maps only canonical shell paths and builds page-specific titles", () => {
-    expect(operatorPageForPath("/")).toBe("endpoints");
+    expect(operatorPageForPath("/")).toBe("overview");
+    expect(operatorPageForPath("/endpoints")).toBe("endpoints");
+    expect(operatorPageForPath("/access")).toBe("endpoints");
     expect(operatorPageForPath("/credentials")).toBeUndefined();
     expect(operatorPageForPath("/tokens")).toBe("tokens");
     expect(operatorPageForPath("/activity")).toBe("activity");

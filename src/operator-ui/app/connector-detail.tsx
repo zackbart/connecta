@@ -1,13 +1,7 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { OperatorState } from "../view.js";
-import {
-  activityReadable,
-  connectorSourceLabel,
-  connectorStatusLabel,
-  connectorStatusTone,
-  formatDate,
-} from "../view.js";
+import { activityReadable, connectorSourceLabel, connectorVerdict, driftState, formatDate } from "../view.js";
 import { Pill, pillStatus, StateBlock, SummaryRow } from "./parts.js";
 import { Button, Card, Tabs } from "./primitives.js";
 import { Icon } from "./icons.js";
@@ -32,6 +26,12 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
   const rawAuth = state.data?.connectors.find((c) => c.id === id);
   const auth = rawAuth ? { ...rawAuth } : undefined;
   if (auth && !auth.permissions?.manageSharedAuth && !auth.permissions?.connectPersonal) delete auth.credential;
+  const verdict = live
+    ? connectorVerdict(live, {
+        failed: Boolean(state.connectorFailures[id]),
+        drift: driftState(rawAuth?.catalogDrift) === "warning",
+      })
+    : null;
   return (
     <section id="connectorView">
       <a href="/connectors" className="back-link">
@@ -54,9 +54,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
         <>
           <div className="facts-row conn-head">
             <code>{id}</code>
-            <Pill status={pillStatus(state.connectorFailures[id] ? "warn" : connectorStatusTone(live.status))}>
-              {state.connectorFailures[id] ? "Couldn't load" : connectorStatusLabel(live.status, live.problem)}
-            </Pill>
+            <Pill status={pillStatus(verdict!.tone)}>{verdict!.label}</Pill>
             <span className="meta">{config.authScope === "personal" ? "Personal" : "Shared"} auth</span>
             <span className="meta">{live.tools.length} tools</span>
           </div>

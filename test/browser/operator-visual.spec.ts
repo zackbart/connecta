@@ -21,7 +21,8 @@ import {
 test.describe.configure({ mode: "parallel" });
 
 const pages = [
-  ["endpoints", "/", "Endpoints"],
+  ["overview", "/", "Overview"],
+  ["endpoints", "/endpoints", "Endpoints"],
   ["connectors", "/connectors", "Connectors"],
   ["connector-tools", "/connectors/github#tools", "GitHub"],
   ["connector-connection", "/connectors/slot#connection", "Empty slot"],
@@ -183,13 +184,15 @@ async function ready(page: Page, name: string, state: VisualState) {
     await expect(
       page
         .locator(
-          name === "endpoints"
-            ? ".endpoint-table"
-            : name === "connectors"
-              ? "#connectorLedgerHeading"
-              : name === "settings"
-                ? ".snapshot-tree"
-                : ".conn-head",
+          name === "overview"
+            ? ".overview-stats"
+            : name === "endpoints"
+              ? ".endpoint-table"
+              : name === "connectors"
+                ? "#connectorLedgerHeading"
+                : name === "settings"
+                  ? ".snapshot-tree"
+                  : ".conn-head",
         )
         .first(),
     ).toBeVisible();
@@ -250,7 +253,8 @@ function variantPath(variant: VisualVariant): string {
   if (variant === "connectors-matrix" || variant === "matrix-popover" || variant === "narrow-matrix")
     return "/connectors?view=matrix";
   if (variant === "token-secret") return "/tokens";
-  return "/";
+  if (variant.includes("overview")) return "/";
+  return "/endpoints";
 }
 for (const variant of VISUAL_VARIANTS)
   for (const scheme of ["light", "dark"]) {
@@ -280,6 +284,11 @@ for (const variant of VISUAL_VARIANTS)
               await page.locator(".endpoint-entry").nth(row).locator(".endpoint-toggle").click();
               await expect(page.locator(".endpoint-entry").nth(row).locator(".tool-chip").first()).toBeVisible();
             }
+          } else if (variant === "overview-map" || variant === "narrow-overview") {
+            await expect(page.locator(variant === "overview-map" ? ".map-svg" : ".map-list")).toBeVisible();
+          } else if (variant === "overview-trace") {
+            await page.locator('[data-node="person:https://clerk.example.test:user_lin"]').hover();
+            await expect(page.locator("#mapTrace")).toContainText("Lin Chen reaches 5 connectors");
           } else if (variant === "connectors-matrix" || variant === "narrow-matrix") {
             await expect(page.getByRole("table", { name: "Connectors by endpoint", exact: true })).toBeVisible();
           } else if (variant === "matrix-popover") {

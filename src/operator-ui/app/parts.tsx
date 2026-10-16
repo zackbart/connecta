@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import type { Notice, OperatorPage, OperatorState, Tone } from "../view.js";
-import { loadFailureCopy, PAGE_META } from "../view.js";
+import { loadFailureCopy, PAGE_META, pageForPath } from "../view.js";
 import { fixPrompt, type FixPromptKind } from "../fix-prompts.js";
+import type { AccessChip } from "../endpoints.js";
 import { productName } from "./config.js";
 import { Icon } from "./icons.js";
 import { navigate, retryLoad } from "./store.js";
@@ -279,10 +280,27 @@ export function focusableId(...ids: string[]): string {
 }
 
 /**
- * A same-origin operator link that navigates in place. Anything a browser would
- * treat as "open elsewhere" — a modifier key, a middle click, another origin —
- * is left to the browser, which is also why the href is a real one.
+ * Follow a same-origin operator link in place. Anything a browser would treat
+ * as "open elsewhere" — a modifier key, a middle click — is left to the
+ * browser, which is also why every such link carries a real href. The page
+ * comes from the href's path unless the caller names it.
  */
+export function followLink(event: MouseEvent, href: string, page?: OperatorPage): void {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  ) {
+    return;
+  }
+  event.preventDefault();
+  navigate(page ?? pageForPath(href.replace(/[?#].*$/, "")), href);
+}
+
+/** A nav link to one of the operator's pages. */
 export function PageLink({
   page,
   className,
@@ -300,20 +318,7 @@ export function PageLink({
       className={className}
       href={href}
       {...(current ? { "aria-current": "page" as const } : {})}
-      onClick={(event) => {
-        if (
-          event.defaultPrevented ||
-          event.button !== 0 ||
-          event.metaKey ||
-          event.ctrlKey ||
-          event.shiftKey ||
-          event.altKey
-        ) {
-          return;
-        }
-        event.preventDefault();
-        navigate(page, href);
-      }}
+      onClick={(event) => followLink(event, href, page)}
     >
       {children}
     </a>
@@ -379,4 +384,29 @@ export function CopyButton({
 
 function CopyIcon({ done }: { done: boolean }) {
   return <Icon name={done ? "check" : "copy"} size={15} />;
+}
+
+/** A person's colored initials, or an agent's mark: who someone is at a glance. */
+export function MemberMark({ chip, muted }: { chip: Pick<AccessChip, "kind" | "initials" | "hue">; muted?: boolean }) {
+  return chip.kind === "agent" ? (
+    <span className={muted ? "agent-mark muted" : "agent-mark"} aria-hidden="true">
+      <Icon name="agent" size={12} />
+    </span>
+  ) : (
+    <span className={`avatar hue-${chip.hue}`} aria-hidden="true">
+      {chip.initials}
+    </span>
+  );
+}
+
+/** A person by avatar and name, or an agent by name with an agent mark. */
+export function MemberChip({ chip, muted, children }: { chip: AccessChip; muted?: boolean; children?: ReactNode }) {
+  return (
+    <li className={`access-chip ${chip.kind}`}>
+      <MemberMark chip={chip} muted={Boolean(muted)} />
+      {chip.kind === "agent" ? <span className="visually-hidden">Agent </span> : null}
+      <span className="access-chip-text">{chip.text}</span>
+      {children}
+    </li>
+  );
 }

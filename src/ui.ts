@@ -34,6 +34,7 @@ export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, i
 export type OperatorPage = import("./operator-ui/view.js").OperatorPage;
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
+  overview: "Overview",
   endpoints: "Endpoints",
   connections: "Connectors",
   connector: "Connector",
@@ -43,7 +44,8 @@ const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
 };
 
 export function operatorPageForPath(path: string): OperatorPage | undefined {
-  if (path === "/") return "endpoints";
+  if (path === "/") return "overview";
+  if (path === "/endpoints") return "endpoints";
   if (path === "/connectors") return "connections";
   if (/^\/connectors\/[a-z0-9_-]+$/.test(path)) return "connector";
   if (path === "/tools") return "connections";
@@ -239,6 +241,7 @@ export function operatorUi(options: { branding?: ConnectaBranding } = {}): Opera
   options = assertKnownOptions(options, "operatorUi()", OPERATOR_UI_OPTIONS);
   const reservedPaths = [
     "/",
+    "/endpoints",
     "/connectors",
     "/connectors/*",
     "/tools",
