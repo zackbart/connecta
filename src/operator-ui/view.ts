@@ -834,6 +834,7 @@ const ACTOR_KINDS: Readonly<Record<string, string>> = {
   bearer: "Bearer token",
   "cloudflare-access": "Cloudflare Access",
   anonymous: "Anonymous",
+  access_token: "Agent token",
 };
 
 /** How a caller signed in, as a person reads it. An unknown kind is shown as sent. */
@@ -893,9 +894,10 @@ export function filterActivity(events: UiActivityEvent[], query: string): UiActi
 export function activitySummary(events: UiActivityEvent[]): string {
   if (events.length === 0) return "";
   const calls = events.filter((event) => event.kind !== "catalog_drift");
+  const failed = calls.filter((event) => ["error", "timeout"].includes(activityOutcomeClass(event.outcome))).length;
   const changes = events.length - calls.length;
   const tools = new Set(calls.map((event) => event.address)).size;
-  return `${calls.length} loaded call${calls.length === 1 ? "" : "s"} · ${tools} tool${
+  return `${calls.length} loaded call${calls.length === 1 ? "" : "s"} · ${failed} failed · ${tools} tool${
     tools === 1 ? "" : "s"
   }${changes ? ` · ${changes} catalog change${changes === 1 ? "" : "s"}` : ""}`;
 }
@@ -955,6 +957,12 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
 
 function reasonLabel(code: string): string {
   return REASON_LABELS[code] ?? code.replaceAll("_", " ");
+}
+
+/** Why a call stalled or failed, in words; "" when nothing was recorded. */
+export function activityReason(event: UiActivityEvent): string {
+  const reasons = [event.friction, event.errorCode].filter((code): code is string => Boolean(code)).map(reasonLabel);
+  return [...new Set(reasons)].join(" · ");
 }
 
 /** The one-line detail under an address: where it ran, retries, and why it stalled. */

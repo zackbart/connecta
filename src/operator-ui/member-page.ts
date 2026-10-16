@@ -35,7 +35,8 @@ export interface MemberAccount {
   toolCount: number;
   /** One badge from `connection.state` and `problem`; null when there is no connection. */
   badge: { label: string; tone: Tone } | null;
-  summary: string;
+  /** A short note beside the badge, or null when the badge says it all. */
+  summary: string | null;
   manage: OperatorMemberManage;
   controls: AccountControl[];
 }
@@ -91,21 +92,15 @@ function controlsFor(manage: OperatorMemberManage, connection: Connection): Acco
   return [];
 }
 
-function summaryFor(manage: OperatorMemberManage, connection: Connection): string {
-  if (manage.kind === "credential") {
-    if (!credentialStored(manage)) {
-      return manage.actions.includes("save") ? "Add your credential to use its tools." : "No credential saved.";
-    }
-    if (connection.problem === "credential_mismatch") return "Your saved credential no longer fits. Replace it.";
-    return connection.state === "ok" ? "Your credential is saved." : "Your credential is saved, but it isn't working.";
-  }
-  if (connection.state === "ok") return "Connected with your account.";
-  if (connection.state === "auth_required") {
-    return manage.kind === "oauth" && manage.actions.includes("connect")
-      ? "Not connected. Its tools won't work for you until you connect."
-      : "Not connected.";
-  }
-  return "Unavailable right now.";
+/**
+ * A few words under the account's name, only where the badge alone would
+ * leave something out: a saved credential that no longer fits, or one saved
+ * but not working.
+ */
+function summaryFor(manage: OperatorMemberManage, connection: Connection): string | null {
+  if (manage.kind !== "credential" || !credentialStored(manage)) return null;
+  if (connection.problem === "credential_mismatch") return "Saved credential no longer fits";
+  return connection.state === "ok" ? null : "Saved, but not working";
 }
 
 const toolCount = (connector: OperatorMemberConnector) => connector.tools.length;
@@ -154,19 +149,10 @@ export function memberConfirmCopy(
   name: string,
 ): { question: string; confirm: string } {
   if (action === "oauth_restart") {
-    return {
-      question: `Reconnect ${name}? Your current connection stops working until you finish authorizing in the new tab.`,
-      confirm: "Reconnect",
-    };
+    return { question: `Reconnect ${name}? It stops working until you finish in the new tab.`, confirm: "Reconnect" };
   }
   if (action === "oauth_disconnect") {
-    return {
-      question: `Disconnect your ${name} account? Its tools stop working for you until you connect again.`,
-      confirm: "Disconnect",
-    };
+    return { question: `Disconnect your ${name} account? Its tools stop working for you.`, confirm: "Disconnect" };
   }
-  return {
-    question: `Clear your ${name} credential? Its tools stop working for you until you add one again.`,
-    confirm: "Clear",
-  };
+  return { question: `Clear your ${name} credential? Its tools stop working for you.`, confirm: "Clear" };
 }

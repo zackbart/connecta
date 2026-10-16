@@ -507,11 +507,10 @@ test.describe("member page", () => {
     await expect(accounts.nth(1).getByRole("button")).toHaveText(["Add credential"]);
     await expect(accounts.nth(2).getByRole("button")).toHaveText(["Disconnect"]);
     // Shared: names and counts only, no status.
-    await expect(page.locator(".shared-chip")).toHaveText(["GGitHub · 1 tool", "DDrive · 1 tool"]);
+    await expect(page.locator(".shared-name")).toHaveText(["GitHub", "Drive"]);
+    await expect(page.locator(".shared-count")).toHaveText(["1 tool", "1 tool"]);
     await expect(page.locator(".member-section").last().locator(".badge")).toHaveCount(0);
-    await expect(page.locator(".member-footer")).toHaveText(
-      "Something not working? Ask whoever runs Connecta for your team.",
-    );
+    await expect(page.locator(".member-footer")).toHaveText("Trouble? Ask whoever runs Connecta.");
     // The top bar: no tabs, no search, no appearance; the session action stays.
     await expect(page.getByRole("navigation", { name: "Operator pages" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Search" })).toHaveCount(0);
@@ -574,7 +573,7 @@ test.describe("member page", () => {
     await reconnect.click();
     await expect(page.locator("#confirm-cancel-slack")).toBeFocused();
     await expect(page.locator("#confirm-question-slack")).toHaveText(
-      "Reconnect Slack? Your current connection stops working until you finish authorizing in the new tab.",
+      "Reconnect Slack? It stops working until you finish in the new tab.",
     );
     await page.keyboard.press("Escape");
     await expect(reconnect).toBeFocused();

@@ -549,7 +549,7 @@ for (const [path, heading] of [
     const content =
       path === "/tokens"
         ? page.getByRole("rowheader", { name: "simon-ada", exact: true })
-        : page.getByText("No connector tool calls recorded yet.", { exact: true });
+        : page.getByText("No calls yet", { exact: true });
     await expect(content).toBeVisible();
     const banner = page.locator("#recoveryBanner");
     await expect(banner).toHaveCount(0);

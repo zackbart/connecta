@@ -165,7 +165,7 @@ async function ready(page: Page, name: string, state: VisualState) {
     await expect(page.getByRole("navigation", { name: "Operator pages" })).toHaveCount(0);
   } else if (name.includes("activity")) {
     await expect(
-      state === "empty" ? page.getByText("No connector tool calls recorded yet.") : page.locator("#activityList"),
+      state === "empty" ? page.getByText("No calls yet", { exact: true }) : page.locator("#activityList"),
     ).toBeVisible();
   } else if (name === "tokens") {
     await expect(

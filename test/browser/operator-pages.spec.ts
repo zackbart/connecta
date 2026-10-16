@@ -238,17 +238,28 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await page.getByLabel("Search loaded activity").fill("");
   await expect(page.locator('[aria-label="Request request-one"] .activity-item')).toHaveCount(2);
   const row = page.locator('[aria-label="Request request-one"] .activity-item').first();
-  await expect(row.getByText("read", { exact: true })).toBeVisible();
-  await expect(row.getByText("42 bytes", { exact: true })).toBeVisible();
-  await expect(row.getByText("Connecta version: 0.28.1", { exact: true })).toBeVisible();
-  await expect(row.getByText("Client name: Claude Code", { exact: true })).toBeVisible();
-  await expect(row.getByText("Client version: 2.1.0", { exact: true })).toBeVisible();
+  // The row shows size compactly; opening it shows everything recorded.
+  await expect(row.getByText("42 B", { exact: true })).toBeVisible();
+  await expect(row.locator(".activity-detail")).toBeHidden();
+  await row.locator("summary").click();
+  const detail = row.locator(".activity-detail");
+  await expect(detail.getByText("read", { exact: true })).toBeVisible();
+  await expect(detail.getByText("42 bytes", { exact: true })).toBeVisible();
+  await expect(detail.getByText("0.28.1", { exact: true })).toBeVisible();
+  await expect(detail.getByText("Claude Code 2.1.0", { exact: true })).toBeVisible();
   await expect(row.locator("input, select, textarea, button")).toHaveCount(0);
-  await page.getByLabel("Activity outcome").selectOption("error");
-  await expect(page).toHaveURL(/outcome=error/);
-  await expect(page.getByText("No loaded activity matches this search.")).toBeVisible();
+  // No native selects: outcome is a segmented control, connector and source are chips.
+  await expect(page.locator("#activityView select")).toHaveCount(0);
+  const outcome = page.getByRole("group", { name: "Outcome", exact: true });
+  await outcome.getByRole("button", { name: "Failed", exact: true }).click();
+  await expect(page).toHaveURL(/outcome=failed/);
+  await expect(page.getByText("No matches", { exact: true })).toBeVisible();
   await page.goBack();
-  await expect(page.getByLabel("Activity outcome")).toHaveValue("");
+  await expect(outcome.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
+  const connector = page.getByRole("group", { name: "Connector", exact: true });
+  await expect(connector.getByRole("button", { name: /github/i })).toHaveAttribute("aria-pressed", "true");
+  await connector.getByRole("button", { name: /github/i }).click();
+  await expect(page).not.toHaveURL(/connector=/);
   await page.route("**/ui/api/activity*", (route) => {
     const old = event("old", "", "read");
     delete (old as Partial<ToolCallActivityEvent>).requestId;
@@ -260,17 +271,59 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
     return route.fulfill({ json: { events: [old, { ...old, id: "older" }] } });
   });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByText("Call without request ID", { exact: true })).toHaveCount(2);
   await expect(page.locator('[aria-label="Ungrouped call"]')).toHaveCount(2);
   for (const group of await page.locator('[aria-label="Ungrouped call"]').all()) {
     await expect(group.locator(".activity-item")).toHaveCount(1);
-    await expect(group).not.toContainText("bytes");
-    await expect(group).not.toContainText("Connecta version:");
-    await expect(group).not.toContainText("Client name:");
-    await expect(group).not.toContainText("Client version:");
+    await expect(group.locator(".activity-size")).toHaveText("");
+    for (const label of ["Kind", "Size", "Request", "Client", "Connecta"])
+      await expect(group.locator("dt").getByText(label, { exact: true })).toHaveCount(0);
   }
   await clean(page);
 });
+
+for (const outcome of ["constructor", "toString", "error"]) {
+  test(`Activity shows and clears the exact outcome ${outcome}`, async ({ page }) => {
+    await session(page);
+    await page.route("**/ui/api/activity*", (route) =>
+      route.fulfill({
+        json: {
+          events: [
+            { ...event("exact", "request-exact", "read"), outcome },
+            event("success", "request-success", "write"),
+          ],
+        },
+      }),
+    );
+    await page.goto(origin + `/activity?outcome=${outcome}`);
+    const outcomes = page.getByRole("group", { name: "Outcome", exact: true });
+    await expect(outcomes.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "false");
+    const exact = page.getByRole("button", { name: `Exact outcome: ${outcome}`, exact: true });
+    await expect(exact).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".activity-item")).toHaveCount(1);
+    await expect(page.locator(".activity-item")).toContainText("github.read");
+    await expect(page.locator("#activitySummary")).toHaveText("2 loaded calls · 1 failed · 2 tools");
+    await exact.click();
+    await expect(page).not.toHaveURL(/outcome=/);
+    await expect(outcomes.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".activity-item")).toHaveCount(2);
+    await clean(page);
+  });
+}
+
+for (const path of ["/activity", "/connectors/github"]) {
+  test(`Activity keeps a single selected source clearable at ${path}`, async ({ page }) => {
+    await session(page);
+    await page.goto(origin + path + "?source=call_tool" + (path === "/activity" ? "" : "#activity"));
+    const source = page
+      .getByRole("group", { name: "Source", exact: true })
+      .getByRole("button", { name: "Direct", exact: true });
+    await expect(source).toHaveAttribute("aria-pressed", "true");
+    await source.click();
+    await expect(page).not.toHaveURL(/source=/);
+    await expect(page.locator(".activity-item")).toHaveCount(3);
+    await clean(page);
+  });
+}
 
 test("Config provenance recognizes explicit defaults and the access model", async ({ page }) => {
   await session(page);

@@ -637,8 +637,9 @@ test("navigates to the activity list and back without a shell reload", async ({ 
   await expect(page).toHaveURL(origin + "/activity");
   const activity = page.locator("#activityList");
   await expect(activity.getByText("oauth.contacts")).toBeVisible();
-  await expect(activity.getByText("Ada Lovelace (Clerk)")).toBeVisible();
-  await expect(activity.getByText("Succeeded")).toBeVisible();
+  await expect(activity.getByText("Ada Lovelace", { exact: true })).toBeVisible();
+  // One status dot per call, named for assistive technology.
+  await expect(activity.locator(".activity-status.success").first()).toHaveText("Succeeded");
   expect(requests.find((request) => request.path.startsWith("/ui/api/activity"))?.authorization).toBe(
     `Bearer ${TOKEN}`,
   );
@@ -660,7 +661,7 @@ for (const body of ["truncated JSON", "null", "{}"]) {
     await openAuthenticated(page);
     await page.getByRole("link", { name: "Activity" }).click();
     await expect(page.locator("#activityError")).toContainText("Activity couldn't be loaded");
-    await expect(page.getByText("No connector tool calls recorded yet.", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("No calls yet", { exact: true })).toHaveCount(0);
     await page.unroute("**/ui/api/activity?**");
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(page.locator("#activityList").getByText("oauth.contacts")).toBeVisible();

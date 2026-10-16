@@ -1,79 +1,163 @@
+import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
-  activityDetail,
-  activityReadable,
-  contractRecovering,
-  activityOutcomeBadge,
   activityOutcomeClass,
+  activityReadable,
   activitySummary,
-  actorLabel,
-  actorStableId,
+  contractRecovering,
   filterActivity,
-  formatDate,
-  pageDescription,
   type OperatorState,
   type UiActivityEvent,
 } from "../view.js";
-import { productDescription } from "./config.js";
-import { Badge, LoadFailure, NoticeLine, Pill, pillStatus, StateBlock, Unavailable } from "./parts.js";
+import { LoadFailure, NoticeLine, StateBlock, Unavailable } from "./parts.js";
+import { Button, SegmentedControl } from "./primitives.js";
+import { Icon } from "./icons.js";
+import { ConnectorMark } from "./marks.js";
+import { ActivityList } from "./activity-list.js";
 import { loadActivity, retryCollection, setActivitySearch } from "./store.js";
 
-function ActivityRow({ event }: { event: UiActivityEvent }) {
-  if (event.kind === "catalog_drift" && event.drift)
-    return (
-      <article className="activity-item">
-        <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
-        <div>
-          <div className="activity-address">{event.connectorId}: Catalog changed</div>
-          <div className="activity-detail">
-            {event.drift.addedTools} added · {event.drift.removedTools} removed · {event.drift.changedTools} changed
-          </div>
-        </div>
-        <Badge>Catalog change</Badge>
-      </article>
-    );
-  const outcome = activityOutcomeClass(event.outcome);
-  const badge = activityOutcomeBadge(event.outcome);
-  const stableId = actorStableId(event.actor);
+type OutcomeFilter = "" | "failed" | "succeeded";
+
+const OUTCOME_OPTIONS = [
+  { value: "", label: "All" },
+  { value: "failed", label: "Failed" },
+  { value: "succeeded", label: "Succeeded" },
+] as const satisfies readonly { value: OutcomeFilter; label: string }[];
+
+/** Which recorded outcomes each filter keeps; any other value matches itself, as older links sent it. */
+const OUTCOME_CLASSES: Readonly<Record<string, readonly string[]>> = {
+  failed: ["error", "timeout"],
+  succeeded: ["success", "approved"],
+};
+
+const SOURCE_LABELS: Readonly<Record<string, string>> = {
+  call_tool: "Direct",
+  call_destructive_tool: "Approved",
+  execute_code: "Program",
+  batch_call: "Batch",
+  catalog_refresh: "Catalog",
+};
+
+function failedCall(event: UiActivityEvent): boolean {
+  return event.kind !== "catalog_drift" && OUTCOME_CLASSES.failed!.includes(activityOutcomeClass(event.outcome));
+}
+
+function outcomeMatches(event: UiActivityEvent, outcome: string): boolean {
+  if (!outcome) return true;
+  if (event.kind === "catalog_drift") return false;
+  const classes = Object.hasOwn(OUTCOME_CLASSES, outcome) ? OUTCOME_CLASSES[outcome] : undefined;
+  return classes ? classes.includes(activityOutcomeClass(event.outcome)) : event.outcome === outcome;
+}
+
+/** A choice of one, pressed again to clear. Filters what is shown; nothing here is configuration. */
+function ChipGroup({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string; mark?: ReactNode }[];
+  onChange: (value: string) => void;
+}) {
   return (
-    <article className={`activity-item ${outcome}`}>
-      <div className="activity-stamp">
-        <span className={`dot ${outcome}`} aria-hidden="true" />
-        <div>
-          <time className="activity-time" dateTime={event.occurredAt}>
-            {formatDate(event.occurredAt)}
-          </time>
-          <div className="activity-actor">{actorLabel(event.actor)}</div>
-          {stableId ? <div className="activity-actor-id mono">{stableId}</div> : null}
-        </div>
-      </div>
-      <div>
-        <div className="activity-address">{event.address}</div>
-        <div className="activity-detail">{activityDetail(event)}</div>
-        {event.packageVersion ? <div className="activity-detail">Connecta version: {event.packageVersion}</div> : null}
-        {event.clientName ? <div className="activity-detail">Client name: {event.clientName}</div> : null}
-        {event.clientVersion ? <div className="activity-detail">Client version: {event.clientVersion}</div> : null}
-      </div>
-      <div className="activity-result">
-        <Pill status={pillStatus(badge.tone)}>{badge.label}</Pill>
-        <div className="activity-detail">{event.durationMs} ms</div>
-        {event.classification ? <Badge>{event.classification}</Badge> : null}
-        {Number.isFinite(event.resultBytes) ? <span className="meta">{event.resultBytes} bytes</span> : null}
-      </div>
-    </article>
+    <div className="filter-chips" role="group" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="filter-chip"
+          aria-pressed={value === option.value}
+          onClick={() => onChange(value === option.value ? "" : option.value)}
+        >
+          {option.mark}
+          {option.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
-/** Missing IDs are separate calls, never an invented multi-call request. */
-function grouped(events: UiActivityEvent[]): Map<string, UiActivityEvent[]> {
-  const groups = new Map<string, UiActivityEvent[]>();
-  events.forEach((event, index) => {
-    const key = event.requestId ? `request:${event.requestId}` : `ungrouped:${index}`;
-    const group = groups.get(key) ?? [];
-    group.push(event);
-    groups.set(key, group);
-  });
-  return groups;
+/**
+ * Loaded calls over time, failures stacked on top in red. Drawn only when the
+ * loaded window spans more than a minute, so a handful of calls at one
+ * moment is not a chart of one bar.
+ */
+function CallStrip({ events }: { events: UiActivityEvent[] }) {
+  const calls = events
+    .filter((event) => event.kind !== "catalog_drift")
+    .map((event) => ({ at: Date.parse(event.occurredAt), failed: failedCall(event) }))
+    .filter((call) => Number.isFinite(call.at));
+  if (calls.length < 2) return null;
+  const first = Math.min(...calls.map((call) => call.at));
+  const last = Math.max(...calls.map((call) => call.at));
+  if (last - first < 60_000) return null;
+  const bins = 32;
+  const width = (last - first) / bins;
+  const counts = Array.from({ length: bins }, () => ({ ok: 0, failed: 0 }));
+  for (const call of calls) {
+    const bin = counts[Math.min(bins - 1, Math.floor((call.at - first) / width))]!;
+    if (call.failed) bin.failed++;
+    else bin.ok++;
+  }
+  const peak = Math.max(...counts.map((bin) => bin.ok + bin.failed));
+  const height = 28;
+  const scale = (n: number) => (n ? Math.max(2, (n / peak) * height) : 0);
+  return (
+    <svg
+      className="call-strip"
+      viewBox={`0 0 ${bins * 6} ${height}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={`${calls.length} calls over the loaded window`}
+    >
+      {counts.map((bin, index) => {
+        const ok = scale(bin.ok + bin.failed) - (bin.failed ? scale(bin.failed) : 0);
+        const failed = bin.failed ? scale(bin.failed) : 0;
+        const total = bin.ok + bin.failed;
+        return (
+          <g key={index}>
+            <rect className="strip-base" x={index * 6} y={height - 1} width={4} height={1} />
+            {total ? (
+              <rect className="strip-ok" x={index * 6} y={height - ok - failed} width={4} height={ok} rx={1} />
+            ) : null}
+            {failed ? (
+              <rect className="strip-failed" x={index * 6} y={height - failed} width={4} height={failed} rx={1} />
+            ) : null}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function Stats({ events }: { events: UiActivityEvent[] }) {
+  const calls = events.filter((event) => event.kind !== "catalog_drift");
+  const failed = calls.filter(failedCall).length;
+  const tools = new Set(calls.map((event) => event.address)).size;
+  const changes = events.length - calls.length;
+  const stat = (value: number, one: string, many: string, tone?: string) => (
+    <div className={tone ? `activity-stat ${tone}` : "activity-stat"}>
+      <strong>{value}</strong>
+      <span>{value === 1 ? one : many}</span>
+    </div>
+  );
+  return (
+    <div className="activity-stats">
+      {/* The numbers below are for the eye; this line is what is announced. */}
+      <p id="activitySummary" className="visually-hidden" aria-live="polite">
+        {activitySummary(events)}
+      </p>
+      <div className="activity-stat-list" aria-hidden="true">
+        {stat(calls.length, "call", "calls")}
+        {stat(failed, "failed", "failed", failed ? "danger" : undefined)}
+        {stat(tools, "tool", "tools")}
+        {changes ? stat(changes, "catalog change", "catalog changes") : null}
+      </div>
+      <CallStrip events={events} />
+    </div>
+  );
 }
 
 export function ActivityPage({ state, connectorId }: { state: OperatorState; connectorId?: string }) {
@@ -84,8 +168,10 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
   const connector = connectorId ?? params.get("connector") ?? "";
   const outcome = params.get("outcome") ?? "";
   const source = params.get("source") ?? "";
-  const updateFilter = (key: string, value: string) => {
-    const search = { ...location.search, [key]: value || undefined };
+  const exactOutcome = outcome && !OUTCOME_OPTIONS.some((option) => option.value === outcome);
+  const updateFilters = (changes: Record<string, string>) => {
+    const search: Record<string, unknown> = { ...location.search };
+    for (const [key, value] of Object.entries(changes)) search[key] = value || undefined;
     void go({ to: location.pathname, search, hash: location.hash });
   };
   const data = state.data;
@@ -93,17 +179,47 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
   // screen, stale, rather than claiming Activity is unavailable.
   const enabled = activityReadable(state) || contractRecovering(state);
   const loading = state.activityPhase === "loading";
+  const failed = state.activityPhase === "error";
+  const connectors = state.contract?.config?.connectors ?? data?.connectors ?? [];
+  const titles = new Map(connectors.map((c) => [c.id, c.title ?? c.id]));
+  // A connector's tab is that connector's history; the page is all of it.
+  const scoped = connectorId
+    ? state.activityEvents.filter((event) => event.connectorId === connectorId)
+    : state.activityEvents;
   const visible = filterActivity(
-    state.activityEvents.filter(
-      (e) =>
-        (!connector || e.connectorId === connector) &&
-        (!outcome || e.outcome === outcome) &&
-        (!source || e.source === source),
+    scoped.filter(
+      (event) =>
+        (!connector || event.connectorId === connector) &&
+        outcomeMatches(event, outcome) &&
+        (!source || event.source === source),
     ),
     query,
   );
-  const summary = activitySummary(state.activityEvents);
-  const failed = state.activityPhase === "error";
+  const filtered = Boolean(query.trim() || outcome || source || (connector && !connectorId));
+  // Chips for what the loaded history holds, plus whatever a link selected.
+  const present = (values: string[], selected: string) => [...new Set([...values, ...(selected ? [selected] : [])])];
+  const connectorChips = connectorId
+    ? []
+    : present(
+        scoped.map((event) => event.connectorId),
+        connector,
+      );
+  const sourceChips = present(
+    scoped.map((event) => event.source),
+    source,
+  ).filter((value) => SOURCE_LABELS[value] || value === source);
+  const refresh = (
+    <Button
+      id="refreshActivity"
+      size="sm"
+      className="activity-refresh"
+      disabled={loading}
+      onClick={() => void loadActivity(true)}
+    >
+      <Icon name="refresh" size={14} />
+      {loading ? "Loading…" : "Refresh"}
+    </Button>
+  );
   return (
     <section id="activityView">
       {connectorId ? null : (
@@ -112,7 +228,6 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
             <h1 id="activityHeading" tabIndex={-1}>
               Activity
             </h1>
-            <p className="meta">{pageDescription("activity", productDescription)}</p>
           </div>
         </div>
       )}
@@ -125,91 +240,10 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
           <StateBlock busy>Loading activity…</StateBlock>
         )
       ) : !enabled ? (
-        <Unavailable>
-          Activity history is not available to this session. Its reader and access rules are configured in deployment
-          code.
-        </Unavailable>
+        <Unavailable>Activity isn't available to this session.</Unavailable>
       ) : (
         <div id="activityAvailable" className="collection">
-          {/* Nothing loaded and the load failed: the block below has the one
-              Retry, and a search over nothing has nothing to find. */}
-          {failed && state.activityEvents.length === 0 ? null : (
-            <div className="row">
-              <input
-                id="activitySearch"
-                type="search"
-                placeholder="Search user, tool, or outcome…"
-                aria-label="Search loaded activity"
-                value={query}
-                onInput={(event) => {
-                  setActivitySearch(event.currentTarget.value);
-                  updateFilter("q", event.currentTarget.value);
-                }}
-              />
-              {connectorId ? null : (
-                <label className="select-label">
-                  Connector
-                  <select
-                    aria-label="Activity connector"
-                    value={connector}
-                    onChange={(e) => updateFilter("connector", e.target.value)}
-                  >
-                    <option value="">All connectors</option>
-                    {(state.contract?.config?.connectors ?? data.connectors).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.title ?? c.id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <label className="select-label">
-                Outcome
-                <select
-                  aria-label="Activity outcome"
-                  value={outcome}
-                  onChange={(e) => updateFilter("outcome", e.target.value)}
-                >
-                  <option value="">All outcomes</option>
-                  {["success", "error", "timeout", "cancelled", "paused", "approved"].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="select-label">
-                Source
-                <select
-                  aria-label="Activity source"
-                  value={source}
-                  onChange={(e) => updateFilter("source", e.target.value)}
-                >
-                  <option value="">All sources</option>
-                  {["call_tool", "call_destructive_tool", "execute_code", "batch_call", "catalog_refresh"].map(
-                    (value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ),
-                  )}
-                </select>
-              </label>
-              <button
-                id="refreshActivity"
-                className="btn"
-                type="button"
-                disabled={loading}
-                onClick={() => void loadActivity(true)}
-              >
-                {loading ? "Loading…" : "Refresh"}
-              </button>
-            </div>
-          )}
-          <p id="activitySummary" className="meta" aria-live="polite">
-            {summary}
-          </p>
-          {state.activityEvents.length === 0 ? (
+          {scoped.length === 0 ? (
             loading ? (
               <StateBlock busy>Loading activity…</StateBlock>
             ) : failed ? (
@@ -222,53 +256,111 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
                 {state.activityNotice?.message}
               </StateBlock>
             ) : (
-              <StateBlock>
-                {query.trim() ? "No loaded activity matches this search." : "No connector tool calls recorded yet."}
-              </StateBlock>
+              <StateBlock
+                title="No calls yet"
+                action={{ label: "Refresh", id: "refreshActivity", onClick: () => void loadActivity(true) }}
+              />
             )
-          ) : visible.length === 0 ? (
-            <StateBlock>No loaded activity matches this search.</StateBlock>
           ) : (
-            <div id="activityList" className="activity-list" aria-busy={loading ? "true" : "false"}>
-              {[...grouped(visible)].map(([key, events]) => (
-                <section
-                  key={key}
-                  className="request-group"
-                  aria-label={events[0]?.requestId ? `Request ${events[0].requestId}` : "Ungrouped call"}
-                >
-                  <div className="request-head">
-                    <span>{events[0]?.requestId ? "Request" : "Call without request ID"}</span>
-                    {events[0]?.requestId ? <code>{events[0].requestId}</code> : null}
-                    <span className="meta">
-                      {events.length}{" "}
-                      {events.some((event) => event.kind === "catalog_drift")
-                        ? events.length === 1
-                          ? "event"
-                          : "events"
-                        : events.length === 1
-                          ? "call"
-                          : "calls"}
-                    </span>
+            <>
+              <Stats events={scoped} />
+              <div className="activity-toolbar">
+                <div className="activity-toolbar-row">
+                  <label className="activity-search">
+                    <Icon name="search" size={15} />
+                    <input
+                      id="activitySearch"
+                      type="search"
+                      placeholder="Search"
+                      aria-label="Search loaded activity"
+                      value={query}
+                      onInput={(event) => {
+                        setActivitySearch(event.currentTarget.value);
+                        updateFilters({ q: event.currentTarget.value });
+                      }}
+                    />
+                  </label>
+                  <SegmentedControl
+                    label="Outcome"
+                    value={outcome}
+                    options={OUTCOME_OPTIONS}
+                    onChange={(value) => updateFilters({ outcome: value })}
+                  />
+                  {refresh}
+                </div>
+                {connectorChips.length > 1 ||
+                (connector && !connectorId) ||
+                sourceChips.length > 1 ||
+                source ||
+                exactOutcome ? (
+                  <div className="activity-toolbar-row chips">
+                    {exactOutcome ? (
+                      <ChipGroup
+                        label="Exact outcome"
+                        value={outcome}
+                        options={[{ value: outcome, label: `Exact outcome: ${outcome}` }]}
+                        onChange={(value) => updateFilters({ outcome: value })}
+                      />
+                    ) : null}
+                    {connectorChips.length > 1 || (connector && !connectorId) ? (
+                      <ChipGroup
+                        label="Connector"
+                        value={connectorId ? "" : connector}
+                        options={connectorChips.map((id) => ({
+                          value: id,
+                          label: titles.get(id) ?? id,
+                          mark: <ConnectorMark id={id} title={titles.get(id) ?? id} size="sm" />,
+                        }))}
+                        onChange={(value) => updateFilters({ connector: value })}
+                      />
+                    ) : null}
+                    {sourceChips.length > 1 || source ? (
+                      <ChipGroup
+                        label="Source"
+                        value={source}
+                        options={sourceChips.map((value) => ({ value, label: SOURCE_LABELS[value] ?? value }))}
+                        onChange={(value) => updateFilters({ source: value })}
+                      />
+                    ) : null}
                   </div>
-                  {events.map((event, index) => (
-                    <ActivityRow key={event.id ?? `${event.occurredAt}-${event.address}-${index}`} event={event} />
-                  ))}
-                </section>
-              ))}
-            </div>
+                ) : null}
+              </div>
+              {visible.length === 0 ? (
+                <StateBlock
+                  title="No matches"
+                  {...(filtered
+                    ? {
+                        action: {
+                          label: "Clear filters",
+                          onClick: () => {
+                            setActivitySearch("");
+                            updateFilters({
+                              q: "",
+                              outcome: "",
+                              source: "",
+                              ...(connectorId ? {} : { connector: "" }),
+                            });
+                          },
+                        },
+                      }
+                    : {})}
+                />
+              ) : (
+                <ActivityList events={visible} busy={loading} titles={titles} showConnector={!connectorId} />
+              )}
+            </>
           )}
           {/* Older pages failing is a line under the list, not a wiped list. */}
           {state.activityEvents.length > 0 ? <NoticeLine id="activityNotice" notice={state.activityNotice} /> : null}
           {state.activityCursor ? (
-            <button
+            <Button
               id="moreActivity"
-              className="btn activity-more"
-              type="button"
+              className="activity-more"
               disabled={loading}
               onClick={() => void loadActivity(false)}
             >
               {loading ? "Loading…" : "Load older"}
-            </button>
+            </Button>
           ) : null}
         </div>
       )}
