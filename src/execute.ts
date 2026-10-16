@@ -1015,21 +1015,19 @@ function sandboxProvider(
           includeSchemaKeys?: boolean;
         };
         const result = flatSearchResult(
-          await catalog.search({
-            ...args,
-            includeSchemas: args.includeSchemas ?? "json",
-            includeSchemaKeys: args.includeSchemaKeys !== false,
-          }),
+          await catalog.search(
+            {
+              ...args,
+              includeSchemas: args.includeSchemas ?? "json",
+              includeSchemaKeys: args.includeSchemaKeys !== false,
+            },
+            catalogDependency,
+          ),
         );
         boundedDiscoveryText(
           result,
           "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
         );
-        for (const tool of result.tools) catalogAddressDependency(tool.address);
-        for (const error of result.catalogErrors) catalogDependency(error.connector);
-        for (const connector of result.absence?.configuredConnectors ?? []) catalogDependency(connector);
-        for (const connector of result.queryAnalysis?.configuredConnectors ?? []) catalogDependency(connector);
-        if (result.queryAnalysis?.connectorScope) catalogDependency(result.queryAnalysis.connectorScope);
         return result;
       }),
     describe: (raw) =>

@@ -875,6 +875,158 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       await connecta.close();
     });
 
+    it.each([
+      {
+        name: "connector-id no-match guidance",
+        args: { query: "mail zzzzzqwerty" },
+        expected: { tools: [], queryAnalysis: { guidance: expect.stringContaining('"mail"') } },
+      },
+      {
+        name: "connector-title no-match guidance",
+        args: { query: "staff zzzzzqwerty" },
+        expected: { tools: [], queryAnalysis: { guidance: expect.stringContaining('configured connector "mail"') } },
+      },
+      {
+        name: "summarized connector identities",
+        args: { query: "staff zzzzzqwerty" },
+        expected: { tools: [], queryAnalysis: { guidance: expect.stringContaining('"inbox_three" and 1 more') } },
+      },
+      {
+        name: "scoped guide and summary",
+        args: { connector: "mail", query: "zzzzzqwerty" },
+        expected: { tools: [], queryAnalysis: { guide: "connector:mail", guideSummary: expect.any(String) } },
+      },
+      {
+        name: "absent-service connector roster",
+        args: { query: "slack zzzzzqwerty" },
+        expected: { tools: [], absence: { service: "Slack", configuredConnectors: ["mail", "shared_mail"] } },
+      },
+      {
+        name: "unknown-scope connector roster",
+        args: { connector: "missing" },
+        expected: {
+          tools: [],
+          queryAnalysis: { unknownConnector: true, configuredConnectors: ["mail", "shared_mail"] },
+        },
+      },
+      {
+        name: "catalog error and recovery",
+        args: { connector: "mail", query: "zzzzzqwerty" },
+        expected: { tools: [], catalogErrors: [{ connector: "mail", code: "auth_required" }] },
+      },
+      {
+        name: "matched tool and guide",
+        args: { connector: "mail", query: "labels" },
+        expected: { tools: [{ address: "mail.list_labels", guide: "connector:mail" }] },
+      },
+      {
+        name: "fixed-subject guide control",
+        args: { connector: "shared_mail", query: "zzzzzqwerty" },
+        expected: { tools: [], queryAnalysis: { guide: "connector:shared_mail", guideSummary: expect.any(String) } },
+      },
+    ])("INV-4: return paging rechecks $name after a pool owner is removed", async ({ name, args, expected }) => {
+      const storage = memoryStorage();
+      const mapping = vi.fn((who: AuthenticatedIdentity) => DIRECTORY[who.principal?.id ?? ""]);
+      const mail = mailbox({ subject: mapping, title: "Staff mailbox" });
+      if (name === "catalog error and recovery") {
+        delete mail.staticTools;
+        mail.listTools = async () => {
+          throw new ConnectorCallError("auth_required", "Reconnect the mailbox.");
+        };
+      }
+      const shared = gmail("shared_mail", {
+        purpose: "Shared inbox",
+        serviceAccount: account(),
+        subject: "shared-inbox@org.example",
+      } as Parameters<typeof gmail>[1]);
+      const connectors = [
+        ...(name === "summarized connector identities"
+          ? ["one", "two", "three"].map((id) =>
+              gmail(`inbox_${id}`, {
+                purpose: "Shared inbox",
+                title: "Staff inbox",
+                serviceAccount: account(),
+                subject: "shared-inbox@org.example",
+              } as Parameters<typeof gmail>[1]),
+            )
+          : []),
+        mail,
+        shared,
+      ];
+      let resultId: string | undefined;
+      const executor = scriptedExecutor(async (fns) => {
+        if (resultId) return fns.result!(resultId, { maxBytes: 8_000 });
+        const search = await fns.search!(args);
+        expect(search).toMatchObject(expected);
+        return { search, padding: "x".repeat(30_000) };
+      });
+      const deployment = (owner?: string) =>
+        createTestConnecta({
+          connectors,
+          auth: people(),
+          maintainers: ["alice"],
+          agents: ["assistant"],
+          accessTokens: accessTokens(storage),
+          storage,
+          pools: {
+            group: {
+              tools: connectors.map((connector) => connector.id),
+              members: ["alice", "agent:assistant"],
+              ...(owner ? { owner } : {}),
+            },
+          },
+          executor,
+          logger: silentLogger,
+        });
+      const assistant = await issueAgentToken(storage, "assistant");
+      const owned = deployment("alice@org.example");
+      const run = async (connecta: ReturnType<typeof deployment>) =>
+        (
+          await readJsonRpc(
+            await connecta.fetch(
+              mcpRpc(
+                "tools/call",
+                {
+                  name: "execute_code",
+                  arguments: { code: "async () => null" },
+                },
+                { token: assistant, agentPool: "group" },
+              ),
+            ),
+          )
+        ).result;
+      try {
+        const original = await run(owned);
+        expect(original.isError, JSON.stringify(original.structuredContent)).toBeFalsy();
+        resultId = original.structuredContent.result.resultId;
+        expect(resultId).toMatch(/^[a-f0-9-]{36}$/);
+        const page = await run(owned);
+        expect(page.isError).toBeFalsy();
+        expect(page.structuredContent.result.text).toContain('{"search":');
+      } finally {
+        await owned.close();
+      }
+      // Same storage, token, identity and endpoint; only the owner changes.
+      const ownerless = deployment();
+      try {
+        const page = await run(ownerless);
+        if (name === "fixed-subject guide control") {
+          expect(page.isError).toBeFalsy();
+          expect(page.structuredContent.result.text).toContain("connector:shared_mail");
+        } else {
+          expect(page.isError).toBe(true);
+          expect(page.structuredContent).toMatchObject({ error: { code: "not_found" } });
+          expect(JSON.stringify(page)).not.toContain('"mail"');
+          expect(JSON.stringify(page)).not.toContain("connector:mail");
+        }
+        expect(mapping).not.toHaveBeenCalled();
+        expect(tokenCalls).toEqual([]);
+        expect(apiCalls).toEqual([]);
+      } finally {
+        await ownerless.close();
+      }
+    });
+
     it("INV-3: nothing an agent sends — arguments, headers, or a program — moves it off its pool owner", async () => {
       const { connecta, assistant } = await deployment({
         executor: scriptedExecutor(async (fns) => {

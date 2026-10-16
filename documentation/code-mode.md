@@ -695,6 +695,10 @@ when the metadata describes a write on a read-only endpoint.
 Caught call failures retain that connector visibility when catalog loading or
 tool resolution fails. Recovery messages listing configured connectors or
 local guides retain visibility of those contributors too.
+Search guidance retains its referenced connectors even when no tool matches,
+including connectors named by id or title and identities summarized as an
+additional count. Scoped guides and summaries, absence rosters, and catalog
+errors retain their contributing connectors as well.
 Each page rechecks current auth,
 grants, pool membership, and the endpoint's `readOnly`. Reading a stash inside a program carries
 its dependencies forward to any new return stash. The page cap is the smallest
