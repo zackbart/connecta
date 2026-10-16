@@ -95,7 +95,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     // Alice, the fake Clerk operator, is the maintainer. Lin and the triage
     // agent use support; alice uses automation.
     pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, members: ["user_lin", "agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["alice"] } },
-    agents: empty || restricted ? [] : ["triage"],
+    ...(empty || restricted ? {} : { agents: ["triage"] }),
     activity: activityHistory({ readGate: () => !restricted, store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),
     accessTokens: accessTokens(storage),
     calls: { maxResultBytes: 1_000_000 },
