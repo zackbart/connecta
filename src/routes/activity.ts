@@ -1,5 +1,5 @@
 import { activityEventVisible } from "./activity-disclosure.js";
-import { Duration, Effect } from "effect";
+import { Effect } from "effect";
 import {
   activityBehaviorFacts,
   activityPackageVersion,
@@ -11,14 +11,7 @@ import {
 } from "../activity.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import type { InboundAuth } from "../types.js";
-import {
-  ACTOR_LABEL_BUDGET_MS,
-  ACTOR_LABEL_CONCURRENCY,
-  actorKey,
-  cleanActorLabel,
-  labelLookups,
-  type LabelLookup,
-} from "./actor-labels.js";
+import { actorKey, resolveActorLabels } from "./actor-labels.js";
 import { authorized, refuse, serveOperator, type Answer, visibleRegistry } from "./operator.js";
 import { privateJson, readsActivity, type RouteContext } from "./shared.js";
 
@@ -32,67 +25,48 @@ import { privateJson, readsActivity, type RouteContext } from "./shared.js";
  * abandoned, as they are when the reader leaves.
  */
 function enrichActivityActorLabels(page: ActivityPage, auth: readonly InboundAuth[]): Effect.Effect<ActivityReadPage> {
-  return Effect.suspend(() => {
-    const labels = new Map<string, string>();
-    const resolve = ({ key, id, provider }: LabelLookup) =>
-      Effect.tryPromise(() => Promise.resolve(provider.activityActorLabel!(id))).pipe(
-        Effect.map(cleanActorLabel),
-        Effect.orElseSucceed(() => undefined),
-        Effect.map((label) => {
-          if (label) labels.set(key, label);
-        }),
-      );
-    return Effect.forEach(
-      labelLookups(
-        page.events.map((event) => event.actor),
-        auth,
-      ),
-      resolve,
-      {
-        concurrency: ACTOR_LABEL_CONCURRENCY,
-        discard: true,
-      },
-    ).pipe(
-      Effect.timeoutOption(Duration.millis(ACTOR_LABEL_BUDGET_MS)),
-      Effect.map(() => ({
-        ...page,
-        events: page.events.map((event) => {
-          const resolved = event.actor.id ? labels.get(actorKey(event.actor)) : undefined;
-          // Never trust or echo a `label` supplied by storage. The persisted event
-          // schema has no label; only this authenticated read path may add one.
-          const actor: ActivityActor = {
-            kind: event.actor.kind,
-            ...(event.actor.id ? { id: event.actor.id } : {}),
-            ...(event.actor.namespace ? { namespace: event.actor.namespace } : {}),
-          };
-          // Re-check stored client facts, including custom readers and old rows.
-          const {
-            packageVersion: suppliedPackageVersion,
-            clientName: suppliedName,
-            clientVersion: suppliedVersion,
-            classification: _classification,
-            resultBytes: _resultBytes,
-            kind: _kind,
-            drift: _drift,
-            pool: _pool,
-            actorBasis: _actorBasis,
-            ...record
-          } = event;
-          const packageVersion = activityPackageVersion(suppliedPackageVersion);
-          const clientName = activityClientFact(suppliedName, "name");
-          const clientVersion = activityClientFact(suppliedVersion, "version");
-          return {
-            ...record,
-            ...activityBehaviorFacts(event),
-            ...(packageVersion !== undefined ? { packageVersion } : {}),
-            ...(clientName !== undefined ? { clientName } : {}),
-            ...(clientVersion !== undefined ? { clientVersion } : {}),
-            actor: resolved ? { ...actor, label: resolved } : actor,
-          };
-        }),
-      })),
-    );
-  });
+  return resolveActorLabels(
+    page.events.map((event) => event.actor),
+    auth,
+  ).pipe(
+    Effect.map((labels) => ({
+      ...page,
+      events: page.events.map((event) => {
+        const resolved = event.actor.id ? labels.get(actorKey(event.actor)) : undefined;
+        // Never trust or echo a `label` supplied by storage. The persisted event
+        // schema has no label; only this authenticated read path may add one.
+        const actor: ActivityActor = {
+          kind: event.actor.kind,
+          ...(event.actor.id ? { id: event.actor.id } : {}),
+          ...(event.actor.namespace ? { namespace: event.actor.namespace } : {}),
+        };
+        // Re-check stored client facts, including custom readers and old rows.
+        const {
+          packageVersion: suppliedPackageVersion,
+          clientName: suppliedName,
+          clientVersion: suppliedVersion,
+          classification: _classification,
+          resultBytes: _resultBytes,
+          kind: _kind,
+          drift: _drift,
+          pool: _pool,
+          actorBasis: _actorBasis,
+          ...record
+        } = event;
+        const packageVersion = activityPackageVersion(suppliedPackageVersion);
+        const clientName = activityClientFact(suppliedName, "name");
+        const clientVersion = activityClientFact(suppliedVersion, "version");
+        return {
+          ...record,
+          ...activityBehaviorFacts(event),
+          ...(packageVersion !== undefined ? { packageVersion } : {}),
+          ...(clientName !== undefined ? { clientName } : {}),
+          ...(clientVersion !== undefined ? { clientVersion } : {}),
+          actor: resolved ? { ...actor, label: resolved } : actor,
+        };
+      }),
+    })),
+  );
 }
 
 function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {

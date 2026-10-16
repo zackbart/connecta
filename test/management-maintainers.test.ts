@@ -331,33 +331,31 @@ describe("management collapses to maintainers", () => {
     expect(rotated.status).toBe(200);
   });
 
-  it("INV-4: the v1 operator permissions follow the maintainer rules", async () => {
+  it("INV-4: the operator contract follows the maintainer rules: whole for maintainers, own manage for members", async () => {
     const flow = await setup();
-    const permissions = async (user: string) =>
-      ((await (await flow.send(user, "/ui/api/config")).json()) as OperatorUiContract).you.permissions;
-    expect(await permissions("alice")).toEqual({
-      activity: true,
-      accessTokenManagement: true,
-      connectors: [
-        { id: "shared", use: true, manageSharedAuth: true, connectPersonal: false },
-        { id: "personal", use: true, manageSharedAuth: false, connectPersonal: true },
-        { id: "vaulted", use: true, manageSharedAuth: true, connectPersonal: false },
-        { id: "own_key", use: true, manageSharedAuth: false, connectPersonal: true },
-        { id: "wiki", use: true, manageSharedAuth: true, connectPersonal: false },
-      ],
-    });
-    // A non-interactive maintainer reads activity and manages nothing.
-    expect(await permissions("machine")).toEqual({
-      activity: true,
-      accessTokenManagement: false,
-      connectors: ["shared", "personal", "vaulted", "own_key", "wiki"].map((id) => ({
-        id,
-        use: true,
-        manageSharedAuth: false,
-        connectPersonal: false,
-      })),
-    });
-    // Members have no operator contract until the member view (#837 P6b).
-    expect((await flow.send("bob", "/ui/api/config")).status).toBe(404);
+    const contract = async (user: string) =>
+      (await (await flow.send(user, "/ui/api/config")).json()) as OperatorUiContract;
+    // Both maintainers get the whole view, interactive or not.
+    for (const user of ["alice", "machine"]) {
+      const view = await contract(user);
+      expect(view.role, user).toBe("maintainer");
+      expect(view.config?.connectors.map((c) => c.id)).toEqual(["shared", "personal", "vaulted", "own_key", "wiki"]);
+      expect(view.agents.map((agent) => agent.name)).toEqual(["bot"]);
+    }
+    // Bob manages his own account on the personal connectors in his pool, and nothing shared.
+    const bob = await contract("bob");
+    expect(bob.role).toBe("member");
+    expect(bob.connectors.map((c) => [c.id, c.manage])).toEqual([
+      ["shared", { kind: "none" }],
+      ["personal", { kind: "oauth", actions: ["connect", "restart", "disconnect"] }],
+      ["vaulted", { kind: "none" }],
+      ["own_key", { kind: "credential", label: "Token", actions: ["save"] }],
+    ]);
+    // Carol's pool holds no personal connector, so she manages nothing.
+    const carol = await contract("carol");
+    expect(carol.connectors.map((c) => [c.id, c.manage])).toEqual([["wiki", { kind: "none" }]]);
+    // Dave is nobody, and an agent never reads an operator contract.
+    expect((await flow.send("dave", "/ui/api/config")).status).toBe(404);
+    expect((await flow.send(flow.bot, "/ui/api/config")).status).toBe(404);
   });
 });

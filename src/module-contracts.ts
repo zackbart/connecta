@@ -21,6 +21,18 @@ export interface ActivityModule {
 export interface AccessTokensModule {
   readonly auth: import("./types.js").InboundAuth;
   handle(context: RouteContext): Promise<Response | null>;
+  /**
+   * Every declared agent's token slot, in declaration order: the list GET
+   * /ui/access-tokens serves, which the maintainer's operator contract
+   * repeats field by field. Never secret material.
+   */
+  slots(): Promise<
+    Array<
+      | { name: string; state: "none"; revision: string }
+      | { name: string; state: "issued"; issuedAt: string; revision: string }
+      | { name: string; state: "revoked"; revokedAt: string; revision: string }
+    >
+  >;
   /** The same module bound to the deployment's declared `agents`; createConnecta calls it once. */
   forAgents(agents: readonly string[]): AccessTokensModule;
 }

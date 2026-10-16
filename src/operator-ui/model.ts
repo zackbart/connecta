@@ -1,4 +1,5 @@
-import type { OperatorConnectorOverlay, OperatorTool, OperatorUiContract, OperatorViewer } from "./contract.js";
+import type { ConnectaConfigDescription } from "../describe-config.js";
+import type { OperatorConnectorOverlay, OperatorTool } from "./contract.js";
 import type { CatalogAccessObservation, CatalogDriftReport, ResourceTemplateRefusalCode } from "../types.js";
 
 /** Tool verdicts, independent of whether the selected pool is read-only. */
@@ -75,7 +76,8 @@ export interface UiConnector {
   title?: string;
   description?: string;
   status: "loading" | OperatorConnectorOverlay["status"];
-  permissions?: Omit<OperatorViewer["permissions"]["connectors"][number], "id">;
+  /** What this maintainer may do with the connector. */
+  permissions?: { use: boolean; manageSharedAuth: boolean; connectPersonal: boolean };
   /**
    * Why this connector is not usable, when it is not. See `UiProblem`. The
    * only failure detail the payload carries; the status message behind it is
@@ -108,9 +110,9 @@ export type CredentialManagementCapability = "available" | "requires_operator" |
 
 export interface UiData {
   accessTokenManagement?: "available" | "requires_operator";
-  serverInfo: Pick<OperatorUiContract["config"]["server"], "name" | "version">;
+  serverInfo: Pick<ConnectaConfigDescription["server"], "name" | "version">;
   /** Version of the installed @zackbart/connecta package. */
-  connectaVersion: OperatorUiContract["config"]["connectaVersion"];
+  connectaVersion: ConnectaConfigDescription["connectaVersion"];
   connectors: UiConnector[];
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;

@@ -6,7 +6,6 @@ import { createTestConnecta } from "../helpers.js";
 import { cloudflareAccessAuth } from "../../src/auth/cloudflare-access.js";
 import { CredentialVault, encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
-import { contractV2 } from "../fixtures/operator-contract-v2-bridge.js";
 
 let server: Server;
 let origin: string;
@@ -47,11 +46,7 @@ test.beforeAll(async () => {
           : {}),
       },
     );
-    // Until P6b of #837 serves contract v2, bridge the real v1 answer (test-only).
-    const body =
-      url.pathname === "/ui/api/config" && response.ok
-        ? Buffer.from(JSON.stringify(contractV2(await response.json())))
-        : Buffer.from(await response.arrayBuffer());
+    const body = Buffer.from(await response.arrayBuffer());
     const headers = Object.fromEntries(response.headers);
     delete headers["content-length"];
     outgoing.writeHead(response.status, headers);

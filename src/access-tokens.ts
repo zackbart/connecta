@@ -912,6 +912,7 @@ function moduleFor(storage: KVStorage, agents: readonly string[]): AccessTokensM
   return {
     auth: manager.auth,
     handle: (context) => routeAccessTokens(context, manager),
+    slots: () => manager.list(),
     forAgents: (declared) => moduleFor(storage, declared),
   };
 }

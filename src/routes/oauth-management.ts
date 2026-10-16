@@ -25,8 +25,11 @@ function oauthManagementRequest(context: RouteContext, connectorId: string): Eff
 
     const connector = registry.getConnector(connectorId);
     const disconnectAuth = connector?.disconnectAuth?.bind(connector);
-    const startAuth = connector?.startAuth?.bind(connector);
-    if (!connector || !disconnectAuth || !startAuth) {
+    // Each verb needs only its own hooks (#837): connecting needs the whole
+    // flow, through the callback's state check; disconnecting needs only
+    // disconnectAuth, so a grant provisioned out of band can still be dropped.
+    const connects = Boolean(connector?.startAuth && connector.finishAuth && connector.verifyState);
+    if (!connector || (!connects && !disconnectAuth)) {
       return yield* refuse("unknown OAuth connector", 404);
     }
     if (!mayManageConnector(opts, authz, connector)) {
@@ -42,6 +45,9 @@ function oauthManagementRequest(context: RouteContext, connectorId: string): Eff
     const mode = disconnecting ? undefined : startMode(context.url);
     if (mode === null) {
       return yield* refuse('mode must be "continue" or "restart"', 400);
+    }
+    if (disconnecting ? !disconnectAuth : !connects) {
+      return yield* refuse("unknown OAuth connector", 404);
     }
 
     if (!disconnecting) {
@@ -67,7 +73,7 @@ function oauthManagementRequest(context: RouteContext, connectorId: string): Eff
     ctx = registry.contextFor(connectorId, baseUrl);
     const operation = yield* Effect.result(
       Effect.tryPromise({
-        try: () => disconnectAuth(ctx!),
+        try: () => disconnectAuth!(ctx!),
         catch: (error) => error,
       }),
     );

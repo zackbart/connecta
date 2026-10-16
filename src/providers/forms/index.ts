@@ -34,6 +34,7 @@ import {
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
+  workspaceConnector,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
@@ -1422,20 +1423,23 @@ function formsConnector(id: string, options: FormsOptions): Connector {
     notFound: "ambiguous",
     connection,
   });
-  return api(id, {
-    ...defined({
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
+  return workspaceConnector(
+    connection,
+    api(id, {
+      ...defined({
+        callAdmission: options.callAdmission,
+        maxResultBytes: options.maxResultBytes,
+      }),
+      title: options.title ?? "Google Forms",
+      description: `Google Forms as the signed-in Workspace user: read and edit forms, read responses — ${connection.purpose}`,
+      usageGuide: {
+        content: usageGuide(connection.purpose, options.instructions),
+        summary: "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
+        // Required: whose forms they are, that Drive lists them, and the
+        // revision-checked edit sequence are conventions no schema can carry.
+        required: true,
+      },
+      tools: tools(client),
     }),
-    title: options.title ?? "Google Forms",
-    description: `Google Forms as the signed-in Workspace user: read and edit forms, read responses — ${connection.purpose}`,
-    usageGuide: {
-      content: usageGuide(connection.purpose, options.instructions),
-      summary: "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
-      // Required: whose forms they are, that Drive lists them, and the
-      // revision-checked edit sequence are conventions no schema can carry.
-      required: true,
-    },
-    tools: tools(client),
-  });
+  );
 }

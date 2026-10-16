@@ -8,7 +8,6 @@ import { credentialKeys } from "../../src/storage/keys.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { createTestConnecta } from "../helpers.js";
 import { fakeClerkAuth } from "../fixtures/http.js";
-import { serveContractV2 } from "./operator-fixture.js";
 
 const TOKEN = "flows-clerk-session";
 const CLERK = "https://clerk.example.test";
@@ -260,7 +259,6 @@ const test = base.extend<{ deployment: Deployment }>({
 
 async function openShell(page: Page, deployment: Deployment, path: string, signedIn = true) {
   if (signedIn) await page.context().addCookies([{ name: "__session", value: TOKEN, url: deployment.origin }]);
-  await serveContractV2(page);
   const response = await page.goto(deployment.origin + path);
   expect(response!.status()).toBe(200);
   expect(response!.headers()["content-security-policy"]).toContain(

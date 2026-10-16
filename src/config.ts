@@ -478,7 +478,7 @@ const connectaConfig = {
     check: (value) => {
       const auth = isObject(value) ? value.auth : undefined;
       if (
-        !hasMethods(value, ["handle", "forAgents"]) ||
+        !hasMethods(value, ["handle", "slots", "forAgents"]) ||
         !isObject(auth) ||
         typeof auth.authorize !== "function" ||
         auth.interactiveOperator

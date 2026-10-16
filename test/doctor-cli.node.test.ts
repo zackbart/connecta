@@ -306,9 +306,8 @@ describe("connecta doctor --config", () => {
           CF_ACCESS_CLIENT_SECRET: "",
         },
       });
-      // Doctor prints the v1 contract's config, which alone adds `hasGrant`
-      // (#837); everything else is describeConfig() verbatim.
-      expect(JSON.parse(stdout)).toEqual({ ...app.describeConfig(), hasGrant: true });
+      // Doctor prints the maintainer contract's config: describeConfig() verbatim.
+      expect(JSON.parse(stdout)).toEqual(app.describeConfig());
       expect(stderr).toBe("");
       for (const [position, secret] of Object.entries(SECRETS)) expect(stdout + stderr, position).not.toContain(secret);
       expect(stdout).not.toContain(VAULT_KEY);
@@ -318,11 +317,12 @@ describe("connecta doctor --config", () => {
   });
 
   it("INV-4: prints the snapshot only for a maintainer and does not execute a diagnostic program", async () => {
-    // Operator routes serve maintainers only until the member view (#837
-    // P6b): a maintainer reads every connector, anyone else gets the private
-    // 404 and doctor prints nothing.
+    // A maintainer reads every connector. A pool member gets their own view,
+    // which carries no config snapshot (#837), so doctor prints nothing; anyone
+    // else gets the private 404.
     let executed = 0;
     const OTHER = "doctor-cli-other-token";
+    const NOBODY = "doctor-cli-nobody-token";
     const app = createConnecta({
       readOnly: false,
       connectors: [
@@ -346,7 +346,11 @@ describe("connecta doctor --config", () => {
         },
         { lifecycle: "self-managed" },
       ),
-      auth: [machineAuth(TOKEN), machineAuth(OTHER, { subjectId: "other" })],
+      auth: [
+        machineAuth(TOKEN),
+        machineAuth(OTHER, { subjectId: "other" }),
+        machineAuth(NOBODY, { subjectId: "nobody" }),
+      ],
       maintainers: [MACHINE],
       pools: { visible: { tools: ["visible"], members: [{ namespace: TEST_MACHINE_NAMESPACE, id: "other" }] } },
       ui: operatorUi(),
@@ -365,8 +369,18 @@ describe("connecta doctor --config", () => {
     } catch (error) {
       const result = error as { stdout: string; stderr: string };
       expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("HTTP 404");
+      expect(result.stderr).toContain("The config snapshot is for maintainers only.");
       expect(result.stderr).not.toContain("hidden");
+    }
+    try {
+      await run(process.execPath, [CLI, "doctor", "--config", "--url", url], {
+        env: { ...process.env, CONNECTA_TOKEN: NOBODY, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+      });
+      throw new Error("Expected failure");
+    } catch (error) {
+      const result = error as { stdout: string; stderr: string };
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("HTTP 404");
     }
     expect(executed).toBe(0);
   });

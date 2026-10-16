@@ -45,7 +45,8 @@ function linExpectation(change: (source: MemberViewSource) => void): MemberViewE
   return memberViewExpectation(source);
 }
 
-// No route serves v2 yet; these fixtures freeze the shape the UI builds against.
+// These fixtures freeze the shape the UI builds against; the server's own
+// responses are checked in operator-contract-server.test.ts.
 describe("operator contract v2 fixtures", () => {
   it("type-checks both roles against OperatorUiContractV2", () => {
     expectTypeOf(OPERATOR_V2_MAINTAINER).toExtend<OperatorUiContractV2>();
@@ -110,6 +111,13 @@ describe("operator contract v2 fixtures", () => {
     expectMemberViewWithholds(OPERATOR_V2_MEMBER, OPERATOR_V2_MEMBER_EXPECTED);
     const kinds = OPERATOR_V2_MEMBER.connectors.map((c) => `${c.authScope}:${c.manage.kind}`);
     expect(kinds).toEqual(expect.arrayContaining(["personal:oauth", "personal:credential", "shared:none"]));
+    // Stored-ness rides on actions alone: Lin's partition holds no Notion
+    // value, so only save; Ada's holds one, so test and clear too.
+    expect(credential(linView()).actions).toEqual(["save"]);
+    const ada = memberViewExpectation(operatorV2MemberSource("user_ada"));
+    expect(ada.connectors.find((c) => c.id === "notion")?.manage).toMatchObject({
+      actions: ["save", "test", "clear"],
+    });
   });
 
   it("INV-4: builds the projection from membership and caller-supplied partition facts only", () => {
@@ -239,7 +247,7 @@ describe("operator contract v2 fixtures", () => {
       linExpectation((source) => (source.personal[id]!.manage = manage));
 
     it("INV-4: an action the trusted value omits fails", () => {
-      // A credential connector whose hooks cannot test it. (Without a vault, every credential action is gone.)
+      // A stored credential whose hooks cannot test it. (Without a vault, every credential action is gone.)
       const noTest = withManage("notion", { ...credential(linView()), actions: ["save", "clear"] });
       expectRejected(() => {}, noTest);
       expectMemberViewWithholds(
@@ -251,7 +259,7 @@ describe("operator contract v2 fixtures", () => {
 
     it("INV-4: an action the trusted value names cannot go missing", () => {
       expectRejected((view) => (connector(view, "slack").manage = { kind: "oauth", actions: ["connect", "restart"] }));
-      expectRejected((view) => credential(view).actions.splice(1, 1));
+      expectRejected((view) => credential(view).actions.splice(0, 1));
     });
 
     it("INV-4: a member without manage permission must see none", () => {

@@ -522,6 +522,10 @@ describe("status UI", () => {
       },
       disconnectAuth,
       startAuth,
+      async finishAuth() {},
+      async verifyState() {
+        return true;
+      },
     };
     const storage = memoryStorage();
     const connecta = createTestConnecta({
@@ -579,6 +583,10 @@ describe("status UI", () => {
       async disconnectAuth() {
         throw new Error("provider cleanup failed");
       },
+      async finishAuth() {},
+      async verifyState() {
+        return true;
+      },
       async startAuth() {
         return { state: "auth_required" };
       },
@@ -613,6 +621,10 @@ describe("status UI", () => {
         return null;
       },
       async disconnectAuth() {},
+      async finishAuth() {},
+      async verifyState() {
+        return true;
+      },
       async startAuth() {
         return {
           state: "auth_required",
@@ -670,6 +682,10 @@ describe("status UI", () => {
         return null;
       },
       async disconnectAuth() {},
+      async finishAuth() {},
+      async verifyState() {
+        return true;
+      },
       async startAuth() {
         return {
           state: "error",

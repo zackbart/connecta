@@ -3,6 +3,7 @@ import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js"
 import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
 import { createConnecta, customExecutor, type Connector, type InboundAuth } from "../src/index.js";
 import { operatorUi, type OperatorUiContract } from "../src/ui.js";
+import type { ConnectaConfigDescription } from "../src/describe-config.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
 
@@ -42,11 +43,18 @@ function connector(
     ...rest,
   };
 }
+/** A maintainer's view, whose config and root are always present. */
+type MaintainerView = OperatorUiContract & {
+  config: ConnectaConfigDescription;
+  root: NonNullable<OperatorUiContract["root"]>;
+};
 async function read(app: ReturnType<typeof createConnecta>, headers?: HeadersInit) {
   const response = await app.fetch(new Request(`${BASE}/ui/api/config`, headers ? { headers } : undefined));
   expect(response.status).toBe(200);
   expect(response.headers.get("Cache-Control")).toBe("no-store");
-  return (await response.json()) as OperatorUiContract;
+  const body = (await response.json()) as OperatorUiContract;
+  expect(body).toMatchObject({ schemaVersion: 2, role: "maintainer" });
+  return body as MaintainerView;
 }
 
 describe("operator config contract", () => {
@@ -73,12 +81,16 @@ describe("operator config contract", () => {
     const response = await app.fetch(new Request(`${BASE}/ui/api/config?connector=selected`));
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    const body = (await response.json()) as OperatorUiContract;
+    const body = (await response.json()) as MaintainerView;
     expect(body.config.connectors.map(({ id }) => id)).toEqual(["selected"]);
     expect(body.live.connectors.map(({ id }) => id)).toEqual(["selected"]);
-    expect(body.you.permissions.connectors.map(({ id }) => id)).toEqual(["selected"]);
+    expect(body.matrix.map(({ connectorId, pool }) => [connectorId, pool])).toEqual([
+      ["selected", null],
+      ["selected", "shared"],
+    ]);
     expect(probes).toEqual(["selected"]);
-    expect(JSON.stringify(body)).not.toMatch(/unrelated|hidden/);
+    // Pools list their declared tools whole; everything else names only the selected connector.
+    expect(JSON.stringify({ ...body, pools: [] })).not.toMatch(/unrelated|hidden/);
     for (const id of ["missing"]) {
       const refused = await app.fetch(new Request(`${BASE}/ui/api/config?connector=${id}`));
       expect(refused.status).toBe(404);
@@ -106,15 +118,20 @@ describe("operator config contract", () => {
     expect(json).not.toContain(VAULT_KEY);
     expect(json).not.toContain("lastFour");
     expect(json).not.toContain("SENTINEL");
-    // v1 alone adds hasGrant (#837): inbound auth is configured, so
-    // maintainers gate plain /mcp.
-    expect(data.config).toEqual({ ...app.describeConfig(), hasGrant: true });
+    expect(data.config).toEqual(app.describeConfig());
     expect(data.you.interactive).toBe(false);
-    // The machine operator is a maintainer: every connector whole, every pool.
-    expect(data.you.grants.every((grant) => grant.tools === "all")).toBe(true);
-    expect(data.you.grants.map((grant) => grant.connectorId)).toEqual(app.describeConfig().connectors.map((c) => c.id));
-    expect(data.you.pools).toEqual([
-      { name: "support", path: "/mcp/support", readOnly: false, grants: [{ connectorId: "static_api", tools: "all" }] },
+    // The machine operator is a maintainer: plain /mcp serves every connector whole, and every pool is listed.
+    const root = data.matrix.filter((cell) => cell.pool === null);
+    expect(root.every((cell) => cell.tools === "all")).toBe(true);
+    expect(root.map((cell) => cell.connectorId)).toEqual(app.describeConfig().connectors.map((c) => c.id));
+    expect(data.pools).toMatchObject([
+      {
+        name: "support",
+        humanPath: "/mcp/support",
+        agentPath: "/agent/support",
+        readOnly: false,
+        tools: [{ connectorId: "static_api", tools: "all" }],
+      },
     ]);
   });
 
@@ -133,6 +150,10 @@ describe("operator config contract", () => {
     });
     const anonymous = await read(open);
     expect(anonymous.config.pools.map((pool) => [pool.name, pool.owner])).toEqual([
+      ["mine", null],
+      ["group", null],
+    ]);
+    expect(anonymous.pools.map((pool) => [pool.name, pool.owner])).toEqual([
       ["mine", null],
       ["group", null],
     ]);
@@ -155,6 +176,10 @@ describe("operator config contract", () => {
       ["mine", "alice@example.com"],
       ["group", null],
     ]);
+    expect(maintainer.pools.map((pool) => [pool.name, pool.owner])).toEqual([
+      ["mine", "alice@example.com"],
+      ["group", null],
+    ]);
   });
 
   it("INV-4: shows a maintainer every connector, tool, and pool, and refuses everyone else", async () => {
@@ -173,7 +198,7 @@ describe("operator config contract", () => {
       },
     });
     const alice = await read(app);
-    expect(alice.config.hasGrant).toBe(true);
+    expect(alice.config).not.toHaveProperty("hasGrant");
     expect(alice.config.maintainers).toEqual([{ namespace: "directory", id: "alice" }]);
     expect(alice.config.connectors.map((c) => c.id)).toEqual(["shared", "personal", "hidden"]);
     expect(alice.config.connectors[0]?.tools?.map((t) => t.name)).toEqual(["read", "write"]);
@@ -200,46 +225,54 @@ describe("operator config contract", () => {
       ["shared.read", "read"],
       ["shared.write", "write"],
     ]);
-    expect(alice.you).toMatchObject({
+    expect(alice.root).toEqual({
+      path: "/mcp",
       readOnly: true,
-      grants: [
-        { connectorId: "shared", tools: "all" },
-        { connectorId: "personal", tools: "all" },
-        { connectorId: "hidden", tools: "all" },
-      ],
-      // Every declared pool with exactly its declared tools; guarded grants
-      // are gone, so requireReadOnly is always false.
-      pools: [
-        {
-          name: "support",
-          path: "/mcp/support",
-          readOnly: false,
-          grants: [
-            { connectorId: "shared", tools: "all" },
-            { connectorId: "hidden", tools: "all" },
-          ],
-        },
-        {
-          name: "reader",
-          path: "/mcp/reader",
-          readOnly: true,
-          grants: [{ connectorId: "shared", tools: [{ name: "read", requireReadOnly: false }] }],
-        },
-      ],
-      permissions: {
-        connectors: [
-          { id: "shared", use: true, manageSharedAuth: true, connectPersonal: false },
-          { id: "personal", use: true, manageSharedAuth: false, connectPersonal: true },
-          { id: "hidden", use: true, manageSharedAuth: true, connectPersonal: false },
-        ],
-      },
+      maintainers: [{ kind: "human", namespace: "directory", id: "alice", label: null }],
     });
-    // Operator routes serve maintainers only until the member view (#837
-    // P6b): a pool member who is not a maintainer gets the private 404.
+    // Every declared pool with exactly its declared tools; guarded grants
+    // are gone, so requireReadOnly is always false.
+    expect(alice.pools).toEqual([
+      {
+        name: "support",
+        humanPath: "/mcp/support",
+        agentPath: "/agent/support",
+        readOnly: false,
+        owner: null,
+        tools: [
+          { connectorId: "shared", tools: "all" },
+          { connectorId: "hidden", tools: "all" },
+        ],
+        members: [{ kind: "human", namespace: "directory", id: "bob", label: null }],
+      },
+      {
+        name: "reader",
+        humanPath: "/mcp/reader",
+        agentPath: "/agent/reader",
+        readOnly: true,
+        owner: null,
+        tools: [{ connectorId: "shared", tools: [{ name: "read", requireReadOnly: false }] }],
+        members: [{ kind: "human", namespace: "directory", id: "alice", label: null }],
+      },
+    ]);
+    expect(alice.matrix.map(({ connectorId, pool, tools }) => [connectorId, pool, tools])).toEqual([
+      ["shared", null, "all"],
+      ["shared", "support", "all"],
+      ["shared", "reader", ["read"]],
+      ["personal", null, "all"],
+      ["hidden", null, "all"],
+      ["hidden", "support", "all"],
+    ]);
+    expect(alice.connectors).toEqual([]);
+    // Bob is a pool member, not a maintainer: his own member view (#837).
     const bob = await app.fetch(new Request(`${BASE}/ui/api/config`, { headers: { "X-User": "bob" } }));
-    expect(bob.status).toBe(404);
-    expect(bob.headers.get("Cache-Control")).toBe("no-store");
-    expect(await bob.json()).toEqual({ error: "not found" });
+    expect(bob.status).toBe(200);
+    expect(await bob.json()).toMatchObject({ role: "member", config: null, root: null, matrix: [] });
+    // Neither a maintainer nor a member: the private 404.
+    const carol = await app.fetch(new Request(`${BASE}/ui/api/config`, { headers: { "X-User": "carol" } }));
+    expect(carol.status).toBe(404);
+    expect(carol.headers.get("Cache-Control")).toBe("no-store");
+    expect(await carol.json()).toEqual({ error: "not found" });
     expect(app.describeConfig().connectors).toHaveLength(3);
   });
 
@@ -414,7 +447,6 @@ describe("operator config contract", () => {
       const reads = mode === "unavailable" || mode === "machine";
       expect(data.live.activity).toBe(mode === "gate_throws" ? "forbidden" : reads ? "unavailable" : mode);
       expect(data.live.connectors[0]?.lastCall).toBeNull();
-      expect(data.you.permissions.activity).toBe(reads);
       expect(calls).toBe(reads ? 1 : 0);
       expect(JSON.stringify(data)).not.toContain("SENTINEL");
     },

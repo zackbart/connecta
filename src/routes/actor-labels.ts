@@ -3,22 +3,23 @@
 // only on an authorized read path. Nothing here is persisted, and a label a
 // store happens to carry is never trusted or echoed.
 
+import { Duration, Effect } from "effect";
 import type { ActivityActor } from "../activity.js";
-import type { InboundAuth } from "../types.js";
+import type { IdentityReference, InboundAuth } from "../types.js";
 import { activityActorNamespace } from "./shared.js";
 
-export const ACTOR_LABEL_CONCURRENCY = 8;
-export const ACTOR_LABEL_BUDGET_MS = 1_500;
+const ACTOR_LABEL_CONCURRENCY = 8;
+const ACTOR_LABEL_BUDGET_MS = 1_500;
 const ACTOR_LABEL_MAX_LENGTH = 160;
 
-export function cleanActorLabel(value: unknown): string | undefined {
+function cleanActorLabel(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const compact = value.replace(/\s+/gu, " ").trim();
   if (!compact) return undefined;
   return Array.from(compact).slice(0, ACTOR_LABEL_MAX_LENGTH).join("");
 }
 
-export interface LabelLookup {
+interface LabelLookup {
   key: string;
   id: string;
   provider: InboundAuth;
@@ -33,7 +34,7 @@ export function actorKey(actor: ActivityActor): string {
  * the actor's directory. An actor no provider can claim unambiguously gets no
  * lookup at all.
  */
-export function labelLookups(actors: readonly ActivityActor[], auth: readonly InboundAuth[]): LabelLookup[] {
+function labelLookups(actors: readonly ActivityActor[], auth: readonly InboundAuth[]): LabelLookup[] {
   const identities = new Map<string, { kind: string; id: string; namespace?: string }>();
   for (const actor of actors) {
     if (!actor.id) continue;
@@ -72,4 +73,46 @@ export function labelLookups(actors: readonly ActivityActor[], auth: readonly In
     if (provider) lookups.push({ key, id: identity.id, provider });
   }
   return lookups;
+}
+
+/**
+ * Resolve labels for these actors, keyed by `actorKey`. Best-effort and
+ * bounded: at most eight lookups run at once, and whatever has resolved
+ * within 1.5 seconds in all is used; the rest are abandoned, as they are when
+ * the reader leaves. A lookup that fails or answers nothing usable is absent.
+ */
+export function resolveActorLabels(
+  actors: readonly ActivityActor[],
+  auth: readonly InboundAuth[],
+): Effect.Effect<ReadonlyMap<string, string>> {
+  return Effect.suspend(() => {
+    const labels = new Map<string, string>();
+    const resolve = ({ key, id, provider }: LabelLookup) =>
+      Effect.tryPromise(() => Promise.resolve(provider.activityActorLabel!(id))).pipe(
+        Effect.map(cleanActorLabel),
+        Effect.orElseSucceed(() => undefined),
+        Effect.map((label) => {
+          if (label) labels.set(key, label);
+        }),
+      );
+    return Effect.forEach(labelLookups(actors, auth), resolve, {
+      concurrency: ACTOR_LABEL_CONCURRENCY,
+      discard: true,
+    }).pipe(
+      Effect.timeoutOption(Duration.millis(ACTOR_LABEL_BUDGET_MS)),
+      Effect.map(() => labels),
+    );
+  });
+}
+
+/**
+ * The activity actor a listed person would be recorded as: the principal in
+ * the namespace of the interactive provider that owns that directory. People
+ * no interactive provider owns have no actor, and so no label.
+ */
+export function principalActor(principal: IdentityReference, auth: readonly InboundAuth[]): ActivityActor | undefined {
+  const provider = auth.find(
+    (candidate) => candidate.interactiveOperator && activityActorNamespace(candidate) === principal.namespace,
+  );
+  return provider ? { kind: provider.kind, id: principal.id, namespace: principal.namespace } : undefined;
 }

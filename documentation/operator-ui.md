@@ -87,77 +87,121 @@ interactive credential or token management authority.
 ## Operator data contract
 
 `GET /ui/api/config`, owned by `operatorUi()`, returns `OperatorUiContract`
-from `connecta/ui`. `src/operator-ui/contract.ts` is also the browser's type
-source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, and `you`.
-`config` is the construction-time `describeConfig()` snapshot, including
-`maintainers` and each pool's `members`; only maintainers receive it. v1 alone
-adds `config.hasGrant`, true whenever inbound auth is configured, because
-`maintainers` then gate plain `/mcp`. Settings reads contract v2 instead and
-never `hasGrant`: it lists who may use plain `/mcp` from `root.maintainers`, by
-label or raw id.
-`describeConfig()` itself no longer has `hasGrant`. Pool tools are the pool's
-declared tools, never intersected.
-`configSources` labels each serialized leaf as `default` or `config`, based on
-option presence rather than equality with the default. Factory descriptions carry
-relative `optionSources` paths so resolved module and transport defaults retain
-their provenance. The snapshot copies only resolved values; the UI consumes
-these presence facts separately. Its paths use connector
-ids and pool names and are filtered after disclosure; hidden values leave no
-provenance keys. It contains no source code or credential material.
-Every response is private, `no-store` JSON. Only GET is allowed, with the
-same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
-These catalog reads, activity reads, and access-token routes require a
-maintainer. Anyone else gets a private JSON 404 `{ "error": "not found" }`;
-until the member view ships in P6b of
-[#837](https://github.com/zackbart/connecta/issues/837), pool members who are
-not maintainers have no operator UI. The connector auth routes,
-`/ui/oauth/<id>` and `/ui/credentials/<id>`, also admit a pool member for a
-personal connector in one of their pools, in their own partition. Public HTML
-shells and static assets carry no catalog data. Access-token management also
-requires an interactive session.
+(`OperatorUiContractV2`) from `connecta/ui`, `schemaVersion: 2`, frozen by
+[decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract).
+`src/operator-ui/contract.ts` is also the browser's type source. Schema
+version 1 and its `you` and `hasGrant` facts were removed. It is the page's
+only gate: a signed-out caller gets the auth provider's 401 challenge; a
+maintainer, or a person listed in a pool's `members`, gets 200 with `role`
+`"maintainer"` or `"member"`; anyone else, agents included, gets the private
+JSON 404 `{ "error": "not found" }`. An open deployment's anonymous caller is
+a maintainer. Every response is private, `no-store` JSON, and only GET is
+allowed. One shape serves both roles; a field a role does not receive is
+`null` or empty, never omitted.
 
-`live.connectors` carries status and problem codes, complete registry tools
-with their final read/write classification, catalog age in milliseconds, and
-last-call time/outcome. Catalog descriptions and schemas are allowed for an
-authenticated reader; grammar-failing names and addresses become `<withheld>`.
-`auth.registrationPath` reports the selected downstream OAuth client mechanism when known.
-Status prose, error text, credential values or suffixes, arguments, results,
-and code are excluded. Static and unobserved catalogs have a null age;
-persisted catalogs retain their original fetch time. Probes run with bounded
+The maintainer view carries:
+
+- `config`, the construction-time `describeConfig()` snapshot, including
+  `maintainers` and each pool's `members`, and `configSources`, which labels
+  each serialized leaf as `default` or `config` from option presence rather
+  than equality with the default. Factory descriptions carry relative
+  `optionSources` paths so resolved module and transport defaults retain their
+  provenance. Paths use connector ids and pool names and are filtered after
+  disclosure; hidden values leave no provenance keys. Neither contains source
+  code or credential material.
+- `root`: plain `/mcp`, its `readOnly`, and its `maintainers`, people only.
+- `pools`: every declared pool with `humanPath` (`/mcp/<name>`), `agentPath`
+  (`/agent/<name>`), `readOnly`, `owner` (the Workspace address its agents act
+  as), its declared `tools` (never intersected; no `requireReadOnly` is ever
+  true), and its `members`, agents as `{ kind: "agent", name }`. Every listed
+  person carries a `label` from the same directory lookup activity actor
+  labels use, on an interactive read only, and `null` without a directory
+  (Cloudflare Access) or an entry. An open deployment's anonymous maintainer
+  reads every `owner` as `null`.
+- `agents`: every agent declared in code, with its pools, its token slot
+  (`state`, `issuedAt`, `revokedAt`, `revision`) exactly as
+  `GET /ui/access-tokens` lists it, and `lastSeenAt`, the newest visible
+  activity row recorded for that agent, or `null` when activity is off or
+  none is visible. A slot read that fails answers 503 rather than drop agents.
+- `matrix`: a cell per connector for plain `/mcp` (`pool: null`) and for each
+  pool that serves it, with that endpoint's tool names or `"all"` and
+  `runsAs`. A Workspace connector with a subject mapping is
+  `{ kind: "workspace", humans: "self", agents }`, `agents` being the pool's
+  owner, or `null` on plain `/mcp` and in an ownerless pool; a fixed subject is
+  `{ kind: "workspaceFixed", subject }`. A personal connector counts the
+  endpoint's people (the maintainers on plain `/mcp`) and how many have
+  connected in their own partition: a stored credential of the declared shape,
+  or an `ok` status. A shared connector names its `source`: `vault` (a saved
+  slot, with `savedAt`), `missing` (a slot with nothing saved, or shared OAuth
+  reporting it needs authorizing), `oauth` (a shared grant; grants carry no
+  saved time, so `savedAt` is `null`), `unauthenticated` (a remote MCP server
+  that declares no auth), or `config` (everything else, held by deployment
+  code).
+- `live.connectors`: status and problem codes, complete registry tools with
+  their final read/write classification, catalog age in milliseconds, and
+  last-call time/outcome. Catalog descriptions and schemas are allowed;
+  grammar-failing names and addresses become `<withheld>`.
+  `auth.registrationPath` reports the selected downstream OAuth client
+  mechanism when known. Static and unobserved catalogs have a null age;
+  persisted catalogs retain their original fetch time.
+- `live.activity`: available, unconfigured, forbidden, or unavailable history.
+  Last-call and last-seen lookups need the activity permission and read gate,
+  scan up to 1,000 recent rows, filter connector/tool grants, restrict personal
+  connectors to the caller's activity identity, and copy a validated timestamp
+  and outcome only. A null means unknown or absent in that window.
+- `connectors: []`.
+
+The member view is exactly that member's projection: `config`,
+`configSources` and `root` are `null`, `live.connectors`, `agents` and
+`matrix` are empty, and `live.activity` is `"forbidden"`. `pools` lists only
+their pools, each with `owner: null` and `members: []`. `connectors` lists
+each connector in those pools with its title, the member's pools that serve
+it, its auth scope, the tools those pools grant with their classification,
+`connection` (their own partition's state and problem code for a personal
+connector, `null` for a shared one) and `manage`. `manage` is derived on the
+server. A shared connector is always `{ kind: "none" }`. For a personal one,
+the member's own permission (an interactive person in a pool that holds it)
+gates every action. A credential slot offers `save` when a vault is
+configured, `clear` when a value is stored in the member's partition, and
+`test` when one is stored in the declared shape and the connector has the
+matching test hook; an unreadable partition offers `save` alone, so the page
+reads stored-ness from `actions`. OAuth offers `connect` and `restart` when
+the connector has `startAuth`, `finishAuth` and `verifyState` and the
+deployment can sign the connect hand-off, and `disconnect` when it has
+`disconnectAuth`. No actions is `{ kind: "none" }`. The view carries no shared
+credential status, catalog ages, last calls, other members, agents, owners or
+activity. Status prose, error text, credential values or suffixes, arguments,
+results, and code are excluded from both views. Probes run with bounded
 concurrency and the configured probe deadline, and release their scopes.
 
-Last-call lookup requires the existing activity permission and read gate. It
-scans up to 1,000 recent rows, filters connector/tool grants, and restricts
-personal connectors to the caller's activity identity. Each retained fact
-copies a validated timestamp and outcome only. A null call means unknown or
-absent in that window, not proof of no calls. `live.activity` distinguishes
-available, unconfigured, forbidden, and unavailable history. `you` names no
-identity or auth material; for a maintainer `grants` is `"all"` on every
-connector, `pools` lists every declared pool with its declared tools (no
-`requireReadOnly` is ever true), and it reports whether each is read-only and
-the effective activity, token, and per-connector auth permissions.
+`/ui/data`, `/ui/connectors/:id`, activity reads and access-token routes
+require a maintainer and give anyone else the same private 404. The connector
+auth routes, `/ui/oauth/<id>` and `/ui/credentials/<id>`, also admit a pool
+member for a personal connector in one of their pools, in their own
+partition. `/ui/oauth/<id>` gates each verb on its own hooks: a connect needs
+`startAuth`, `finishAuth` and `verifyState`, a disconnect only
+`disconnectAuth`. Public HTML shells and static assets carry no catalog data.
+Access-token management also requires an interactive session.
 
-`contract.ts` also declares `OperatorUiContractV2` and its member, pool, agent,
-connector and matrix types, frozen by
-[decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract)
-for the server cutover in P6b of [#837](https://github.com/zackbart/connecta/issues/837). The browser store reads only
-v2: it accepts `schemaVersion: 2` with a `role`, requires `config` and `root` for a maintainer, and treats a v1 body
-as a failed load. Every page checks `role` before reading a maintainer-only field.
-`test/fixtures/operator-contract-v2.ts` holds maintainer and member fixtures,
-and `test/helpers/operator-member-view.ts` checks a member response's exact
-shape and compares its values with a projection built from config, membership,
-the member's own partition status, and each personal connector's exact `manage`.
+The browser store reads only v2 and checks `role` before reading a
+maintainer-only field. `test/fixtures/operator-contract-v2.ts` holds
+maintainer and member fixtures, and `test/helpers/operator-member-view.ts`
+checks a member response's exact shape and compares its values with a
+projection built from config, membership, the member's own partition status,
+and each personal connector's exact `manage`;
+`test/operator-contract-server.test.ts` runs it against real responses.
 
-`GET /ui/api/config?connector=<id>` narrows the same contract to one admitted
-connector before status and catalog probes. Config, provenance, grants, pool
-tools, management permissions and live rows contain only that connector's
-facts. An unknown or invisible id receives a no-store 404. The selector never
-widens identity grants.
+`GET /ui/api/config?connector=<id>` narrows the same contract to one connector
+before status and catalog probes. For a maintainer, config, provenance, live
+rows and matrix cells contain only that connector's facts; for a member,
+`connectors` does. Pools keep their declared tools. An id outside the
+caller's view receives a no-store 404. The selector never widens access.
 
 `connecta doctor --config` fetches this authenticated contract and prints only
-`config` as indented JSON. It requires the UI module and the existing doctor
-authentication environment variables; it runs no diagnostic program, follows
-no redirects, and prints no raw HTTP failure body.
+a maintainer's `config` as indented JSON; a member's view has none, and doctor
+says the snapshot is for maintainers. It requires the UI module and the
+existing doctor authentication environment variables; it runs no diagnostic
+program, follows no redirects, and prints no raw HTTP failure body.
 
 The operator shell uses React, TanStack Router/Query/Table, Radix, cmdk and
 Tailwind v4. Geist Sans, Geist Mono, CSS, JavaScript and dependency notices are hashed assets

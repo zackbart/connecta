@@ -42,7 +42,7 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
   credential_required: {
     problem: "A connector with an operator-managed credential slot has no usable credential stored.",
     steps: [
-      "A maintainer can add a shared credential on the operator page, and a pool member their own personal one; that needs no code change.",
+      "With a credential vault configured, a maintainer adds a shared credential on the operator page, and a pool member saves their own personal one from their view of it; neither needs a code change. Without a vault, configure one first.",
       "If nobody can, list the person in the deployment's maintainers for shared auth, or in the members of a pool containing the connector for personal auth.",
       "Check that the connector's credential declaration (label and fields) matches what the downstream actually needs.",
     ],
@@ -83,7 +83,7 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
   oauth_action_failed: {
     problem: "Restarting or disconnecting a connector's downstream OAuth from the operator page failed.",
     steps: [
-      "Check that the connector implements startAuth and disconnectAuth, and that the storage holding its OAuth state is writable.",
+      "Check that the connector implements the hooks the action needs (startAuth, finishAuth, and verifyState to connect; disconnectAuth to disconnect), and that the storage holding its OAuth state is writable.",
       "Check the connector's OAuth client configuration, including the authorization server it discovers or is given.",
       "Confirm the person is a maintainer for shared auth, or a member of a pool containing the connector for personal auth.",
     ],
