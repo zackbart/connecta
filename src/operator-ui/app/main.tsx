@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./query.js";
-import { applySavedScheme, ShellControls } from "./shell.js";
+import { ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import {
@@ -389,7 +389,6 @@ function mount(id: string, view: ReactNode): void {
   createRoot(host).render(view);
 }
 
-applySavedScheme();
 mount("operatorNav", <OperatorNav />);
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
 const routes = [

@@ -43,6 +43,8 @@ interface ShellConfig {
   auth: BrowserAuth;
   mcpUrl: string;
   initialPage: string;
+  /** The deployment pinned a color scheme; the viewer's choice does not apply. */
+  schemePinned: boolean;
   titleSuffix: string;
   productName: string;
   productDescription: string;
@@ -50,7 +52,7 @@ interface ShellConfig {
 }
 
 const config = JSON.parse(document.getElementById("operatorConfig")!.textContent!) as ShellConfig;
-export const { auth, mcpUrl, initialPage, titleSuffix, productName, productDescription } = config;
+export const { auth, mcpUrl, initialPage, schemePinned, titleSuffix, productName, productDescription } = config;
 
 /** Where a bearer operator's token lives between visits. */
 export const TOKEN_KEY = "connecta:token";

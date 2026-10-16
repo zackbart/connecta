@@ -276,7 +276,18 @@ The operator shell uses React, TanStack Router/Query/Table, Radix, cmdk and
 Tailwind v4. Geist Sans, Geist Mono, CSS, JavaScript and dependency notices are hashed assets
 under `/ui/assets/*`, served identically with immutable cache headers on Node
 and Workers. HTML contains only mount points and escaped inert configuration;
-it remains uncached. `generated.ts` is ignored and generated before build and
+it remains uncached. Ahead of the stylesheet, every operator page (sign-in
+gate, member page, maintainer pages) loads a blocking hashed scheme initializer
+of under 200 bytes, `src/operator-ui/app/scheme-init.ts`, with a plain
+`<script src>` and no inline code. When the server set no `html[data-scheme]`
+from a pinned `branding.theme.colorScheme`, it copies a saved `light` or `dark`
+from local storage key `connecta:scheme` onto that attribute, ignoring storage
+errors, so the first frame already has the viewer's scheme. The deferred bundle
+learns of a pin from `schemePinned` in the inert configuration; Appearance
+writes the key and moves the attribute live, and is read-only under a pin. Every
+local and session storage access in the UI tolerates storage that throws, as in
+private browsing: a read finds nothing stored and a write keeps nothing, so a
+bearer token is not remembered there. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
 owns authenticated reads and existing mutations. An Access-only shell selects

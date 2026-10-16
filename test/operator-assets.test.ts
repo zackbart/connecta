@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createTestConnecta } from "./helpers.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { OPERATOR_UI_ASSETS, OPERATOR_UI_SCRIPT_PATH, OPERATOR_UI_STYLE_PATH } from "../src/operator-ui/generated.js";
+import {
+  OPERATOR_UI_ASSETS,
+  OPERATOR_UI_SCHEME_PATH,
+  OPERATOR_UI_SCRIPT_PATH,
+  OPERATOR_UI_STYLE_PATH,
+} from "../src/operator-ui/generated.js";
 import { renderUiHtml } from "../src/ui.js";
 
 const BASE = "https://connecta.test";
@@ -52,6 +57,11 @@ describe("operator assets on both runtimes", () => {
     expect(html.length).toBeLessThan(5000);
     expect(html).toContain(OPERATOR_UI_SCRIPT_PATH);
     expect(html).toContain(OPERATOR_UI_STYLE_PATH);
+    // The blocking scheme initializer stays a few hundred bytes (#854).
+    expect(html).toContain(`<script src="${OPERATOR_UI_SCHEME_PATH}"></script>`);
+    const scheme = OPERATOR_UI_ASSETS[OPERATOR_UI_SCHEME_PATH]!.body;
+    expect(scheme.length).toBeLessThan(400);
+    expect(scheme).toContain('"connecta:scheme"');
     const css = OPERATOR_UI_ASSETS[OPERATOR_UI_STYLE_PATH]!.body;
     const fonts = Object.keys(OPERATOR_UI_ASSETS).filter((path) => path.endsWith(".woff2"));
     expect(fonts).toHaveLength(2);
