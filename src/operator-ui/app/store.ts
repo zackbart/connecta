@@ -233,7 +233,7 @@ let dataRevision = 0;
  * is, and a member never asks for it.
  */
 async function loadData(): Promise<void> {
-  if (state.contract?.role !== "maintainer") return;
+  if (!maintainerNow()) return;
   const identityCurrent = fence();
   const revision = ++dataRevision;
   ++snapshotRevision;
@@ -379,20 +379,33 @@ export async function loadOperatorContract(): Promise<OperatorRole | null> {
     return null;
   }
   const { contract } = outcome;
-  // A role that changed under a refresh is a different viewer: start over,
-  // so nothing read for the old role stays in memory or keeps refreshing.
-  if (state.contract && state.contract.role !== contract.role) {
-    gate(null, "loading");
-    void loadCurrent();
-    return null;
-  }
+  // A role other than the last confirmed one is a different viewer, even
+  // when a failed refresh cleared `contract` in between: drop everything read
+  // for the old role and fence its requests in flight, then accept this
+  // answer as a fresh start. A new maintainer's data loads here, so the
+  // caller has nothing more to do.
+  const changed = state.role !== null && state.role !== contract.role;
+  if (changed) gate(null, "loading");
   // A maintainer's page waits for `/ui/data` too; a member's is ready now.
   set({
     contract,
+    role: contract.role,
     contractPhase: "ready",
     ...(contract.role === "member" ? { session: "ready" as const, loadFailure: null } : {}),
   });
-  return contract.role;
+  if (!changed) return contract.role;
+  if (contract.role === "maintainer") void loadData();
+  return null;
+}
+
+/**
+ * Whether a maintainer-only read may go out now: the last confirmed role is
+ * maintainer and the contract on screen still says so. Every privileged read
+ * checks this when it is sent, not only at boot, so a background refetch
+ * never runs for a member or while the role is unknown.
+ */
+function maintainerNow(): boolean {
+  return state.role === "maintainer" && state.contract?.role === "maintainer";
 }
 
 /**
@@ -786,7 +799,7 @@ export function testCredential(connector: string): Promise<void> {
 
 let activityRevision = 0;
 export async function loadActivity(reset: boolean): Promise<void> {
-  if (!state.data?.activityEnabled) return;
+  if (!maintainerNow() || !state.data?.activityEnabled) return;
   const identityCurrent = fence();
   const revision = ++activityRevision;
   const current = () => identityCurrent() && revision === activityRevision;
@@ -896,36 +909,17 @@ function onReturn(): void {
   }, RETURN_DEBOUNCE_MS);
 }
 
-const RECOVERY_DELAYS_MS = [2000, 2000, 4000, 8000];
-let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
-let recoveryAttempt = 0;
-let recoveryNotBefore = 0;
-const RECOVERY_READ_TIMEOUT_MS = 15_000;
-interface RecoveryRead {
-  controller: AbortController;
-  timer: ReturnType<typeof setTimeout>;
-  finish: () => void;
-}
-let recoveryRead: RecoveryRead | undefined;
-// Superseded catalog refreshes are revision-fenced, but still need physical
-// cancellation if this identity or view goes away before their transport lands.
-const recoveryReads = new Set<RecoveryRead>();
-
-function releaseRecoveryRead(): void {
-  if (!recoveryRead) return;
-  clearTimeout(recoveryRead.timer);
-  recoveryRead.finish();
-  recoveryRead = undefined;
-  set({ recoveryPending: false });
-}
-
-function cancelRecoveryRead(): void {
-  if (recoveryReads.size === 0) return;
-  recoveryRead = undefined;
-  for (const read of recoveryReads) {
-    clearTimeout(read.timer);
-    read.controller.abort();
-    read.finish();
+function recheckAuthorization(): void {
+  if (state.session !== "ready" || !state.data || !maintainerNow()) return;
+  for (const connector of state.data.connectors) {
+    if (state.oauthBusy === connector.id) continue;
+    // Only authorization that happens in another tab can change while this
+    // one is away; a credential slot is filled on this page.
+    const authorizesElsewhere =
+      connector.status === "auth_required" && (connector.oauth === true || Boolean(connector.authorizationUrl));
+    if (authorizesElsewhere || awaitingAuthorization.has(connector.id)) {
+      void refreshConnector(connector.id, true);
+    }
   }
   recoveryReads.clear();
   set({
@@ -1228,10 +1222,40 @@ function detailsPatch(
   return { ...patch, connectorFailures, data: { ...state.data, connectors } };
 }
 
-/** Refreshes never replay the mutation that caused them. */
-export function refreshConnector(id: string, quiet = false): Promise<void> {
-  if (!state.data?.connectors.some((connector) => connector.id === id)) return Promise.resolve();
-  if (!quiet && state.data)
+let detailGeneration = 0;
+const detailRevisions = new Map<string, number>();
+async function loadConnectorDetails(
+  data: UiData,
+  current: () => boolean,
+  token: string | null | undefined,
+): Promise<void> {
+  const generation = ++detailGeneration;
+  let next = 0;
+  const worker = async () => {
+    while (next < data.connectors.length && current() && generation === detailGeneration && maintainerNow()) {
+      const connector = data.connectors[next++]!;
+      const revision = (detailRevisions.get(connector.id) ?? 0) + 1;
+      detailRevisions.set(connector.id, revision);
+      const outcome = await readConnector(connector.id, token);
+      if (!current() || generation !== detailGeneration || !state.data) return;
+      if (detailRevisions.get(connector.id) !== revision) continue;
+      applyDetail(connector.id, outcome);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, data.connectors.length) }, worker));
+}
+
+/**
+ * Re-read one connector. A `quiet` read — the one a returning tab makes —
+ * keeps the row as it is while it waits, and keeps it as it was when the read
+ * could not get through: a passive check that fails has nothing new to say.
+ */
+export async function refreshConnector(id: string, quiet = false): Promise<void> {
+  if (!maintainerNow()) return;
+  const current = fence();
+  const revision = (detailRevisions.get(id) ?? 0) + 1;
+  detailRevisions.set(id, revision);
+  if (!quiet && state.data) {
     set({
       data: {
         ...state.data,
@@ -1241,7 +1265,21 @@ export function refreshConnector(id: string, quiet = false): Promise<void> {
       },
       connectorFailures: withoutKey(state.connectorFailures, id),
     });
-  return guardedRecoveryRead((signal) => refreshSnapshot(quiet, undefined, signal));
+  }
+  let token;
+  try {
+    token = await sessionToken();
+  } catch {
+    if (!current() || quiet || detailRevisions.get(id) !== revision) return;
+    return applyDetail(id, { kind: "local", failure: "session" });
+  }
+  if (!current() || !maintainerNow()) return;
+  const outcome = await readConnector(id, token);
+  if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
+  // A passive read only reports good news: a transient failure on a focus
+  // check is not a reason to repaint an auth-needed row as broken.
+  if (quiet && outcome.kind !== "detail") return;
+  applyDetail(id, outcome);
 }
 
 /* Access tokens ----------------------------------------------------------- */
@@ -1283,6 +1321,7 @@ export function slotState(row: UiAccessToken): UiAgentSlot["state"] {
 
 let tokenRevision = 0;
 export async function loadAccessTokens(): Promise<void> {
+  if (!maintainerNow()) return;
   const identityCurrent = fence();
   const revision = ++tokenRevision;
   const current = () => identityCurrent() && revision === tokenRevision;
@@ -1322,7 +1361,7 @@ function replaceRow(slot: UiAgentSlot): UiAccessToken[] {
 
 /** Issue the agent's first token or rotate it; the previous secret stops at once. */
 export function rotateAgentToken(name: string): Promise<void> {
-  if (state.tokenBusy) return Promise.resolve();
+  if (state.tokenBusy || !maintainerNow()) return Promise.resolve();
   const row = state.tokens.find((token) => token.id === name);
   if (
     row &&
@@ -1357,6 +1396,7 @@ export function dismissCreatedToken(): void {
 }
 
 export function revokeAgentToken(name: string): Promise<void> {
+  if (!maintainerNow()) return Promise.resolve();
   if (!window.confirm(`Revoke ${name}'s token? The agent will immediately lose access.`)) return Promise.resolve();
   return mutate({
     request: (current) =>

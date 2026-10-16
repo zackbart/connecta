@@ -423,6 +423,12 @@ export interface OperatorState {
   data: UiData | null;
   /** Operator contract v2, for either role; null until `/ui/api/config` answers. */
   contract: OperatorUiContractV2 | null;
+  /**
+   * The role the last good contract confirmed. It outlives a failed refresh
+   * that clears `contract`, so the next answer with a different role is
+   * still recognized as a different viewer. Only an identity reset clears it.
+   */
+  role: OperatorRole | null;
   contractPhase: LoadPhase;
   health: "loading" | "ok" | "unavailable";
   connectorFilter: string;
@@ -501,6 +507,7 @@ function identityScopedState() {
     recoveryPending: false,
     data: null,
     contract: null,
+    role: null,
     contractPhase: "idle" as LoadPhase,
     health: "loading" as const,
     connectorFilter: "",
