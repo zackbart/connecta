@@ -5,9 +5,11 @@ import {
   endpointRows,
   matrixCell,
   matrixCellLabel,
+  matrixCellShare,
   matrixCellText,
   matrixColumns,
   runsAsLabel,
+  toolSplit,
 } from "../src/operator-ui/endpoints.js";
 import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./fixtures/operator-contract-v2.js";
 
@@ -197,5 +199,25 @@ describe("matrix cells", () => {
       kind: "all",
       runsAs: { kind: "shared" },
     });
+  });
+});
+
+describe("glance marks", () => {
+  it("splits an endpoint's tools into read and write for its bar", () => {
+    const ada = endpointRows(maintainer()).find((row) => row.path === "/mcp/ada")!;
+    expect(toolSplit(ada.groups.flatMap((group) => group.tools))).toEqual({ read: 2, write: 1 });
+    expect(toolSplit([{ classification: null }])).toEqual({ read: 0, write: 0 });
+  });
+
+  it("gives a matrix cell's pie its share of the live catalog", () => {
+    const contract = maintainer();
+    const share = (id: string, pool: string | null) =>
+      matrixCellShare(contract, id, matrixCell(contract, id, { pool }));
+    expect(share("gmail", "ada")).toBe(1);
+    expect(share("github", "team")).toBe(0.5);
+    expect(share("slack", "support")).toBe(0);
+    // A named list against a catalog not seen yet reads as half, never as all.
+    contract.live.connectors = contract.live.connectors.map((c) => (c.id === "github" ? { ...c, tools: [] } : c));
+    expect(share("github", "team")).toBe(0.5);
   });
 });

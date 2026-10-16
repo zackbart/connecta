@@ -24,8 +24,8 @@ committed through the deployment's own store, so the contract's `agents` and
 last seen are fixed. The restricted state is the member fixture from
 `test/fixtures/operator-contract-v2.ts`, and the endpoint and matrix variants
 use its maintainer fixture, which covers every runs-as kind and agent pools,
-with `test/fixtures/operator-console.ts` crowding the team pool so its chips
-collapse to "+3 more".
+with `test/fixtures/operator-console.ts` crowding the team pool so its avatar
+stack collapses to "+3".
 Collections use their corresponding browser types.
 `test/operator-visual-fixtures.test.ts` validates contract versions, connector
 IDs, granted tools, matrix cells, classification, provenance, and secret
@@ -71,13 +71,13 @@ and an agent pool expanded with every runs-as kind; command search; narrow
 endpoints; the connector × endpoint matrix, one cell's open popover, and the
 narrow matrix; a new token's one-time secret dialog; and the member page, wide
 and narrow. `endpoints-expanded` and `narrow-endpoints` include the team row
-collapsed to "+3 more". The base
+collapsed to "+3". The base
 populated Activity fixture includes grouped calls, an ungrouped legacy row,
 classification/result size/client facts, and a catalog-change event.
 
 `test/browser/operator-matrix.spec.ts` serves the frozen v2 fixtures to the
-real shell. It covers the matrix's table semantics, cell names and runs-as
-labels, popover keyboard behavior, placement at a short viewport, the in-flow
+real shell. It covers the matrix's table semantics, cell names, status dots,
+runs-as labels in each kind's popover, popover keyboard behavior, placement at a short viewport, the in-flow
 fallback without CSS anchors, and the absence of `style` attributes, agent URLs on Endpoints, the member page (its
 received body checked with `expectMemberViewWithholds`, `/ui/data` answering 404
 and never requested, no maintainer fact rendered, no maintainer request sent),
@@ -97,7 +97,7 @@ as its accessible name, Enter opening an endpoint's row and a connector; the
 narrow list; an empty deployment; and a member at `/` getting the member page
 with no maintainer read, plus CSP and no `style` attributes.
 `test/browser/operator-console.spec.ts` covers UI-3: who-can-use chips by
-label, raw id and agent mark and "+N more" from the keyboard; Tokens rows,
+label, raw id and agent mark and "+N" from the keyboard; Tokens rows,
 issue with the once-only secret dialog, in-row rotate and revoke questions,
 503, 499 and 409 failures that send exactly one request, slots missing from
 the list or left unresolved shown with disabled controls until Refresh; and the

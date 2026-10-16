@@ -108,29 +108,25 @@ test("INV-2: the matrix is a real table with scoped headers, named cells and run
   const table = page.getByRole("table", { name: "Connectors by endpoint", exact: true });
   await expect(table.getByRole("columnheader")).toHaveText([
     "Connector",
-    "Status",
-    "Runs as",
     "/mcp",
     "/mcp/ada",
     "/mcp/support (read-only)",
     "/mcp/team",
   ]);
   expect(await table.locator("thead th").evaluateAll((cells) => cells.map((c) => c.getAttribute("scope")))).toEqual(
-    Array(7).fill("col"),
+    Array(5).fill("col"),
   );
   await expect(table.getByRole("rowheader")).toHaveText(["GitHub", "Gmail", "Drive", "Slack", "Calendar", "Notion"]);
   expect(await table.locator("tbody th").evaluateAll((cells) => cells.map((c) => c.getAttribute("scope")))).toEqual(
     Array(6).fill("row"),
   );
   const row = (name: string) => table.getByRole("row").filter({ has: page.getByRole("rowheader", { name }) });
-  await expect(row("GitHub").locator(".matrix-runs-as")).toHaveText("Shared · saved Oct 1, 2026");
-  await expect(row("Gmail").locator(".matrix-runs-as")).toHaveText("Workspace · people: self · agents: none");
-  await expect(row("Drive").locator(".matrix-runs-as")).toHaveText("Everyone acts as support@workspace.example");
-  await expect(row("Slack").locator(".matrix-runs-as")).toHaveText("Personal · 1 of 2 connected");
-  // One status badge, and the single action only where something needs fixing.
-  await expect(row("Notion").locator(".badge")).toHaveText("Credential needed");
-  await expect(row("Notion").getByRole("link", { name: "Connect Notion", exact: true })).toBeVisible();
-  await expect(row("Slack").locator(".problem-action")).toHaveCount(0);
+  // Only a connector that needs fixing gets a status dot, which links to its fix.
+  const notion = row("Notion").getByRole("link", { name: "Connect Notion", exact: true });
+  await expect(notion).toBeVisible();
+  await expect(notion).toHaveAttribute("title", "Credential needed");
+  await expect(notion).toHaveAttribute("href", "/connectors/notion#connection");
+  await expect(row("Slack").locator(".status-dot-link")).toHaveCount(0);
   const cell = (name: string) => table.getByRole("button", { name, exact: true });
   await expect(cell("GitHub on /mcp: all tools")).toHaveText("all");
   await expect(cell("GitHub on /mcp/support: 1 tool, read-only")).toHaveText("1");
@@ -139,6 +135,17 @@ test("INV-2: the matrix is a real table with scoped headers, named cells and run
   // No tools is a dash with a name, not a button.
   await expect(row("Slack").getByText("Slack on /mcp/support: no tools", { exact: true })).toBeAttached();
   await expect(table.getByRole("button", { name: /^Slack on \/mcp\/support/ })).toHaveCount(0);
+  // Runs-as lives in each cell's popover: every kind, from the /mcp cells.
+  for (const [name, runsAs] of [
+    ["GitHub", "Shared · saved Oct 1, 2026"],
+    ["Gmail", "Workspace · people: self · agents: none"],
+    ["Drive", "Everyone acts as support@workspace.example"],
+    ["Slack", "Personal · 1 of 2 connected"],
+  ]) {
+    await cell(`${name} on /mcp: all tools`).click();
+    await expect(page.getByRole("dialog", { name: `${name} on /mcp`, exact: true })).toContainText(`Runs as ${runsAs}`);
+    await page.keyboard.press("Escape");
+  }
   await page.getByLabel("Filter connectors").fill("drive");
   await expect(table.getByRole("rowheader")).toHaveText(["Drive"]);
   await page.getByRole("button", { name: "List", exact: true }).click();
@@ -155,7 +162,8 @@ test("a matrix cell opens exactly its tools from the keyboard and returns focus"
   const popover = page.getByRole("dialog", { name: "Gmail on /mcp/ada", exact: true });
   await expect(popover).toBeFocused();
   await expect(gmail).toHaveAttribute("aria-expanded", "true");
-  await expect(popover.getByRole("listitem")).toHaveText(["search", "sendwrite"]);
+  // Each tool carries its classification as a pill.
+  await expect(popover.getByRole("listitem")).toHaveText(["searchread", "sendwrite"]);
   await expect(popover).toContainText("Runs as Workspace · people: self · agents: ada@workspace.example");
   await page.keyboard.press("Escape");
   await expect(popover).toHaveCount(0);
@@ -166,7 +174,7 @@ test("a matrix cell opens exactly its tools from the keyboard and returns focus"
   await github.focus();
   await page.keyboard.press("Space");
   const team = page.getByRole("dialog", { name: "GitHub on /mcp/team", exact: true });
-  await expect(team.getByRole("listitem")).toHaveText(["read"]);
+  await expect(team.getByRole("listitem")).toHaveText(["readread"]);
   await expect(team).toContainText("Runs as Shared · saved Oct 1, 2026");
   await page.keyboard.press("Tab");
   await expect(team).toHaveCount(0);

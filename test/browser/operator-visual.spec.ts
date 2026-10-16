@@ -170,7 +170,7 @@ async function ready(page: Page, name: string, state: VisualState) {
   } else if (name === "tokens") {
     await expect(
       state === "empty"
-        ? page.getByText("No agents are declared. Add them to agents in the deployment code.")
+        ? page.getByText("No agents declared in code.")
         : page.getByRole("rowheader", { name: "claude-desktop", exact: true }),
     ).toBeVisible();
   } else {

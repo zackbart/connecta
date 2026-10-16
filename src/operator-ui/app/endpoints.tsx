@@ -1,13 +1,23 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useLocation } from "@tanstack/react-router";
 import { endpointFromHash } from "../connection-map.js";
-import { endpointRows, runsAsLabel, visibleChips, type EndpointGroup, type EndpointRow } from "../endpoints.js";
-import { connectorVerdict, driftState, type OperatorState } from "../view.js";
-import { clientServerName, clientSetupCommands } from "../setup-commands.js";
+import {
+  endpointRows,
+  runsAsLabel,
+  toolSplit,
+  visibleChips,
+  type AccessChip,
+  type EndpointGroup,
+  type EndpointRow,
+} from "../endpoints.js";
+import { connectorVerdict, driftState, type OperatorState, type Tone } from "../view.js";
+import { clientServerName, clientSetupCommands, type ClientSetupCommand } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
-import { Badge, CopyButton, MemberChip, StateBlock } from "./parts.js";
-import { Button, Dialog } from "./primitives.js";
+import { CopyButton, MemberMark, Pill, StateBlock } from "./parts.js";
+import { Button, Dialog, SegmentedControl } from "./primitives.js";
 import { ContractState, maintainerContract, useCloseOnRecovery } from "./contract-state.js";
+import { Icon } from "./icons.js";
+import { Monogram, SplitBar } from "./marks.js";
 
 /** What the client setup drawer needs: a path, its absolute URL, and the name a client files it under. */
 export interface SetupTarget {
@@ -17,16 +27,16 @@ export interface SetupTarget {
   name: string;
 }
 
-export function EndpointLine({ url, label, kind }: { url: string; label: string; kind?: "agents" }) {
+export function EndpointLine({ url, label, kind }: { url: string; label: string; kind?: "people" | "agents" }) {
   return (
-    <div className={kind ? "endpoint endpoint-agent" : "endpoint"}>
-      {kind ? <span className="endpoint-kind">Agents</span> : null}
+    <div className={kind === "agents" ? "endpoint endpoint-agent" : "endpoint"}>
+      {kind ? <span className="endpoint-kind">{kind === "agents" ? "Agents" : "People"}</span> : null}
       <code>{breakable(url)}</code>
       <CopyButton
         value={url}
         label="Copy URL"
         icon
-        ariaLabel={kind ? `Copy agent URL for ${label}` : `Copy URL for ${label}`}
+        ariaLabel={kind === "agents" ? `Copy agent URL for ${label}` : `Copy URL for ${label}`}
       />
     </div>
   );
@@ -47,6 +57,12 @@ export function endpointUrl(path: string): string {
   return new URL(path, mcpUrl).href;
 }
 
+const CLIENT_LABELS: Record<ClientSetupCommand["id"], string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  json: "JSON",
+};
+
 export function ClientSetupDialog({
   target,
   onClose,
@@ -56,6 +72,9 @@ export function ClientSetupDialog({
   onClose: () => void;
   returnFocus: RefObject<HTMLElement | null>;
 }) {
+  const [client, setClient] = useState<ClientSetupCommand["id"]>("claude");
+  const commands = target ? clientSetupCommands(target.name, target.url) : [];
+  const command = commands.find((candidate) => candidate.id === client) ?? commands[0];
   return (
     <Dialog
       drawer
@@ -65,28 +84,29 @@ export function ClientSetupDialog({
         if (!open) onClose();
       }}
       title="Client setup"
-      description="Connect your MCP client to this endpoint."
+      description={target?.path ?? ""}
     >
-      {target ? (
+      {target && command ? (
         <section className="setup-list">
-          <h3>{target.path}</h3>
           <EndpointLine url={target.url} label={target.label} />
-          {clientSetupCommands(target.name, target.url).map((command) => (
-            <div className="setup-item" key={command.id} data-setup={command.id}>
-              <div className="setup-head">
-                <span>{command.label}</span>
-                <CopyButton
-                  value={command.text}
-                  label="Copy"
-                  ariaLabel={`Copy ${command.label} setup for ${target.label}`}
-                />
-              </div>
-              <pre className="setup-code">{command.text}</pre>
-            </div>
-          ))}
+          <SegmentedControl
+            label="Client"
+            value={command.id}
+            options={commands.map((candidate) => ({ value: candidate.id, label: CLIENT_LABELS[candidate.id] }))}
+            onChange={setClient}
+          />
+          <div className="setup-item" data-setup={command.id}>
+            <pre className="setup-code">{command.text}</pre>
+            <CopyButton
+              value={command.text}
+              label="Copy"
+              icon
+              className="btn sm copy-btn setup-copy"
+              ariaLabel={`Copy ${command.label} setup for ${target.label}`}
+            />
+          </div>
         </section>
       ) : null}
-      <p className="meta">No token is included. Use your deployment's inbound sign-in or an issued client token.</p>
     </Dialog>
   );
 }
@@ -95,28 +115,45 @@ export function ClientSetupDialog({
  * Connector health lives on Connectors. Here a connector that is not fine
  * gets a dot and a link to its Connection tab; a healthy one gets neither.
  */
-function ConnectorName({ group, state }: { group: EndpointGroup; state: OperatorState }) {
+function connectorProblem(group: EndpointGroup, state: OperatorState): { label: string; tone: Tone } | null {
   const { config, live } = group;
   const verdict = connectorVerdict(live, {
     failed: Boolean(state.connectorFailures[config.id]),
     drift: driftState(state.data?.connectors.find((c) => c.id === config.id)?.catalogDrift) === "warning",
   });
-  const problem = verdict.tone === "ok" ? null : verdict.label;
-  const tone = verdict.tone;
+  return verdict.tone === "ok" ? null : { label: verdict.label, tone: verdict.tone };
+}
+
+function ConnectorName({ group, state }: { group: EndpointGroup; state: OperatorState }) {
+  const { config } = group;
+  const problem = connectorProblem(group, state);
   const id = encodeURIComponent(config.id);
+  const title = config.title ?? config.id;
   return (
     <a className="endpoint-connector-name" href={`/connectors/${id}#${problem ? "connection" : "tools"}`}>
-      {problem ? <span className={`dot ${tone}`} title={problem} aria-hidden="true" /> : null}
-      {config.title ?? config.id}
-      {problem ? <span className="visually-hidden"> ({problem})</span> : null}
+      <Monogram id={config.id} title={title} size="sm" />
+      {title}
+      {problem ? <span className={`dot ${problem.tone}`} title={problem.label} aria-hidden="true" /> : null}
+      {problem ? <span className="visually-hidden"> ({problem.label})</span> : null}
     </a>
   );
 }
 
+/** A person by avatar, or an agent by its mark; the name shows on hover and to a screen reader. */
+function Chip({ chip }: { chip: AccessChip }) {
+  return (
+    <li className={`access-chip ${chip.kind}`} title={chip.text}>
+      <MemberMark chip={chip} />
+      {chip.kind === "agent" ? <span className="visually-hidden">Agent </span> : null}
+      <span className="access-chip-text visually-hidden">{chip.text}</span>
+    </li>
+  );
+}
+
 /**
- * Who can use one endpoint. A long list shows its first few and a "+N more"
- * button; expanding it is one-way for the row, so focus moves to the first
- * chip it revealed rather than to a button that is gone.
+ * Who can use one endpoint, as an avatar stack. A long list shows its first
+ * few and a "+N" button; expanding it is one-way for the row, so focus moves
+ * to the list it revealed rather than to a button that is gone.
  */
 function WhoCanUse({ endpoint }: { endpoint: EndpointRow }) {
   const [expanded, setExpanded] = useState(false);
@@ -126,15 +163,15 @@ function WhoCanUse({ endpoint }: { endpoint: EndpointRow }) {
   if (!endpoint.access.length) {
     return (
       <div className="endpoint-access" aria-label={label} role="group">
-        <span className="meta">{endpoint.pool === null ? "No maintainers listed" : "No members"}</span>
+        <span className="meta">Nobody</span>
       </div>
     );
   }
   return (
     <div className="endpoint-access" aria-label={label} role="group">
-      <ul className="access-chips" ref={list} tabIndex={-1}>
+      <ul className={expanded ? "access-chips stack all" : "access-chips stack"} ref={list} tabIndex={-1}>
         {shown.map((chip) => (
-          <MemberChip key={chip.key} chip={chip} />
+          <Chip key={chip.key} chip={chip} />
         ))}
       </ul>
       {hidden ? (
@@ -149,51 +186,136 @@ function WhoCanUse({ endpoint }: { endpoint: EndpointRow }) {
             requestAnimationFrame(() => list.current?.focus());
           }}
         >
-          +{hidden} more
+          +{hidden}
         </button>
       ) : null}
     </div>
   );
 }
 
-function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: OperatorState }) {
-  if (!endpoint.groups.length) return <StateBlock>No connectors are granted on this endpoint.</StateBlock>;
+/** How many connectors the row shows as monograms before "+N". */
+const MONOGRAM_LIMIT = 4;
+
+function ConnectorMarks({ endpoint, state }: { endpoint: EndpointRow; state: OperatorState }) {
+  if (!endpoint.groups.length) return <span className="endpoint-monograms meta">None</span>;
+  const shown = endpoint.groups.slice(0, MONOGRAM_LIMIT);
+  const rest = endpoint.groups.length - shown.length;
   return (
-    <table className="endpoint-breakdown" aria-label={`Tools on ${endpoint.path}`}>
-      <thead>
-        <tr>
-          <th scope="col">Connector</th>
-          <th scope="col">Runs as</th>
-          <th scope="col">Tools</th>
-        </tr>
-      </thead>
-      <tbody>
-        {endpoint.groups.map((group) => (
-          <tr key={group.config.id}>
-            <td>
-              <ConnectorName group={group} state={state} />
-            </td>
-            <td className="endpoint-runs-as">
-              {group.runsAs ? runsAsLabel(group.runsAs) : group.config.authScope === "personal" ? "Personal" : "Shared"}
-            </td>
-            <td>
-              {group.tools.length ? (
-                <ul className="endpoint-tools">
-                  {group.tools.map((tool) => (
-                    <li key={tool.address} className={`tool-chip ${tool.classification}`}>
-                      {tool.name}
-                      {tool.classification === "write" ? <span className="tool-chip-mark"> · write</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <span className="meta">No tools available</span>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <ul className="endpoint-monograms" aria-label={`Connectors on ${endpoint.path}`}>
+      {shown.map((group) => {
+        const title = group.config.title ?? group.config.id;
+        const problem = connectorProblem(group, state);
+        return (
+          <li key={group.config.id} title={problem ? `${title} · ${problem.label}` : title}>
+            <Monogram id={group.config.id} title={title} />
+            {problem ? <span className={`monogram-dot ${problem.tone}`} aria-hidden="true" /> : null}
+            <span className="visually-hidden">
+              {title}
+              {problem ? ` (${problem.label})` : ""}
+            </span>
+          </li>
+        );
+      })}
+      {rest ? (
+        <li className="monogram-more" title={`${rest} more`}>
+          +{rest}
+          <span className="visually-hidden"> more</span>
+        </li>
+      ) : null}
+    </ul>
+  );
+}
+
+function ToolSummary({ endpoint }: { endpoint: EndpointRow }) {
+  const split = toolSplit(endpoint.groups.flatMap((group) => group.tools));
+  return (
+    <div className="endpoint-tool-summary" title={`${split.read} read · ${split.write} write`}>
+      <span className="endpoint-count">
+        <span className="visually-hidden">Tools: </span>
+        {endpoint.toolCount}
+      </span>
+      <SplitBar read={split.read} write={split.write} />
+      <span className="visually-hidden">
+        , {split.read} read, {split.write} write
+      </span>
+    </div>
+  );
+}
+
+/** A runs-as label with its kind ("Shared", "Personal", …) set apart from the detail. */
+export function RunsAs({ label }: { label: string }) {
+  const at = label.indexOf(" · ");
+  if (at < 0) return <span className="runs-as-kind">{label}</span>;
+  return (
+    <>
+      <span className="runs-as-kind">{label.slice(0, at)}</span>
+      {label.slice(at)}
+    </>
+  );
+}
+
+function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: OperatorState }) {
+  return (
+    <>
+      {endpoint.access.length ? (
+        <ul className="endpoint-members" aria-label={`Members of ${endpoint.path}`}>
+          {endpoint.access.map((chip) => (
+            <li key={chip.key} className={`member-chip ${chip.kind}`}>
+              <MemberMark chip={chip} />
+              {chip.text}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {endpoint.groups.length ? (
+        <table className="endpoint-breakdown" aria-label={`Tools on ${endpoint.path}`}>
+          <thead>
+            <tr>
+              <th scope="col">Connector</th>
+              <th scope="col">Runs as</th>
+              <th scope="col">Tools</th>
+            </tr>
+          </thead>
+          <tbody>
+            {endpoint.groups.map((group) => (
+              <tr key={group.config.id}>
+                <td>
+                  <ConnectorName group={group} state={state} />
+                </td>
+                <td className="endpoint-runs-as">
+                  <RunsAs
+                    label={
+                      group.runsAs
+                        ? runsAsLabel(group.runsAs)
+                        : group.config.authScope === "personal"
+                          ? "Personal"
+                          : "Shared"
+                    }
+                  />
+                </td>
+                <td>
+                  {group.tools.length ? (
+                    <ul className="endpoint-tools">
+                      {group.tools.map((tool) => (
+                        <li key={tool.address} className={`tool-chip ${tool.classification}`}>
+                          {tool.classification === "write" ? <Icon name="pencil" size={11} /> : null}
+                          {tool.name}
+                          {tool.classification === "write" ? <span className="visually-hidden"> · write</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="meta">No tools</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <StateBlock>No connectors on this endpoint.</StateBlock>
+      )}
+    </>
   );
 }
 
@@ -227,9 +349,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
             Endpoints
           </h1>
           <p className="meta">
-            {contract
-              ? `${endpoints.length} ${endpoints.length === 1 ? "endpoint" : "endpoints"}, defined in code.`
-              : "Defined in code."}
+            {contract ? `${endpoints.length} ${endpoints.length === 1 ? "endpoint" : "endpoints"}` : "Defined in code"}
           </p>
         </div>
       </div>
@@ -238,10 +358,10 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
       ) : (
         <div className="endpoint-table" aria-label="Endpoints">
           <div className="endpoint-columns endpoint-labels" aria-hidden="true">
-            <span>Endpoint</span>
-            <span>Who can use it</span>
-            <span>Tools</span>
-            <span>Mode</span>
+            <span className="endpoint-label-name">Endpoint</span>
+            <span className="endpoint-label-who">Access</span>
+            <span className="endpoint-label-conn">Connectors</span>
+            <span className="endpoint-label-tools">Tools</span>
           </div>
           {endpoints.map((endpoint, index) => {
             const expanded = open.has(endpoint.path);
@@ -265,24 +385,27 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                       aria-controls={panel}
                       onClick={() => toggle(endpoint.path)}
                     >
+                      <span className="endpoint-chevron">
+                        <Icon name="chevron" size={14} />
+                      </span>
                       <code>{endpoint.path}</code>
-                      <span className="meta">{endpoint.label}</span>
+                      {endpoint.pool === null ? <span className="meta">{endpoint.label}</span> : null}
                     </button>
-                    <EndpointLine url={url} label={endpoint.label} />
+                    {endpoint.readOnly ? <Pill status="info">read-only</Pill> : null}
+                  </div>
+                  <div className="endpoint-urls">
+                    <EndpointLine
+                      url={url}
+                      label={endpoint.label}
+                      {...(endpoint.agentPath ? { kind: "people" } : {})}
+                    />
                     {endpoint.agentPath ? (
                       <EndpointLine url={endpointUrl(endpoint.agentPath)} label={endpoint.label} kind="agents" />
                     ) : null}
                   </div>
                   <WhoCanUse endpoint={endpoint} />
-                  <span className="endpoint-count">
-                    <span className="visually-hidden">Tools: </span>
-                    {endpoint.toolCount}
-                  </span>
-                  {endpoint.readOnly ? (
-                    <Badge tone="accent">read-only</Badge>
-                  ) : (
-                    <span className="endpoint-mode" aria-hidden="true" />
-                  )}
+                  <ConnectorMarks endpoint={endpoint} state={state} />
+                  <ToolSummary endpoint={endpoint} />
                   <Button
                     size="sm"
                     className="endpoint-setup"
@@ -297,9 +420,9 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                     }}
                     aria-label={`Client setup for ${endpoint.label}`}
                   >
-                    Client setup
+                    <Icon name="terminal" size={14} />
+                    Setup
                   </Button>
-                  <span className="conn-caret" aria-hidden="true" />
                 </div>
                 <div id={panel} className="endpoint-details" hidden={!expanded}>
                   {expanded ? <EndpointTools endpoint={endpoint} state={state} /> : null}

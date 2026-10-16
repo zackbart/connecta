@@ -134,10 +134,8 @@ describe("agent token slots", () => {
     expect(slotBadge({ state: "none" })).toEqual({ label: "No token", tone: "neutral" });
     expect(slotBadge({ state: "issued" })).toEqual({ label: "Issued", tone: "ok" });
     expect(slotBadge({ state: "revoked" })).toEqual({ label: "Revoked", tone: "warn" });
-    expect(slotSince({ name: "a", state: "issued", issuedAt: "2026-10-01T09:30:00Z" }, day)).toBe("Issued 2026-10-01");
-    expect(slotSince({ name: "a", state: "revoked", revokedAt: "2026-10-02T00:00:00Z" }, day)).toBe(
-      "Revoked 2026-10-02",
-    );
+    expect(slotSince({ name: "a", state: "issued", issuedAt: "2026-10-01T09:30:00Z" }, day)).toBe("2026-10-01");
+    expect(slotSince({ name: "a", state: "revoked", revokedAt: "2026-10-02T00:00:00Z" }, day)).toBe("2026-10-02");
     expect(slotSince({ name: "a", state: "none" }, day)).toBe("—");
     expect(lastSeenLabel(null, day)).toBe("never");
     expect(lastSeenLabel("2026-10-08T12:00:00Z", day)).toBe("2026-10-08");

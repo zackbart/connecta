@@ -69,26 +69,31 @@ controls of its own:
   endpoint, or Tokens for an agent when that page is open. The drawing never
   scales below 880px wide; a narrower card scrolls it sideways. At 960px and
   below the map becomes a list with one entry per endpoint: its mode, who uses
-  it as the chips Endpoints draws, and its connectors with health. A deployment with no connectors shows
+  it as named member chips, and its connectors with health. A deployment with no connectors shows
   "Nothing to map yet".
 
 Endpoints, at `/endpoints`, has one row for `/mcp` and each pool,
-with a copyable URL, who can use it, tool count, a read-only pill on a
-read-only endpoint, and client setup. Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
-elsewhere: a person by label, or by raw id when the label is null, beside their
-initials, and an agent by its bare name beside an agent mark. A row shows four
-and a "+N more" button that reveals the rest. A pool with
-agent members also shows its agent URL, muted. Expanding a row lists each
-connector on that endpoint with what it runs as and its tools, marking write
-tools. The runs-as label comes from that endpoint's matrix cell. A shared connector
+with its path, a read-only pill only on a read-only endpoint, a copyable URL,
+who can use it, its connectors as colored monograms (four, then "+N"), its tool
+count over a read/write bar, and a Setup button. Who can use it is
+`root.maintainers` on `/mcp` and the pool's `members` elsewhere, as an avatar
+stack: a person by their initials, an agent by an agent mark, each named on
+hover and to a screen reader by label (raw id when the label is null) or bare
+agent name. A row shows four and a "+N" button that reveals the rest. A pool
+with agent members labels its two URLs People and Agents, the agent one muted.
+Expanding a row lists everyone by name, then each connector on that endpoint
+with what it runs as and its tools, write tools amber with a pencil. Client
+setup is a drawer with the URL and a Claude Code / Codex / JSON switch over one
+snippet and its copy button; no snippet carries a token. The runs-as label
+comes from that endpoint's matrix cell. A shared connector
 names its credential's source: "Shared · saved <date>" (vault), "Shared ·
 connected <date>" (OAuth), "Shared · not configured", "Shared · set in
 deployment", or "Shared · no credential needed"; a vault or OAuth cell without a
 date omits it. The others read "Personal · N of M connected", "Workspace · people:
 self · agents: <owner>" (or "none"), or "Everyone acts as <subject>" for a
 fixed-subject Workspace connector. Connector health is not repeated per
-endpoint: a connector that needs attention gets a status dot linking to its
-Connection tab. Counts intersect live tools with the pool's declared tools
+endpoint: a connector that needs attention gets a status dot on its monogram
+and beside its name, which links to its Connection tab. Counts intersect live tools with the pool's declared tools
 (the `/mcp` matrix cells for the root), guarded grants' live verdicts, and
 read-only mode. Connectors shows one card per connector: its title and id, one
 status pill, a Shared or Per person badge, its tool count over a read/write
@@ -102,12 +107,15 @@ unavailable, so `connector_unavailable` beside one reads "Couldn't load" and
 offers no fix prompt. A connector that is not fine adds one action (Connect,
 Replace key, Inspect, or Review for drift) that opens Connection and counts as
 Needs attention. A List / Matrix toggle (`?view=matrix`)
-switches to a table of connectors by endpoint, `/mcp` first: each cell reads
-"all", a tool count, or a dash, read-only columns are tinted, and a Runs as
-column summarizes the `/mcp` cell, else the first pool's. A cell with tools is
-a button named like "GitHub on /mcp/support: 1 tool, read-only"; Enter, Space or
-a click opens a popover listing exactly that cell's tool names, write tools
-marked, with the cell's runs-as. Escape or Tab returns focus to the cell. The
+switches to a table of connectors by endpoint, `/mcp` first. A connector's row
+header is its monogram and name, plus a status dot only when it needs fixing,
+linking to Connection and named for its fix (like "Connect Notion"). Each cell
+is a pie of how much of the connector's live catalog it grants, with "all" or a
+tool count, or a dash for none; read-only columns are hatched. A cell with
+tools is a button named like "GitHub on /mcp/support: 1 tool, read-only";
+Enter, Space or a click opens a popover listing exactly that cell's tool names,
+each with a read or write pill (a write tool struck through on a read-only
+endpoint), and the cell's runs-as. Escape or Tab returns focus to the cell. The
 popover opens below its cell, or above when the viewport has more room there,
 with a capped height that scrolls; CSS anchor positioning places it, and the
 page sets no inline styles. A browser without anchor positioning gets the same
@@ -186,14 +194,16 @@ An empty section is not drawn. Deployment code owns connectors, grants, pools,
 and classification; the UI changes only authorized authentication material.
 
 Tokens has one row per agent declared in code, in `GET /ui/access-tokens`
-order: its pools, a state badge (No token, Issued or Revoked), the issue or
-revoke date, and last seen ("never" when null). One line says agents are
-declared in code; nothing creates or renames one. Issue appears for a slot with
-no token or a revoked one, Rotate and Revoke for an issued one; rotate and
-revoke ask first in a row under the agent's, with focus on Cancel. Every
+order: its agent mark and name, its pools as chips, a state pill (No token,
+Issued or Revoked), the issue or revoke date, and last seen ("never" when
+null). The heading reads "Declared in code"; nothing creates or renames an
+agent. Issue (primary) appears for a slot with no token or a revoked one,
+Rotate and a quiet red Revoke for an issued one; rotate and revoke ask first
+in a row under the agent's, with focus on Cancel. On a narrow screen each row
+stacks into a small card. Every
 mutation sends `{ "expect": "<revision>" }` with the slot revision the
 operator confirmed against. A new secret opens once in a dialog with a copy
-button and a note that it won't be shown again; closing it drops the secret
+button and "You won't see this token again."; closing it drops the secret
 from the page, and recovery never closes it. A 409 `slot_changed` reads
 "Changed since you looked, refresh"; a 503 `outcome_unknown` or 499 `aborted`
 is a failure notice and is never retried. Sending a mutation leaves the slot

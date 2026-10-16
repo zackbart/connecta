@@ -127,7 +127,7 @@ test.describe("who can use each endpoint", () => {
     await expect(who("/mcp/ada").locator(".access-chip.human .avatar")).toHaveText(["AL"]);
     await expect(who("/mcp/ada").locator(".access-chip.agent .agent-mark")).toHaveCount(1);
     await expect(who("/mcp/ada").locator(".access-chip.agent .avatar")).toHaveCount(0);
-    await expect(page.locator(".endpoint-labels")).toContainText("Who can use it");
+    await expect(page.locator(".endpoint-labels")).toContainText("Access");
     await noStyleAttributes(page, ".endpoint-table");
     await noCsp(page);
   });
@@ -138,7 +138,7 @@ test.describe("who can use each endpoint", () => {
     const team = page.getByRole("group", { name: "Who can use /mcp/team", exact: true });
     await expect(team.locator(".access-chip")).toHaveCount(4);
     const more = team.getByRole("button", { name: "Show 3 more who can use /mcp/team", exact: true });
-    await expect(more).toHaveText("+3 more");
+    await expect(more).toHaveText("+3");
     await more.focus();
     await page.keyboard.press("Enter");
     await expect(team.locator(".access-chip-text")).toHaveText([
@@ -221,13 +221,13 @@ test.describe("agent tokens", () => {
     await expect(simon.locator("td")).toHaveText([
       "ada",
       "Issued",
-      "Issued Oct 1, 2026, 9:30 AM",
+      "Oct 1, 2026, 9:30 AM",
       "Oct 8, 2026, 12:00 PM",
       "RotateRevoke",
     ]);
     const triage = table.locator('tr[data-agent="triage"]');
     await expect(triage.locator("td")).toHaveText(["support", "No token", "—", "never", "Issue"]);
-    await expect(page.getByText("Agents are declared in code; only their tokens change here.")).toBeVisible();
+    await expect(page.getByText("Declared in code · one token each")).toBeVisible();
     await expect(page.getByRole("textbox")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /create|rename|new agent/i })).toHaveCount(0);
     await noStyleAttributes(page, "#tokensView");

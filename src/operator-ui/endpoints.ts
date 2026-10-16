@@ -140,6 +140,20 @@ function endpointGroups(
 
 const toolCount = (groups: EndpointGroup[]) => groups.reduce((n, group) => n + group.tools.length, 0);
 
+/** How many of these tools read and how many write; an unclassified tool counts as neither. */
+export function toolSplit(tools: ReadonlyArray<{ classification: "read" | "write" | null }>): {
+  read: number;
+  write: number;
+} {
+  let read = 0;
+  let write = 0;
+  for (const tool of tools) {
+    if (tool.classification === "read") read++;
+    else if (tool.classification === "write") write++;
+  }
+  return { read, write };
+}
+
 /** One row for plain /mcp, then one per pool, in contract order. Maintainer view only. */
 export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
   if (contract.role !== "maintainer") return [];
@@ -247,6 +261,17 @@ export function matrixCell(
       ? live.map(({ name, classification }) => ({ name, classification }))
       : cell.tools.map((name) => ({ name, classification: live.find((t) => t.name === name)?.classification ?? null }));
   return { kind: cell.tools === "all" ? "all" : "some", tools, runsAs: cell.runsAs };
+}
+
+/**
+ * How much of the connector's live catalog a cell grants, from 0 to 1, for
+ * the cell's pie. A named list against a catalog not seen yet reads as half.
+ */
+export function matrixCellShare(contract: OperatorUiContractV2, connectorId: string, cell: MatrixCell): number {
+  if (cell.kind === "none") return 0;
+  if (cell.kind === "all") return 1;
+  const total = contract.live.connectors.find((c) => c.id === connectorId)?.tools.length ?? 0;
+  return total ? Math.min(1, cell.tools.length / total) : 0.5;
 }
 
 /** The cell's visible text: "all", a count, or a dash. */

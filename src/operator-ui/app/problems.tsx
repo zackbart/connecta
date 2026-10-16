@@ -34,13 +34,30 @@ export function ConnectorStatus({
   name,
   live,
   state,
+  compact,
 }: {
   id: string;
   name: string;
   live: OperatorConnectorOverlay;
   state: OperatorState;
+  /** Only a dot, and only when something needs fixing: the dot is the action's link. */
+  compact?: boolean;
 }) {
   const verdict = verdictFor(id, live, state);
+  const href = `/connectors/${encodeURIComponent(id)}#connection`;
+  if (compact) {
+    return verdict.action ? (
+      <a
+        className="status-dot-link"
+        href={href}
+        title={verdict.label}
+        aria-label={`${verdict.action} ${name}`}
+        onClick={(event) => followLink(event, href, "connector")}
+      >
+        <span className={`dot ${verdict.tone}`} aria-hidden="true" />
+      </a>
+    ) : null;
+  }
   return (
     <div className="inline-problems">
       <Pill status={pillStatus(verdict.tone)}>{verdict.label}</Pill>
