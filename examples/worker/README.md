@@ -242,10 +242,25 @@ npm install @cloudflare/codemode
 npm install --save-dev wrangler @cloudflare/workers-types typescript @types/node
 ```
 
-Its `tsconfig.json` needs `"types": ["@cloudflare/workers-types", "node"]`,
-`"module": "ES2022"`, `"moduleResolution": "Bundler"`, and `"strict": true`
-so `tsc --noEmit` resolves `D1Database`, `WorkerLoader`, and
-`ExecutionContext`. `wrangler` also serves `scripts/copy-kv-to-d1.mjs`.
+A `tsconfig.json` like the following lets `tsc --noEmit` resolve `D1Database`,
+`WorkerLoader`, and `ExecutionContext`. `wrangler` also serves
+`scripts/copy-kv-to-d1.mjs`.
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types", "node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}
+```
 
 `@cloudflare/codemode` is the optional peer behind `execute_code`, declared in
 connecta's manifest but never installed with it, and published as

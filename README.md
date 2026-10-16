@@ -119,8 +119,8 @@ flowchart TB
 ```
 
 Agents have no account of their own, so personal connections never appear for
-them. To let an agent use Alice's notes, add a shared connection for her
-account (`notes_alice`) and list it only in her pool.
+them. An agent reaches a person's account only through a shared connection set
+up for that person and placed in that person's pool.
 
 ### One agent, many people
 
@@ -138,8 +138,9 @@ flowchart LR
     style PB fill:#dcfce7,stroke:#15803d,color:#14532d
 ```
 
-Never add another person to someone's personal pool: they would act as that
-person.
+Anyone else in a person's pool would act as that person, so those pools hold
+only the agent. [Organizing an agent's pools](./documentation/auth.md#organizing-an-agents-pools)
+has the full layout.
 
 ### Who can do what
 
