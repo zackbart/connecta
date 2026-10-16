@@ -19,7 +19,7 @@ Connection purpose: <!-- endfragment -->
 
 Every call acts as the Workspace account deployment config maps the caller
 to, and reaches exactly the documents Drive shares with that person; an
-agent acts as the owner of the pool it came through. No argument names an
+agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names an
 account. A call with none mapped, or from an agent whose pool has no owner,
 fails `auth_required`; only an operator can change either.
 

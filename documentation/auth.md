@@ -480,27 +480,29 @@ mapping function, the caller decides whose account a call opens:
 | An agent, pool has no `owner` | Nothing: the call fails `auth_required` before any request leaves.              |
 
 `owner` is a Workspace email address, checked at construction and listed in
-`describeConfig()` (`null` when unset). Core copies it from the pool the
+`describeConfig()` (`null` when unset). Over HTTP, `/ui/api/config` serves it
+only to an authenticated maintainer; anyone else, an open deployment's
+anonymous caller included, reads `null`, the same as an unset owner. Core copies it from the pool the
 request was admitted through; no argument, header, or program can choose or
 change it, and the `auth_required` message never names an address. One
 `gmail()` then serves a pool per person:
 
 ```ts
 const team = [
-  { id: "user_ada", email: "ada@example.com" },
-  { id: "user_lin", email: "lin@example.com" },
+  { id: "alice", email: "alice@example.com" },
+  { id: "bob", email: "bob@example.com" },
 ];
 createConnecta({
   auth: clerkAuth({ publishableKey, secretKey }),
   storage,
   accessTokens: accessTokens(storage),
   readOnly: false,
-  maintainers: ["user_ada"],
-  agents: ["simon"],
+  maintainers: ["alice"],
+  agents: ["assistant"],
   pools: Object.fromEntries(
     team.map((person) => [
-      `simon-${person.id}`,
-      { tools: ["gmail", "drive"], owner: person.email, members: [person.id, "agent:simon"] },
+      `assistant-${person.id}`,
+      { tools: ["gmail", "drive"], owner: person.email, members: [person.id, "agent:assistant"] },
     ]),
   ),
   connectors: [

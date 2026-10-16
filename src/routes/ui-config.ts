@@ -20,6 +20,7 @@ import { withDeadlineEffect } from "../runtime/run.js";
 import type { Connector } from "../types.js";
 import { uiProblemFor } from "../ui.js";
 import { authorized, refuse, serveOperator, visibleRegistry, type Answer, type Authorized } from "./operator.js";
+import { isMaintainer } from "../membership.js";
 import { mayManageConnector, privateJson, type RouteContext } from "./shared.js";
 
 const attempt = <A>(operation: () => Promise<A>) => Effect.tryPromise({ try: operation, catch: (error) => error });
@@ -197,8 +198,13 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
         .filter(([id]) => ids.includes(id))
         .map(([id, tools]) => [id, Object.fromEntries(Object.entries(tools).filter(([name]) => validName(name)))]),
     );
+    // A pool owner is a Workspace mailbox address. Only an authenticated
+    // maintainer reads it; an open deployment's anonymous caller, which this
+    // route admits, gets null, the same as an unset owner (#837).
+    const ownersVisible = opts.config.auth.length > 0 && isMaintainer(opts.maintainers, authz.identity);
     config.pools = config.pools.map((pool) => ({
       ...pool,
+      owner: ownersVisible ? pool.owner : null,
       tools: (pools.find((p) => p.name === pool.name)?.grants ?? []).flatMap((grant) =>
         grant.tools === "all" ? [grant.connectorId] : grant.tools.map((tool) => `${grant.connectorId}.${tool.name}`),
       ),

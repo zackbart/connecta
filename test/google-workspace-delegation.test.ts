@@ -651,14 +651,14 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
 
   it("INV-3: a human in an owned pool acts as themselves through the mapping", async () => {
     const mapping = vi.fn((who: AuthenticatedIdentity) => DIRECTORY[who.principal?.id ?? ""]);
-    await labels(mailbox({ subject: mapping }), inPool(identity("alice"), "simon-bob", "bob@org.example"));
+    await labels(mailbox({ subject: mapping }), inPool(identity("alice"), "assistant-bob", "bob@org.example"));
     expect(mapping).toHaveBeenCalledTimes(1);
     expect(sub()).toBe("alice@org.example");
   });
 
   it("INV-3: an agent in an owned pool acts as the owner, and the mapping is never asked", async () => {
     const mapping = vi.fn(() => "alice@org.example");
-    await labels(mailbox({ subject: mapping }), inPool(agent("simon"), "simon-bob", "bob@org.example"));
+    await labels(mailbox({ subject: mapping }), inPool(agent("assistant"), "assistant-bob", "bob@org.example"));
     expect(mapping).not.toHaveBeenCalled();
     expect(sub()).toBe("bob@org.example");
     expect(apiCalls).toHaveLength(1);
@@ -667,10 +667,10 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
   it("INV-3: an agent in an ownerless pool, or in no pool, fails auth_required before anything leaves", async () => {
     const mapping = vi.fn(() => "alice@org.example");
     for (const ctx of [
-      inPool(agent("simon"), "team"),
-      inPool(agent("simon")),
+      inPool(agent("assistant"), "team"),
+      inPool(agent("assistant")),
       // An owner without the pool it belongs to is not one core set.
-      inPool(agent("simon"), undefined, "bob@org.example"),
+      inPool(agent("assistant"), undefined, "bob@org.example"),
     ]) {
       const failure = await labels(mailbox({ subject: mapping }), ctx).catch((error) => error);
       expect(failure).toBeInstanceOf(ConnectorCallError);
@@ -684,9 +684,9 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
 
   it("INV-3: a fixed subject applies to humans and agents alike, and the pool owner is ignored", async () => {
     const shared = mailbox({ subject: "shared-inbox@org.example" });
-    await labels(shared, inPool(identity("alice"), "simon-bob", "bob@org.example"));
-    await labels(shared, inPool(agent("simon"), "simon-bob", "bob@org.example"));
-    await labels(shared, inPool(agent("simon"), "team"));
+    await labels(shared, inPool(identity("alice"), "assistant-bob", "bob@org.example"));
+    await labels(shared, inPool(agent("assistant"), "assistant-bob", "bob@org.example"));
+    await labels(shared, inPool(agent("assistant"), "team"));
     expect(tokenCalls.map((_, index) => sub(index))).toEqual(["shared-inbox@org.example"]);
     expect(apiCalls).toHaveLength(3);
   });
@@ -720,25 +720,25 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         connectors: [mailbox({ subject: mapping })],
         auth: people(),
         maintainers: ["alice"],
-        agents: ["simon"],
+        agents: ["assistant"],
         accessTokens: accessTokens(storage),
         storage,
         pools: {
           ...Object.fromEntries(
             team.map((person) => [
-              `simon-${person.id}`,
-              { tools: ["mail"], owner: person.email, members: [person.id, "agent:simon"] },
+              `assistant-${person.id}`,
+              { tools: ["mail"], owner: person.email, members: [person.id, "agent:assistant"] },
             ]),
           ),
           // Alice assists Bob: Bob owns it, and Alice still acts as herself.
           "assist-bob": { tools: ["mail"], owner: "bob@org.example", members: ["alice"] },
           // A group pool names no owner, so its agents have no mailbox.
-          group: { tools: ["mail"], members: ["alice", "bob", "agent:simon"] },
+          group: { tools: ["mail"], members: ["alice", "bob", "agent:assistant"] },
         },
         ...(options.executor ? { executor: options.executor } : {}),
         logger: silentLogger,
       });
-      return { connecta, mapping, simon: await issueAgentToken(storage, "simon") };
+      return { connecta, mapping, assistant: await issueAgentToken(storage, "assistant") };
     }
 
     const callOver = async (
@@ -758,10 +758,10 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
     };
 
     it("INV-3: one connector serves per-person pools, and each agent call reaches only its pool owner's mailbox", async () => {
-      const { connecta, mapping, simon } = await deployment();
-      expect((await callOver(connecta, simon, "simon-alice")).isError).toBeFalsy();
-      expect((await callOver(connecta, simon, "simon-bob")).isError).toBeFalsy();
-      expect((await callOver(connecta, simon, "simon-alice")).isError).toBeFalsy();
+      const { connecta, mapping, assistant } = await deployment();
+      expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
+      expect((await callOver(connecta, assistant, "assistant-bob")).isError).toBeFalsy();
+      expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
       expect(mapping).not.toHaveBeenCalled();
       // The delegated subject in each token request; the third reuses Alice's token.
       expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example", "bob@org.example"]);
@@ -782,8 +782,8 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
     });
 
     it("INV-3: an agent in an ownerless pool gets auth_required with no outbound request", async () => {
-      const { connecta, mapping, simon } = await deployment();
-      const result = await callOver(connecta, simon, "group");
+      const { connecta, mapping, assistant } = await deployment();
+      const result = await callOver(connecta, assistant, "group");
       expect(result.isError).toBe(true);
       const text = JSON.stringify(result);
       expect(text).toContain("auth_required");
@@ -795,7 +795,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
     });
 
     it("INV-3: nothing an agent sends — arguments, headers, or a program — moves it off its pool owner", async () => {
-      const { connecta, simon } = await deployment({
+      const { connecta, assistant } = await deployment({
         executor: scriptedExecutor(async (fns) => {
           const forged = await fns.call!("mail.list_labels", { subject: "bob@org.example" }).catch((error) =>
             String((error as { code?: string }).code ?? error),
@@ -804,13 +804,13 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           return forged;
         }),
       });
-      const forged = await callOver(connecta, simon, "simon-alice", { userId: "bob@org.example" });
+      const forged = await callOver(connecta, assistant, "assistant-alice", { userId: "bob@org.example" });
       expect(forged.isError).toBe(true);
       expect(JSON.stringify(forged)).toContain("invalid_args");
       const headed = await callOver(
         connecta,
-        simon,
-        "simon-alice",
+        assistant,
+        "assistant-alice",
         {},
         {
           "X-Goog-Subject": "bob@org.example",
@@ -824,7 +824,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
             mcpRpc(
               "tools/call",
               { name: "execute_code", arguments: { code: "async () => null" } },
-              { token: simon, pool: "simon-alice" },
+              { token: assistant, pool: "assistant-alice" },
             ),
           ),
         )
@@ -850,12 +850,12 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       }
     });
 
-    it("INV-11: describeConfig names each pool's trimmed owner, or null", async () => {
+    it("describeConfig names each pool's trimmed owner, or null", async () => {
       const { connecta } = await deployment();
       const owners = connecta.describeConfig().pools.map((pool) => [pool.name, pool.owner]);
       expect(owners).toEqual([
-        ["simon-alice", "alice@org.example"],
-        ["simon-bob", "bob@org.example"],
+        ["assistant-alice", "alice@org.example"],
+        ["assistant-bob", "bob@org.example"],
         ["assist-bob", "bob@org.example"],
         ["group", null],
       ]);
