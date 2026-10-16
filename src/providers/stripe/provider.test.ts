@@ -224,6 +224,25 @@ describe("stripe() over an API key", () => {
     return error as ConnectorCallError;
   }
 
+  it("INV-5: withholds signed and credential-bearing URLs embedded in response text before select and error mapping (#812)", async () => {
+    const ordinary = "[proxy](https://EXAMPLE.com/image?url=https://file.notion.so/a?id=42&width=400#section)";
+    const input = `${ordinary} Download [file](https://files.example/a?token=PRIVATE_TOKEN&X-Amz-Signature=PRIVATE_SIGNATURE)`;
+    const expected = `${ordinary} Download [file](https://files.example/a?[redacted])`;
+    const connector = stripe("billing", SANDBOX);
+    respond = () => Response.json({ object: "charge", id: "ch_1", failure_message: input });
+    const result = (await connector.callTool(
+      "stripe_api_read",
+      { path: "/v1/charges/ch_1", select: ["failure_message"] },
+      keyed(),
+    )) as any;
+    expect(result.data).toEqual({ failure_message: expected });
+    respond = () => Response.json({ error: { type: "invalid_request_error", message: input } }, { status: 400 });
+    const error = await refusal(connector.callTool("stripe_api_read", { path: "/v1/products/prod_1" }, keyed()));
+    expect(error.message).toContain("Download");
+    expect(error.message).toContain("[redacted]");
+    expect(error.message).not.toMatch(/PRIVATE_TOKEN|PRIVATE_SIGNATURE/);
+  });
+
   it("builds Connecta's REST connector with a mode title, an operator credential, and per-mode admission", async () => {
     const sandbox = stripe("billing_sandbox", { ...SANDBOX, maxResultBytes: 25_000 });
     expect(mocks.remoteMcp).not.toHaveBeenCalled();

@@ -20,7 +20,13 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { inspectGraphqlQuery } from "./graphql.js";
-import { valueSafety } from "../_shared/rest/value-safety.js";
+import {
+  valueSafety,
+  withholdEmbeddedUrlsIn,
+  refuseWithheldLinks,
+  refuseWithheldUpload,
+  refuseWithheldBase64,
+} from "../_shared/rest/value-safety.js";
 import { CLOUDFLARE_VALUE_SAFETY } from "./value-safety.js";
 import { openapi } from "./openapi.generated.js";
 
@@ -312,7 +318,7 @@ const SAFETY = valueSafety(CLOUDFLARE_VALUE_SAFETY, () => cloudflareIndex());
  * (it may echo a submitted secret); the status and numeric codes still route.
  */
 function failureFor(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError {
-  const errors = errorsOf(body);
+  const errors = errorsOf(withholdEmbeddedUrlsIn(body));
   const ray = headers.get("cf-ray");
   const codes = errorCodes(errors);
   const withheld = call !== undefined && SAFETY.withholdsErrors(call.op);
@@ -582,6 +588,26 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
    * neither is admitted only from the reviewed `PIN_SAFE_UNSCOPED` set.
    */
   const admit = async (call: RestCall, ctx: ConnectorContext): Promise<void> => {
+    if (
+      call.method !== "GET" &&
+      call.method !== "HEAD" &&
+      !READ_POSTS.some(([method, path]) => method === call.method && path === call.op.path)
+    ) {
+      refuseWithheldLinks([call.query, call.path], "Cloudflare");
+      if (call.body instanceof RawUpload) await refuseWithheldUpload(call.body.body, "Cloudflare");
+      else refuseWithheldLinks(call.body, "Cloudflare");
+      if (
+        call.method === "PUT" &&
+        call.op.path === "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk" &&
+        Array.isArray(call.body)
+      ) {
+        for (const entry of call.body) {
+          // KV values support 25 MiB decoded; MAX_RESPONSE_BYTES only caps reads.
+          if (record(entry)["base64"] === true)
+            await refuseWithheldBase64(record(entry)["value"], "Cloudflare", 25 * 1024 * 1024);
+        }
+      }
+    }
     if (!pin) return;
     const { accounts, zones, template } = scopeIds(call);
     const scoped = template.some(
@@ -721,7 +747,9 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     if (!isEnvelope(body)) return undefined;
     const info = record(body["result_info"]);
     if (Object.keys(info).length === 0) return undefined;
-    const cursor = text(info["cursor"]) ?? text(record(info["cursors"])["after"]);
+    const rawCursor = text(info["cursor"]) ?? text(record(info["cursors"])["after"]);
+    // Never echo or offer a modified cursor: it would not address the next page.
+    const cursor = rawCursor === undefined || withholdEmbeddedUrlsIn(rawCursor) === rawCursor ? rawCursor : undefined;
     if (cursor !== undefined || "cursor" in info || "cursors" in info) {
       const accepted = operations.contract(call.op).parameters.map((parameter) => parameter.name);
       const param = accepted.includes("cursor") ? "cursor" : accepted.includes("after") ? "after" : "cursor";

@@ -6,6 +6,11 @@ import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/
 import {
   REDACTED,
   carriesWithheldLink,
+  refuseWithheldLinks,
+  refuseWithheldUpload,
+  refuseWithheldBase64,
+  withholdEmbeddedUrls,
+  withholdEmbeddedUrlsIn,
   withholdSignedLinks,
   withholdSignedLinksIn,
   redact,
@@ -625,5 +630,271 @@ describe("pre-signed links in free text", () => {
     const admitting = performance.now();
     expect(carriesWithheldLink(text, HOSTS)).toBeTypeOf("boolean");
     expect(performance.now() - admitting).toBeLessThan(2_000);
+  });
+});
+
+describe("global embedded REST URL policy (#812)", () => {
+  it.each([
+    [
+      "Markdown",
+      "[download](https://files.example/a?token=PRIVATE&width=400)",
+      "[download](https://files.example/a?[redacted])",
+    ],
+    [
+      "HTML",
+      '<a href="https://files.example/a?width=400&amp;api_key=PRIVATE">file</a>',
+      '<a href="https://files.example/a?[redacted]">file</a>',
+    ],
+    ["scheme-less URL", "download //files.example/a?sig=PRIVATE now", "download //files.example/a?[redacted] now"],
+    [
+      "escaped URL",
+      String.raw`see https:\/\/files.example/a\u003ftoken%3DPRIVATE now`,
+      String.raw`see https:\/\/files.example/a?[redacted] now`,
+    ],
+    [
+      "encoded URL",
+      "see https%3A%2F%2Ffiles.example%2Fa%3Ftoken%3DPRIVATE now",
+      "see https%3A%2F%2Ffiles.example%2Fa?[redacted] now",
+    ],
+    ["fragment", "[file](https://files.example/a#access_token=PRIVATE)", "[file](https://files.example/a#[redacted])"],
+    [
+      "adjacent links",
+      "[a](https://example.com/a?width=400)[b](https://files.example/b?secret=PRIVATE)[c](https://example.com/c?x=1)",
+      "[a](https://example.com/a?width=400)[b](https://files.example/b?[redacted])[c](https://example.com/c?x=1)",
+    ],
+    [
+      "unmatched filename parentheses in HTML",
+      '<img src="https://files.example/a)b?sig=PRIVATE">',
+      '<img src="https://files.example/a)b?[redacted]">',
+    ],
+    [
+      "literal signing name",
+      "download https://files.example/a?X-Amz-Signature=PRIVATE",
+      "download https://files.example/a?[redacted]",
+    ],
+    ["signing name outside a URL", "X-Goog-Credential=PRIVATE", "X-Goog-Credential=[redacted]"],
+    ["log labels", "download:https://files.example/a?api_key=PRIVATE", "download:https://files.example/a?[redacted]"],
+    [
+      "credential after a placeholder",
+      "see https://files.example/a?token=[redacted]PRIVATE",
+      "see https://files.example/a?[redacted]",
+    ],
+  ])("INV-5: withholds credential queries in %s", (_, input, expected) => {
+    expect(withholdEmbeddedUrls(input)).toBe(expected);
+    expect(withholdEmbeddedUrls(expected)).toBe(expected);
+  });
+
+  it.each([
+    "A token=ordinary assignment and code=42 in prose",
+    "[user](https://EXAMPLE.com/a%2fb?width=400&x=%2f#section)",
+    "[proxy](https://example.com/image?url=https://file.notion.so/a?id=42&width=400)",
+    "[proxy](/proxy/https://file.notion.so/a?id=42)",
+    "[a]( https://example.com/a?width=1)[redacted]![b](https://example.com/b#section)",
+    "<img src='//files.example/a?width=200'>",
+  ])("INV-5: preserves ordinary user text and links byte for byte: %s", (input) => {
+    expect(withholdEmbeddedUrls(input)).toBe(input);
+  });
+
+  it("INV-5: applies globally through arrays and projections' source objects without changing the default vendor policy", () => {
+    const input = {
+      description: "download https://files.example/a?token=PRIVATE",
+      nested: [{ text: "[file](//example.com/a?sig=PRIVATE)" }],
+    };
+    expect(engine({ operations: {} }).redact(input, "GET", "/v1/things")).toEqual(input);
+    const safety = engine({
+      operations: {},
+      embeddedUrls: { operations: { "GET /v1/things": ["description", "nested.text", "text"] } },
+    });
+    expect(safety.redact(input, "GET", "/v1/things")).toEqual({
+      description: "download https://files.example/a?[redacted]",
+      nested: [{ text: "[file](//example.com/a?[redacted])" }],
+    });
+    expect(
+      safety.redact(
+        { text: "https://example.com/a?width=400 see https://files.example/b?token=PRIVATE" },
+        "GET",
+        "/v1/things",
+      ),
+    ).toEqual({ text: "https://example.com/a?width=400 see https://files.example/b?[redacted]" });
+    expect(safety.redact({ text: "https://example.com/a?token=PRIVATE&width=400" }, "GET", "/v1/things")).toEqual({
+      text: "https://example.com/a?[redacted]",
+    });
+    const unchanged = { description: "[file](https://example.com/a?width=100)" };
+    expect(withholdEmbeddedUrlsIn(unchanged)).toBe(unchanged);
+    expect(withholdEmbeddedUrlsIn(input)).toEqual(safety.redact(input, "GET", "/v1/things"));
+  });
+
+  it.each([
+    ["a large body with no URLs", "plain text ".repeat(200_000)],
+    ["many ordinary queries", "[f](https://example.com/a?width=400)".repeat(40_000)],
+    ["many signed queries", "[f](https://example.com/a?sig=PRIVATE)".repeat(40_000)],
+    ["one long parameter name", `see https://example.com/a?${"a".repeat(2_000_000)}=value`],
+    ["many parameter delimiters", `see https://example.com/a?${"?&a&".repeat(400_000)}`],
+  ])("INV-5: scans %s with bounded linear passes", (_, input) => {
+    const started = performance.now();
+    expect(withholdEmbeddedUrls(input)).not.toContain("PRIVATE");
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe("reviewed text policy and global admission (#846)", () => {
+  it("INV-5: still strips userinfo from whole IPv6 URLs while preserving generic query data", () => {
+    const safety = engine({ operations: {}, embeddedUrls: {} });
+    const result = safety.redact(
+      { description: "https://alice:PRIVATE@[::1]/a?code=welcome" },
+      "GET",
+      "/v1/things",
+    ) as any;
+    expect(result.description).not.toMatch(/alice|PRIVATE/);
+    expect(new URL(result.description).searchParams.get("code")).toBe("welcome");
+  });
+
+  it.each(["&#61;", "&#x3d;"])("INV-5: scans original entity equals before URL normalization: %s", (equals) => {
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    const input = `https://public.example/a<br>https://files.example/a?token${equals}PRIVATE`;
+    const result = safety.redact({ message: input, description: input }, "GET", "/v1/things") as any;
+    expect(result.message).not.toContain("PRIVATE");
+    expect(result.description).toBe(input);
+    const signed = input.replace("token", "X-Amz-Signature");
+    expect(JSON.stringify(safety.redact({ description: signed }, "GET", "/v1/things"))).not.toContain("PRIVATE");
+  });
+
+  it.each([
+    "[file](/proxy/https://files.example/a?token=PRIVATE)",
+    "[file](/proxy/https://files.example/a%3Fkey%3DPRIVATE)",
+    "[file](/proxy/https://files.example/a#token=PRIVATE)",
+    "[a](/proxy/https://public.example/a?id=1)[b](/proxy/https://files.example/a?sig=PRIVATE)",
+  ])("INV-5: inspects a relative Markdown destination's own query: %s", (input) => {
+    expect(withholdEmbeddedUrls(input)).not.toContain("PRIVATE");
+    expect(withholdSignedLinks(input, { domains: ["files.example"], buckets: [] })).toBe(input);
+  });
+
+  it.each([
+    "[file](/proxy?url=https://files.example/a?token=ordinary&width=4)",
+    "[file](/proxy?url=https%3A%2F%2Ffiles.example%2Fa%3Ftoken%3Dordinary%26key%3Dpublic)",
+    "[file](/proxy?url=https%3A%2F%2Ffiles.example%2Fa%23token%3Dordinary)",
+    "[file](/proxy%3Furl%3Dhttps%253A%252F%252Ffiles.example%252Fa%253Ftoken%253Dordinary%2526key%253Dpublic)",
+  ])("INV-5: preserves nested ordinary proxy parameters without re-anchoring: %s", (input) => {
+    expect(withholdEmbeddedUrls(input)).toBe(input);
+  });
+
+  it("INV-5: replaces a credential query ending in an existing signing placeholder without duplicating syntax", () => {
+    expect(withholdEmbeddedUrls("[f](https://files.example/a?token=PRIVATE&X-Amz-Signature=[redacted])")).toBe(
+      "[f](https://files.example/a?[redacted])",
+    );
+  });
+
+  it("INV-5: protects resource diagnostics and partial event copies while preserving customer URLs", () => {
+    const safety = engine({
+      operations: {},
+      embeddedUrls: {
+        resources: { key: "object", partials: ["previous_attributes"], paths: { charge: ["failure_message"] } },
+      },
+    });
+    const input = "See https://public.example/a?code=welcome&key=public";
+    const result = safety.redact(
+      {
+        data: {
+          object: { object: "charge", failure_message: input, description: input },
+          previous_attributes: { failure_message: input, description: input },
+        },
+      },
+      "GET",
+      "/v1/things",
+    ) as any;
+    expect(result.data.object.failure_message).toContain("[redacted]");
+    expect(result.data.previous_attributes.failure_message).toContain("[redacted]");
+    expect(result.data.object.description).toBe(input);
+    expect(result.data.previous_attributes.description).toBe(input);
+    expect(safety.redact({ description: input.replace("See ", "") }, "GET", "/v1/things")).toEqual({
+      description: input.replace("See ", ""),
+    });
+  });
+
+  it("INV-5: removes a private suffix after an existing signing placeholder", () => {
+    expect(
+      withholdSignedLinks("https://files.example/a?X-Amz-Signature=[redacted]PRIVATE", { domains: [], buckets: [] }),
+    ).not.toContain("PRIVATE");
+  });
+
+  it.each([
+    "[file](/proxy/https://files.example/a?token=%255Bredacted%255D)",
+    "[a](https://public.example/a?width=1),![b](https://files.example/a#&#91;redacted&#93;)",
+    "[a](https://public.example/a?width=1);[b]( https://files.example/a%3F%5Bredacted%5D)",
+  ])("INV-5: shares exact-placeholder admission and actual adjacent destination boundaries: %s", (input) => {
+    expect(carriesWithheldLink(input)).toBe(true);
+    expect(() => refuseWithheldLinks(input, "Vendor")).toThrow("withheld");
+    expect(carriesWithheldLink("[file](https://files.example/a?width=1)[redacted]")).toBe(false);
+    expect(carriesWithheldLink("[redacted] outside https://files.example/a?code=unredacted")).toBe(false);
+  });
+
+  it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {
+    const text = "[file](/proxy/https://files.example/a%3F%5Bredacted%5D)";
+    const bytes = new Uint8Array(new TextEncoder().encode(text));
+    for (const body of [bytes, bytes.buffer, new Blob([text]), new URLSearchParams({ value: text })]) {
+      await expect(refuseWithheldUpload(body, "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    const form = new FormData();
+    form.append("file", new Blob([text]), "index.js");
+    await expect(refuseWithheldUpload(form, "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
+  it("INV-5: inspects object keys and array values with the same host policy as strings", () => {
+    const input = "https://file.notion.so/a?%5Bredacted%5D";
+    const external = "https://external.example/a?%5Bredacted%5D";
+    const hosts = { domains: ["file.notion.so"], buckets: [] };
+    for (const value of [{ [input]: "link" }, { nested: ["safe", { [input]: "link" }] }, [[input]]]) {
+      expect(carriesWithheldLink(value)).toBe(true);
+      expect(carriesWithheldLink(value, hosts)).toBe(true);
+    }
+    expect(carriesWithheldLink({ [external]: [external] }, hosts)).toBe(false);
+    expect(carriesWithheldLink({ "https://public.example/?code=welcome": ["[redacted] outside"] })).toBe(false);
+  });
+
+  it("INV-5: scans all request-sized JSON keys and values iteratively without depth or breadth ceilings", () => {
+    const nest = (value: unknown, depth: number): unknown => {
+      for (let i = 0; i < depth; i++) value = [value];
+      return value;
+    };
+    for (const depth of [48, 52, 20_000]) {
+      expect(carriesWithheldLink(nest("https://files.example/?[redacted]", depth))).toBe(true);
+      expect(carriesWithheldLink(nest("ordinary", depth))).toBe(false);
+      expect(carriesWithheldLink(nest({ "https://files.example/?%5Bredacted%5D": "link" }, depth))).toBe(true);
+    }
+    expect(carriesWithheldLink(Array(110_000).fill("safe"))).toBe(false);
+    expect(carriesWithheldLink(["https://files.example/?[redacted]", ...Array(110_000).fill("safe")])).toBe(true);
+  });
+
+  it("INV-5: refuses cyclic direct arguments while inspecting repeated non-cyclic references", () => {
+    const cyclic: unknown[] = [];
+    cyclic.push(cyclic);
+    expect(() => refuseWithheldLinks(cyclic, "Vendor")).toThrow(expect.objectContaining({ code: "invalid_args" }));
+    const repeated = { note: "safe" };
+    expect(carriesWithheldLink([repeated, repeated])).toBe(false);
+  });
+
+  it("INV-5: decodes base64 once within its encoded length and optional operation value limit", async () => {
+    const text = "https://files.example/?%255Bredacted%255D";
+    await expect(refuseWithheldBase64(btoa(text), "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(refuseWithheldBase64("!!", "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(refuseWithheldBase64(btoa(btoa(text)), "Vendor")).resolves.toBeUndefined();
+    await expect(refuseWithheldBase64(btoa("https://public.example/?code=welcome"), "Vendor")).resolves.toBeUndefined();
+    for (const input of [btoa("safe"), btoa("safe").replace(/=+$/, ""), ` \n${btoa("safe")}\t`]) {
+      await expect(refuseWithheldBase64(input, "Vendor", 4)).resolves.toBeUndefined();
+      await expect(refuseWithheldBase64(input, "Vendor", 3)).rejects.toMatchObject({ code: "invalid_args" });
+    }
+  });
+
+  it.each([
+    "[f](/proxy/https://files.example/a%3Ftoken%3DPRIVATE)".repeat(30_000),
+    "https://public.example/a<br>https://files.example/a?X-Amz-Signature&#61;PRIVATE ".repeat(25_000),
+    `see https://public.example/a?${"?&a&".repeat(400_000)}`,
+  ])("INV-5: scans large reviewed paths, global signing values and admission with bounded linear passes", (input) => {
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    const started = performance.now();
+    const clean = safety.redact({ message: input }, "GET", "/v1/things") as any;
+    expect(clean.message).not.toContain("PRIVATE");
+    expect(carriesWithheldLink(clean)).toBe(input.includes("PRIVATE"));
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 });

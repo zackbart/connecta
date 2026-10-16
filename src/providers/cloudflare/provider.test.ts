@@ -180,6 +180,27 @@ describe("cloudflare() over a key", () => {
     return error as ConnectorCallError;
   }
 
+  it("INV-5: withholds signed and credential-bearing URLs embedded in response text before select and error mapping (#812)", async () => {
+    const ordinary = "[proxy](https://EXAMPLE.com/image?url=https://file.notion.so/a?id=42&width=400#section)";
+    const input = `${ordinary} Download [file](https://files.example/a?token=PRIVATE_TOKEN&X-Amz-Signature=PRIVATE_SIGNATURE)`;
+    const expected = `${ordinary} Download [file](https://files.example/a?[redacted])`;
+    const connector = cloudflare("cf", TOKEN);
+    respond = () => envelope({ lines: [[123, input]] });
+    const result = (await connector.callTool(
+      "cloudflare_api_read",
+      { path: `/accounts/${ACCOUNT}/builds/builds/build-1/logs`, select: ["lines"] },
+      token(),
+    )) as any;
+    expect(result.data).toEqual({ lines: [[123, expected]] });
+    respond = () => Response.json({ success: false, errors: [{ code: 1001, message: input }] }, { status: 400 });
+    const error = await refusal(
+      connector.callTool("cloudflare_api_read", { path: `/accounts/${ACCOUNT}/access/custom_pages/page-1` }, token()),
+    );
+    expect(error.message).toContain("Download");
+    expect(error.message).toContain("[redacted]");
+    expect(error.message).not.toMatch(/PRIVATE_TOKEN|PRIVATE_SIGNATURE/);
+  });
+
   it("builds Connecta's REST connector with an operator credential, admission, and its tool set", async () => {
     const connector = cloudflare("cf", { ...TOKEN, maxResultBytes: 30_000 });
     expect(mocks.remoteMcp).not.toHaveBeenCalled();
@@ -1319,7 +1340,9 @@ describe("cloudflare() over a key", () => {
           },
           (data) => {
             const text = JSON.stringify(data);
-            for (const secret of ["T1", "BIND", "PASS", "SIG", "CS", "PEM"]) expect(text, secret).not.toContain(secret);
+            for (const secret of ["T1", "BIND", "PASS", "CS", "PEM"]) expect(text, secret).not.toContain(secret);
+            // No reviewed diagnostic path: generic parameters are application data.
+            expect(new URL(data[0].callback).searchParams.get("sig")).toBe("SIG");
             expect(data[0].nested.next_page_token).toBe("cursor-1");
             expect(data[0].callback).toContain("page=2");
           },

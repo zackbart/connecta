@@ -15,6 +15,23 @@
 // Paths are dot paths into the data a tool returns (Cloudflare's `result`,
 // or the whole body when it is not an envelope); lists are traversed
 // implicitly and `*` matches every key of an object.
+// Embedded URL verdict (#812): reviewed paths + global signing parameters.
+// Evidence: digest-verified schema revision 3fad73eb27c381031c09ccdfa28ef9352029cd5a:
+// builds_BuildLogsResponse.lines (timestamp/log-message tuples),
+// pages_deployment_log.data.line and workers-observability_query_results
+// events.events and invocations.* -> telemetry_event.$metadata.message/error
+// and source (raw string/object log payload). Exact operations
+// and paths are below, after envelope unwrapping. All vendor error text is
+// scanned too; ordinary code/key links can be false positives in diagnostics.
+// DNS TXT content, KV values, Access custom_html, Waiting Room custom_page_html
+// and other operator/application content retain generic query parameters.
+// Literal X-Amz-/X-Goog- Signature/Credential/Security-Token values are withheld
+// in every decoded string. Binary/base64 response bodies (including Worker
+// JavaScript served as application/javascript) are not decoded or scanned.
+// Recording/download/upload capabilities retain their structured-field rules.
+// The review found no documented Cloudflare-minted links embedded in other
+// free text and justifies no Cloudflare/R2/S3-wide file-host policy.
+
 import {
   redact as reviewed,
   refuse,
@@ -1463,6 +1480,22 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
  * are reviewed metadata wherever they appear.
  */
 export const CLOUDFLARE_VALUE_SAFETY: ValueSafetyTable = {
+  embeddedUrls: {
+    operations: {
+      "GET /accounts/{account_id}/builds/builds/{build_uuid}/logs": ["lines"],
+      "GET /accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}/history/logs": [
+        "data.line",
+      ],
+      "POST /accounts/{account_id}/workers/observability/telemetry/query": [
+        "events.events.$metadata.message",
+        "events.events.$metadata.error",
+        "events.events.source",
+        "invocations.*.$metadata.message",
+        "invocations.*.$metadata.error",
+        "invocations.*.source",
+      ],
+    },
+  },
   title: "Cloudflare",
   operations: OPERATIONS,
   fields: {

@@ -88,6 +88,34 @@ describe("value-safety harness mutations", () => {
     expect(Object.values(reviewProblems(review(["secret", "origin:url"], ["data.*.pin"]))).flat()).toEqual([]);
   });
 
+  it("INV-5: rejects embedded-URL operation keys outside the pinned index and invalid paths", () => {
+    const original = review(["secret", "origin:url"], ["data.*.pin"]);
+    const problems = reviewProblems({
+      ...original,
+      table: {
+        ...original.table,
+        embeddedUrls: {
+          operations: {
+            "GET /v0/hooks": ["message"],
+            "GET /v1/pins": ["bad[?nope]"],
+            "GET /v1/pins extra": ["message"],
+          },
+        },
+      },
+    });
+    expect(problems.invalid).toEqual([
+      "embeddedUrls GET /v0/hooks: not in the pinned index",
+      "embeddedUrls GET /v1/pins: bad[?nope] is not in the path language",
+      "embeddedUrls GET /v1/pins extra: not in the pinned index",
+    ]);
+    expect(
+      reviewProblems({
+        ...original,
+        table: { ...original.table, embeddedUrls: { operations: { "GET /v1/pins": ["data.*.message"] } } },
+      }).invalid,
+    ).toEqual([]);
+  });
+
   it("INV-5: fails a path that names nothing in the pinned response schema", () => {
     const problems = reviewProblems(review(["secret", "url.missing"], ["data.*.pin"]));
     expect(problems.unresolved).toContainEqual(expect.stringContaining("GET /v1/hooks/{id}: url.missing"));

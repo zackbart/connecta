@@ -31,10 +31,10 @@
 // Residual risk, as with Infisical: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 //
-// The rules here are the union of the two that preceded them (Cloudflare's
-// and Vercel's): every detection either made still redacts. Exemptions are
-// never shared: each vendor states its own in its table (`keep`, `urls`,
-// `fields`, `scopeMaps`, `envBodies`).
+// The key-name rules combine Cloudflare's and Vercel's former engines.
+// URL policy and exemptions are reviewed per vendor in its table (`keep`,
+// `fields`, `scopeMaps`, `envBodies`, `embeddedUrls`).
+import { ConnectorCallError } from "../../../errors.js";
 import type { JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex } from "./operation-index.js";
 
@@ -255,6 +255,16 @@ interface ResourceRules {
 export interface ValueSafetyTable {
   /** Display name in refusals. */
   readonly title: string;
+  /** Global signing names plus generic credential names only on these reviewed response paths. */
+  readonly embeddedUrls?: {
+    readonly operations?: Readonly<Record<string, readonly string[]>>;
+    /** Discriminated resources, wherever lists, expansions, or events embed them. */
+    readonly resources?: {
+      readonly key: string;
+      readonly partials?: readonly string[];
+      readonly paths: Readonly<Record<string, readonly string[]>>;
+    };
+  };
   /** The reviewed verdict for every flagged operation, keyed `METHOD /path template`. */
   readonly operations: Readonly<Record<string, ValueSafetyVerdict>>;
   /**
@@ -330,7 +340,7 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 /** A URL without userinfo, credential query parameters, or a credential-looking fragment; anything unparseable is withheld. */
-function sanitizeUrl(value: string): string {
+function sanitizeUrl(value: string, credentials = true): string {
   let url: URL;
   try {
     url = new URL(value);
@@ -344,13 +354,13 @@ function sanitizeUrl(value: string): string {
     changed = true;
   }
   // A snapshot of the names: setting a parameter while iterating the live list is unsafe.
-  for (const name of Array.from(url.searchParams.keys())) {
+  for (const name of credentials ? Array.from(url.searchParams.keys()) : []) {
     if (URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""))) {
       url.searchParams.set(name, REDACTED);
       changed = true;
     }
   }
-  if (url.hash && /token|secret|key|code|auth/i.test(url.hash)) {
+  if (credentials && url.hash && /token|secret|key|code|auth/i.test(url.hash)) {
     url.hash = "";
     changed = true;
   }
@@ -694,8 +704,8 @@ function linkSpan(text: string, start: number, host: number | undefined, inline:
  * file-host matching. Each consumed span is skipped in full; admission and
  * redaction choose their own span boundary, and both stay linear.
  */
-function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<LinkSpan> {
-  const matcher = hostMatcher(hosts);
+function* hostLinks(text: string, hosts: FileHosts | undefined, redact: boolean): Generator<LinkSpan> {
+  const matcher = hosts ? hostMatcher(hosts) : undefined;
   // The first URL delimiter in the current text run also protects relative
   // paths/queries such as /proxy/https://… and image?url=//… .
   let firstReference = -1;
@@ -711,7 +721,13 @@ function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<
         const angle = text[destination] === "<";
         const start = destination + (angle ? 1 : 0);
         const authority = destinationHost(text, start);
-        const host = authority === undefined ? undefined : fileHost(text, authority, matcher);
+        // Generic policy inspects a relative destination's own query/fragment.
+        // Host policy must still attribute the leading authority to the vendor.
+        const host = matcher
+          ? authority === undefined
+            ? undefined
+            : fileHost(text, authority, matcher)
+          : (authority ?? start);
         const span = linkSpan(text, start, host, !angle, redact);
         at = Math.max(destination, span.end) - 1;
         firstReference = -1;
@@ -727,8 +743,11 @@ function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<
         if (SLASH.test(text)) {
           const authority = SLASH.lastIndex;
           const start = authorityAt(text, authority);
-          if (start >= 0 && (firstReference < 0 || firstReference >= start)) {
-            const host = fileHost(text, authority, matcher);
+          // Global parameter scanning needs no host attribution. This also
+          // catches a URL after a log label such as `download:https://…`.
+          // File-host policy keeps the stricter authority/proxy boundary.
+          if (!matcher || (start >= 0 && (firstReference < 0 || firstReference >= start))) {
+            const host = matcher ? fileHost(text, authority, matcher) : authority;
             const span = linkSpan(text, authority, host, false, redact);
             at = span.end - 1;
             firstReference = -1;
@@ -751,44 +770,105 @@ function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<
  * parameter's value. Everything else comes back byte for byte.
  */
 export function withholdSignedLinks(text: string, hosts: FileHosts): string {
+  return withholdSigningParams(withholdLinkQueries(text, hosts));
+}
+
+/** A credential-named parameter in a URL, rather than an assignment in prose. */
+function credentialQuery(text: string): boolean {
+  let decoded = decodeLinkText(text, false);
+  // Decode the destination's enclosing percent layers only until its own
+  // opener is visible. Encoded &/# inside a proxy parameter remain data,
+  // rather than becoming parameters or a fragment of the outer URL.
+  for (let round = 0; round < 4 && decoded[0] !== "?" && decoded[0] !== "#"; round++) {
+    const next = decoded.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+    if (next === decoded) break;
+    decoded = next;
+  }
+  const fragment = decoded.indexOf("#");
+  if (fragment >= 0 && /token|secret|key|code|auth/i.test(decodeLinkText(decoded.slice(fragment + 1)))) return true;
+  const query = fragment < 0 ? decoded : decoded.slice(0, fragment);
+  for (let at = query[0] === "?" ? 1 : 0; at < query.length;) {
+    const next = query.indexOf("&", at);
+    const end = next < 0 ? query.length : next;
+    const pair = decodeLinkText(query.slice(at, end));
+    const equals = pair.indexOf("=");
+    at = end + 1;
+    if (equals < 0) continue;
+    const name = pair.slice(0, equals);
+    if (!URL_PARAM_CONTAINS.test(name) && !URL_PARAM_SUFFIX.test(normalizedName(name))) continue;
+    if (pair.slice(equals + 1) !== REDACTED) return true;
+  }
+  return false;
+}
+
+/** Remove a link's entire query/fragment, keeping its surrounding syntax. */
+function withholdLinkQueries(text: string, hosts?: FileHosts): string {
   let out = "";
   let copied = 0;
-  for (const { cut, open, end } of hostLinks(text, hosts, true)) {
+  for (const { cut, open, end } of hostLinks(text, hosts, hosts !== undefined)) {
     if (cut < 0) continue;
+    if (!hosts && !credentialQuery(text.slice(cut, end))) continue;
     let keep = end;
-    while (keep > cut + 1 && TRAILING.test(text[keep - 1]!)) keep--;
+    while (keep > cut + 1 && TRAILING.test(text[keep - 1]!)) {
+      // A signing pass may already have replaced the final parameter. Its
+      // closing bracket belongs to the value, not the surrounding Markdown.
+      if (text.endsWith(REDACTED, keep)) break;
+      keep--;
+    }
     // A query with nothing in it.
     if (keep <= cut + 1) continue;
     out += `${text.slice(copied, cut)}${open}${REDACTED}`;
     copied = keep;
   }
-  const anchored = copied === 0 ? text : out + text.slice(copied);
+  return copied === 0 ? text : out + text.slice(copied);
+}
 
-  out = "";
-  copied = 0;
+function withholdSigningParams(anchored: string): string {
+  let out = "";
+  let copied = 0;
   SIGNING_PARAM.lastIndex = 0;
   for (let match = SIGNING_PARAM.exec(anchored); match; match = SIGNING_PARAM.exec(anchored)) {
     const start = match.index + match[0].length;
-    let end = start;
+    // Skip an existing complete placeholder, but still remove any suffix.
+    const already = anchored.startsWith(REDACTED, start);
+    let end = already ? start + REDACTED.length : start;
     while (end < anchored.length && !endsValue(anchored, end)) end++;
     SIGNING_PARAM.lastIndex = end;
-    if (end === start || anchored.startsWith(REDACTED, start)) continue;
+    if (end === start || (already && end === start + REDACTED.length)) continue;
     out += `${anchored.slice(copied, start)}${REDACTED}`;
     copied = end;
   }
   return copied === 0 ? anchored : out + anchored.slice(copied);
 }
 
+/**
+ * Reviewed REST text policy: only credential-bearing URL queries/fragments
+ * change. Ordinary links, including external proxies, retain their bytes.
+ * Literal AWS/Google signing names are withheld anywhere, as in #818.
+ */
+export function withholdEmbeddedUrls(text: string): string {
+  return withholdSigningParams(withholdLinkQueries(text));
+}
+
 /** Every string inside a JSON value through `withholdSignedLinks`; unchanged values keep their identity. */
 export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 0): unknown {
-  if (typeof value === "string") return withholdSignedLinks(value, hosts);
+  return mapStrings(value, (text) => withholdSignedLinks(text, hosts), depth);
+}
+
+/** Apply the reviewed text policy to a selected value or vendor error body. */
+export function withholdEmbeddedUrlsIn(value: unknown): unknown {
+  return mapStrings(value, withholdEmbeddedUrls, 0);
+}
+
+function mapStrings(value: unknown, cleanText: (text: string) => string, depth: number): unknown {
+  if (typeof value === "string") return cleanText(value);
   if (typeof value !== "object" || value === null) return value;
   // Deeper than any vendor's shape: withheld, as the heuristic does.
   if (depth > MAX_DEPTH) return REDACTED;
   if (Array.isArray(value)) {
     let changed = false;
     const items = value.map((item) => {
-      const clean = withholdSignedLinksIn(item, hosts, depth + 1);
+      const clean = mapStrings(item, cleanText, depth + 1);
       if (clean !== item) changed = true;
       return clean;
     });
@@ -796,7 +876,7 @@ export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 
   }
   let changed = false;
   const entries = Object.entries(value).map(([key, item]) => {
-    const clean = withholdSignedLinksIn(item, hosts, depth + 1);
+    const clean = mapStrings(item, cleanText, depth + 1);
     if (clean !== item) changed = true;
     return [key, clean] as const;
   });
@@ -808,10 +888,10 @@ export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 
  * would, through up to four layers of escaping (`%255B`, `&amp;#91;`). Each
  * round is one linear pass.
  */
-function decodeLinkText(text: string): string {
+function decodeLinkText(text: string, percent = true): string {
   for (let round = 0; round < 4; round++) {
     const next = text.replace(ESCAPES, (token, ...groups: Array<string | undefined>) =>
-      token === "\\" ? "" : (unescaped(groups.slice(0, 6)) ?? token),
+      !percent && groups[0] !== undefined ? token : token === "\\" ? "" : (unescaped(groups.slice(0, 6)) ?? token),
     );
     if (next === text) break;
     text = next;
@@ -820,23 +900,103 @@ function decodeLinkText(text: string): string {
 }
 
 /**
- * Whether a request value carries a link at one of `hosts` whose query or
+ * Whether a request value carries a link whose query or
  * fragment holds the exact `[redacted]` placeholder, plain or encoded: a
  * withheld read copied into a write, which would store the placeholder.
  * Only the link's own destination is read: a Markdown link ends at its
  * closing `)`, so `[f](…?a=1)[redacted]` is ordinary text after it.
  * The word alone (`unredacted`) or the placeholder away from a file link is
- * a person's text.
+ * a person's text. When `hosts` is supplied, require its actual authority
+ * to match that policy, preserving Notion's external-proxy boundary.
  */
-export function carriesWithheldLink(value: unknown, hosts: FileHosts, depth = 0): boolean {
-  if (typeof value === "string") {
-    for (const { cut, end } of hostLinks(value, hosts, false)) {
-      if (cut >= 0 && decodeLinkText(value.slice(cut, end)).includes(REDACTED)) return true;
+export function carriesWithheldLink(value: unknown, hosts?: FileHosts): boolean {
+  const pending: Array<{ value: unknown; leave?: boolean }> = [{ value }];
+  const ancestors = new WeakSet<object>();
+  const inspect = (text: string): boolean => {
+    for (const { cut, end } of hostLinks(text, hosts, false)) {
+      if (cut >= 0 && decodeLinkText(text.slice(cut, end)).includes(REDACTED)) return true;
     }
     return false;
+  };
+  // JSON structure is bounded by the admitted request's bytes. Visit every key
+  // and value iteratively, without imposing a smaller node/depth limit. Reject
+  // cycles from direct callers; repeated non-cyclic references remain valid.
+  while (pending.length > 0) {
+    const { value: item, leave } = pending.pop()!;
+    if (typeof item === "string") {
+      if (inspect(item)) return true;
+    } else if (typeof item === "object" && item !== null) {
+      if (leave) {
+        ancestors.delete(item);
+        continue;
+      }
+      if (ancestors.has(item)) {
+        throw new ConnectorCallError("invalid_args", "Not sent: URL admission cannot inspect cyclic JSON.");
+      }
+      ancestors.add(item);
+      pending.push({ value: item, leave: true });
+      if (Array.isArray(item)) {
+        for (const child of item) pending.push({ value: child });
+      } else {
+        for (const [key, child] of Object.entries(item)) {
+          if (inspect(key)) return true;
+          pending.push({ value: child });
+        }
+      }
+    }
   }
-  if (typeof value !== "object" || value === null || depth > MAX_DEPTH) return false;
-  return Object.values(value).some((item) => carriesWithheldLink(item, hosts, depth + 1));
+  return false;
+}
+
+/** Refuse a withheld destination copied into customer data, before any dispatch. */
+export function refuseWithheldLinks(value: unknown, title: string): void {
+  if (!carriesWithheldLink(value)) return;
+  throw new ConnectorCallError(
+    "invalid_args",
+    `This write carries a URL whose query or fragment Connecta withheld ([redacted]), so ${title} would store the placeholder. Do not write withheld URLs back; obtain the original link or omit the field.`,
+  );
+}
+
+/** Upload admission inspects actual bytes, including base64-decoded files and multipart blobs. */
+export async function refuseWithheldUpload(body: BodyInit, title: string): Promise<void> {
+  if (body instanceof FormData) {
+    for (const [name, part] of body) {
+      refuseWithheldLinks(name, title);
+      if (typeof part === "string") refuseWithheldLinks(part, title);
+      else {
+        refuseWithheldLinks(part.name, title);
+        refuseWithheldLinks(await part.text(), title);
+      }
+    }
+  } else if (body instanceof Blob) refuseWithheldLinks(await body.text(), title);
+  else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+    refuseWithheldLinks(new TextDecoder().decode(body), title);
+  } else refuseWithheldLinks(body instanceof URLSearchParams ? body.toString() : body, title);
+}
+
+/** Only for documented JSON fields the vendor decodes as base64, never arbitrary strings. */
+export async function refuseWithheldBase64(value: unknown, title: string, maxDecodedBytes?: number): Promise<void> {
+  if (typeof value !== "string") {
+    throw new ConnectorCallError("invalid_args", "Not sent: a base64 field must be a string.");
+  }
+  // One decode, bounded by this field's own encoded length (at most 3/4 as
+  // many bytes), itself bounded by the host's request limit. Operation-specific
+  // value limits are independent of response caps and raw-upload caps.
+  let decoded: string;
+  try {
+    decoded = atob(value);
+  } catch {
+    throw new ConnectorCallError("invalid_args", "Not sent: a base64 field must be valid base64.");
+  }
+  if (maxDecodedBytes !== undefined && decoded.length > maxDecodedBytes) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      `Not sent: a base64 field must encode at most ${maxDecodedBytes} bytes.`,
+    );
+  }
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+  await refuseWithheldUpload(bytes, title);
 }
 
 /**
@@ -944,10 +1104,11 @@ export function validPath(raw: string): boolean {
 }
 
 /** Apply one reviewed path to a body in place of its value. */
-function applyPath(body: unknown, raw: string): unknown {
+function applyPath(body: unknown, raw: string, transform?: (value: unknown) => unknown): unknown {
   const { mode, segments } = parsePath(raw);
   const step = (current: unknown, index: number): unknown => {
     if (index === segments.length) {
+      if (transform) return transform(current);
       if (current === undefined || current === null) return current;
       if (mode === "url") return typeof current === "string" ? sanitizeUrl(current) : REDACTED;
       if (mode === "origin") return originOnly(current);
@@ -1079,6 +1240,7 @@ interface Exemptions {
   verbatim: WeakMap<object, Set<string>>;
   fields: Readonly<Record<string, FieldReview>>;
   scopeMaps: readonly string[];
+  reviewedUrls: boolean;
 }
 
 /**
@@ -1092,7 +1254,15 @@ interface Exemptions {
 function heuristic(value: unknown, exempt: Exemptions): unknown {
   const walk = (current: unknown, trail: string[], parent: string, depth: number): unknown => {
     if (depth > MAX_DEPTH) return REDACTED;
-    if (typeof current === "string") return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
+    if (typeof current === "string") {
+      // Scan original escaped text before URL parsing. A string containing
+      // HTML, Markdown or escapes is text, even when it has no whitespace.
+      // Reviewed vendors already scanned signing names and selected text;
+      // generic names in customer data must retain their original bytes.
+      if (!exempt.reviewedUrls) return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
+      const whole = URL_SHAPE.test(current) && !/[\s<>"'`\\]|&(?:#|[a-z]+;)|\]\(/i.test(current);
+      return whole ? sanitizeUrl(current, false) : current;
+    }
     if (Array.isArray(current)) return current.map((item) => walk(item, trail, parent, depth + 1));
     if (!isRecord(current)) return current;
     const labelled =
@@ -1202,12 +1372,51 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
     redact(data, method, template) {
       const reviewed = verdict(method, template);
       let out = data;
+      if (table.embeddedUrls) {
+        // Do this before any reviewed URL rule parses/serializes the text.
+        out = mapStrings(out, withholdSigningParams, 0);
+        for (const path of table.embeddedUrls.operations?.[`${method} ${template}`] ?? []) {
+          out = applyPath(out, path, withholdEmbeddedUrlsIn);
+        }
+        const resources = table.embeddedUrls.resources;
+        if (resources) {
+          const scan = (value: unknown, depth: number): unknown => {
+            if (depth > MAX_DEPTH || value === null || typeof value !== "object") return value;
+            if (Array.isArray(value)) return value.map((item) => scan(item, depth + 1));
+            let clean: JsonRecord = Object.fromEntries(
+              Object.entries(value).map(([key, item]) => [key, scan(item, depth + 1)]),
+            );
+            const inner = clean[resources.key];
+            const innerType = isRecord(inner) ? inner[resources.key] : undefined;
+            if (typeof innerType === "string" && Object.hasOwn(resources.paths, innerType)) {
+              for (const partial of resources.partials ?? []) {
+                if (!Object.hasOwn(clean, partial)) continue;
+                for (const path of resources.paths[innerType]!)
+                  clean[partial] = applyPath(clean[partial], path, withholdEmbeddedUrlsIn);
+              }
+            }
+            const type = clean[resources.key];
+            if (typeof type === "string" && Object.hasOwn(resources.paths, type)) {
+              for (const path of resources.paths[type]!)
+                clean = applyPath(clean, path, withholdEmbeddedUrlsIn) as JsonRecord;
+            }
+            return clean;
+          };
+          out = scan(out, 0);
+        }
+      }
       if (reviewed?.verdict === "redact") for (const path of reviewed.paths) out = applyPath(out, path);
       if (table.envBodies?.test(template)) out = scrubValues(out, 0);
       const verbatim = new WeakMap<object, Set<string>>();
       if (table.resources) out = resourcePass(out, table.resources, verbatim, 0);
       const keep = reviewed && reviewed.verdict !== "refuse" ? (reviewed.keep ?? []) : [];
-      return heuristic(out, { keep: keep.map(trailOf), verbatim, fields, scopeMaps });
+      return heuristic(out, {
+        keep: keep.map(trailOf),
+        verbatim,
+        fields,
+        scopeMaps,
+        reviewedUrls: table.embeddedUrls !== undefined,
+      });
     },
     withholdsErrors(op) {
       const reviewed = verdict(op.method, op.path);

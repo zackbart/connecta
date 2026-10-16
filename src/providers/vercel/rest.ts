@@ -19,7 +19,13 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { openapi } from "./openapi.generated.js";
-import { valueSafety } from "../_shared/rest/value-safety.js";
+import {
+  valueSafety,
+  withholdEmbeddedUrlsIn,
+  refuseWithheldLinks,
+  refuseWithheldUpload,
+  refuseWithheldBase64,
+} from "../_shared/rest/value-safety.js";
 import { VERCEL_VALUE_SAFETY } from "./value-safety.js";
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
@@ -116,7 +122,7 @@ function reviewedCode(value: unknown): string | undefined {
  * value: it says the status, a reviewed code, and what to do.
  */
 function vercelFailure(status: number, headers: Headers, payload: unknown, family = false): ConnectorCallError {
-  const root = record(payload);
+  const root = record(withholdEmbeddedUrlsIn(payload));
   const error = record(root["error"]);
   const code = text(error["code"]);
   const message = text(error["message"])?.trim() ?? text(root["message"])?.trim() ?? `Vercel returned HTTP ${status}.`;
@@ -520,6 +526,23 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
       vercelFailure(status, headers, body, call ? SAFETY.withholdsErrors(call.op) : false),
     readPosts: READ_POSTS,
     valueSafety: SAFETY,
+    async admit(call) {
+      if (
+        call.method === "GET" ||
+        call.method === "HEAD" ||
+        READ_POSTS.some(([method, path]) => method === call.method && path === call.op.path)
+      )
+        return;
+      refuseWithheldLinks([call.body, call.query, call.path], "Vercel");
+      if (call.method === "POST" && call.op.path === "/v13/deployments") {
+        const files = record(call.body)["files"];
+        if (Array.isArray(files)) {
+          for (const file of files) {
+            if (record(file)["encoding"] === "base64") await refuseWithheldBase64(record(file)["data"], "Vercel");
+          }
+        }
+      }
+    },
     refuse,
     scope(call) {
       const query: JsonRecord = { ...call.query };
@@ -1030,6 +1053,8 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
         // Decode first, then validate what was supplied: a required binary body
         // is present whenever bytes are (the index types it as a string).
         const bytes = decodeUpload(args);
+        await vendor.admit?.(call, ctx);
+        await refuseWithheldUpload(bytes, "Vercel");
         operations.check(call.op, call.query, String(args["base64Body"] ?? args["textBody"]));
         const digest = call.op.path === "/v2/files" ? await sha1(bytes) : undefined;
         const query: Record<string, string | number | boolean> = {};

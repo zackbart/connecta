@@ -1021,9 +1021,64 @@ every vendor ships one reviewed table through one mechanism
    labelled or typed secret records lose their value, environment containers
    lose their values, header, cookie, and query rules lose theirs, external
    destinations keep their origin, and every URL loses userinfo and
-   credential-named query parameters or fragments. Exemptions are never
-   shared; each vendor states its own. This URL rule sees a string that is
-   itself a URL. Vendors whose responses embed the file links they mint can
+   credential-named query parameters or fragments under its URL policy.
+   Exemptions are never shared; each vendor states its own. Every REST vendor
+   reviews the pinned spec's free-text fields for embedded vendor-minted links
+   and records its verdict and source limitations beside its value-safety table.
+   Stripe, Vercel, and Cloudflare use **reviewed paths plus global signing
+   parameters**. Literal AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
+   Credential and Security-Token values are withheld across all decoded string
+   values. Generic credential names (`code`, `key`, `token`, `signature`, `sig`,
+   etc.) and credential-looking fragments apply only to reviewed diagnostic
+   paths and vendor error text. Matching destinations lose their entire query
+   and fragment. The tables list exact operations/resource paths with evidence:
+   Stripe charge failure/outcome messages, Vercel deployment failures and
+   build/runtime log text, Cloudflare Workers/Pages build logs and telemetry
+   message/error and raw string/object source payloads in both events and
+   invocation maps. The shared review harness rejects embedded-URL operation
+   keys absent from each vendor's pinned index and invalid path syntax.
+   Vercel's unavailable full pin remains a review limitation.
+   Generic parameters in descriptions, metadata, nicknames, billing footers,
+   notes, DNS TXT, KV values and operator HTML retain their original bytes,
+   including whole URL strings. Ordinary code/key URLs can be false positives
+   in reviewed diagnostics. Existing structured-field/resource rules, reviewed
+   `url:` per-parameter rules, and payer-facing exceptions still apply.
+   Scans read the original escaped text before URL parsing or serialization;
+   adjacent HTML or Markdown is text even without whitespace. Relative Markdown
+   destinations are checked at their own query/fragment, without re-anchoring
+   a nested proxy URL. Ordinary proxy parameters retain their bytes.
+   Scans precede success/select/named projections and error mapping. Named
+   Vercel streams use the same paths before clamping. Binary responses encoded
+   as base64, including Cloudflare Worker JavaScript served as
+   `application/javascript`, are returned unchanged, without decoding/scanning.
+   Cloudflare omits an envelope cursor that URL sanitizing would change;
+   ordinary cursors retain their bytes. No vendor-wide host/bucket policy is
+   inferred. Each string is scanned with bounded linear passes over disjoint
+   destinations, including large inputs.
+   These three vendors enforce write admission with the shared
+   `carriesWithheldLink(value)` scanner and `refuseWithheldLinks`/
+   `refuseWithheldUpload` helpers, plus `refuseWithheldBase64` for documented
+   base64 JSON fields. Every supported write transport (JSON,
+   form-encoded, raw/base64 bytes, multipart parts and named writes) refuses
+   with `invalid_args` and zero dispatch when a URL destination's own query
+   or fragment contains the exact `[redacted]` placeholder, plain or up to four
+   layers encoded. Upload admission reads decoded bytes and each multipart
+   string/blob. Vercel deployment `files[].data` with `encoding: "base64"`
+   and Cloudflare KV bulk `value` with `base64: true` pass through the same
+   byte inspection with one decode, bounded by the field's own encoded length
+   (decoded bytes are at most three quarters of encoded characters). Cloudflare
+   KV additionally enforces its documented 25 MiB decoded value limit;
+   malformed base64 and values beyond that limit refuse with `invalid_args`.
+   The host's inbound request cap still applies (Node `maxBodyBytes`, or the
+   Workers platform); response and raw-upload limits do not bound JSON fields.
+   JSON admission iteratively checks every key and value, with no separate
+   depth or node-count ceiling below the accepted request's size. Cyclic
+   direct arguments refuse with `invalid_args`; repeated non-cyclic references
+   are inspected. The scans remain linear in the supplied and decoded bytes.
+   Withheld values must not be written back; obtain the original
+   link or omit the field. A placeholder outside a destination is ordinary
+   text. Notion keeps its stricter reviewed-host admission and proxy policy.
+   Vendors whose responses embed the file links they mint can
    use `withholdSignedLinks(text, hosts)` or
    `withholdSignedLinksIn(value, hosts)` with a reviewed `FileHosts` policy
    (`domains` and S3 `buckets`). Notion applies the latter in its `result`

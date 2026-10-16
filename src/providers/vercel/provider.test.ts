@@ -206,6 +206,48 @@ describe("vercel() over an access token", () => {
   const call = (connector: Connector, name: string, args: Record<string, unknown> = {}) =>
     connector.callTool(name, args, keyed()) as Promise<any>;
 
+  it("INV-5: withholds signed and credential-bearing URLs embedded in response text before select and error mapping (#812)", async () => {
+    const ordinary = "[proxy](https://EXAMPLE.com/image?url=https://file.notion.so/a?id=42&width=400#section)";
+    const input = `${ordinary} Download [file](https://files.example/a?token=PRIVATE_TOKEN&X-Amz-Signature=PRIVATE_SIGNATURE)`;
+    const expected = `${ordinary} Download [file](https://files.example/a?[redacted])`;
+    const connector = vercel("hosting", TOKEN);
+    respond = () => Response.json({ errorMessage: input });
+    const result = (await connector.callTool(
+      "vercel_api_read",
+      { path: "/v13/deployments/dpl_1", select: ["errorMessage"] },
+      keyed(),
+    )) as any;
+    expect(result.data).toEqual({ errorMessage: expected });
+    respond = () => Response.json({ error: { code: "bad_request", message: input } }, { status: 400 });
+    const error = await refusal(
+      connector.callTool("vercel_api_read", { path: "/v3/deployments/dpl_1/events" }, keyed()),
+    );
+    expect(error.message).toContain("Download");
+    expect(error.message).toContain("[redacted]");
+    expect(error.message).not.toMatch(/PRIVATE_TOKEN|PRIVATE_SIGNATURE/);
+  });
+
+  it("INV-5: sanitizes embedded URLs in named build/runtime log streams before clamping (#812)", async () => {
+    const connector = vercel("hosting", TOKEN);
+    const ordinary = "[public](https://EXAMPLE.com/a?width=400#section)";
+    const input = `${ordinary} download [file](https://files.example/a?sig=PRIVATE_SIG&X-Goog-Credential=PRIVATE_CREDENTIAL)`;
+    const expected = `${ordinary} download [file](https://files.example/a?[redacted])`;
+    respond = () => Response.json([{ type: "stdout", payload: { text: input } }]);
+    expect((await call(connector, "get_deployment_build_logs", { deploymentId: "dpl_1" })).events[0].text).toBe(
+      expected,
+    );
+    respond = () =>
+      new Response(JSON.stringify({ level: "info", message: input }) + "\n", {
+        headers: { "content-type": "application/x-ndjson" },
+      });
+    expect((await call(connector, "get_runtime_logs", { projectId: "web", deploymentId: "dpl_1" })).logs[0].text).toBe(
+      expected,
+    );
+    respond = () => Response.json([{ type: "stdout", payload: { text: "x".repeat(3900) + input } }]);
+    const long = await call(connector, "get_deployment_build_logs", { deploymentId: "dpl_1" });
+    expect(JSON.stringify(long)).not.toMatch(/PRIVATE_SIG|PRIVATE_CREDENTIAL/);
+  });
+
   it("builds Connecta's REST connector with an operator credential and its own tools", async () => {
     const connector = vercel("hosting", { ...TOKEN, maxResultBytes: 25_000 });
     expect(mocks.remoteMcp).not.toHaveBeenCalled();
@@ -726,7 +768,7 @@ describe("vercel() over an access token", () => {
         })
       ).data,
     ).toEqual({ id: "wh_3", url: "https://hooks.slack.com/[redacted]", secret: REDACTED });
-    // Elsewhere the heuristic strips userinfo and credential query parameters and keeps the rest.
+    // Outside reviewed diagnostics, strip userinfo but preserve generic application parameters.
     respond = () =>
       Response.json({
         deployments: [{ uid: "dpl_1", inspectorUrl: "https://alice:basic-secret@vercel.com/x?token=t1&env=prod" }],
@@ -735,9 +777,10 @@ describe("vercel() over an access token", () => {
     const page = await call(connector, "vercel_api_read", { path: "/v7/deployments" });
     const inspector = new URL(page.data.deployments[0].inspectorUrl);
     expect(inspector.searchParams.get("env")).toBe("prod");
-    expect(page.data.deployments[0].inspectorUrl).not.toMatch(/basic-secret|t1|alice/);
+    expect(page.data.deployments[0].inspectorUrl).not.toMatch(/basic-secret|alice/);
+    expect(inspector.searchParams.get("token")).toBe("t1");
     expect(page.page).toEqual({ hasMore: true });
-    expect(JSON.stringify(page)).not.toContain("cursor-secret");
+    expect(page.data.pagination.next).toBe("https://api.vercel.com/page?token=cursor-secret");
   });
 
   it("INV-3: refuses a project transfer request, whose code lets another team claim the project", async () => {
