@@ -152,7 +152,8 @@ names. Storage that is memory because the deployment configured none reads
 held. Sign-in has one tile per inbound auth provider in the order they are
 tried, with its mark and whether it admits people or machines; the agent-token
 tile carries a count chip ("3 agents"). One Maintainers tile follows with an
-avatar stack of the `/mcp` maintainers, whatever the methods are. Features shows
+avatar stack of the `/mcp` maintainers, or muted "None" when none are configured.
+With no auth providers, an Open tile precedes the Maintainers tile. Features shows
 the vault (with "Seals OAuth" when it seals OAuth tokens), activity, agent-token
 and any other module, on or off. Limits shows each limit as a value over a short
 label: durations in their largest whole unit, sizes in decimal KB or MB with the

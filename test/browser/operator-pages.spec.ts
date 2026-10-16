@@ -272,6 +272,38 @@ test("Config provenance recognizes explicit defaults and the access model", asyn
   await clean(page);
 });
 
+for (const hasMaintainers of [true, false]) {
+  test(`Settings keeps the Maintainers tile without auth providers (${hasMaintainers ? "configured" : "none"})`, async ({
+    page,
+  }) => {
+    await session(page);
+    await page.route("**/ui/api/config", async (route) => {
+      const response = await route.fetch();
+      const contract = (await response.json()) as OperatorUiContract;
+      if (!contract.config || !contract.root) throw new Error("Expected a maintainer contract");
+      contract.config.auth = [];
+      if (!hasMaintainers) contract.root.maintainers = [];
+      await route.fulfill({ json: contract });
+    });
+    await page.goto(origin + "/settings");
+    const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
+    await expect(signIn.locator(".identity-grid > li")).toHaveCount(2);
+    await expect(signIn.getByText("Open", { exact: true })).toBeVisible();
+    await expect(signIn.getByText("No sign-in", { exact: true })).toBeVisible();
+    const maintainers = signIn.locator('[data-sign-in="maintainers"]');
+    await expect(maintainers.getByText("Maintainers", { exact: true })).toBeVisible();
+    await expect(maintainers.getByText("/mcp", { exact: true })).toBeVisible();
+    if (hasMaintainers) {
+      await expect(maintainers.getByRole("list", { name: "Maintainers", exact: true })).toContainText("pages-user");
+      await expect(maintainers.getByText("None", { exact: true })).toHaveCount(0);
+    } else {
+      await expect(maintainers.getByText("None", { exact: true })).toBeVisible();
+      await expect(maintainers.locator(".avatar-stack")).toHaveCount(0);
+    }
+    await clean(page);
+  });
+}
+
 test("connector tabs are keyboard friendly and preserve the selected tab on reload", async ({ page }) => {
   await session(page);
   await page.goto(origin + "/connectors/github#tools");

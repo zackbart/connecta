@@ -165,12 +165,12 @@ function AvatarStack({ chips, label }: { chips: AccessChip[]; label: string }) {
 /**
  * Each sign-in method: its mark, its name and who it admits, with a count chip
  * on agent tokens. The maintainers who may use /mcp follow once, whatever the
- * methods are. An open deployment draws one tile that says so.
+ * methods are. An open deployment draws an Open tile before its maintainers.
  */
 export function SignInTiles({ tiles, maintainers }: { tiles: SignInTile[]; maintainers: AccessChip[] }) {
-  if (!tiles.length)
-    return (
-      <ul className="identity-grid">
+  return (
+    <ul className="identity-grid">
+      {!tiles.length ? (
         <li className="identity-tile open">
           <span className="provider-mark other" aria-hidden="true">
             <Icon name="alert" size={18} />
@@ -178,10 +178,7 @@ export function SignInTiles({ tiles, maintainers }: { tiles: SignInTile[]; maint
           <span className="identity-name">Open</span>
           <span className="identity-kind">No sign-in</span>
         </li>
-      </ul>
-    );
-  return (
-    <ul className="identity-grid">
+      ) : null}
       {tiles.map((tile) => (
         <li key={tile.id} className="identity-tile" data-sign-in={tile.id}>
           <ProviderMark mark={tile.mark} />
