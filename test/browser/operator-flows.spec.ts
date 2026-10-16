@@ -269,7 +269,9 @@ async function openShell(page: Page, deployment: Deployment, path: string, signe
   );
   // Fonts come from the unmodified hashed asset routes, never a CDN.
   await page.evaluate("document.fonts.ready");
-  expect(deployment.requests.some((request) => /^\/ui\/assets\/geist-.+\.woff2$/.test(request.path))).toBe(true);
+  expect(deployment.requests.some((request) => /^\/ui\/assets\/hanken-grotesk-.+\.woff2$/.test(request.path))).toBe(
+    true,
+  );
 }
 
 test("INV-4: Clerk sign-in admits a session before loading real operator data", async ({ page, deployment }) => {
@@ -295,6 +297,7 @@ test("INV-4: Clerk sign-in admits a session before loading real operator data", 
   await page.reload();
   await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Team sign in", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Account", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Team sign in", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toHaveCount(0);

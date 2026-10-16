@@ -1236,10 +1236,13 @@ connecta shows a person — the operator shell, the OAuth callback, a browser's
 404 — reads it. `src/operator-ui/tokens.css`
 resolves every color, radius, and font through a custom property and mixes the
 rest from those with `color-mix`; `page.css` holds the base typography and the
-primitives (shell, masthead, buttons, badges, messages, the one-message status
-page). The UI's `browser.css` imports both, and the build writes the same CSS,
-minified, into `src/page-styles.ts`, a module of two strings that core imports
+pieces server-rendered pages share (top bar, buttons, badges, messages, the
+one-message status page). The UI's `browser.css` imports both, then one file
+per area under `src/operator-ui/styles/` (fonts, shared components, shell, and
+each page). The build writes the shared CSS, minified, into
+`src/page-styles.ts`, with the hashed font paths, a module that core imports
 without the UI bundle, so an OAuth callback still renders with the UI omitted.
+Those pages link the fonts only when the UI module serves them.
 `renderPage` in `src/branding.ts` is the one layout: head, favicon (the default
 is linked only when the UI serves it), `data-scheme`, the tokens with the theme
 after them, and the masthead. So `branding.theme` only has to append a `:root`

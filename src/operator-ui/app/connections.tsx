@@ -16,7 +16,7 @@ import {
 } from "../view.js";
 import { productName } from "./config.js";
 import { CredentialCard } from "./credentials.js";
-import { ConfirmBar, FixPrompt, NoticeLine, StateBlock, focusableId } from "./parts.js";
+import { Callout, ConfirmBar, FixPrompt, NoticeLine, StateBlock, focusableId } from "./parts.js";
 import { askConfirm, cancelConfirm, disconnectOAuth, refreshConnector, startOAuth } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
@@ -163,23 +163,26 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
       {connector.registrationPath ? (
         <p className="meta">OAuth client: {registrationPathLabel(connector.registrationPath)}</p>
       ) : null}
-      {connector.status === "loading" ? <StateBlock>Loading authentication details…</StateBlock> : null}
+      {connector.status === "loading" ? <StateBlock busy>Loading authentication details…</StateBlock> : null}
       {problem && connector.problem ? (
-        <p className={problemTone(connector.problem) === "warn" ? "msg warn" : "msg"} data-problem={connector.problem}>
+        <Callout
+          tone={problemTone(connector.problem) === "warn" ? "notice" : "problem"}
+          data-problem={connector.problem}
+        >
           {problem}
-        </p>
+        </Callout>
       ) : null}
       {fixKind ? <FixPrompt kind={fixKind} connectorId={id} name={name} /> : null}
       {local ? (
-        <p className="msg warn" data-load-failure={local}>
+        <Callout tone="notice" data-load-failure={local}>
           {connectorLoadFailureCopy(local, productName)}
-        </p>
+        </Callout>
       ) : null}
       <p className="meta">{permissionLabel(connector)}</p>
       <div className="actions">
         {local ? null : <AuthActions connector={connector} name={name} manage={manage} state={state} />}
         <button
-          className={local ? "btn primary" : "btn quiet"}
+          className={local ? "btn primary" : "btn"}
           type="button"
           aria-label={`Refresh ${name}`}
           disabled={connector.status === "loading"}

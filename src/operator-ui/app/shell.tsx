@@ -1,11 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Command } from "cmdk";
-import { Button, Dialog, Tabs } from "./primitives.js";
+import { Dialog, Tabs } from "./primitives.js";
 import { PAGE_META, type OperatorPage, type OperatorState } from "../view.js";
 import { navigate } from "./store.js";
 import { useCloseOnRecovery } from "./contract-state.js";
 import { schemePinned } from "./config.js";
 import { SCHEME_KEY } from "./scheme.js";
+import { Icon } from "./icons.js";
 
 type Scheme = "light" | "dark" | "system";
 /**
@@ -85,20 +86,21 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
   };
   return (
     <>
-      <Button
-        variant="quiet"
+      <button
+        type="button"
         className="command-trigger"
         onClick={() => {
           commandReturnFocus.current = document.activeElement as HTMLElement;
           setCommandOpen(true);
         }}
       >
-        <span>Search</span>
+        <Icon name="search" size={15} />
+        <span className="command-label">Search</span>
         <kbd>⌘K</kbd>
-      </Button>
-      <Button
-        variant="quiet"
-        className="appearance-trigger"
+      </button>
+      <button
+        type="button"
+        className="icon-button appearance-trigger"
         aria-label="Appearance"
         title="Appearance"
         onClick={() => {
@@ -106,11 +108,8 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
           setAppearanceOpen(true);
         }}
       >
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-          <circle cx="8" cy="8" r="5.75" fill="none" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M8 2.25a5.75 5.75 0 0 1 0 11.5z" fill="currentColor" />
-        </svg>
-      </Button>
+        <Icon name={scheme === "dark" ? "moon" : scheme === "light" ? "sun" : "monitor"} size={17} />
+      </button>
       <Dialog
         returnFocusTo={appearanceReturnFocus}
         open={appearanceOpen}
@@ -122,6 +121,7 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
           <p className="meta">{scheme === "dark" ? "Dark" : "Light"} mode</p>
         ) : (
           <Tabs
+            variant="segmented"
             value={scheme}
             onValueChange={(value) => setScheme(value as Scheme)}
             items={[
@@ -198,5 +198,69 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
         </Command>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * The account in the top bar: who is signed in, and the way out. A
+ * disclosure, not a menu widget: its contents are a line of text and one or
+ * two plain buttons, reachable with Tab. Escape and a click elsewhere close it.
+ */
+export function AccountMenu({
+  account,
+  role,
+  children,
+}: {
+  /** The signed-in email, where the sign-in exposes one. */
+  account: string | null;
+  role: string;
+  /** The session action: Sign out or Change token. */
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const panel = useId();
+  const root = useRef<HTMLDivElement | null>(null);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const initial = account?.trim().charAt(0).toUpperCase();
+  return (
+    <div className="account-menu" ref={root}>
+      <button
+        ref={trigger}
+        type="button"
+        className="account-trigger"
+        aria-label="Account"
+        aria-expanded={open}
+        aria-controls={panel}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="account-avatar" aria-hidden="true">
+          {initial ? initial : <Icon name="user" size={15} />}
+        </span>
+      </button>
+      <div id={panel} className="account-panel" hidden={!open}>
+        <div className="account-who">
+          <p className="account-label">{account ?? "Signed in"}</p>
+          <p className="meta">{role}</p>
+        </div>
+        <div className="account-session">{children}</div>
+      </div>
+    </div>
   );
 }

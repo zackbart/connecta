@@ -1,4 +1,4 @@
-import { PAGE_CSS, TOKENS_CSS } from "./page-styles.js";
+import { PAGE_CSS, PAGE_FONTS, TOKENS_CSS } from "./page-styles.js";
 import { htmlSecurityHeaders } from "./html-security.js";
 import type { ConnectaBranding, ConnectaTheme, UiAuthConfig } from "./types.js";
 /** Connecta's default monochrome "C" mark. */
@@ -197,11 +197,11 @@ export function escapeHtml(value: string): string {
 }
 
 /**
- * The masthead's `--surface` in each palette, for the browser chrome a
+ * The top bar's `--bg` in each palette, for the browser chrome a
  * `theme-color` paints. A configured `themeColor` wins; without one a dark
  * page should not sit under a white status bar.
  */
-const SURFACE = { light: "#ffffff", dark: "#151a21" } as const;
+const SURFACE = { light: "#f6f4ef", dark: "#12110f" } as const;
 
 /** The operator's own `themeColor`, read the one way both callers read it. */
 function configuredThemeColor(branding: ConnectaBranding | undefined): string | undefined {
@@ -293,7 +293,16 @@ export function renderPage(branding: ConnectaBranding | undefined, layout: PageL
   const skip = layout.skipTo
     ? `<a class="skip-link" href="#${escapeHtml(layout.skipTo.id)}">${escapeHtml(layout.skipTo.label)}</a>\n`
     : "";
-  const styles = (layout.styles ?? TOKENS_CSS + PAGE_CSS) + (layout.extraStyles ?? "");
+  // The operator bundle declares its own fonts. Other pages link the same
+  // files only where the UI module serves them; elsewhere the stacks fall
+  // back to system fonts.
+  const fonts = layout.uiMounted
+    ? PAGE_FONTS.map(
+        (font) =>
+          `@font-face{font-family:"${font.family}";font-style:normal;font-weight:${font.weight};font-display:swap;src:url("${iconHref(font.path)}") format("woff2")}`,
+      ).join("")
+    : "";
+  const styles = (layout.styles ?? fonts + TOKENS_CSS + PAGE_CSS) + (layout.extraStyles ?? "");
   return `<!doctype html>
 <html lang="en"${schemeAttribute(brand.theme)}>
 <head>

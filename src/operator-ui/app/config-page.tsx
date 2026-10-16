@@ -1,5 +1,6 @@
 import type { OperatorState } from "../view.js";
 import { Badge } from "./parts.js";
+import { Card } from "./primitives.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
 import { rootAccessSentence } from "../endpoints.js";
 import { SnapshotTree } from "./snapshot.js";
@@ -20,28 +21,38 @@ export function SettingsPage({ state }: { state: OperatorState }) {
         <ContractState state={state} />
       ) : (
         <>
-          <section className="section" aria-labelledby="inboundHeading">
-            <h2 id="inboundHeading">Inbound auth</h2>
-            <div className="rows">
+          <Card
+            className="section"
+            aria-labelledby="inboundHeading"
+            titleId="inboundHeading"
+            title="Inbound auth"
+            description={rootAccessSentence(contract.root)}
+          >
+            <ul className="list-rows">
               {contract.config.auth.map((provider, index) => (
-                <div className="attention-row" key={`${provider.kind}-${index}`}>
+                <li className="attention-row" key={`${provider.kind}-${index}`}>
                   <span>{provider.kind}</span>
                   <Badge>{provider.interactive ? "Interactive" : "Machine"}</Badge>
-                </div>
+                </li>
               ))}
-            </div>
-            <p className="meta">{rootAccessSentence(contract.root)}</p>
-          </section>
-          <section className="section" aria-labelledby="snapshotHeading">
-            <h2 id="snapshotHeading">Configuration</h2>
-            <div className="facts-row">
-              <Badge>config</Badge>
-              <span className="meta">Supplied by deployment code</span>
-              <Badge>default</Badge>
-              <span className="meta">Resolved default or built-in value</span>
-            </div>
+            </ul>
+          </Card>
+          <Card
+            className="section"
+            aria-labelledby="snapshotHeading"
+            titleId="snapshotHeading"
+            title="Configuration"
+            actions={
+              <div className="facts-row source-legend">
+                <Badge>config</Badge>
+                <span className="meta">Set in deployment code</span>
+                <Badge>default</Badge>
+                <span className="meta">Built-in default</span>
+              </div>
+            }
+          >
             <SnapshotTree value={contract.config} sources={contract.configSources ?? undefined} />
-          </section>
+          </Card>
         </>
       )}
     </section>

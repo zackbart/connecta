@@ -15,7 +15,7 @@ import {
   type UiActivityEvent,
 } from "../view.js";
 import { productDescription } from "./config.js";
-import { Badge, LoadFailure, NoticeLine, StateBlock, Unavailable } from "./parts.js";
+import { Badge, LoadFailure, NoticeLine, Pill, pillStatus, StateBlock, Unavailable } from "./parts.js";
 import { loadActivity, retryCollection, setActivitySearch } from "./store.js";
 
 function ActivityRow({ event }: { event: UiActivityEvent }) {
@@ -55,7 +55,7 @@ function ActivityRow({ event }: { event: UiActivityEvent }) {
         {event.clientVersion ? <div className="activity-detail">Client version: {event.clientVersion}</div> : null}
       </div>
       <div className="activity-result">
-        <Badge tone={badge.tone}>{badge.label}</Badge>
+        <Pill status={pillStatus(badge.tone)}>{badge.label}</Pill>
         <div className="activity-detail">{event.durationMs} ms</div>
         {event.classification ? <Badge>{event.classification}</Badge> : null}
         {Number.isFinite(event.resultBytes) ? <span className="meta">{event.resultBytes} bytes</span> : null}
@@ -107,12 +107,12 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
   return (
     <section id="activityView">
       {connectorId ? null : (
-        <div className="lead">
-          <h1 id="activityHeading" tabIndex={-1}>
-            Activity
-          </h1>
-          <div className="lead-copy">
-            <p>{pageDescription("activity", productDescription)}</p>
+        <div className="page-heading">
+          <div>
+            <h1 id="activityHeading" tabIndex={-1}>
+              Activity
+            </h1>
+            <p className="meta">{pageDescription("activity", productDescription)}</p>
           </div>
         </div>
       )}
@@ -122,7 +122,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
         state.loadFailure ? (
           <LoadFailure state={state} />
         ) : (
-          <StateBlock>Loading activity…</StateBlock>
+          <StateBlock busy>Loading activity…</StateBlock>
         )
       ) : !enabled ? (
         <Unavailable>
@@ -211,7 +211,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
           </p>
           {state.activityEvents.length === 0 ? (
             loading ? (
-              <StateBlock>Loading activity…</StateBlock>
+              <StateBlock busy>Loading activity…</StateBlock>
             ) : failed ? (
               <StateBlock
                 id="activityError"

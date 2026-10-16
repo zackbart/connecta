@@ -288,7 +288,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                     {endpoint.readOnly ? "read-only" : "rw"}
                   </Badge>
                   <Button
-                    variant="quiet"
+                    size="sm"
                     className="endpoint-setup"
                     onClick={(event) => {
                       returnFocus.current = event.currentTarget;

@@ -122,11 +122,11 @@ describe("the shared page layout", () => {
   it("sets data-scheme only for a pinned scheme, with a matching theme color", () => {
     const system = renderPage(undefined, layout);
     expect(system).toContain('<html lang="en">');
-    expect(system).toContain('<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">');
-    expect(system).toContain('<meta name="theme-color" content="#151a21" media="(prefers-color-scheme: dark)">');
+    expect(system).toContain('<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">');
+    expect(system).toContain('<meta name="theme-color" content="#12110f" media="(prefers-color-scheme: dark)">');
     const dark = renderPage({ theme: { colorScheme: "dark" } }, layout);
     expect(dark).toContain('<html lang="en" data-scheme="dark">');
-    expect(dark).toContain('<meta name="theme-color" content="#151a21">');
+    expect(dark).toContain('<meta name="theme-color" content="#12110f">');
     expect(dark).not.toContain("prefers-color-scheme: light");
     const configured = renderPage({ themeColor: "#101010", theme: { colorScheme: "dark" } }, layout);
     expect(configured).toContain('<meta name="theme-color" content="#101010">');

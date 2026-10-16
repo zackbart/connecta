@@ -11,7 +11,7 @@ const SEPARATOR = "\n\n----------------------------------------\n\n";
 /**
  * Every package the operator script actually ships, found independently of
  * the asset build: bundle the entry again and read the packages off its
- * metafile. The two Geist packages ship as fonts through the stylesheet.
+ * metafile. The two font packages ship as fonts through the stylesheet.
  */
 async function shippedPackages(): Promise<Map<string, string>> {
   const result = await build({
@@ -33,7 +33,7 @@ async function shippedPackages(): Promise<Map<string, string>> {
   // Name each package by its last node_modules segment and read it from the
   // directory esbuild resolved, under npm's flat tree and pnpm's store alike.
   const packages = new Map(
-    ["@fontsource-variable/geist", "@fontsource-variable/geist-mono"].map((name) => [
+    ["@fontsource-variable/hanken-grotesk", "@fontsource-variable/jetbrains-mono"].map((name) => [
       name,
       resolve(root, "node_modules", name),
     ]),

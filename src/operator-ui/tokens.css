@@ -5,48 +5,89 @@
  *
  * Every color, radius, and font resolves through a custom property here, so
  * `branding.theme` only has to append a `:root` block after this stylesheet
- * to retheme every page. Tints, hovers, and focus rings are mixed from the
- * tokens with `color-mix` instead of being written out, so setting one
- * accent keeps all of them consistent with it.
+ * to retheme every page. It sets `--accent`, `--radius`, `--sans` and
+ * `--mono`; every accent tint and every smaller radius is mixed or derived
+ * from those, so one configured value keeps the rest consistent with it.
  */
 
 :root {
   color-scheme: light;
-  --default-accent: #171717;
-  --accent: var(--default-accent);
-  --radius: 8px;
+
+  /* Type */
   --sans:
-    "Geist Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas, monospace;
+    "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas, monospace;
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.78125rem;
+  --text-sm: 0.84375rem;
+  --text-base: 0.9375rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.125rem;
+  --weight-medium: 500;
+  --weight-semibold: 620;
+  --weight-bold: 700;
 
-  --bg: #fafafa;
-  --surface: #ffffff;
-  --surface-2: #f5f5f5;
-  --border: #eaeaea;
-  --border-strong: #d4d4d4;
-  --text: #171717;
-  --muted: #666666;
-  --ok: #0a7d33;
-  --warn: #a35200;
-  --danger: #d8242c;
-  --on-accent: #ffffff;
-
-  /* Accent as text reads differently from accent as a fill; both derive. */
-  --link: var(--accent);
-  --blue: #0060df;
-  --tint: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  --shell: 68rem;
-  --pad: 1.25rem;
-  --gap: 1rem;
+  /* Space */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
+  --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-base: 0.875rem;
+  --space-10: 2.5rem;
+  --shell: 73.75rem;
+  --pad: 1.5rem;
+  --gap: 1rem;
+  --topbar: 3.875rem;
+
+  /* Shape: one configured radius; the smaller ones follow it. */
+  --radius: 14px;
+  --radius-md: max(calc(var(--radius) - 4px), 2px);
+  --radius-sm: max(calc(var(--radius) - 7px), 2px);
+  --radius-pill: 999px;
+
+  /* Surfaces */
+  --bg: #f6f4ef;
+  --surface: #ffffff;
+  --surface-2: #fbfaf7;
+  --sunk: #f0ede6;
+  --hover: #f5f2ec;
+  --line: #e9e4da;
+  --line-strong: #dcd5c8;
+  --text: #1d1a16;
+  --text-2: #5c564c;
+  --text-3: #756e61;
+  --scrim: rgb(20 16 8 / 0.38);
+
+  /* One accent. The tints mix from it, so a configured accent recolors them. */
+  --default-accent: #4c44e0;
+  --accent: var(--default-accent);
+  --accent-strong: color-mix(in srgb, var(--accent) 84%, #000000);
+  --accent-soft: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  --accent-line: color-mix(in srgb, var(--accent) 26%, var(--surface));
+  --on-accent: #ffffff;
+  /* Accent as text reads differently from accent as a fill; both derive. */
+  --link: var(--accent);
+
+  /* Status */
+  --ok: #16774b;
+  --ok-soft: #e4f3ea;
+  --ok-line: #bfe2cd;
+  --warn: #9a5800;
+  --warn-soft: #fcf0da;
+  --warn-line: #f1d7a6;
+  --danger: #bc3a27;
+  --danger-soft: #fbe8e4;
+  --danger-line: #f2c5bc;
+
+  /* Depth */
+  --shadow-1: 0 1px 2px rgb(40 30 10 / 0.05), 0 1px 1px rgb(40 30 10 / 0.03);
+  --shadow-2: 0 1px 2px rgb(40 30 10 / 0.04), 0 6px 20px -6px rgb(40 30 10 / 0.1);
+  --shadow-3: 0 24px 60px -16px rgb(30 20 0 / 0.28), 0 2px 6px rgb(30 20 0 / 0.06);
 }
 
 /*
@@ -65,37 +106,65 @@ html[data-scheme="dark"] {
 
 @media (prefers-color-scheme: dark) {
   html:not([data-scheme="light"]) {
-    --default-accent: #ededed;
-    --on-accent: #171717;
-    --blue: #70b3ff;
-    --bg: #0a0a0a;
-    --surface: #111111;
-    --surface-2: #1a1a1a;
-    --border: #2e2e2e;
-    --border-strong: #454545;
-    --text: #ededed;
-    --muted: #a1a1a1;
-    --ok: #4cce83;
-    --warn: #f5b85a;
-    --danger: #ff777f;
-    --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
-    --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
+    --bg: #12110f;
+    --surface: #1b1a17;
+    --surface-2: #1f1d1a;
+    --sunk: #16150f;
+    --hover: #24221e;
+    --line: #2c2925;
+    --line-strong: #3a3631;
+    --text: #f3efe7;
+    --text-2: #b5aea2;
+    --text-3: #8a8378;
+    --scrim: rgb(0 0 0 / 0.6);
+    --default-accent: #8c86ff;
+    --accent-strong: color-mix(in srgb, var(--accent) 80%, #ffffff);
+    --accent-soft: color-mix(in srgb, var(--accent) 17%, var(--surface));
+    --accent-line: color-mix(in srgb, var(--accent) 38%, var(--surface));
+    --on-accent: #0f0e1f;
+    --link: color-mix(in srgb, var(--accent) 80%, #ffffff);
+    --ok: #5bd08f;
+    --ok-soft: #173326;
+    --ok-line: #24513a;
+    --warn: #f0b354;
+    --warn-soft: #352812;
+    --warn-line: #5a4319;
+    --danger: #ff8a75;
+    --danger-soft: #3a1c16;
+    --danger-line: #5e2c22;
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -8px rgb(0 0 0 / 0.5);
+    --shadow-3: 0 30px 80px -20px rgb(0 0 0 / 0.7);
   }
 }
 html[data-scheme="dark"] {
-  --default-accent: #ededed;
-  --on-accent: #171717;
-  --blue: #70b3ff;
-  --bg: #0a0a0a;
-  --surface: #111111;
-  --surface-2: #1a1a1a;
-  --border: #2e2e2e;
-  --border-strong: #454545;
-  --text: #ededed;
-  --muted: #a1a1a1;
-  --ok: #4cce83;
-  --warn: #f5b85a;
-  --danger: #ff777f;
-  --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
-  --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  --bg: #12110f;
+  --surface: #1b1a17;
+  --surface-2: #1f1d1a;
+  --sunk: #16150f;
+  --hover: #24221e;
+  --line: #2c2925;
+  --line-strong: #3a3631;
+  --text: #f3efe7;
+  --text-2: #b5aea2;
+  --text-3: #8a8378;
+  --scrim: rgb(0 0 0 / 0.6);
+  --default-accent: #8c86ff;
+  --accent-strong: color-mix(in srgb, var(--accent) 80%, #ffffff);
+  --accent-soft: color-mix(in srgb, var(--accent) 17%, var(--surface));
+  --accent-line: color-mix(in srgb, var(--accent) 38%, var(--surface));
+  --on-accent: #0f0e1f;
+  --link: color-mix(in srgb, var(--accent) 80%, #ffffff);
+  --ok: #5bd08f;
+  --ok-soft: #173326;
+  --ok-line: #24513a;
+  --warn: #f0b354;
+  --warn-soft: #352812;
+  --warn-line: #5a4319;
+  --danger: #ff8a75;
+  --danger-soft: #3a1c16;
+  --danger-line: #5e2c22;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -8px rgb(0 0 0 / 0.5);
+  --shadow-3: 0 30px 80px -20px rgb(0 0 0 / 0.7);
 }
