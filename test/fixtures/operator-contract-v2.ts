@@ -78,6 +78,7 @@ const config: ConnectaConfigDescription = {
     accessTokenManagement: "default",
     personalConnection: "default",
   },
+  agents: ["simon-ada", "triage"],
   pools: [
     { name: "ada", path: "/mcp/ada", tools: ["gmail", "github.read"], hasGrant: true, readOnly: false },
     { name: "support", path: "/mcp/support", tools: ["github.read", "drive.search"], hasGrant: true, readOnly: true },
@@ -87,7 +88,7 @@ const config: ConnectaConfigDescription = {
     ui: { enabled: true },
     vault: { enabled: true, sealsOAuth: true },
     activity: { enabled: true, readable: true, store: { kind: "sqlite", retentionDays: 30 } },
-    accessTokens: { enabled: true, maxActive: 20 },
+    accessTokens: { enabled: true },
   },
   storage: { configured: true, kind: "sqlite" },
   branding: {
