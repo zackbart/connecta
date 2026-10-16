@@ -141,13 +141,23 @@ export interface OperatorAgent {
   lastSeenAt: string | null;
 }
 
+/**
+ * Where a shared connector's credential comes from:
+ * - "vault": a declared operator credential slot that holds a saved value;
+ * - "missing": a declared slot, or a shared OAuth connector, with nothing saved yet;
+ * - "oauth": a shared OAuth grant, even when the grant is vault-sealed;
+ * - "config": supplied by deployment code or environment (literal headers, env values,
+ *   request-token callbacks, `api()` handlers that hold their own credentials), never shown;
+ * - "unauthenticated": the connector declares no auth at all.
+ * A token minted per request follows its underlying credential (a GitHub App key from a
+ * slot is "vault", from code is "config"). Absence of a slot alone never means
+ * "unauthenticated": that needs a connector that declares no auth.
+ */
+export type OperatorSharedSource = "vault" | "missing" | "oauth" | "config" | "unauthenticated";
+
 export type OperatorRunsAs =
-  /**
-   * Where the shared credential lives: saved in the vault, an OAuth grant, deployment
-   * config (env or code, never shown), or not configured yet. `savedAt` is set only
-   * for "vault" and "oauth".
-   */
-  | { kind: "shared"; source: "vault" | "oauth" | "config" | "none"; savedAt: string | null }
+  // `savedAt` is set only for "vault" and "oauth".
+  | { kind: "shared"; source: OperatorSharedSource; savedAt: string | null }
   | { kind: "personal"; connectedMembers: number; members: number }
   // Mapping subject: humans act as themselves; agents act as the pool owner.
   // `agents` is null on plain /mcp (`pool: null`), which admits no agents.

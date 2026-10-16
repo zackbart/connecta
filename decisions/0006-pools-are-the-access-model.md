@@ -192,7 +192,11 @@ interface OperatorAgent {
 }
 
 type OperatorRunsAs =
-  | { kind: "shared"; source: "vault" | "oauth" | "config" | "none"; savedAt: string | null } // savedAt for vault and oauth only
+  // source: "vault" (saved slot), "missing" (slot or shared OAuth with nothing saved),
+  // "oauth" (shared grant), "config" (deployment code or env: literal headers, env values,
+  // request-token callbacks, credential-holding api() handlers; never shown),
+  // "unauthenticated" (connector declares no auth). savedAt only for vault and oauth.
+  | { kind: "shared"; source: "vault" | "missing" | "oauth" | "config" | "unauthenticated"; savedAt: string | null }
   | { kind: "personal"; connectedMembers: number; members: number }
   | { kind: "workspace"; humans: "self"; agents: string | null } // mapping subject; agents: pool owner
   | { kind: "workspaceFixed"; subject: string }; // fixed subject: every caller acts as it
