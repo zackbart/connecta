@@ -26,7 +26,7 @@ import { ExecutorAdmissionError, type AdmissionController, type AdmissionLease }
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
-import { CONNECTA_INSTRUCTIONS } from "../skills.js";
+import { endpointInstructions } from "../skills.js";
 import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
@@ -431,7 +431,10 @@ function serveMcp(
       // A request-local server cannot publish catalog changes. Set this before
       // tool registration, whose SDK default otherwise advertises listChanged.
       capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
-      instructions: CONNECTA_INSTRUCTIONS,
+      // Instructions differ per endpoint only by the admitted pool's
+      // description. Every cache hint below is private, so a client keeps
+      // what it learned per endpoint URL and never shares it across them.
+      instructions: endpointInstructions(pool !== undefined ? opts.pools.get(pool)?.description : undefined),
       inputRequired: { legacyShim: false },
       requestState: { verify: (state, context) => authElicitation.verify(state, context) },
       cacheHints: {

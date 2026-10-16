@@ -225,6 +225,7 @@ describe("describeConfig", () => {
             ],
             readOnly: false,
             owner: "support@workspace.example",
+            description: "Support tier: tickets only.",
           },
         ],
         modules: {

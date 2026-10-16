@@ -260,7 +260,15 @@ purchase verification, experiment checks, and customer or deployment
 investigations — shared guidance, not a saved workflow and not a source of
 deployment-specific ids. The always-loaded instructions and tool definitions keep
 route selection, the fail-closed boundary, and the minimum guest syntax, so a
-client that never fetches a skill can still write a valid first program. Connector
+client that never fetches a skill can still write a valid first program.
+The instructions are the same on every endpoint except one addition: at
+`/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
+[`description`](./auth.md#pools) has it appended after `This endpoint: `, so
+the model learns that endpoint's scope, for example
+`This endpoint: Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
+Plain `/mcp` never carries one. The description changes no tool or tool
+description, and `initialize` and `server/discover` stay `cacheScope: "private"`,
+so a client keeps what it learned per endpoint. Connector
 guides stay scoped to the deployment that listed them even when two deployments
 use identical content, and a deployment with no connector guides receives none of
 the short conditional guide pointers in its tool definitions.
@@ -965,12 +973,14 @@ Handlers and schemas live in [meta-tools.ts](https://github.com/zackbart/connect
 [Catalog service](https://github.com/zackbart/connecta/blob/main/src/catalog-service.ts)
 and [invocation](https://github.com/zackbart/connecta/blob/main/src/invocation.ts)
 serve both direct tools and programs. [Skills](https://github.com/zackbart/connecta/blob/main/src/skills.ts)
-owns the supplied usage instructions and connector guides.
+owns the supplied usage instructions, each endpoint's instructions
+(`endpointInstructions`), and connector guides.
 
 [Schema tests](https://github.com/zackbart/connecta/blob/main/test/meta-tool-schemas.test.ts),
 [search tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-search.test.ts),
 [call tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-call.test.ts),
 [skills tests](https://github.com/zackbart/connecta/blob/main/test/skills-extension.test.ts),
-and [surface tests](https://github.com/zackbart/connecta/blob/main/test/code-first-surface.test.ts)
+[surface tests](https://github.com/zackbart/connecta/blob/main/test/code-first-surface.test.ts),
+and [pool description tests](https://github.com/zackbart/connecta/blob/main/test/pool-description.test.ts)
 check the published contract. Guest parity and clause evidence are in
 [code-mode verification](./code-mode.md#verification).

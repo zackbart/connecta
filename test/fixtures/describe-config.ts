@@ -139,6 +139,7 @@ export function secretBearingDeployment() {
           tools: ["static_api"],
           members: ["agent:release-bot", "user_support"],
           owner: " support@workspace.example ",
+          description: " Support tier: tickets only. ",
         },
       },
       serverInfo: {

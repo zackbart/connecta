@@ -77,7 +77,9 @@ export function describeConfigSources(
           ? provided(raw.pools?.[key!]?.readOnly ?? raw.readOnly)
           : field === "owner"
             ? provided(raw.pools?.[key!]?.owner)
-            : provided(raw.pools);
+            : field === "description"
+              ? provided(raw.pools?.[key!]?.description)
+              : provided(raw.pools);
     else if (group === "modules") {
       source = provided(
         key === "ui" ? raw.ui : key === "vault" ? raw.vault : key === "activity" ? raw.activity : raw.accessTokens,

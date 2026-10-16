@@ -21,6 +21,17 @@ const RECOVERY =
  */
 export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs and call_destructive_tool may write. On a read-only endpoint, search omits write tools and every write call is refused; guides may still name them. The execute_code description says which this endpoint is. Never repeat a write to recover its output. ${RECOVERY}`;
 
+/**
+ * The instructions one endpoint serves: {@link CONNECTA_INSTRUCTIONS}, then
+ * the admitted pool's `description` after a fixed lead-in. Plain `/mcp` and a
+ * pool without a description serve the constant unchanged. The description
+ * comes from deployment config for the pool the request was admitted through;
+ * nothing a request sends reaches it.
+ */
+export function endpointInstructions(description?: string): string {
+  return description === undefined ? CONNECTA_INSTRUCTIONS : `${CONNECTA_INSTRUCTIONS} This endpoint: ${description}`;
+}
+
 export { USAGE_SKILL } from "./usage-guide.js";
 
 /** True when at least one of `connectors` carries a usage guide. */
