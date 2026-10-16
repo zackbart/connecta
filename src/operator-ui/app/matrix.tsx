@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { OperatorConnectorOverlay, OperatorUiContractV2 } from "../contract.js";
 import {
   connectorRunsAs,
@@ -17,6 +17,7 @@ export type MatrixRow = OperatorConnectorOverlay & { title: string };
 
 interface OpenCell {
   key: string;
+  rowId: string;
   title: string;
   column: MatrixColumn;
   cell: Exclude<MatrixCell, { kind: "none" }>;
@@ -26,6 +27,15 @@ interface OpenCell {
 interface Placement {
   block: "above" | "below";
   inline: "start" | "end" | "viewport";
+}
+
+/**
+ * Whether the browser can float the panel beside its chip with CSS anchors.
+ * Without them a floating panel would sit inside the table's scroller and be
+ * clipped, so the matrix shows the list in flow under the row instead.
+ */
+function anchorsSupported(): boolean {
+  return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("anchor-name: --matrix-open");
 }
 
 /** Room kept between the panel and its cell, and the viewport's edge. */
@@ -53,19 +63,27 @@ function placement(anchor: DOMRect, panel: { width: number; height: number }): P
 }
 
 /**
- * One cell's tools, beside the cell that opened it. Non-modal: focus moves in
- * so a screen reader reads the list, Escape or Tab returns it to the cell, and
- * a click elsewhere closes it. It renders inside its cell and is positioned by
- * the stylesheet alone: JS picks a side, never a coordinate, so the page
- * carries no inline styles.
+ * One cell's tools. Non-modal: focus moves in so a screen reader reads the
+ * list, Escape or Tab returns it to the cell, and a click elsewhere closes it.
+ * Floating, it renders inside its cell and the stylesheet positions it: JS
+ * picks a side, never a coordinate, so the page carries no inline styles.
+ * `inline` renders it in flow instead, for an expansion row.
  */
-function CellPopover({ open, onClose }: { open: OpenCell; onClose: (restoreFocus: boolean) => void }) {
+function CellPopover({
+  open,
+  inline,
+  onClose,
+}: {
+  open: OpenCell;
+  inline: boolean;
+  onClose: (restoreFocus: boolean) => void;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
   const focused = useRef(false);
   const [side, setSide] = useState<Placement | null>(null);
   const place = () => {
     const panel = ref.current;
-    if (!panel) return;
+    if (!panel || inline) return;
     const next = placement(open.anchor.getBoundingClientRect(), {
       width: panel.offsetWidth,
       height: panel.offsetHeight,
@@ -75,7 +93,7 @@ function CellPopover({ open, onClose }: { open: OpenCell; onClose: (restoreFocus
   useLayoutEffect(place, [open]);
   // Focus once it is placed: a hidden element cannot take focus.
   useEffect(() => {
-    if (!side || focused.current) return;
+    if ((!side && !inline) || focused.current) return;
     focused.current = true;
     ref.current?.focus();
   }, [side]);
@@ -101,7 +119,11 @@ function CellPopover({ open, onClose }: { open: OpenCell; onClose: (restoreFocus
       aria-label={label}
       tabIndex={-1}
       className="matrix-popover"
-      {...(side ? { "data-placement": side.block, "data-align": side.inline } : {})}
+      {...(inline
+        ? { "data-placement": "inline" }
+        : side
+          ? { "data-placement": side.block, "data-align": side.inline }
+          : {})}
       onKeyDown={(event) => {
         // The popover holds nothing to tab to; Tab and Escape both hand focus
         // back to its cell, so the next Tab continues along the row.
@@ -170,6 +192,7 @@ export function ConnectorMatrix({
   link: (row: MatrixRow) => ReactNode;
 }) {
   const [open, setOpen] = useState<OpenCell | null>(null);
+  const [inline] = useState(() => !anchorsSupported());
   const columns = matrixColumns(contract);
   const close = (restoreFocus: boolean) => {
     const anchor = open?.anchor;
@@ -198,46 +221,64 @@ export function ConnectorMatrix({
             {rows.map((row) => {
               const runsAs = connectorRunsAs(contract, row.id);
               return (
-                <tr key={row.id}>
-                  <th scope="row">{link(row)}</th>
-                  <td>
-                    <ConnectorStatus id={row.id} name={row.title} live={row} state={state} />
-                  </td>
-                  <td className="matrix-runs-as">{runsAs ? runsAsLabel(runsAs) : "—"}</td>
-                  {columns.map((column) => {
-                    const cell = matrixCell(contract, row.id, column);
-                    const name = matrixCellLabel(row.title, column, cell);
-                    const key = `${row.id}\u0000${column.path}`;
-                    const tone = column.readOnly ? " read-only" : "";
-                    return (
-                      <td key={column.path} className={`matrix-cell${tone}`}>
-                        {cell.kind === "none" ? (
-                          <span className="matrix-none" title={name}>
-                            <span aria-hidden="true">—</span>
-                            <span className="visually-hidden">{name}</span>
-                          </span>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              className={`matrix-chip ${cell.kind}${tone}`}
-                              aria-label={name}
-                              aria-haspopup="dialog"
-                              aria-expanded={open?.key === key}
-                              onClick={(event) => {
-                                if (open?.key === key) return close(false);
-                                setOpen({ key, title: row.title, column, cell, anchor: event.currentTarget });
-                              }}
-                            >
-                              {matrixCellText(cell)}
-                            </button>
-                            {open?.key === key ? <CellPopover open={open} onClose={close} /> : null}
-                          </>
-                        )}
+                <Fragment key={row.id}>
+                  <tr>
+                    <th scope="row">{link(row)}</th>
+                    <td>
+                      <ConnectorStatus id={row.id} name={row.title} live={row} state={state} />
+                    </td>
+                    <td className="matrix-runs-as">{runsAs ? runsAsLabel(runsAs) : "—"}</td>
+                    {columns.map((column) => {
+                      const cell = matrixCell(contract, row.id, column);
+                      const name = matrixCellLabel(row.title, column, cell);
+                      const key = `${row.id}\u0000${column.path}`;
+                      const tone = column.readOnly ? " read-only" : "";
+                      return (
+                        <td key={column.path} className={`matrix-cell${tone}`}>
+                          {cell.kind === "none" ? (
+                            <span className="matrix-none" title={name}>
+                              <span aria-hidden="true">—</span>
+                              <span className="visually-hidden">{name}</span>
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className={`matrix-chip ${cell.kind}${tone}`}
+                                aria-label={name}
+                                aria-haspopup="dialog"
+                                aria-expanded={open?.key === key}
+                                onClick={(event) => {
+                                  if (open?.key === key) return close(false);
+                                  setOpen({
+                                    key,
+                                    rowId: row.id,
+                                    title: row.title,
+                                    column,
+                                    cell,
+                                    anchor: event.currentTarget,
+                                  });
+                                }}
+                              >
+                                {matrixCellText(cell)}
+                              </button>
+                              {open?.key === key && !inline ? (
+                                <CellPopover open={open} inline={false} onClose={close} />
+                              ) : null}
+                            </>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  {inline && open?.rowId === row.id ? (
+                    <tr className="matrix-expansion">
+                      <td colSpan={3 + columns.length}>
+                        <CellPopover key={open.key} open={open} inline onClose={close} />
                       </td>
-                    );
-                  })}
-                </tr>
+                    </tr>
+                  ) : null}
+                </Fragment>
               );
             })}
           </tbody>

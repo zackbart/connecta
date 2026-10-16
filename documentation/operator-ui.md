@@ -47,13 +47,17 @@ a button named like "GitHub on /mcp/support: 1 tool, read-only"; Enter, Space or
 a click opens a popover listing exactly that cell's tool names, write tools
 marked, with the cell's runs-as. Escape or Tab returns focus to the cell. The
 popover opens below its cell, or above when the viewport has more room there,
-with a capped height that scrolls; the stylesheet positions it, and the page
-sets no inline styles. `GET /ui/api/config` is the browser's one gate: a 401
+with a capped height that scrolls; CSS anchor positioning places it, and the
+page sets no inline styles. A browser without anchor positioning gets the same
+list, with the same keys, in an expansion row under the connector. `GET /ui/api/config` is the browser's one gate: a 401
 shows sign-in, the private 404 shows a "No access" page naming who to ask, with
 Sign out or Change token, and a 200 renders by `role`. `/ui/data`, connector
 details, activity and tokens are requested only after the contract says
-`maintainer`. Until a role is known, the page shows its loading or error state
-and no navigation. A
+`maintainer`, and every such read checks the role again when it is sent, focus
+returns included. Until a role is known, the page shows its loading or error
+state and no navigation. The store keeps the last confirmed role through a
+failed refresh, and an answer with a different role clears everything read
+under the old one before it is accepted. A
 pool member sees one page on every path, until UI-3 of
 [#834](https://github.com/zackbart/connecta/issues/834): their pools with each
 URL and client setup, and the Endpoints tab alone. Connector

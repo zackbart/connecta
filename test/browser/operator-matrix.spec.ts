@@ -438,3 +438,54 @@ test("the matrix popover flips above at a short viewport, scrolls within its cap
   expect(await page.locator("[role=dialog][style], .matrix-popover[style]").count()).toBe(0);
   await noCsp(page);
 });
+
+test("without CSS anchors, a cell's tools open in flow under the row, unclipped, with the same keyboard behavior", async ({
+  page,
+}) => {
+  // A browser without anchor positioning: the matrix reads it from CSS.supports.
+  await page.addInitScript(`{
+    const supports = CSS.supports.bind(CSS);
+    CSS.supports = (...args) => (args.join(" ").includes("anchor") ? false : supports(...args));
+  }`);
+  await install(page, maintainer.contract, maintainer.data);
+  await page.goto(VISUAL_ORIGIN + "/connectors?view=matrix");
+  await page.getByLabel("Filter connectors").fill("github");
+  const table = page.getByRole("table", { name: "Connectors by endpoint", exact: true });
+  await expect(table.getByRole("rowheader")).toHaveText(["GitHub"]);
+  const cell = table.getByRole("button", { name: "GitHub on /mcp: all tools", exact: true });
+  await cell.focus();
+  await page.keyboard.press("Enter");
+  const panel = page.getByRole("dialog", { name: "GitHub on /mcp", exact: true });
+  await expect(panel).toBeFocused();
+  await expect(panel).toHaveAttribute("data-placement", "inline");
+  await expect(cell).toHaveAttribute("aria-expanded", "true");
+  // Its own row, under the connector's, inside the table.
+  await expect(table.locator("tr.matrix-expansion").getByRole("dialog")).toHaveCount(1);
+  await expect(panel).toContainText("Runs as Shared · saved Oct 1, 2026");
+  // Nothing clipped: the whole panel lies inside the table's scroller.
+  const scroller = (await page.locator(".table-scroll").boundingBox())!;
+  const box = (await panel.boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(scroller.y);
+  expect(box.y + box.height).toBeLessThanOrEqual(scroller.y + scroller.height);
+  expect(box.x).toBeGreaterThanOrEqual(scroller.x);
+  expect(box.x + box.width).toBeLessThanOrEqual(scroller.x + scroller.width);
+  expect(await page.evaluate('document.querySelectorAll(".matrix-table[style], .matrix-table [style]").length')).toBe(
+    0,
+  );
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(table.locator("tr.matrix-expansion")).toHaveCount(0);
+  await expect(cell).toBeFocused();
+  await expect(cell).toHaveAttribute("aria-expanded", "false");
+  // Space opens it, Tab hands focus back to the cell, a click elsewhere closes it.
+  await page.keyboard.press("Space");
+  await expect(panel).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(panel).toHaveCount(0);
+  await expect(cell).toBeFocused();
+  await cell.click();
+  await expect(panel).toBeVisible();
+  await page.getByRole("heading", { name: "Connectors", exact: true }).click();
+  await expect(panel).toHaveCount(0);
+  await noCsp(page);
+});
