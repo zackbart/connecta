@@ -113,15 +113,18 @@ reordering reads like a harmless refactor.
 An admitted non-preflight `/mcp` request then takes five steps in
 `src/routes/mcp.ts`:
 
-1. **Admit.** Modern `subscriptions/listen` requests take no permit: their
-   mirrored method and parsed body must both name the unsupported method.
-   They still pass auth, endpoint admission, and SDK validation, then receive HTTP
-   404 with JSON-RPC `-32601`. Their body classification and auth share the
-   configured request lifetime, starting before classification. Other requests
-   take one permit from the deployment-wide pool, taken before auth so an
-   unauthenticated flood costs a permit rather than a Clerk lookup, and held
-   until the response _body_ completes, the caller leaves, or its configured
-   lifetime ends, not until the handler returns.
+1. **Admit.** No request body is read before auth on any endpoint. A request
+   whose `Mcp-Method` header names `subscriptions/listen` takes no permit
+   before auth. After auth and endpoint admission connecta reads at most
+   64 KiB (`MAX_LISTEN_CLASSIFICATION_BYTES`) of it: past that it answers
+   413 `-33006` and stops reading. A body that confirms a modern listen stays
+   permit-free, passes SDK validation, and receives HTTP 404 with JSON-RPC
+   `-32601`; anything else takes a permit then, so the header alone bypasses
+   nothing. Auth and classification share the configured request lifetime.
+   Other requests take one permit from the deployment-wide pool, taken before
+   auth so an unauthenticated flood costs a permit rather than a Clerk lookup,
+   and held until the response _body_ completes, the caller leaves, or its
+   configured lifetime ends, not until the handler returns.
 2. **Authorize.** `/agent/<pool>` consults only the built-in `cta_` adapter
    (`authorizeAgent`), never with the runtime context that carries
    `ctx.access`. Human endpoints refuse a `cta_` token before recognition or
@@ -199,13 +202,14 @@ request-scoped sent-credential set and pass through `redactAgentOutput` before
 serialization. The SDK's `server/discover` response and registered meta-tool
 results use that same set; connector contexts retain only an opaque scope.
 
-| Refusal                             | HTTP status | Application code | Previous code |
-| ----------------------------------- | ----------- | ---------------- | ------------- |
-| Request capacity exhausted          | 503         | `-33001`         | `-31001`      |
-| Server shutting down                | 503         | `-33002`         | `-31002`      |
-| Request lifetime exceeded           | 504         | `-33003`         | none          |
-| Pool missing or refused             | 404         | `-33004`         | none          |
-| Origin or admitted access forbidden | 403         | `-33005`         | none          |
+| Refusal                              | HTTP status | Application code | Previous code |
+| ------------------------------------ | ----------- | ---------------- | ------------- |
+| Request capacity exhausted           | 503         | `-33001`         | `-31001`      |
+| Server shutting down                 | 503         | `-33002`         | `-31002`      |
+| Request lifetime exceeded            | 504         | `-33003`         | none          |
+| Pool missing or refused              | 404         | `-33004`         | none          |
+| Origin or admitted access forbidden  | 403         | `-33005`         | none          |
+| Listen classification body too large | 413         | `-33006`         | none          |
 
 These allocations are outside JSON-RPC's reserved `-32768..-32000` range and
 MCP's `-32020..-32099` range. The prior admission codes were also outside those

@@ -58,9 +58,25 @@ const SDK_BODY_BOUND = { maxRequestBodySize: Number.MAX_SAFE_INTEGER };
 // Identity, not a status/header a custom auth response could imitate.
 const deadlineResponses = new WeakSet<Response>();
 
-async function isModernListen(request: Request, signal: AbortSignal): Promise<boolean> {
+/**
+ * The most a `subscriptions/listen` classification reads. A listen is a small
+ * JSON-RPC request; this read happens before request admission, so it is
+ * bounded by this fixed cap rather than by the host's body limit (#857).
+ */
+export const MAX_LISTEN_CLASSIFICATION_BYTES = 64 * 1024;
+
+/**
+ * Whether an admitted, authenticated request is a modern `subscriptions/listen`.
+ * Reads at most `MAX_LISTEN_CLASSIFICATION_BYTES` of a clone, then stops and
+ * cancels the body: `"too_large"` past the cap, `"aborted"` when the request
+ * ended or its lifetime ran out while reading.
+ */
+async function classifyListen(
+  request: Request,
+  signal: AbortSignal,
+): Promise<"listen" | "other" | "too_large" | "aborted"> {
   const reader = request.clone().body?.getReader();
-  if (!reader) return false;
+  if (!reader) return "other";
   const onAbort = () => {
     void reader.cancel(signal.reason).catch(() => {});
     void request.body?.cancel(signal.reason).catch(() => {});
@@ -75,10 +91,14 @@ async function isModernListen(request: Request, signal: AbortSignal): Promise<bo
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > SDK_BODY_BOUND.maxRequestBodySize) return false;
+      if (bytes > MAX_LISTEN_CLASSIFICATION_BYTES) {
+        void reader.cancel().catch(() => {});
+        void request.body?.cancel().catch(() => {});
+        return "too_large";
+      }
       text += decoder.decode(value, { stream: true });
     }
-    if (signal.aborted) return false;
+    if (signal.aborted) return "aborted";
     const protocolVersion = request.headers.get("MCP-Protocol-Version");
     const method = request.headers.get("Mcp-Method");
     const route = classifyInboundRequest({
@@ -87,12 +107,13 @@ async function isModernListen(request: Request, signal: AbortSignal): Promise<bo
       ...(method !== null ? { mcpMethodHeader: method } : {}),
       body: JSON.parse(text + decoder.decode()),
     });
-    return (
-      route.kind === "modern" && route.messageKind === "request" && route.message.method === "subscriptions/listen"
-    );
+    return route.kind === "modern" && route.messageKind === "request" && route.message.method === "subscriptions/listen"
+      ? "listen"
+      : "other";
   } catch {
+    if (signal.aborted) return "aborted";
     // Leave unreadable, malformed, and legacy bodies to the normal SDK path.
-    return false;
+    return "other";
   } finally {
     signal.removeEventListener("abort", onAbort);
     reader.releaseLock();
@@ -693,39 +714,26 @@ export function createMcpRoute(opts: ServerOptions): {
             if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
           }),
         );
-        // Only a body-confirmed modern listen may skip admission. Trusting the
-        // method header alone would let a legacy tools/call bypass the pool.
+        // A request naming `subscriptions/listen` defers its permit: nothing of
+        // its body is read until auth and endpoint admission pass, and then at
+        // most MAX_LISTEN_CLASSIFICATION_BYTES (#857). Only a body-confirmed
+        // modern listen goes without a permit; trusting the header alone would
+        // let a legacy tools/call bypass the pool, so anything else takes one
+        // after classification. Every other request takes its permit here,
+        // before auth, and no body is read before auth on any path.
         const startedAt = Date.now();
         const maxDurationMs = opts.requestAdmission.maxDurationMs;
-        let listen = false;
-        if (request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen") {
-          const classify = Effect.promise(() => isModernListen(request, localAbort.signal));
-          const prepared =
-            maxDurationMs === undefined
-              ? Option.some(yield* classify)
-              : yield* classify.pipe(Effect.timeoutOption(Duration.millis(maxDurationMs)));
-          if (Option.isNone(prepared)) {
-            localAbort.abort(new Error("MCP request lifetime exceeded."));
-            return cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
-          }
-          listen = prepared.value;
-        }
-        const admission = listen
+        const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";
+        const refuseAdmission = (error: unknown): Effect.Effect<Response, unknown> => {
+          if (!(error instanceof ExecutorAdmissionError)) return Effect.fail(error);
+          if (error.code === "executor_cancelled") return Effect.fail(request.signal.reason ?? error);
+          if (error.code === "executor_overloaded") warnAdmissionRejected(error);
+          return Effect.succeed(cors(requestAdmissionFailure(sentSecrets, error)));
+        };
+        const admission = listenHeader
           ? Result.succeed(undefined)
           : yield* Effect.result(admitted(opts.requestAdmission, request.signal));
-        if (Result.isFailure(admission)) {
-          const error = admission.failure;
-          if (!(error instanceof ExecutorAdmissionError)) {
-            return yield* Effect.fail(error);
-          }
-          if (error.code === "executor_cancelled") {
-            return yield* Effect.fail(request.signal.reason ?? error);
-          }
-          if (error.code === "executor_overloaded") {
-            warnAdmissionRejected(error);
-          }
-          return cors(requestAdmissionFailure(sentSecrets, error));
-        }
+        if (Result.isFailure(admission)) return yield* refuseAdmission(admission.failure);
         const remainingMs = admission.success
           ? admission.success.remainingMs()
           : maxDurationMs === undefined
@@ -840,6 +848,20 @@ export function createMcpRoute(opts: ServerOptions): {
             return notFound();
           }
           const { access, readOnly, poolOwner } = scope;
+          if (listenHeader) {
+            const verdict = yield* Effect.promise(() => classifyListen(localRequest, localAbort.signal));
+            // The deadline timer aborts a stalled read; its body is already cancelled.
+            if (verdict === "aborted") {
+              return cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
+            }
+            if (verdict === "too_large") {
+              return cors(mcpRefusal(sentSecrets, 413, -33006, "MCP request body too large."));
+            }
+            if (verdict === "other") {
+              const late = yield* Effect.result(admitted(opts.requestAdmission, request.signal));
+              if (Result.isFailure(late)) return yield* refuseAdmission(late.failure);
+            }
+          }
           let scopedRegistry: RegistryView;
           try {
             scopedRegistry = opts.registry.scoped({
