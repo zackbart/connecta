@@ -101,7 +101,7 @@ test("INV-2: the matrix is a real table with scoped headers, named cells and run
   await install(page, maintainer.contract, maintainer.data);
   await page.goto(VISUAL_ORIGIN + "/connectors");
   // The list stays the default; the toggle keeps its choice in the URL.
-  await expect(page.getByRole("table", { name: "Connectors", exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Connectors", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Matrix", exact: true }).click();
   await expect(page).toHaveURL(VISUAL_ORIGIN + "/connectors?view=matrix");
   await expect(page.getByRole("button", { name: "Matrix", exact: true })).toHaveAttribute("aria-pressed", "true");

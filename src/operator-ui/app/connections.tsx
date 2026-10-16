@@ -1,4 +1,6 @@
+import type { ReactNode } from "react";
 import { useLocation } from "@tanstack/react-router";
+import type { OperatorConnectorOverlay } from "../contract.js";
 import type { UiConnector } from "../model.js";
 import {
   confirmCopy,
@@ -7,7 +9,6 @@ import {
   driftState,
   driftSummary,
   formatDate,
-  permissionLabel,
   registrationPathLabel,
   problemCopy,
   problemTone,
@@ -16,13 +17,25 @@ import {
 } from "../view.js";
 import { productName } from "./config.js";
 import { CredentialCard } from "./credentials.js";
-import { Callout, ConfirmBar, FixPrompt, NoticeLine, StateBlock, focusableId } from "./parts.js";
+import {
+  Badge,
+  Callout,
+  ConfirmBar,
+  FixPrompt,
+  NoticeLine,
+  Pill,
+  StateBlock,
+  SummaryRow,
+  focusableId,
+} from "./parts.js";
+import { Icon } from "./icons.js";
+import { sinceLabel } from "./connectors.js";
 import { askConfirm, cancelConfirm, disconnectOAuth, refreshConnector, startOAuth } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
-  clean: "Catalog drift · none",
-  warning: "Catalog drift · review",
-  unavailable: "Catalog drift · not observed",
+  clean: "No drift",
+  warning: "Drift",
+  unavailable: "Drift not observed",
 };
 
 /**
@@ -39,15 +52,19 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
   return (
     <>
       {/* Kept outside the counted panel, so the panel stays counts only. */}
-      <div id={`drift-${connector.id}`} className={`connector-drift ${state}`} data-drift={state}>
-        <p className="cap">{DRIFT_HEADING[state]}</p>
-        <p className="meta">{driftSummary(drift)}</p>
+      <div id={`drift-${connector.id}`} className={`connector-drift drift-${state}`} data-drift={state}>
+        <div className="drift-head">
+          <Pill status={state === "warning" ? "attention" : state === "clean" ? "healthy" : "neutral"}>
+            {DRIFT_HEADING[state]}
+          </Pill>
+          <span className="meta">{driftSummary(drift)}</span>
+        </div>
         {state === "unavailable" ? null : (
-          <ul className="drift-counts">
+          <ul className="metric-grid">
             {driftCounts(drift).map(({ key, label, count }) => (
-              <li key={key} className={count > 0 ? "drift-count flagged" : "drift-count"}>
-                <span className="drift-count-value">{count}</span>
-                <span className="drift-count-label">{label}</span>
+              <li key={key} className={count > 0 ? "metric flagged" : "metric"}>
+                <span className="metric-label">{label}</span>
+                <span className="metric-value">{count}</span>
               </li>
             ))}
           </ul>
@@ -147,6 +164,13 @@ function AuthActions({
   );
 }
 
+/** Who can change this connector's sign-in, in a word. */
+function managedBy(connector: UiConnector): string {
+  if (connector.permissions?.manageSharedAuth) return "You";
+  if (connector.permissions?.connectPersonal) return "Each person";
+  return "Deployment";
+}
+
 export function ConnectorAuth({ connector, state }: { connector: UiConnector; state: OperatorState }) {
   const id = connector.id;
   const name = connector.title || id;
@@ -154,42 +178,61 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
   const confirming = state.confirming?.connectorId === id ? state.confirming : null;
   const oauthConfirm = confirming && confirming.action !== "credential_remove" ? confirming : null;
   const local = state.connectorFailures[id];
-  const problem = !local && connector.status !== "loading" ? problemCopy(connector.problem) : null;
-  // One prompt per kind: a credential card already offering this one keeps it.
+  // One notice and prompt per kind: a credential card already reporting this one keeps it.
   const credentialFix = connector.credential?.error ? connector.credential.problem : undefined;
-  const fixKind = problem && connector.problem !== credentialFix ? connector.problem : undefined;
+  const problem =
+    !local && connector.status !== "loading" && connector.problem !== credentialFix
+      ? problemCopy(connector.problem)
+      : null;
+  const fixKind = problem ? connector.problem : undefined;
   return (
-    <div className="collection" data-connector={id}>
-      {connector.registrationPath ? (
-        <p className="meta">OAuth client: {registrationPathLabel(connector.registrationPath)}</p>
-      ) : null}
+    <div className="collection connector-auth" data-connector={id}>
       {connector.status === "loading" ? <StateBlock busy>Loading authentication details…</StateBlock> : null}
       {problem && connector.problem ? (
-        <Callout
-          tone={problemTone(connector.problem) === "warn" ? "notice" : "problem"}
-          data-problem={connector.problem}
-        >
-          {problem}
-        </Callout>
+        <div className={problemTone(connector.problem) === "warn" ? "problem-block warn" : "problem-block"}>
+          <Callout
+            tone={problemTone(connector.problem) === "warn" ? "notice" : "problem"}
+            data-problem={connector.problem}
+          >
+            {problem}
+          </Callout>
+          {fixKind ? <FixPrompt kind={fixKind} connectorId={id} name={name} /> : null}
+        </div>
       ) : null}
-      {fixKind ? <FixPrompt kind={fixKind} connectorId={id} name={name} /> : null}
       {local ? (
         <Callout tone="notice" data-load-failure={local}>
           {connectorLoadFailureCopy(local, productName)}
         </Callout>
       ) : null}
-      <p className="meta">{permissionLabel(connector)}</p>
-      <div className="actions">
-        {local ? null : <AuthActions connector={connector} name={name} manage={manage} state={state} />}
-        <button
-          className={local ? "btn primary" : "btn"}
-          type="button"
-          aria-label={`Refresh ${name}`}
-          disabled={connector.status === "loading"}
-          onClick={() => void refreshConnector(id)}
-        >
-          Refresh
-        </button>
+      <div className="auth-row">
+        <SummaryRow
+          className="auth-facts"
+          items={[
+            { label: "Mode", value: connector.authScope === "personal" ? "Per person" : "Shared" },
+            ...(connector.registrationPath
+              ? [
+                  {
+                    label: "OAuth client",
+                    value: <span data-oauth-client>{registrationPathLabel(connector.registrationPath)}</span>,
+                  },
+                ]
+              : []),
+            { label: "Managed by", value: <span data-managed-by>{managedBy(connector)}</span> },
+          ]}
+        />
+        <div className="actions">
+          {local ? null : <AuthActions connector={connector} name={name} manage={manage} state={state} />}
+          <button
+            className={local ? "btn primary" : "btn quiet"}
+            type="button"
+            aria-label={`Refresh ${name}`}
+            disabled={connector.status === "loading"}
+            onClick={() => void refreshConnector(id)}
+          >
+            <Icon name="refresh" size={14} />
+            Refresh
+          </button>
+        </div>
       </div>
       {oauthConfirm ? (
         <ConfirmBar
@@ -219,28 +262,77 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
           confirming={confirming?.action === "credential_remove"}
           notice={state.credentialNoticeFor === id ? state.credentialNotice : null}
         />
-      ) : (
-        <p className="meta">
-          No operator-managed credential slot is visible. Credentials configured in code stay in the deployment.
-        </p>
-      )}
+      ) : null}
     </div>
   );
 }
 
-export function ConnectorDiagnostics({ connector }: { connector: UiConnector }) {
+/** "12 s", "4 min", "3 h": how long ago the catalog was listed. */
+function ageLabel(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} d`;
+}
+
+/** Big value, small label: one diagnostic fact. */
+function Metric({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: string }) {
   return (
-    <div className="collection">
-      <DriftPanel connector={connector} />
-      {connector.resourceTemplateRefusals?.map((code) => (
-        <p className="meta" key={code}>
-          Resource dispatch refusal: {code}
-        </p>
-      ))}
-      {connector.catalogAccess ? (
-        <p className="meta">
-          Catalog cache {connector.catalogAccess.state} · {formatDate(connector.catalogAccess.observedAt)}
-        </p>
+    <div className={tone ? `metric ${tone}` : "metric"}>
+      <dt className="metric-label">{label}</dt>
+      <dd>
+        <span className="metric-value">{value}</span>
+        {sub ? <span className="metric-sub">{sub}</span> : null}
+      </dd>
+    </div>
+  );
+}
+
+export function ConnectorDiagnostics({
+  live,
+  connector,
+}: {
+  live: OperatorConnectorOverlay;
+  connector: UiConnector | undefined;
+}) {
+  return (
+    <div className="collection connector-diagnostics">
+      <dl className="metric-grid">
+        <Metric label="Catalog age" value={live.catalogAgeMs === null ? "—" : ageLabel(live.catalogAgeMs)} />
+        <Metric
+          label="Last call"
+          value={live.lastCall ? sinceLabel(live.lastCall.at) : "—"}
+          {...(live.lastCall
+            ? {
+                sub: (
+                  <>
+                    <span className={`dot ${live.lastCall.outcome}`} aria-hidden="true" />
+                    {live.lastCall.outcome}
+                  </>
+                ),
+              }
+            : {})}
+        />
+        {connector?.catalogAccess ? (
+          <Metric
+            label="Catalog cache"
+            value={connector.catalogAccess.state}
+            sub={formatDate(connector.catalogAccess.observedAt)}
+          />
+        ) : null}
+      </dl>
+      {connector ? <DriftPanel connector={connector} /> : <StateBlock busy>Diagnostics are loading.</StateBlock>}
+      {connector?.resourceTemplateRefusals?.length ? (
+        <div className="refusals">
+          <span className="meta">Resource refusals</span>
+          {connector.resourceTemplateRefusals.map((code) => (
+            <Badge key={code} tone="warn">
+              {code}
+            </Badge>
+          ))}
+        </div>
       ) : null}
     </div>
   );

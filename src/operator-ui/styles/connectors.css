@@ -1,5 +1,5 @@
 /*
- * Connectors: the list with one status per connector, and a connector's
+ * Connectors: the card grid with one status per connector, and a connector's
  * detail page with its Tools, Connection and Activity tabs.
  */
 
@@ -15,99 +15,438 @@
 .problem-action.btn {
   min-height: 1.625rem;
 }
+.segment-count {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-medium);
+}
+.segmented > button[aria-pressed="true"] .segment-count {
+  color: var(--text-2);
+}
+
+/* List: filters, then cards */
+
+.connector-toolbar,
+.catalog-toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.connector-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(18.5rem, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.connector-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: 1.125rem 1.25rem 1rem;
+  position: relative;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.connector-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-2);
+}
+.connector-card:has(h3 a:focus-visible) {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+.connector-card.attention.warn {
+  border-color: var(--warn-line);
+}
+.connector-card.attention.danger {
+  border-color: var(--danger-line);
+}
+.connector-card-top {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+.connector-card-name {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.connector-card-name h3 {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+.connector-card-name h3 a {
+  color: var(--text);
+  text-decoration: none;
+}
+/* The name's link covers the card, so the whole card opens the connector. */
+.connector-card-name h3 a::after {
+  border-radius: inherit;
+  content: "";
+  inset: 0;
+  position: absolute;
+}
+.connector-card-name h3 a:focus-visible {
+  outline: none;
+}
+.connector-card-sub {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.connector-card-sub code {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.connector-card-sub .badge {
+  position: relative;
+  z-index: 1;
+}
+.connector-card-top > .badge {
+  flex: none;
+}
+.connector-card-description {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  margin-top: calc(-1 * var(--space-2));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connector-card-foot {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  font-size: var(--text-xs);
+  gap: var(--space-3);
+  justify-content: space-between;
+  margin-top: auto;
+  min-height: 2.25rem;
+  padding-top: var(--space-3);
+}
+.connector-card-last {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.375rem;
+}
+.connector-card-last .dot {
+  vertical-align: 0.05em;
+}
+.connector-card-foot .problem-action {
+  position: relative;
+  z-index: 1;
+}
+
+/* Read and write tools in one bar */
+
+.tool-split {
+  align-items: center;
+  display: grid;
+  font-size: var(--text-xs);
+  gap: 0.375rem var(--space-3);
+  grid-template-columns: auto 1fr;
+}
+.tool-split-total {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+}
+.tool-split-counts {
+  color: var(--text-3);
+  justify-self: end;
+}
+.tool-split-bar {
+  border-radius: var(--radius-pill);
+  display: block;
+  grid-column: 1 / -1;
+  height: 0.375rem;
+  overflow: hidden;
+  width: 100%;
+}
+.tool-split-bar .track {
+  fill: var(--sunk);
+}
+.tool-split-bar .read {
+  fill: var(--ok);
+  opacity: 0.75;
+}
+.tool-split-bar .write {
+  fill: var(--warn);
+  opacity: 0.8;
+}
 
 /* Connector detail */
 
 #connectorView {
   min-width: 0;
 }
-#connectorView > .page-heading {
+#connectorView > .back-link {
   margin-bottom: var(--space-3);
 }
-#connectorView > .facts-row.conn-head {
-  color: var(--text-2);
+#connectorView > .page-heading {
+  align-items: flex-start;
+  margin-bottom: var(--space-6);
+}
+.conn-head {
+  display: grid;
+  gap: var(--space-3);
+}
+.conn-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2) var(--space-4);
 }
-#connectorView > .facts-row.conn-head > code {
-  color: var(--text-2);
-  font-size: var(--text-sm);
+.conn-badges {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
 }
-#connectorView > .catalog-description {
+.conn-badges > code {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+.conn-badges .tool-split {
+  display: flex;
+}
+.conn-badges .tool-split-bar {
+  order: 1;
+  width: 6rem;
+}
+.conn-badges .tool-split-counts {
+  order: 2;
+}
+.conn-description {
   color: var(--text-2);
   font-size: var(--text-md);
-  margin-top: var(--space-3);
-}
-#connectorView > [dir] {
-  margin-top: var(--space-8);
-}
-.catalog-description {
   max-width: 70ch;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+}
+#connectorView > [dir] {
+  margin-top: 0;
 }
 .connection-sections {
   gap: var(--space-5);
+  max-width: 56rem;
 }
 
 /* Tools tab */
-.schema-trigger.btn {
+
+.catalog-toolbar .filter {
+  flex: 1 1 16rem;
+  max-width: 22rem;
+}
+.tool-list {
+  list-style: none;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+}
+.tool-row {
+  align-items: center;
+  display: flex;
+  gap: var(--space-4);
+  justify-content: space-between;
+  padding: 0.875rem 1.25rem;
+  position: relative;
+  transition: background-color 0.12s;
+}
+.tool-row + .tool-row {
+  border-top: 1px solid var(--line);
+}
+.tool-row:hover {
+  background: var(--surface-2);
+}
+.tool-row-main {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.tool-name {
+  background: none;
+  border: 0;
   color: var(--text);
-  justify-content: flex-start;
-  min-height: auto;
+  cursor: pointer;
   padding: 0;
   text-align: left;
 }
-.schema-trigger.btn:hover {
-  background: none;
-  color: var(--link);
+/* The name's button covers the row, so the whole row opens the schema. */
+.tool-name::after {
+  content: "";
+  inset: 0;
+  position: absolute;
 }
-.schema-trigger code {
+.tool-name:focus-visible {
+  outline: none;
+}
+.tool-row:has(.tool-name:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--link);
+}
+.tool-name code {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   overflow-wrap: anywhere;
   white-space: normal;
 }
-
-/* Connection tab: drift counts */
-.connector-drift {
-  display: grid;
-  gap: 0.25rem;
+.tool-row:hover .tool-name code {
+  color: var(--link);
 }
-.drift-counts {
+.tool-description {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-row-badges {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  justify-content: flex-end;
+}
+
+/* Schema drawer */
+
+.schema-drawer {
+  display: grid;
+  gap: var(--space-5);
+}
+.schema-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.schema-description {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.schema-block {
   display: grid;
   gap: var(--space-2);
-  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
-  margin-top: var(--space-2);
 }
-.drift-count {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+.schema-block h3 {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Connection tab: auth */
+
+.auth-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+  justify-content: space-between;
+}
+.auth-row > .actions {
+  margin: 0;
+}
+/* An empty notice stays in the tree as a live region but takes no grid row. */
+.connector-auth > .notice:empty,
+.credential-card > .notice:empty {
+  position: absolute;
+}
+.problem-block {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
   border-radius: var(--radius-md);
   display: grid;
-  gap: 0.125rem;
-  padding: var(--space-3) var(--space-3);
+  gap: var(--space-3);
+  padding: 0.75rem 1rem;
 }
-.drift-count.flagged {
+.problem-block.warn {
   background: var(--warn-soft);
   border-color: var(--warn-line);
 }
-.drift-count-value {
-  font-size: var(--text-xl);
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--weight-bold);
-  letter-spacing: -0.02em;
+.problem-block > .msg.callout {
+  background: none;
+  border: 0;
+  padding: 0;
 }
-.drift-count.flagged .drift-count-value {
-  color: var(--warn);
-}
-.drift-count-label {
-  color: var(--text-2);
-  font-size: var(--text-xs);
+.problem-block > .fix-prompt {
+  padding-left: calc(var(--space-3) + 1rem);
 }
 
 /* Connection tab: credentials */
+
+.credential-card {
+  gap: var(--space-4);
+}
+.credential-card > .subcard-head {
+  align-items: center;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+}
+.credential-icon {
+  align-items: center;
+  background: var(--sunk);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  display: inline-flex;
+  flex: none;
+  height: 2rem;
+  justify-content: center;
+  width: 2rem;
+}
+.credential-icon.configured {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.credential-icon.missing {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.credential-icon.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.credential-heading {
+  display: grid;
+  flex: 1;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.credential-heading .meta {
+  font-size: var(--text-xs);
+}
+.credential-masked {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.credential-masked code {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  letter-spacing: 0.04em;
+}
+.credential-masked .meta {
+  font-size: var(--text-xs);
+}
+.credential-card > .actions {
+  margin: 0;
+}
 .credential-fields,
-.credential-field-summary,
 .credential-form {
   display: grid;
   gap: var(--space-3);
@@ -120,18 +459,121 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
 }
-.credential-field-summary > div {
+.credential-field-summary {
+  border-top: 1px solid var(--line);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.credential-field-summary > li {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
-  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: 0.625rem 0;
+}
+.credential-field-label {
+  flex: 1;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
 }
 .credential-form .actions {
   justify-content: flex-end;
 }
 
+/* Connection tab: diagnostics as tiles */
+
+.metric-grid {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.metric {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  padding: var(--space-3);
+}
+.metric > dd {
+  display: grid;
+  gap: 0.125rem;
+  margin: 0;
+}
+.metric.flagged {
+  background: var(--warn-soft);
+  border-color: var(--warn-line);
+}
+.metric-value {
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.metric.flagged .metric-value {
+  color: var(--warn);
+}
+.metric-label {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+.metric-sub {
+  align-items: center;
+  color: var(--text-2);
+  display: inline-flex;
+  font-size: var(--text-xs);
+  gap: 0.375rem;
+}
+.connector-diagnostics {
+  gap: var(--space-5);
+}
+.connector-drift {
+  display: grid;
+  gap: var(--space-3);
+}
+.drift-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.drift-head .meta {
+  font-size: var(--text-xs);
+}
+.refusals {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.refusals .meta {
+  font-size: var(--text-xs);
+}
+
 @media (max-width: 51.25rem) {
-  #connectorView > [dir] {
-    margin-top: var(--space-6);
+  .connector-toolbar .filter,
+  .catalog-toolbar .filter {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .connector-grid {
+    grid-template-columns: 1fr;
+  }
+  .tool-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .tool-row-badges {
+    justify-content: flex-start;
   }
 }

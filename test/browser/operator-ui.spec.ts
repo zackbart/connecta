@@ -536,14 +536,14 @@ test("disconnects and reconnects downstream OAuth", async ({ page }) => {
   await openAuthenticated(page);
   const row = await openRow(page, "CRM");
 
-  await expect(row.getByText("OAuth client: Client metadata document (CIMD)", { exact: true })).toBeVisible();
+  await expect(row.locator("[data-oauth-client]")).toHaveText("Client metadata document (CIMD)");
 
   // Disconnecting a healthy connection asks first, in the row.
   await row.getByRole("button", { name: "Disconnect CRM" }).click();
   const confirm = row.getByRole("group", { name: /Disconnect CRM\?/ });
   await confirm.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(row.locator("#oauthNotice-oauth")).toContainText("Disconnected.");
-  await expect(row.getByText("OAuth client:", { exact: false })).toHaveCount(0);
+  await expect(row.locator("[data-oauth-client]")).toHaveCount(0);
 
   // Connecting one that is not healthy does not: it opens the tab at once.
   const popup = page.waitForEvent("popup");
@@ -583,10 +583,10 @@ for (const [path, label] of [
     await openAuthenticated(page);
     await page.getByRole("link", { name: "Connectors", exact: true }).click();
     await expect(
-      page.getByRole("row").filter({ has: page.getByRole("link", { name: "CRM", exact: true }) }),
+      page.getByRole("listitem").filter({ has: page.getByRole("link", { name: "CRM", exact: true }) }),
     ).not.toContainText(label);
     const row = await openRow(page, "CRM", "auth");
-    await expect(row.getByText(`OAuth client: ${label}`, { exact: true })).toBeVisible();
+    await expect(row.locator("[data-oauth-client]")).toHaveText(label);
   });
 }
 
@@ -606,7 +606,7 @@ test("reports a typed revocation failure after local disconnect in the Auth tab"
   await expect(row.locator("#oauthNotice-oauth")).toHaveText(
     "Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.",
   );
-  await expect(row.getByText("OAuth client:", { exact: false })).toHaveCount(0);
+  await expect(row.locator("[data-oauth-client]")).toHaveCount(0);
   await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("raw-provider-secret");
 });
@@ -687,7 +687,7 @@ test("keeps a rejected credential save on screen and retryable", async ({ page }
 
   faults.clear();
   await row.getByRole("button", { name: "Save" }).click();
-  await expect(row.getByText("configured", { exact: true })).toBeVisible();
+  await expect(row.locator('[data-credential-state="configured"]')).toBeVisible();
 });
 
 test("reports a failed OAuth restart and re-enables the control", async ({ page }) => {
@@ -763,7 +763,7 @@ test("shows effective access without exposing auth controls to a reader", async 
   for (const title of ["Vaulted service", "Hosted proxy", "CRM"]) {
     const row = await openRow(page, title);
     await expect(row.getByRole("button", { name: `Refresh ${title}` })).toBeVisible();
-    await expect(row.getByText("Authentication for this connection is managed by your deployment.")).toBeVisible();
+    await expect(row.locator("[data-managed-by]")).toHaveText("Deployment");
   }
   await expect(
     page.getByRole("button", { name: /credential|OAuth|authoriz|Connect|Disconnect|Reconnect/i }),

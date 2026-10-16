@@ -90,15 +90,18 @@ fixed-subject Workspace connector. Connector health is not repeated per
 endpoint: a connector that needs attention gets a status dot linking to its
 Connection tab. Counts intersect live tools with the pool's declared tools
 (the `/mcp` matrix cells for the root), guarded grants' live verdicts, and
-read-only mode. Connectors lists each connector with one status badge, auth
-scope, tool count, and last call. The badge, the Overview, an endpoint's
-status dot, and a connector's own page share one verdict: the server's problem
-code first (so a failed catalog reads "Catalog failed", never "Connected"),
-then a failed detail read ("Couldn't load"), then a non-ok status, then catalog
-drift. A failed detail read marks its connector unavailable, so
-`connector_unavailable` beside one reads "Couldn't load" and offers no fix
-prompt. A connector that is not fine adds one action (Connect, Replace key,
-Inspect, or Review for drift) that opens Connection. A List / Matrix toggle (`?view=matrix`)
+read-only mode. Connectors shows one card per connector: its title and id, one
+status pill, a Shared or Per person badge, its tool count over a read/write
+bar, and how long ago its last call was. All, Needs attention and Healthy
+filter the cards, with their counts, beside a search field. The pill, the
+Overview, an endpoint's status dot, and a connector's own page share one
+verdict: the server's problem code first (so a failed catalog reads "Catalog
+failed", never "Connected"), then a failed detail read ("Couldn't load"), then
+a non-ok status, then catalog drift. A failed detail read marks its connector
+unavailable, so `connector_unavailable` beside one reads "Couldn't load" and
+offers no fix prompt. A connector that is not fine adds one action (Connect,
+Replace key, Inspect, or Review for drift) that opens Connection and counts as
+Needs attention. A List / Matrix toggle (`?view=matrix`)
 switches to a table of connectors by endpoint, `/mcp` first: each cell reads
 "all", a tool count, or a dash, read-only columns are tinted, and a Runs as
 column summarizes the `/mcp` cell, else the first pool's. A cell with tools is
@@ -127,9 +130,15 @@ answer with a different role clears everything read under the old one and
 admits the viewer again. A
 pool member sees the [member page](#use-the-member-page) on every path, with
 no tabs. Connector
-detail has Tools, Connection, and Activity tabs. Connection combines
-authentication (including the OAuth client mechanism), catalog diagnostics,
-one fix prompt beside each problem it reports, and a Configuration card. Its
+detail opens with its title, status pill, id, auth badge and read/write bar,
+then Tools, Connection, and Activity tabs. Tools lists each tool by its mono
+address with a Read or Write badge and annotation badges (Destructive,
+Open world), filtered by search and an All / Read / Write control; a tool opens
+its schema in a side drawer. Connection has an Authentication card (mode, the
+OAuth client mechanism, who manages it, the OAuth actions, and the credential
+card with its masked last four, field states, and Replace, Test and Remove),
+a Diagnostics card of tiles (catalog age, last call, drift counts), one fix
+prompt beside each problem it reports, and a Configuration card. Its
 first badge row names the connector's kind (Remote MCP, HTTP API or Custom),
 provider, auth scope (Shared account or Per person), endpoint host and usage
 guide. Its auth row names the mode (OAuth, Headers, Request token, No auth, or

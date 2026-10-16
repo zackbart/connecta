@@ -475,12 +475,10 @@ test("INV-10: focus after OAuth grant commit refreshes auth status", async ({ pa
 test("INV-5: unreadable credential is unavailable and recovers without reload", async ({ page }) => {
   failMetadata = true;
   await page.goto(`${origin}/connectors/key#connection`);
-  await expect(page.locator("#credential-key .subcard-head .meta")).toContainText("unavailable");
-  await expect(page.locator("#credential-key .subcard-head .meta")).not.toContainText("not configured");
+  await expect(page.locator("#credential-key")).toHaveAttribute("data-credential-state", "unavailable");
   failMetadata = false;
   await focus(page);
-  await expect(page.locator("#credential-key .subcard-head .meta")).toContainText("configured");
-  await expect(page.locator("#credential-key .subcard-head .meta")).not.toContainText("unavailable");
+  await expect(page.locator("#credential-key")).toHaveAttribute("data-credential-state", "configured");
 });
 
 for (const path of ["/ui/data", "/ui/api/config", "/ui/connectors/oauth"]) {

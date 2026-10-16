@@ -737,21 +737,6 @@ export function connectorVerdict(
 }
 
 /**
- * What this identity may do with a connector, in one line. Being able to use it
- * is implied by seeing it at all, so the sentence covers authentication, which
- * is the part that differs between operators.
- */
-export function permissionLabel(connector: UiConnector): string {
-  if (connector.permissions?.manageSharedAuth) {
-    return "You can manage shared authentication for this connection.";
-  }
-  if (connector.permissions?.connectPersonal) {
-    return "You can connect your own account to this connection.";
-  }
-  return "Authentication for this connection is managed by your deployment.";
-}
-
-/**
  * Hosted-provider catalog drift, as an operator reads it
  * ([#343](https://github.com/zackbart/connecta/issues/343)).
  *
@@ -996,19 +981,6 @@ export function credentialProblemCopy(problem: string | undefined): string {
     return "Credential status is unavailable. Retry the status check before replacing or removing the credential.";
   }
   return "The stored credential can't be used. Replace it, or remove it and add a new one.";
-}
-
-export function credentialStateLabel(credential: {
-  configured: boolean | null;
-  problem?: string;
-  fields?: unknown[];
-  lastFour?: string;
-  updatedAt?: string;
-}): string {
-  if (credential.configured === null || credential.problem === "credential_unreadable") return "unavailable";
-  if (!credential.configured) return "not configured";
-  const masked = "configured";
-  return credential.updatedAt ? `${masked} · updated ${formatDate(credential.updatedAt)}` : masked;
 }
 
 /** Gate copy for each browser-auth shape, so the sign-in state is never a blank page. */
