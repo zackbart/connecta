@@ -55,6 +55,8 @@ npm start
 ```
 
 The local commands read the process environment; they do not load `.env`.
+To run them with the values in `.env`, export it into the shell first:
+`set -a; . ./.env; set +a`.
 Compose reads `.env` for the container commands below. Keep the returned
 secret in a client secret store and out of source control and logs. A
 rotation cannot recover an old secret; only the hash persists. An agent has no
@@ -118,9 +120,9 @@ server, then copy the old file into the database once, before the first start:
 npx connecta migrate-state .connecta-state.json .connecta.sqlite
 ```
 
-In the container, run it against the volume, e.g. `docker compose run --rm
-connecta npx connecta migrate-state /data/connecta-state.json
-/data/connecta.sqlite`. It copies every live entry with its expiry, keeps any
+In the container, mount the old file and import it into the volume:
+`docker compose run --rm -v "$PWD/.connecta-state.json:/import/state.json:ro"
+connecta npx connecta migrate-state /import/state.json /data/connecta.sqlite`. It copies every live entry with its expiry, keeps any
 key the database already holds, and never changes the old file; delete that
 once the deployment is verified. The 0.28 activity log
 (`.connecta-activity.jsonl`) is not imported; history starts fresh.
@@ -139,9 +141,9 @@ off. `.env.example` lists each one, and `npm run typecheck` checks every module
 whether or not it is switched on.
 
 The template explicitly enables `ui: operatorUi()` from
-`@zackbart/connecta/ui`. Open `http://localhost:8787/` and supply a
-declared agent's token to inspect Connections. Sign in with Clerk for human
-connection management. Omit that option and import for an API-only
+`@zackbart/connecta/ui`. Open `http://localhost:8787/` and sign in with
+Clerk as a maintainer to inspect Connections and manage connections. Agent
+`cta_` tokens are refused by every human route, the operator UI included. Omit that option and import for an API-only
 server. OAuth callbacks remain in core even with no UI.
 
 The page labels each tool as a read or write and each endpoint as writable or
@@ -215,13 +217,13 @@ Keep this key outside the database. Losing it makes saved values unreadable;
 upgrades must reuse it. The shipped `time` connector declares no credential
 slot. Add `credential: { label: "API token" }` to an `api()` connector and read
 it through `await ctx.credential?.get()`, or use a Notion
-connector with `auth: { type: "token" }`, which declares its own slot. Authorized humans manage the slot inside that
-connection on `/`; there is no separate Credentials tab.
+connector with `auth: { type: "token" }`, which declares its own slot. Maintainers manage the slot on that
+connector's Connection tab (`/connectors/<id>`); there is no separate Credentials tab.
 
 In 0.25.0, this vault also seals downstream OAuth tokens on their first read.
 That is a one-way state migration for those tokens: rolling back to 0.24.x
 requires authorizing each OAuth connector again. See the
-[0.25.0 changelog](../../CHANGELOG.md#0250--2026-09-23) before upgrading a
+[0.25.0 changelog](https://github.com/zackbart/connecta/blob/main/CHANGELOG.md#0250--2026-09-23) before upgrading a
 deployment with existing OAuth connections.
 
 A saved replacement takes effect on the next call. Connecta tests credentials
@@ -273,10 +275,11 @@ from `CONNECTA_TOKEN`; it never accepts the secret as a command-line argument.
 Remote URLs must use HTTPS.
 
 A fully-wired deployment reports exactly the same line as a bare one —
-connector count, QuickJS executed, six tools, plus any catalog drift:
+connector count, the executor, the tool count, the negotiated MCP version, and
+the package version:
 
 ```text
-Connecta doctor passed: 1 connector(s), QuickJS executed, prescribed six-tool surface.
+Connecta doctor passed: 1 connector(s), QuickJS executed, prescribed 6-tool surface, MCP <version>, package <version>.
 ```
 
 `QuickJS` is this deployment's sandbox, reported by the deployment itself —

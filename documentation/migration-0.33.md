@@ -127,7 +127,12 @@ maintainer issues, rotates, and revokes; nothing outside code adds, renames,
 or rebinds one, and removing a name stops its token on the next request.
 
 1. Add `agents: ["<name>", …]` and keep `accessTokens(storage)` on the same
-   storage and key namespace. Drop `maxActive`.
+   storage and key namespace. Drop `maxActive`. A Node template deployment
+   from before 0.33 also copies `src/rotate-token.ts` and `src/adopt-token.ts`
+   from `node_modules/@zackbart/connecta/templates/node/src/`, deletes
+   `src/provision-token.ts`, and replaces the `provision-token` and `doctor`
+   scripts with the installed template's `rotate-token`, `adopt-token`, and
+   `doctor` (`connecta doctor --pool <pool>`) scripts.
 2. Keep each machine's existing secret by adopting its token once:
    `npm run adopt-token` lists the tokens that can be adopted, and
    `npm run adopt-token -- <token-id> <agent>` binds one (Node template), or

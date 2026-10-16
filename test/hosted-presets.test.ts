@@ -13,6 +13,7 @@ import notionLiveGuideChanges from "./fixtures/notion-814-guide-changes.json";
 import callAdmissionGuideChanges from "./fixtures/cloudflare-lookup-admission-801-guide-changes.json";
 import notionAdmissionGuideChanges from "./fixtures/notion-token-admission-813-guide-changes.json";
 import restAdmissionGuideChanges from "./fixtures/rest-write-admission-812-guide-changes.json";
+import docsCorrectnessGuideChanges from "./fixtures/docs-correctness-guide-changes.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
 import { classifyTool } from "../src/tool-safety.js";
 import { providerFixtures } from "./providers.generated.js";
@@ -51,6 +52,8 @@ function expectedGuide(name: Name, content: string): string {
   const callAdmission = callAdmissionGuideChanges as Partial<Record<Name, string[][]>>;
   const admission = notionAdmissionGuideChanges as Partial<Record<Name, string[][]>>;
   const restAdmission = restAdmissionGuideChanges as Partial<Record<Name, string[][]>>;
+  // The docs correctness pass corrects argument names and write lists.
+  const docsCorrectness = docsCorrectnessGuideChanges as Partial<Record<Name, string[][]>>;
   const changes = Object.hasOwn(configChanges, name) ? [] : guideChanges[name];
   for (const [from, to] of [
     ...changes,
@@ -61,6 +64,7 @@ function expectedGuide(name: Name, content: string): string {
     ...(callAdmission[name] ?? []),
     ...(admission[name] ?? []),
     ...(restAdmission[name] ?? []),
+    ...(docsCorrectness[name] ?? []),
   ])
     content = content.replaceAll(from!, to!);
   return content;

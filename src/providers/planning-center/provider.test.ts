@@ -1444,7 +1444,9 @@ describe("Planning Center excludeApps", () => {
     expect(peopleOnly.description).toBe(
       "Planning Center church management — People and Registrations: Downtown campus staff operations",
     );
-    expect(guide(peopleOnly).content).toContain("is the `personId` for every People record.");
+    expect(guide(peopleOnly).content).toContain(
+      "is the person id (`personId` argument, `person_id` field) for every People record.",
+    );
     expect(guide(peopleOnly).content).toContain(
       "- Registrations: read-only. Nobody can be registered through the API.\n",
     );

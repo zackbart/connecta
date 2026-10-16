@@ -197,7 +197,9 @@ CF_ACCESS_CLIENT_ID='<access-service-id>' CF_ACCESS_CLIENT_SECRET='<access-servi
 
 The service headers admit the health probe at the edge; only the `cta_` token
 authenticates the agent endpoint inside Connecta. If the operator UI is enabled, maintainer-authenticated
-`connecta doctor --config --url <public-url>` prints the caller-scoped
+`connecta doctor --config --url <public-url>` (on Node, `CONNECTA_TOKEN` set to a
+maintainer's Clerk OAuth access token; Access on Workers has no non-browser
+maintainer credential, so use the UI there) prints the caller-scoped
 configuration snapshot as JSON. It runs no diagnostic program and prints no
 raw HTTP failure body. [Operator UI](./operator-ui.md) describes the returned
 configuration, live facts, and permission rules. The config route is a human

@@ -128,8 +128,8 @@ Hosted Notion MCP is a separate OAuth connector.
   `data_sources`, usually one. `integration_search` returns data sources
   directly and skips that step.
 - `integration_get_data_source_schema` and `integration_query_data_source`
-  take the **data_source_id**, and so does `integration_create_page` when
-  adding a row.
+  take the **data_source_id**, and `integration_create_page` takes it as
+  `parent_data_source_id` when adding a row.
 
 So the sequence for "find rows in this database" is the database read, then
 `integration_get_data_source_schema`, then `integration_query_data_source`.

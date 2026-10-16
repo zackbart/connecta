@@ -174,7 +174,7 @@ never select an identity, grant, connector view, or pool. Direct and program
 activity records retain only the self-declared `clientName` and `clientVersion`,
 validated by one ASCII grammar at the record builder, SQL write/read boundaries,
 and authenticated activity read route. Names match
-`[A-Za-z0-9][A-Za-z0-9 ._@/+-]{0,63}`; versions match
+`[A-Za-z0-9@][A-Za-z0-9 ._@/+-]{0,63}`; versions match
 `[A-Za-z0-9][A-Za-z0-9._+-]{0,31}`, each as a whole string. Names allow up to
 64 characters, versions up to 32. `__proto__`, `constructor`, and `prototype`
 are reserved. Invalid values are absent, never truncated or escaped. Capabilities and other client metadata never enter activity.
@@ -1253,7 +1253,7 @@ Maintained providers act as the caller downstream. `src/connector-caller.ts`
 attaches the admitted identity beside the request-scoped context, readable only
 by in-repo code and set from authorization, never arguments. Google Workspace
 domain-wide delegation
-(`src/providers/google/`, first consumed by `./providers/gmail`) hands the
+(`src/providers/_shared/google/`, first consumed by `./providers/gmail`) hands the
 admitted identity to a deployment-config `subject` function and mints a
 service-account token as whatever Workspace address it returns. The caller
 carries whether an inbound provider _authenticated_ it: an open deployment
@@ -1510,7 +1510,7 @@ src/
   catalog-drift.ts    reviewed classifications and the drift counts a refresh produces
   provider.ts         defineProvider(): the one maintained-provider shape
   activity.ts         optional history factory and best-effort recorder
-  auth/               bearer, Cloudflare Access, clerk (optional peer), downstream OAuth (remote and static)
+  auth/               Cloudflare Access, clerk (optional peer), downstream OAuth (remote and static)
   executors/          the QuickJS pool and child (Node only)
   node.ts             listen() (Node only)
   d1.ts, sqlite.ts    the two storage drivers; storage/ holds the SQL core and key families

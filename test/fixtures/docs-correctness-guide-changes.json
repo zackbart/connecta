@@ -1,0 +1,34 @@
+{
+  "mixpanel": [
+    [
+      "Projects with Data Views may also require `workspace_id`.",
+      "Projects with Data Views may also require `workspace_id`, which the query and report tools accept; `export_events` and `import_events` do not."
+    ],
+    [
+      "Use `query_retention` or hosted MCP for an existing saved Retention report.",
+      "Use hosted MCP for an existing saved Retention report; `query_retention` recomputes retention from events and dates."
+    ],
+    [
+      "Treat every create, update, edit, merge, dismiss, duplicate, or delete operation as a write.",
+      "Treat every create, update, edit, rename, fill, merge, dismiss, duplicate, or delete operation as a write."
+    ]
+  ],
+  "notion": [
+    [
+      "take the **data_source_id**, and so does `integration_create_page` when\n  adding a row.",
+      "take the **data_source_id**, and `integration_create_page` takes it as\n  `parent_data_source_id` when adding a row."
+    ]
+  ],
+  "revenuecat": [
+    [
+      "Treat every create, update, archive, unarchive, attach, detach, delete, publish, unpublish, grant, assign, and submit operation as a write.",
+      "Treat every operation other than a `get-` or `list-` read as a write, including create, update, archive, duplicate, validate, start, attach, detach, delete, publish, grant, assign, and submit."
+    ]
+  ],
+  "vercel": [
+    [
+      "- `deploy_to_vercel` and `import-claude-design-from-url` can create or update live projects.",
+      "- `web_fetch_vercel_url` runs application code and is reviewed as destructive; the toolbar reply, reaction, edit, and resolve tools are writes.\n- `deploy_to_vercel` and `import-claude-design-from-url` can create or update live projects."
+    ]
+  ]
+}

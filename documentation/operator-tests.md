@@ -128,8 +128,8 @@ non-Linux hosts. Do not commit Darwin baselines.
 When Docker is unavailable, use the **Operator snapshots** workflow:
 
 ```sh
-git push --force-with-lease origin ui/834-shell
-gh workflow run operator-snapshots.yml --ref ui/834-shell
+git push --force-with-lease origin <branch>
+gh workflow run operator-snapshots.yml --ref <branch>
 # Read the completed run ID from the Actions page or gh run list.
 gh run download RUN_ID --name operator-linux-snapshots \
   --dir test/browser/operator-visual.spec.ts-snapshots

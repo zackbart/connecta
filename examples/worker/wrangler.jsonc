@@ -18,7 +18,7 @@
     "CONNECTA_MAINTAINERS": "operator@example.com",
   },
 
-  // Local-only Access identity. Remove this block to exercise the
+  // Local-only Access identity (Wrangler 4.123.0 or later). Remove this block to exercise the
   // unauthenticated path in `wrangler dev`; production identity comes from the
   // Worker-level Access application, not from this file.
   "access": {
