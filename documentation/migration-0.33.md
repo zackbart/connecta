@@ -210,7 +210,8 @@ membership contract.
 In 0.32 a `cta_` token reached a Workspace connector's `subject` mapping,
 which usually answered nothing for a caller without a principal. In 0.33 an
 agent never reaches the mapping. It acts as the `owner` of the pool it came
-through, and fails `auth_required` in a pool without one. People always act
+through; in a pool without one the connector is absent for it, as a personal
+connector is. People always act
 as themselves through the mapping, in any pool. A fixed `subject` address
 still applies to every caller.
 
@@ -346,6 +347,6 @@ pools: {
 5. For Workspace, call a read in an agent's personal pool and confirm it acts
    as the pool's owner. In the base pool, confirm Workspace connectors are
    absent: search finds none of their tools and a call fails
-   `unknown_address`. `auth_required` is what an agent gets only in a pool
-   without an owner that does list a Workspace connector.
+   `unknown_address`. The same holds in any pool without an owner, even one
+   that lists a Workspace connector with a subject mapping.
 6. Confirm each `<agent>-<user>` pool lists no other person in `members`.

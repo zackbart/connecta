@@ -394,7 +394,11 @@ including dependencies inherited from pages read during the run. Downstream skil
 resource content requires a whole-connector grant on every page. Local guides and catalog
 metadata require the contributing connector or tool to remain visible, including
 caught catalog-load errors, unknown-tool failures, and recovery messages that
-list visible connectors or local guides. Returns with no downstream calls still
+list visible connectors or local guides. No-match search guidance also retains
+the connectors it names or summarizes by count, including matches to connector
+titles; scoped guides and summaries, absence rosters, and catalog errors retain
+their contributors. Search counts, ranking, and term analysis also retain every
+searched connector, including matches outside the returned page. Returns with no downstream calls still
 require matching identity, origin and endpoint, current auth, and pool membership. A page must
 match those bindings and pass current auth, connector/tool grants, pool membership,
 and read-only checks. Old entries lacking bindings fail closed. A random UUID is a

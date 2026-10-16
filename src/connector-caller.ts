@@ -9,7 +9,8 @@
 //   Workspace through domain-wide delegation (`src/providers/_shared/google/`) — which
 //   hand the identity to a deployment-config function that names the
 //   downstream subject (PRINCIPLES.md INV-3, #678), or, for an agent, use the
-//   admitted pool's configured owner (decisions/0006). The provider never
+//   admitted pool's configured owner (decisions/0006), and the scoped registry
+//   view hides the connector from an agent whose pool has none. The provider never
 //   decides whose account to open; config does, from this.
 //
 // Core sets it from the authorization that admitted the request, on the scoped

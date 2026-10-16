@@ -18,9 +18,8 @@ Connection purpose: <!-- endfragment -->
 ## Whose forms
 
 Every call reaches only the forms the Workspace user deployment config maps
-the caller to can open; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names a user. A call with none mapped, or from an agent
-whose pool has no owner, fails `auth_required`; only an operator can change
-either. A form id
+the caller to can open; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names a user. A call with none mapped fails `auth_required`; only an operator can change
+that. A form id
 that does not exist and one not shared with that user fail alike, as
 `connector_call_failed`: Google does not say which.
 

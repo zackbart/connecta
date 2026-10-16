@@ -12,8 +12,10 @@
  * Workspace address, and the provider reads the identity core attached beside
  * the context. An agent, which has no Workspace account, acts instead as the
  * `owner` of the pool it came through, which core copies from that pool's
- * config beside the identity; the mapping never sees an agent, and an agent
- * in a pool without an owner fails `auth_required` (decisions/0006). A fixed
+ * config beside the identity; the mapping never sees an agent. In a pool
+ * without an owner the connector is absent for agents (core's scoped
+ * registry view hides it), and this provider still fails `auth_required` if
+ * one reaches it anyway (decisions/0006). A fixed
  * `subject` address is every caller's, owners aside. No tool argument,
  * header, or program can name the subject — every product's base URL is
  * confined beneath `users/me`, or its product's equivalent, so the token's
@@ -76,7 +78,7 @@ export type { GoogleServiceAccount } from "./service-account.js";
  * for a caller who has none — that call then fails closed. It is never called
  * for an open deployment's anonymous requests, for a call no request
  * admitted, or for an agent: an agent acts as the `owner` of the pool it
- * came through, and fails closed in a pool without one. It may be async, for
+ * came through, and never sees the connector in a pool without one. It may be async, for
  * a directory lookup (a Clerk user id to an email, say), and receives the
  * call's cancellation signal for that; it runs once per tool call and should
  * cache what it fetches. A string is one fixed account for every caller who
@@ -192,6 +194,8 @@ async function subjectFor(provider: string, subject: GoogleWorkspaceSubject, ctx
   // An agent has no Workspace account of its own. It acts as the owner of the
   // pool it came through, which core copied from that pool's config, and the
   // mapping, which answers for people, is never asked about it (decisions/0006).
+  // Core's scoped view already hides the connector from an agent without an
+  // owner; this refusal is the fallback for any context built without it.
   if (caller.identity.agent !== undefined) {
     if (caller.pool !== undefined && isWorkspaceAddress(caller.poolOwner)) return caller.poolOwner;
     throw new ConnectorCallError(

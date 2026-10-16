@@ -133,7 +133,8 @@ export type OperatorRunsAs =
   | { kind: "shared"; source: OperatorSharedSource; savedAt: string | null }
   | { kind: "personal"; connectedMembers: number; members: number }
   // Mapping subject: humans act as themselves; agents act as the pool owner.
-  // `agents` is null on plain /mcp (`pool: null`), which admits no agents.
+  // `agents` is null on plain /mcp (`pool: null`), which admits no agents, and
+  // in an ownerless pool, whose agents do not see the connector.
   | { kind: "workspace"; humans: "self"; agents: string | null }
   // Fixed subject: every caller acts as it.
   | { kind: "workspaceFixed"; subject: string };

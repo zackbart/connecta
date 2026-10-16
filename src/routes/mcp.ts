@@ -26,6 +26,7 @@ import { ExecutorAdmissionError, type AdmissionController, type AdmissionLease }
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
+import type { ConnectorCaller } from "../connector-caller.js";
 import { endpointInstructions } from "../skills.js";
 import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
@@ -865,6 +866,18 @@ export function createMcpRoute(opts: ServerOptions): {
               if (Result.isFailure(late)) return yield* refuseAdmission(late.failure);
             }
           }
+          // The caller rides on the view, and the paging recheck builds the
+          // same one: an agent's Workspace visibility depends on the owner.
+          const callerFor = (identity: typeof authz.identity, owner: string | undefined): ConnectorCaller => ({
+            identity,
+            // `authorize` admits an open deployment's every request as the
+            // anonymous actor; only a provider's `ok` is an authentication.
+            authenticated: opts.config.auth.length > 0,
+            // Both pool endpoints build the caller here from the same
+            // admitted scope, so an agent at /agent/<pool> carries the owner.
+            ...(poolName !== undefined ? { pool: poolName } : {}),
+            ...(owner !== undefined ? { poolOwner: owner } : {}),
+          });
           let scopedRegistry: RegistryView;
           try {
             scopedRegistry = opts.registry.scoped({
@@ -886,11 +899,12 @@ export function createMcpRoute(opts: ServerOptions): {
                 // Paging re-admits the caller at this endpoint, as a new request would.
                 const currentScope = scopeFor(current);
                 if (!currentScope) return false;
-                const { access: currentAccess, readOnly: currentReadOnly } = currentScope;
+                const { access: currentAccess, readOnly: currentReadOnly, poolOwner: currentOwner } = currentScope;
                 const view = opts.registry.scoped({
                   ...currentAccess,
                   ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
                   ...(current.principalKey ? { principalKey: current.principalKey } : {}),
+                  caller: callerFor(current.identity, currentOwner),
                 });
                 if (classification === "write" && currentReadOnly) return false;
                 if (address === undefined) return true;
@@ -921,16 +935,7 @@ export function createMcpRoute(opts: ServerOptions): {
                   );
                 }
               },
-              caller: {
-                identity: authz.identity,
-                // `authorize` admits an open deployment's every request as the
-                // anonymous actor; only a provider's `ok` is an authentication.
-                authenticated: opts.config.auth.length > 0,
-                // Both pool endpoints build the caller here from the same
-                // admitted scope, so an agent at /agent/<pool> carries the owner.
-                ...(poolName !== undefined ? { pool: poolName } : {}),
-                ...(poolOwner !== undefined ? { poolOwner } : {}),
-              },
+              caller: callerFor(authz.identity, poolOwner),
             });
           } catch {
             return cors(mcpRefusal(sentSecrets, 403, -33005, "MCP access is forbidden."));

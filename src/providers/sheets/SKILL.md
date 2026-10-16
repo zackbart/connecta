@@ -19,8 +19,8 @@ Connection purpose: <!-- endfragment -->
 
 Every call acts as the Workspace account deployment config maps the caller
 to; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument
-names an account. A call with none mapped, or from an agent whose pool has
-no owner, fails `auth_required`; only an operator can change either. An id that is
+names an account. A call with none mapped fails `auth_required`; only an operator can change
+that. An id that is
 unknown or not shared with this person fails `connector_call_failed` (or
 `provider_permission_denied` when Google refuses access) — Google does not
 say which; check the id or ask the owner to share it.

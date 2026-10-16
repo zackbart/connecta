@@ -906,7 +906,10 @@ export class CatalogService {
     return withAuthorizationHandoff(this.requestScope, error);
   }
 
-  async search(args: CatalogSearchArgs): Promise<CatalogSearchPage> {
+  async search(
+    args: CatalogSearchArgs,
+    onCatalogReference?: (connector: string, tool?: string) => void,
+  ): Promise<CatalogSearchPage> {
     if (args.query !== undefined && typeof args.query !== "string") {
       throw new DiscoveryPolicyError(
         "invalid_args",
@@ -1304,6 +1307,16 @@ export class CatalogService {
         : "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches.";
     };
     const guidance = searchGuidance();
+    // Counts, ranking, and term analysis use the whole searched corpus, not
+    // just this page's tools. Bind every searched connector, including failed
+    // catalogs and off-page matches, so paging cannot reveal a hidden
+    // connector's contribution. Keep provenance host-only.
+    for (const connector of connectors) onCatalogReference?.(connector.id);
+    for (const entry of entries) onCatalogReference?.(entry.connector.id, entry.tool.name);
+    for (const connector of absence?.configuredConnectors ?? []) onCatalogReference?.(connector);
+    // An unknown scope's guidance lists the visible roster without searching it.
+    if (reportsQueryAnalysis && args.connector && !scopedConnector)
+      for (const connector of visibleConnectors) onCatalogReference?.(connector.id);
     return {
       catalogErrors,
       ...(absence ? { absence } : {}),
