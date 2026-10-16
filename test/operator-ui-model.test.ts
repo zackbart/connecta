@@ -258,6 +258,10 @@ describe("operator action notices", () => {
       async startAuth() {
         return { state: "auth_required", authorizationUrl: CONSENT };
       },
+      async finishAuth() {},
+      async verifyState() {
+        return true;
+      },
       ...hooks,
     };
   }

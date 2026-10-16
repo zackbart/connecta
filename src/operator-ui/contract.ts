@@ -35,49 +35,9 @@ export interface OperatorGrant {
   tools: "all" | Array<{ name: string; requireReadOnly: boolean }>;
 }
 
-export interface OperatorPool {
-  name: string;
-  path: string;
-  /** Whether this pool's endpoint refuses every write. */
-  readOnly: boolean;
-  /** The pool's declared tools. */
-  grants: OperatorGrant[];
-}
-
-export interface OperatorViewer {
-  interactive: boolean;
-  grants: OperatorGrant[];
-  /** Whether the root /mcp endpoint refuses every write. */
-  readOnly: boolean;
-  pools: OperatorPool[];
-  permissions: {
-    activity: boolean;
-    accessTokenManagement: boolean;
-    connectors: Array<{ id: string; use: boolean; manageSharedAuth: boolean; connectPersonal: boolean }>;
-  };
-}
-
-export interface OperatorUiContract {
-  schemaVersion: 1;
-  /**
-   * describeConfig's allowlisted snapshot. v1 alone adds `hasGrant`: whether
-   * code gates plain /mcp, which `maintainers` do whenever inbound auth is
-   * configured (#837).
-   */
-  config: ConnectaConfigDescription & { hasGrant: boolean };
-  /** Leaf provenance, built from the same allowlisted snapshot and scoped with it. */
-  configSources?: Record<string, "default" | "config">;
-  live: {
-    connectors: OperatorConnectorOverlay[];
-    /** Last-call lookup scans at most 1,000 recent rows. No payload or actor is returned. */
-    activity: "available" | "unconfigured" | "forbidden" | "unavailable";
-  };
-  you: OperatorViewer;
-}
-
-// Contract v2, frozen by decisions/0006-pools-are-the-access-model.md ahead of
-// the server cutover. One shape serves both roles; maintainer-only fields are
-// null or empty in the member view, never omitted.
+// Contract v2, frozen by decisions/0006-pools-are-the-access-model.md and
+// served by `GET /ui/api/config` for both roles (#837). Maintainer-only fields
+// are null or empty in the member view, never omitted.
 
 export type OperatorRole = "maintainer" | "member";
 
@@ -212,3 +172,6 @@ export interface OperatorUiContractV2 {
   connectors: OperatorMemberConnector[];
   you: { interactive: boolean };
 }
+
+/** The operator contract `GET /ui/api/config` serves; schema version 1 was removed (#837). */
+export type OperatorUiContract = OperatorUiContractV2;

@@ -40,7 +40,11 @@ describe("operator visual fixture contract", () => {
     expect(contract.configSources).not.toHaveProperty(["config.hasGrant"]);
     expect(config.maintainers).toEqual([{ namespace: "https://clerk.example.test", id: "alice" }]);
     expect(config).not.toHaveProperty("pools.0.hasGrant");
-    expect(contract.root?.maintainers.map((m) => (m.kind === "human" ? m.id : m.name))).toEqual(["alice"]);
+    // The server's own view: people labelled from the fake directory, every declared agent.
+    expect(contract.root?.maintainers).toEqual([
+      { kind: "human", namespace: "https://clerk.example.test", id: "alice", label: "Alice Moreau" },
+    ]);
+    expect(contract.agents.map((agent) => agent.name)).toEqual(config.agents);
     expect(contract.configSources?.["config.limits.calls.maxResultBytes"]).toBe("config");
     const ids = config.connectors.map((c) => c.id);
     expect(contract.live.connectors.map((c) => c.id)).toEqual(ids);
@@ -63,9 +67,10 @@ describe("operator visual fixture contract", () => {
       expect(config.pools.find((p) => p.name === pool.name)?.readOnly).toBe(pool.readOnly);
       // The maintainer view carries each pool's described owner (#855).
       expect(pool.owner).toBe(config.pools.find((p) => p.name === pool.name)?.owner ?? null);
-      expect(config.pools.find((p) => p.name === pool.name)?.members).toEqual([
-        { kind: "human", namespace: "https://clerk.example.test", id: "alice" },
-      ]);
+      // The same members the deployment declares, each person with a directory label or null.
+      expect(config.pools.find((p) => p.name === pool.name)?.members).toEqual(
+        pool.members.map((m) => (m.kind === "agent" ? m : { kind: m.kind, namespace: m.namespace, id: m.id })),
+      );
       for (const grant of pool.tools) expect(ids).toContain(grant.connectorId);
     }
     // Every matrix cell names a configured connector and a served endpoint.

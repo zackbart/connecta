@@ -497,6 +497,7 @@ export type FailureEvent =
   | "OAuth error callback consent could not be consumed; no authorization code was exchanged"
   | "MCP handler error"
   | "operator status"
+  | "operator agent slots read failed"
   | "result paging unavailable"
   | "request failed"
   | "Clerk request denied"

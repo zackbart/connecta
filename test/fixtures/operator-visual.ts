@@ -1,4 +1,4 @@
-import type { OperatorMember, OperatorUiContract, OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
+import type { OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
 import type { UiActivityEvent } from "../../src/operator-ui/view.js";
 import type { Connector, InboundAuth } from "../../src/types.js";
@@ -8,7 +8,6 @@ import { encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { createTestConnecta } from "../helpers.js";
 import { fakeClerkAuth } from "./http.js";
-import { contractV2 } from "./operator-contract-v2-bridge.js";
 import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./operator-contract-v2.js";
 
 export const VISUAL_NOW = "2026-10-08T12:00:00.000Z";
@@ -20,9 +19,9 @@ export type VisualState = typeof VISUAL_STATES[number];
 // The contract and legacy auth details come from the current server serializers,
 // not a separately maintained copy of their JSON. Collections use their browser
 // contract types. All volatile values are fixed in this one fixture module.
-// Until P6b of #837 serves contract v2, the maintainer view passes the server's
-// v1 answer through the bridge with the pool facts below; the restricted state
-// is the frozen member fixture, since v2 has no other restricted viewer.
+// The maintainer view is the server's own v2 answer; its people carry labels
+// from the fake directory below. The restricted state is the frozen member
+// fixture, since v2 has no other restricted viewer.
 export interface OperatorVisualFixture {
   contract: OperatorUiContractV2;
   data: UiData;
@@ -50,6 +49,13 @@ const events: ToolCallActivityEvent[] = [
 ];
 
 const ALICE = { namespace: "https://clerk.example.test", id: "alice" };
+/** The fake Clerk directory: the labels a maintainer's view shows beside people. */
+const DIRECTORY: Record<string, string> = { alice: "Alice Moreau", user_lin: "Lin Chen" };
+
+/** The fake Clerk operator with a directory, so listed people carry labels. */
+function labelledMaintainer(): InboundAuth {
+  return { ...fakeClerkAuth({ token: VISUAL_TOKEN, userId: "alice" }), activityActorLabel: (id) => DIRECTORY[id] };
+}
 
 /** The fake Clerk provider, admitting alice by principal alone: a non-interactive bearer session. */
 function bearerMaintainer(): InboundAuth {
@@ -83,11 +89,13 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
   const restrictedConnectors: Connector[] = [readOnlyGithub, connectors[2]!];
   const app = createTestConnecta({
     connectors: empty ? keepEmptyConnector ? [github] : [] : restricted ? restrictedConnectors : connectors, publicUrl: VISUAL_ORIGIN,
-    serverInfo: { name: "Production", version: "1" }, auth: restricted ? bearerMaintainer() : fakeClerkAuth({ token: VISUAL_TOKEN, userId: "alice" }),
-    ...(restricted ? { maintainers: [ALICE] } : {}),
+    serverInfo: { name: "Production", version: "1" }, auth: restricted ? bearerMaintainer() : labelledMaintainer(),
+    maintainers: [ALICE],
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
-    // Otherwise alice, the fake Clerk operator, is the default maintainer.
-    pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, members: ["alice"] }, automation: { tools: ["github"], readOnly: false, members: ["alice"] } },
+    // Alice, the fake Clerk operator, is the maintainer. Lin and the triage
+    // agent use support; alice uses automation.
+    pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, members: ["user_lin", "agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["alice"] } },
+    ...(empty || restricted ? {} : { agents: ["triage"] }),
     activity: activityHistory({ readGate: () => !restricted, store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),
     accessTokens: accessTokens(storage),
     calls: { maxResultBytes: 1_000_000 },
@@ -97,15 +105,9 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     const contractResponse = await app.fetch(new Request(`${VISUAL_ORIGIN}/ui/api/config`, { headers }));
     const dataResponse = await app.fetch(new Request(`${VISUAL_ORIGIN}/ui/data`, { headers }));
     if (!contractResponse.ok || !dataResponse.ok) throw new Error("Visual fixture deployment refused its operator");
-    const served: OperatorUiContract = await contractResponse.json();
+    const served: OperatorUiContractV2 = await contractResponse.json();
     const data: UiData = await dataResponse.json();
-    const human = (id: string, label: string | null): OperatorMember => ({ kind: "human", namespace: "https://clerk.example.test", id, label });
-    const contract = restricted ? structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2 : contractV2(served, {
-      maintainers: [human("alice", "Alice Moreau")],
-      members: { support: [human("user_lin", "Lin Chen"), { kind: "agent", name: "triage" }], automation: [human("alice", "Alice Moreau")] },
-      runsAs: (connectorId) => connectorId === "github" ? { kind: "shared", source: "vault", savedAt: "2026-10-01T09:30:00.000Z" }
-        : connectorId === "slack" ? { kind: "personal", connectedMembers: 1, members: 2 } : undefined,
-    });
+    const contract = restricted ? structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2 : served;
     // /ui/data begins with deferred details. Use the same serializer as the UI
     // uses when its background connector reads finish.
     for (const connector of data.connectors) {

@@ -275,10 +275,19 @@ export function operatorUi(options: { branding?: ConnectaBranding } = {}): Opera
 
 export type {
   OperatorUiContract,
+  OperatorUiContractV2,
+  OperatorRole,
+  OperatorMember,
+  OperatorPoolV2,
+  OperatorRootEndpoint,
+  OperatorMemberConnector,
+  OperatorMemberManage,
+  OperatorAgent,
+  OperatorSharedSource,
+  OperatorRunsAs,
+  OperatorConnectorPoolCell,
   OperatorConnectorOverlay,
   OperatorTool,
-  OperatorViewer,
   OperatorGrant,
-  OperatorPool,
   OperatorLastCall,
 } from "./operator-ui/contract.js";

@@ -33,6 +33,7 @@ import {
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
+  workspaceConnector,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
@@ -1472,20 +1473,24 @@ function docsConnector(id: string, options: DocsOptions): Connector {
     notFound: "ambiguous",
     connection,
   });
-  return api(id, {
-    ...defined({
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
+  return workspaceConnector(
+    connection,
+    api(id, {
+      ...defined({
+        callAdmission: options.callAdmission,
+        maxResultBytes: options.maxResultBytes,
+      }),
+      title: options.title ?? "Google Docs",
+      description: `Google Docs as the signed-in Workspace user: read, create, and edit documents by id — ${connection.purpose}`,
+      usageGuide: {
+        content: usageGuide(connection.purpose, options.instructions),
+        summary:
+          "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
+        // Required: whose documents they are, that ids come from elsewhere, and
+        // that indexes shift and go stale are conventions no schema can carry.
+        required: true,
+      },
+      tools: tools(client),
     }),
-    title: options.title ?? "Google Docs",
-    description: `Google Docs as the signed-in Workspace user: read, create, and edit documents by id — ${connection.purpose}`,
-    usageGuide: {
-      content: usageGuide(connection.purpose, options.instructions),
-      summary: "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
-      // Required: whose documents they are, that ids come from elsewhere, and
-      // that indexes shift and go stale are conventions no schema can carry.
-      required: true,
-    },
-    tools: tools(client),
-  });
+  );
 }

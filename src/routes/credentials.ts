@@ -184,6 +184,20 @@ function credentialRequest(
       }).pipe(Effect.catch((error) => refuse(msg(error), 400)));
     }
     if (request.method === "DELETE") {
+      // Clearing nothing is refused, as testing nothing is, so the route
+      // agrees with the operator contract, which offers `clear` only once a
+      // value is stored in the caller's partition (#837). A value that cannot
+      // be read may still be cleared: removing it is how one recovers.
+      const stored = yield* Effect.tryPromise({
+        try: () => vault.metadata(connectorId, owner),
+        catch: (error) => error,
+      }).pipe(Effect.orElseSucceed(() => "unreadable" as const));
+      if (stored === null) {
+        return privateJson(
+          { error: "no credential is stored to clear", problem: "credential_required" },
+          { status: 409 },
+        );
+      }
       yield* Effect.promise(() => vault.delete(connectorId, owner));
       yield* Effect.promise(() => registry.invalidateStored(connectorId));
       return new Response(null, {

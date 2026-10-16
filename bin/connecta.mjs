@@ -200,7 +200,12 @@ async function doctor() {
     } catch {
       throw new Error("Deployment returned an invalid config contract.");
     }
-    if (contract?.schemaVersion !== 1 || contract.config?.schemaVersion !== 1) {
+    // Operator contract v2 (#837) serves a pool member their own view, which
+    // carries no config; only a maintainer's carries the snapshot.
+    if (contract?.schemaVersion === 2 && contract.role === "member") {
+      throw new Error("The config snapshot is for maintainers only.");
+    }
+    if (contract?.schemaVersion !== 2 || contract.role !== "maintainer" || contract.config?.schemaVersion !== 1) {
       throw new Error("Deployment returned an unsupported config contract.");
     }
     // The server builds this with describeConfig's allowlist; do not print

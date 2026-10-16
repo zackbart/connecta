@@ -4,13 +4,10 @@ Use this repository-maintenance guide when changing operator pages, data routes,
 or browser evidence. Read the [operator UI contract](./operator-ui.md) first.
 [The agent index](./README.md) routes deployment and endpoint tasks.
 
-`test/fixtures/operator-visual.ts` owns the visual data. It builds the config,
-live overlay, and legacy auth details through the current server routes, using
-the types in `src/operator-ui/contract.ts` and `model.ts`. Until P6b of
-[#837](https://github.com/zackbart/connecta/issues/837) serves contract v2,
-`test/fixtures/operator-contract-v2-bridge.ts` turns the server's v1 answer into
-the maintainer's v2 view, with fixed pool members and runs-as facts; it passes
-a v2 body through unchanged and is deleted once the server serves v2. The
+`test/fixtures/operator-visual.ts` owns the visual data. It builds the
+maintainer's contract v2, live overlay, and legacy auth details through the
+current server routes, using the types in `src/operator-ui/contract.ts` and
+`model.ts`; its people carry labels from a fake directory. The
 restricted state is the frozen member fixture from
 `test/fixtures/operator-contract-v2.ts`, and the endpoint and matrix variants
 use its maintainer fixture, which covers every runs-as kind and agent pools.
@@ -121,8 +118,8 @@ CSP violations across every document and popup, and fail on unexpected network
 traffic. No credentials enter visual fixtures or screenshot baselines.
 
 `test/browser/operator-auth-recovery.spec.ts` serves the production UI and real
-operator routes with a trusted Worker Access context, bridging the server's v1
-contract to v2 until P6b (test-only). Each admission reads the contract first,
+operator routes with a trusted Worker Access context, serving the server's own
+contract v2. Each admission reads the contract first,
 so its read counts include one contract read per admission. It covers transient and
 rejected identity reads, missing shell context, delayed OAuth grant commits,
 catalog/auth reconciliation, and unreadable credential metadata, all without

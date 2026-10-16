@@ -52,6 +52,7 @@ import {
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
+  workspaceConnector,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
@@ -3170,21 +3171,24 @@ function slidesConnector(id: string, options: SlidesOptions): Connector {
     notFound: "ambiguous",
     connection,
   });
-  return api(id, {
-    ...defined({
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
+  return workspaceConnector(
+    connection,
+    api(id, {
+      ...defined({
+        callAdmission: options.callAdmission,
+        maxResultBytes: options.maxResultBytes,
+      }),
+      title: options.title ?? "Google Slides",
+      description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${connection.purpose}`,
+      usageGuide: {
+        content: usageGuide(connection.purpose, options.instructions),
+        summary:
+          "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
+        // Required: whose decks they are, that listing is Drive's, and the
+        // revision discipline on writes are conventions no schema can carry.
+        required: true,
+      },
+      tools: tools(client),
     }),
-    title: options.title ?? "Google Slides",
-    description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${connection.purpose}`,
-    usageGuide: {
-      content: usageGuide(connection.purpose, options.instructions),
-      summary:
-        "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
-      // Required: whose decks they are, that listing is Drive's, and the
-      // revision discipline on writes are conventions no schema can carry.
-      required: true,
-    },
-    tools: tools(client),
-  });
+  );
 }

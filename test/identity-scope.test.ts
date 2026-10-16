@@ -253,7 +253,7 @@ describe("maintainers and plain /mcp", () => {
     await c.close();
   });
 
-  it("INV-4: refuses non-maintainers on every operator route with the private 404", async () => {
+  it("INV-4: refuses non-maintainers on every maintainer route with the private 404, and serves a member only their own view", async () => {
     const storage = memoryStorage();
     const service: Connector = {
       id: "service",
@@ -261,6 +261,8 @@ describe("maintainers and plain /mcp", () => {
       listTools: async () => [],
       callTool: async () => null,
       startAuth: async () => ({ state: "auth_required", authorizationUrl: "https://consent.example/authorize" }),
+      finishAuth: async () => {},
+      verifyState: async () => true,
       disconnectAuth: async () => {},
     };
     const vaulted = api("vaulted", { credential: { label: "Token" }, tools: [] });
@@ -281,7 +283,6 @@ describe("maintainers and plain /mcp", () => {
       pools: { team: { tools: ["service", "vaulted"], members: ["bob"] } },
     });
     const routes: Array<[string, string, object?]> = [
-      ["/ui/api/config", "GET"],
       ["/ui/data", "GET"],
       ["/ui/connectors/service", "GET"],
       ["/ui/activity", "GET"],
@@ -302,7 +303,17 @@ describe("maintainers and plain /mcp", () => {
       expect(refused.status, route.join(" ")).toBe(404);
       expect(await refused.json()).toEqual({ error: "not found" });
     }
-    for (const route of routes.filter(([, method]) => method === "GET")) {
+    // The config contract is the one operator route a pool member reads: their own view (#837).
+    const member = await send("bob", ["/ui/api/config", "GET"]);
+    expect(member.status).toBe(200);
+    expect(await member.json()).toMatchObject({ schemaVersion: 2, role: "member", config: null, agents: [] });
+    const outsider = await send("carol", ["/ui/api/config", "GET"]);
+    expect(outsider.status).toBe(404);
+    expect(await outsider.json()).toEqual({ error: "not found" });
+    for (const route of [
+      ...routes.filter(([, method]) => method === "GET"),
+      ["/ui/api/config", "GET"] as [string, string],
+    ]) {
       const admitted = await send("alice", route);
       expect(admitted.status, route.join(" ")).toBe(200);
       await admitted.arrayBuffer();

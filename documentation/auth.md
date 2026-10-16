@@ -528,11 +528,18 @@ to MCP requests and result/page handles. Handles remain bound to their
 originating endpoint; paging re-admits the caller at that endpoint. A pool
 cannot read a `/mcp` handle, and `/mcp` cannot read a pool's handle.
 
-Operator catalog, config, activity, connector auth, and access-token routes
-require a maintainer after their own authentication. Anyone else gets a
-private JSON 404 `{ "error": "not found" }`. Until the member view ships
-(#837 P6b), pool members who are not maintainers have no operator UI. The
-public HTML shell carries no catalog data.
+Operator catalog (`/ui/data`, `/ui/connectors/<id>`), activity, shared
+connector auth, and access-token routes require a maintainer after their own
+authentication. Anyone else gets a private JSON 404 `{ "error": "not found" }`.
+`/ui/api/config` serves a maintainer the whole operator contract and a person
+listed in a pool's `members` only their own view: their pools without owner or
+members, and the connectors in them with the tools those pools grant, their
+own connection on personal connectors, and what they may do about it. It
+carries no shared credential state, agents, other members, owners, or
+activity. Anyone else gets the same 404, and an agent token the machine-only
+401 every human route gives it; see the
+[operator contract](./operator-ui.md#operator-data-contract). The public HTML
+shell carries no catalog data.
 
 Each endpoint is writable or read-only. The deployment's `readOnly` sets the
 plain `/mcp` endpoint and is required: a deployment that omits it fails at
@@ -565,8 +572,9 @@ mapping function, the caller decides whose account a call opens:
 
 `owner` is a Workspace email address, checked at construction and listed in
 `describeConfig()` (`null` when unset). Over HTTP, `/ui/api/config` serves it
-only to an authenticated maintainer; anyone else, an open deployment's
-anonymous caller included, reads `null`, the same as an unset owner. Core copies it from the pool the
+only to an authenticated maintainer; anyone else, a pool member and an open
+deployment's anonymous caller included, reads `null`, the same as an unset
+owner. Core copies it from the pool the
 request was admitted through; no argument, header, or program can choose or
 change it, and the `auth_required` message never names an address. One
 `gmail()` then serves a pool per person:
@@ -1193,9 +1201,15 @@ connectors and refuse a shared one with 403. A person who is neither gets the
 private 404 every operator route gives. A maintainer also manages their own
 personal connectors, which plain `/mcp` includes, in their own partition. A
 maintainer's link continues in the operator UI; a member's link starts the
-authorization directly, as it does on a deployment without the UI. A personal
-credential handoff needs the operator UI, which serves maintainers only until
-the member view ships (#837 P6b).
+authorization directly, as it does on a deployment without the UI. A member's
+operator contract names, per personal connector, the actions their permission,
+the deployment and the connector's hooks support: credential `save` with a
+vault, `test` and `clear` once their own partition holds a value; OAuth
+`connect` and `restart` with `startAuth`, `finishAuth` and `verifyState`, and
+`disconnect` with `disconnectAuth`. `/ui/oauth/<id>` gates each verb on those
+same hooks, so a connector provisioned out of band can still be disconnected,
+and `/ui/credentials/<id>` refuses to clear a partition that holds nothing
+with 409 `credential_required`, for members and maintainers alike.
 
 Activity is read by maintainers alone. An authenticated maintainer principal
 reads it without an interactive session, including a non-interactive API

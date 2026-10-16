@@ -1,8 +1,8 @@
 // Operator contract v2 fixtures, frozen by
-// decisions/0006-pools-are-the-access-model.md so the UI can build against
-// them before the server serves v2. Every value is synthetic. Unlike
-// operator-visual.ts these are literals, not server output: no route serves
-// this shape yet.
+// decisions/0006-pools-are-the-access-model.md. Every value is synthetic.
+// Unlike operator-visual.ts these are literals, not server output: they hold
+// every runsAs variant, labelled people and agents in one view, which the
+// server tests check against real responses part by part.
 import { CONFIG_DEFAULTS } from "../../src/config-defaults.js";
 import type {
   OperatorAgent,
@@ -323,6 +323,8 @@ const memberConnectors: OperatorMemberConnector[] = [
     authScope: "personal",
     tools: [{ address: "notion.query", classification: "read" }],
     connection: { state: "credential_required", problem: "credential_required" },
+    // Nothing is stored in Lin's partition, so only save is offered: test and
+    // clear need a stored value, and the page reads stored-ness from actions.
     manage: {
       kind: "credential",
       label: "Integration token",
@@ -330,7 +332,7 @@ const memberConnectors: OperatorMemberConnector[] = [
         { name: "workspace", label: "Workspace" },
         { name: "token", label: "Token", description: "An internal integration secret" },
       ],
-      actions: ["save", "test", "clear"],
+      actions: ["save"],
     },
   },
   {
@@ -364,16 +366,22 @@ export const OPERATOR_V2_MEMBER = {
 const notionSlot = config.connectors.find((c) => c.id === "notion")!.credential!;
 
 /**
- * What every member may do with each personal connector here, as P6b derives
- * it server-side from permission, hooks and deployment availability.
+ * What each member may do with each personal connector here, as the server
+ * derives it from permission, hooks, deployment availability and, for a
+ * credential, whether their own partition holds a value.
  */
 const manage = {
   slack: { kind: "oauth", actions: ["connect", "restart", "disconnect"] },
-  // Named fields with testCredentials, and a vault for save and clear.
-  notion: { kind: "credential", label: notionSlot.label, fields: notionSlot.fields!, actions: ["save", "test", "clear"] },
   // disconnectAuth without startAuth: the member can only drop the grant.
   calendar: { kind: "oauth", actions: ["disconnect"] },
 } satisfies Record<string, OperatorMemberManage>;
+/** Notion has named fields with testCredentials and a vault: save always; test and clear once a value is stored. */
+const notionManage = (stored: boolean): OperatorMemberManage => ({
+  kind: "credential",
+  label: notionSlot.label,
+  fields: notionSlot.fields!,
+  actions: stored ? ["save", "test", "clear"] : ["save"],
+});
 
 /** Each member's own partition status. Ada's and Lin's differ, so neither may see the other's. */
 export const OPERATOR_V2_PARTITIONS = {
@@ -387,7 +395,7 @@ export const OPERATOR_V2_PARTITIONS = {
     notion: { state: "ok" },
     calendar: { state: "ok" },
   },
-} satisfies Record<string, Record<keyof typeof manage, MemberPartition["connection"]>>;
+} satisfies Record<string, Record<"slack" | "notion" | "calendar", MemberPartition["connection"]>>;
 
 /**
  * The trusted inputs for one member's view: config, catalog, membership, that
@@ -395,10 +403,13 @@ export const OPERATOR_V2_PARTITIONS = {
  * the way P6b gathers them from a real deployment, never from a member response.
  */
 export function operatorV2MemberSource(id: keyof typeof OPERATOR_V2_PARTITIONS): MemberViewSource {
-  const connections: Record<keyof typeof manage, MemberPartition["connection"]> = OPERATOR_V2_PARTITIONS[id];
-  const partition = (connector: keyof typeof manage): MemberPartition => ({
+  const connections: Record<"slack" | "notion" | "calendar", MemberPartition["connection"]> =
+    OPERATOR_V2_PARTITIONS[id];
+  // Ada's Notion is connected, so her partition holds a value; Lin's holds none.
+  const manages = { ...manage, notion: notionManage(connections.notion.state === "ok") };
+  const partition = (connector: keyof typeof manages): MemberPartition => ({
     connection: { ...connections[connector] },
-    manage: structuredClone(manage[connector]),
+    manage: structuredClone(manages[connector]),
   });
   return {
     member: { namespace: CLERK, id },

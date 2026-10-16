@@ -39,6 +39,7 @@ import {
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
+  workspaceConnector,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
@@ -1416,21 +1417,24 @@ function sheetsConnector(id: string, options: SheetsOptions): Connector {
     notFound: "ambiguous",
     connection,
   });
-  return api(id, {
-    ...defined({
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
+  return workspaceConnector(
+    connection,
+    api(id, {
+      ...defined({
+        callAdmission: options.callAdmission,
+        maxResultBytes: options.maxResultBytes,
+      }),
+      title: options.title ?? "Google Sheets",
+      description: `Google Sheets as the signed-in Workspace user: read and write values in spreadsheets they can open, by id — ${connection.purpose}`,
+      usageGuide: {
+        content: usageGuide(connection.purpose, options.instructions),
+        summary:
+          "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
+        // Required: whose spreadsheets they are, that Drive finds them, and what
+        // null and "" mean in a written row are conventions no schema carries.
+        required: true,
+      },
+      tools: tools(client),
     }),
-    title: options.title ?? "Google Sheets",
-    description: `Google Sheets as the signed-in Workspace user: read and write values in spreadsheets they can open, by id — ${connection.purpose}`,
-    usageGuide: {
-      content: usageGuide(connection.purpose, options.instructions),
-      summary:
-        "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
-      // Required: whose spreadsheets they are, that Drive finds them, and what
-      // null and "" mean in a written row are conventions no schema carries.
-      required: true,
-    },
-    tools: tools(client),
-  });
+  );
 }

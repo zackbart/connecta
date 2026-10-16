@@ -195,7 +195,7 @@
         },
         {
           "file": "test/identity-scope.test.ts",
-          "title": "INV-4: refuses non-maintainers on every operator route with the private 404"
+          "title": "INV-4: refuses non-maintainers on every maintainer route with the private 404, and serves a member only their own view"
         },
         {
           "file": "test/agent-endpoints.test.ts",

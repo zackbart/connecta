@@ -1,4 +1,4 @@
-import { fixtureContract, serveContractV2 } from "./operator-fixture.js";
+import { fixtureContract } from "./operator-fixture.js";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -126,7 +126,6 @@ async function openShell(page: Page, scheme = "light", clerk = false) {
 }
 
 test("operator shell admits ambient Access without sending a stored token", async ({ page }) => {
-  await serveContractV2(page);
   // Preserve the trusted edge context after the router drops fixture query parameters.
   await page.context().setExtraHTTPHeaders({ "X-Test-Access": "1" });
   await page.addInitScript("localStorage.setItem('connecta:token', 'stale-token');");

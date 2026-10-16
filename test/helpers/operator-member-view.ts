@@ -53,24 +53,26 @@ export interface MemberViewExpectation {
  * One personal connector as the tested member's own partition sees it. Both
  * values are trusted inputs, never read from the response under test.
  *
- * P6b must derive `manage` server-side, and test that derivation itself
- * (including a disconnect-only connector and a deployment without a vault),
- * from three facts. The member's permission to manage their own connection
- * gates every action. Deployment availability: every credential action
- * (`save`, `test`, `clear`) needs a vault, which `src/routes/credentials.ts`
- * checks before anything else; `connect` and `restart` need what
- * `oauthConnectUnavailable` checks (supported interactive auth plus handoff
- * signing and verification). The connector's hooks: `test` when
- * `credentialTestRule(connector).mode !== null`, which pairs named fields with
- * `testCredentials` and a single credential with `testCredential`; `connect`
- * and `restart` with `startAuth`, `finishAuth` and `verifyState` (the
- * callback needs it); `disconnect` with `disconnectAuth`. `restart` is
- * `connect` with `force`, so it needs nothing more. Today
- * `src/routes/oauth-management.ts` requires both `startAuth` and
- * `disconnectAuth` before either verb, so a disconnect-only connector is
- * refused; P6b must gate each verb on its own hooks before advertising
- * `["disconnect"]` alone. This helper only compares the derived value; it
- * models none of those rules.
+ * The server derives `manage` (`src/routes/ui-config.ts`) from four facts,
+ * and its tests check that derivation against real responses, including a
+ * disconnect-only connector and a deployment without a vault. Permission: the
+ * member's own permission to manage their connection (an interactive person
+ * in a pool containing the connector) gates every action; a shared connector
+ * is always "none". Deployment availability: every credential action needs a
+ * vault, which `src/routes/credentials.ts` checks before anything else;
+ * `connect` and `restart` need what `oauthConnectUnavailable` checks
+ * (supported interactive auth plus handoff signing and verification). The
+ * connector's hooks: `connect` and `restart` need `startAuth`, `finishAuth`
+ * and `verifyState` (the callback needs it), and `disconnect` needs
+ * `disconnectAuth`, each verb gated on its own hooks in
+ * `src/routes/oauth-management.ts`; `restart` is `connect` with `force`.
+ * Stored-ness, for a credential: `save` whenever the rest allows; `clear` only
+ * when a value is stored in the member's own partition; `test` only when one
+ * is stored in the declared shape and `credentialTestRule(connector).mode !==
+ * null`. An unreadable partition offers `save` alone. The page reads
+ * stored-ness from `actions` alone. Actions that come to nothing are
+ * `{ kind: "none" }`. This helper only compares the derived value; it models
+ * none of those rules.
  */
 export interface MemberPartition {
   /** The member's own status from the server's status seam. */

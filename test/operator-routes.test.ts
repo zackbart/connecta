@@ -119,6 +119,10 @@ describe("operator data routes", () => {
           starts.push(opts);
           return status;
         },
+        async finishAuth() {},
+        async verifyState() {
+          return true;
+        },
       };
       const storage = memoryStorage();
       const connecta = createTestConnecta({
@@ -370,6 +374,8 @@ describe("operator data routes", () => {
       kind: "mcp",
       listTools: async () => [],
       callTool: async () => null,
+      finishAuth: async () => {},
+      verifyState: async () => true,
       startAuth: (ctx) =>
         new Promise((_, reject) => {
           reachedStart();
