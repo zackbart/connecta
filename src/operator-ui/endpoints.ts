@@ -4,6 +4,7 @@ import type {
   OperatorGrant,
   OperatorRootEndpoint,
   OperatorRunsAs,
+  OperatorSharedSource,
   OperatorTool,
   OperatorUiContractV2,
 } from "./contract.js";
@@ -116,13 +117,27 @@ function formatDay(value: string): string {
   return Number.isNaN(date.valueOf()) ? "" : date.toLocaleDateString(undefined, { dateStyle: "medium" });
 }
 
+/** Where a shared credential lives; a vault or OAuth date when the contract has one. */
+function sharedSourceLabel(source: OperatorSharedSource, date: string): string {
+  switch (source) {
+    case "vault":
+      return date ? `saved ${date}` : "saved";
+    case "oauth":
+      return date ? `connected ${date}` : "connected";
+    case "missing":
+      return "not configured";
+    case "config":
+      return "set in deployment";
+    case "unauthenticated":
+      return "no credential needed";
+  }
+}
+
 /** Whose account a connector acts with on one endpoint, in one line. */
 export function runsAsLabel(runsAs: OperatorRunsAs, day: (value: string) => string = formatDay): string {
   switch (runsAs.kind) {
-    case "shared": {
-      const saved = runsAs.savedAt ? day(runsAs.savedAt) : "";
-      return saved ? `Shared · saved ${saved}` : "Shared · not saved";
-    }
+    case "shared":
+      return `Shared · ${sharedSourceLabel(runsAs.source, runsAs.savedAt ? day(runsAs.savedAt) : "")}`;
     case "personal":
       return `Personal · ${runsAs.connectedMembers} of ${runsAs.members} connected`;
     case "workspace":

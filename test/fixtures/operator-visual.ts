@@ -103,7 +103,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     const contract = restricted ? structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2 : contractV2(served, {
       maintainers: [human("alice", "Alice Moreau")],
       members: { support: [human("user_lin", "Lin Chen"), { kind: "agent", name: "triage" }], automation: [human("alice", "Alice Moreau")] },
-      runsAs: (connectorId) => connectorId === "github" ? { kind: "shared", savedAt: "2026-10-01T09:30:00.000Z" }
+      runsAs: (connectorId) => connectorId === "github" ? { kind: "shared", source: "vault", savedAt: "2026-10-01T09:30:00.000Z" }
         : connectorId === "slack" ? { kind: "personal", connectedMembers: 1, members: 2 } : undefined,
     });
     // /ui/data begins with deferred details. Use the same serializer as the UI

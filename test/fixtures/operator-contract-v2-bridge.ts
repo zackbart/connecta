@@ -14,7 +14,7 @@ import type {
 } from "../../src/operator-ui/contract.js";
 
 export interface BridgeFacts {
-  /** The subject per connector and endpoint; defaults to shared-unsaved or personal 0 of 0. */
+  /** The subject per connector and endpoint; defaults to shared-missing or personal 0 of 0. */
   runsAs?: (connectorId: string, pool: string | null) => OperatorRunsAs | undefined;
   /** Pool members, by pool name. */
   members?: Record<string, OperatorMember[]>;
@@ -50,7 +50,7 @@ export function contractV2(
     facts.runsAs?.(connectorId, pool) ??
     (scope.get(connectorId) === "personal"
       ? { kind: "personal", connectedMembers: 0, members: 0 }
-      : { kind: "shared", savedAt: null });
+      : { kind: "shared", source: "missing", savedAt: null });
   const cells = (grants: OperatorGrant[], pool: string | null): OperatorConnectorPoolCell[] =>
     grants
       .filter((grant) => scope.has(grant.connectorId))

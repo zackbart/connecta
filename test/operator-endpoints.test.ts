@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
+import type { OperatorSharedSource, OperatorUiContractV2 } from "../src/operator-ui/contract.js";
 import {
   connectorRunsAs,
   endpointRows,
@@ -91,11 +91,23 @@ describe("endpoint rows from contract v2", () => {
 
 describe("runs-as labels", () => {
   const day = (value: string) => `day(${value.slice(0, 10)})`;
+  it("labels where every shared source keeps its credential", () => {
+    const at = "2026-10-01T09:30:00.000Z";
+    const shared = (source: OperatorSharedSource, savedAt: string | null = null) =>
+      runsAsLabel({ kind: "shared", source, savedAt }, day);
+    expect(shared("vault", at)).toBe("Shared · saved day(2026-10-01)");
+    expect(shared("oauth", at)).toBe("Shared · connected day(2026-10-01)");
+    expect(shared("missing")).toBe("Shared · not configured");
+    expect(shared("config")).toBe("Shared · set in deployment");
+    expect(shared("unauthenticated")).toBe("Shared · no credential needed");
+    // A vault or OAuth source without a date still says where it lives.
+    expect(shared("vault")).toBe("Shared · saved");
+    expect(shared("oauth")).toBe("Shared · connected");
+    // An unparseable date is dropped rather than printed.
+    expect(runsAsLabel({ kind: "shared", source: "oauth", savedAt: "not a date" })).toBe("Shared · connected");
+  });
+
   it("labels every runs-as kind", () => {
-    expect(runsAsLabel({ kind: "shared", savedAt: "2026-10-01T09:30:00.000Z" }, day)).toBe(
-      "Shared · saved day(2026-10-01)",
-    );
-    expect(runsAsLabel({ kind: "shared", savedAt: null }, day)).toBe("Shared · not saved");
     expect(runsAsLabel({ kind: "personal", connectedMembers: 1, members: 2 })).toBe("Personal · 1 of 2 connected");
     expect(
       runsAsLabel({
@@ -170,7 +182,7 @@ describe("matrix cells", () => {
       connectorId: "drive",
       pool: "ada",
       tools: ["search", "gone"],
-      runsAs: { kind: "shared", savedAt: null },
+      runsAs: { kind: "shared", source: "missing", savedAt: null },
     });
     const stale = matrixCell(contract, "drive", ada);
     expect(stale).toMatchObject({
