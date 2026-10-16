@@ -88,6 +88,7 @@ const config: ConnectaConfigDescription = {
       ],
       readOnly: false,
       owner: "ada@workspace.example",
+      description: null,
     },
     {
       name: "support",
@@ -99,6 +100,7 @@ const config: ConnectaConfigDescription = {
       ],
       readOnly: true,
       owner: "support@workspace.example",
+      description: null,
     },
     {
       name: "team",
@@ -110,6 +112,7 @@ const config: ConnectaConfigDescription = {
       ],
       readOnly: false,
       owner: null,
+      description: null,
     },
   ],
   modules: {

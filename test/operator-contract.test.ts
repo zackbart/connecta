@@ -211,6 +211,7 @@ describe("operator config contract", () => {
         members: [{ kind: "human", namespace: "directory", id: "bob" }],
         readOnly: false,
         owner: null,
+        description: null,
       },
       {
         name: "reader",
@@ -219,6 +220,7 @@ describe("operator config contract", () => {
         members: [{ kind: "human", namespace: "directory", id: "alice" }],
         readOnly: true,
         owner: null,
+        description: null,
       },
     ]);
     expect(alice.live.connectors[0]?.tools.map((t) => [t.address, t.classification])).toEqual([

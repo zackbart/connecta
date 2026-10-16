@@ -29,6 +29,8 @@ export interface ResolvedPool {
   members: readonly Member[];
   /** Trimmed `owner`: the Workspace address agents in this pool act as. */
   owner?: string;
+  /** Trimmed `description`, appended to this pool's MCP instructions. */
+  description?: string;
 }
 
 const AGENT_PREFIX = "agent:";

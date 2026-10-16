@@ -498,7 +498,8 @@ provider other than the built-in agent-token adapter), and a non-empty
 can be a maintainer, and plain `/mcp` and every operator API admit nobody; the
 agents reach only `/agent/<pool>` for the pools that list them. With no inbound auth at all, the
 deployment is open (see [pools](#pools)). `describeConfig()` lists
-`maintainers` as `{ namespace, id }` and each pool's resolved `members`.
+`maintainers` as `{ namespace, id }` and each pool's resolved `members` and
+trimmed `description` (`null` when unset).
 
 Pool tools are enforced in the scoped registry view, below the catalog service,
 so `search_tools`, both call tools, a program's
@@ -611,7 +612,11 @@ createConnecta({
   maintainers: ["user_owner"],
   agents: ["calendar-bot"],
   pools: {
-    support: { tools: ["linear", "notion.search_pages", "notion.fetch_page"], members: supportTeam },
+    support: {
+      tools: ["linear", "notion.search_pages", "notion.fetch_page"],
+      members: supportTeam,
+      description: "Support tools: Linear and three Notion reads. Ask a maintainer for anything else.",
+    },
     calendar_bot: { tools: ["calendar.create_event"], members: ["agent:calendar-bot"] },
     reporting: { tools: ["linear", "notion"], readOnly: true, members: analysts },
   },
@@ -625,14 +630,15 @@ warning says, every pool path answers the 404 because nobody can be a member,
 and every agent endpoint answers the machine-only 401 because no agent can be
 admitted.
 
-| Rule         | Contract                                                                                                                                                                                                                                                                                                                                |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                              |
-| Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                   |
-| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                               |
-| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
-| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                    |
-| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                       |
+| Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                                                                                                               |
+| Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                                    |
+| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                |
+| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` append it to the MCP `initialize` instructions after `This endpoint: `; plain `/mcp` and a pool without one serve the shared instructions unchanged. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                   |
+| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 characters of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
+| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                     |
+| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                        |
 
 ### Agent endpoints
 

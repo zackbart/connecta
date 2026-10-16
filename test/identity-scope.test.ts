@@ -989,6 +989,7 @@ describe("member references at construction", () => {
         tools: ["wiki"],
         readOnly: false,
         owner: null,
+        description: null,
         members: [
           { kind: "human", namespace: NAMESPACE, id: "bob" },
           { kind: "agent", name: "bot" },

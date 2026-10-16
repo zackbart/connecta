@@ -109,7 +109,8 @@ export interface ConnectaConfigDescription {
   /**
    * `readOnly` is resolved: the pool's own value, else the deployment's.
    * `members` are resolved references in declaration order. `owner` is the
-   * Workspace address agents act as, or null.
+   * Workspace address agents act as, or null. `description` is the trimmed
+   * text the pool's endpoints add to their MCP instructions, or null.
    */
   pools: Array<{
     name: string;
@@ -118,6 +119,7 @@ export interface ConnectaConfigDescription {
     members: DescribedMember[];
     readOnly: boolean;
     owner: string | null;
+    description: string | null;
   }>;
   modules: {
     ui: { enabled: boolean };
@@ -445,6 +447,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
           : { kind: "human", namespace: member.namespace, id: member.id },
       ),
       owner: input.pools.get(name)?.owner ?? null,
+      description: input.pools.get(name)?.description ?? null,
     })),
     modules: {
       ui: { enabled: config.ui !== undefined },
