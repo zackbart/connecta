@@ -27,49 +27,22 @@ The agent doesn't load every service's tools into the conversation. It writes
 a short program that gathers, joins, and trims results inside Connecta, so
 only the answer comes back.
 
-```mermaid
-flowchart LR
-    Q["Which open issues affect<br/>our biggest customers?"] --> P["Program in Connecta"]
-    P --> I["Open issues"]
-    P --> C["Customer records"]
-    I --> J["Match, filter, group"]
-    C --> J
-    J --> A["Short answer"]
-
-    style J fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
-    style A fill:#dcfce7,stroke:#15803d,color:#14532d
-```
-
 ## What you can connect
 
 Maintained connections: <!-- providers:start -->Basecamp, Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Infisical, Linear, Mixpanel, Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, Vercel, and Wispr Flow<!-- providers:end -->.
 Plus any remote MCP server or HTTP API you describe.
 
-| Connection                         | Notes                                                                                      |
-| ---------------------------------- | ------------------------------------------------------------------------------------------ |
-| Stripe, Notion, Cloudflare, Vercel | OAuth uses the vendor's hosted MCP server; an API key or token uses Connecta's own client. |
-| Gmail                              | Reads mail and attachments, writes drafts. Never sends.                                    |
-| Google Drive                       | Reads, writes, and shares files. Never permanently deletes.                                |
-| Google Workspace (all)             | A Workspace admin authorizes it once for the domain.                                       |
-| Your own MCP servers and HTTP APIs | Add them in deployment code.                                                               |
-
 ## Who can use it
 
-Two kinds of caller, kept apart on purpose:
+|                   | People                                               | Agents                                   |
+| ----------------- | ---------------------------------------------------- | ---------------------------------------- |
+| What they are     | You and your team                                    | Bots, assistants, CI, scheduled jobs     |
+| How they prove it | Sign in: Clerk (Node) or Cloudflare Access (Workers) | One token Connecta issues to that agent  |
+| Their own logins  | Yes, on personal connections                         | No. An agent uses accounts you assign it |
 
-|                          | People                                               | Agents                                                  |
-| ------------------------ | ---------------------------------------------------- | ------------------------------------------------------- |
-| What they are            | You and your team                                    | Bots, assistants, CI, scheduled jobs                    |
-| How they prove it        | Sign in: Clerk (Node) or Cloudflare Access (Workers) | One token Connecta issues to that agent                 |
-| How they're added        | Named in deployment code                             | Named in deployment code; a maintainer issues the token |
-| Their own service logins | Yes                                                  | No. An agent uses accounts you assign it                |
-| Can manage Connecta      | Maintainers only                                     | Never                                                   |
-
-People come in two roles:
-
-- **Maintainers** run the deployment: they reach every tool, connect shared
-  accounts, manage agent tokens, and read activity.
-- **Pool members** reach only the pools they're listed in.
+**Maintainers** are the people who run the deployment: they reach every tool
+and manage credentials and agent tokens. Everyone else reaches only the pools
+they are listed in.
 
 ### Pools
 
@@ -87,112 +60,58 @@ flowchart LR
     style AgentPool fill:#fef3c7,stroke:#b45309,color:#78350f
 ```
 
-| Address         | Who gets in               | What they see     |
-| --------------- | ------------------------- | ----------------- |
-| `/mcp`          | Maintainers               | Everything        |
-| `/mcp/<pool>`   | People listed in the pool | That pool's tools |
-| `/agent/<pool>` | Agents listed in the pool | That pool's tools |
-
-- Not a member? You get the same "not found" as a pool that doesn't exist.
-- In two pools? You use two addresses. Pools never merge.
-- Maintainers aren't in any pool automatically.
-- Agent tokens are refused at people addresses, and sign-ins are ignored at
-  agent addresses. Behind Cloudflare Access, an agent sends only its token.
-- With no sign-in and no agent tokens configured, a deployment is open: anyone
-  who can reach it gets everything, and Connecta warns at startup. The shipped
-  templates always configure agent tokens, so they are never open.
-
-### Whose account a connection uses
-
-Reaching a tool and which downstream account it runs as are separate questions.
-
-```mermaid
-flowchart TB
-    Call["An allowed call"] --> Kind{"Connection type"}
-    Kind -->|"Shared (default)"| Dep["The deployment's account<br/>connected once by a maintainer"]
-    Kind -->|"Personal"| Own["The caller's own account<br/>each person connects their own"]
-    Kind -->|"Google Workspace"| WS["The signed-in person's account<br/>for an agent, the pool's owner<br/>or one fixed shared account"]
-
-    style Dep fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
-    style Own fill:#dcfce7,stroke:#15803d,color:#14532d
-    style WS fill:#fef3c7,stroke:#b45309,color:#78350f
-```
-
-Agents have no account of their own, so personal connections never appear for
-them. An agent reaches a person's account only through a shared connection set
-up for that person and placed in that person's pool.
+People use a pool at `/mcp/<pool>` and agents at `/agent/<pool>`. A caller
+outside a pool gets the same "not found" as a pool that doesn't exist, and
+someone in two pools uses two addresses: pools never merge.
 
 ### One agent, many people
 
 An assistant that talks to several people keeps **one token and one
-connection**. Its harness, not the model, picks the pool each turn:
+connection**. Its harness, not the model, picks the pool each turn: a chat
+gets the most capable tier that everyone in it is cleared for, and a
+one-on-one gets that person's own pool.
 
 ```mermaid
 flowchart LR
-    Group["Group chat or<br/>scheduled job"] --> Base["/agent/assistant<br/>shared tools only"]
-    Alice["One-on-one<br/>with Alice"] --> PA["/agent/assistant-alice<br/>shared tools + Alice's accounts"]
-    Bob["One-on-one<br/>with Bob"] --> PB["/agent/assistant-bob<br/>shared tools + Bob's accounts"]
+    Guests["Chat with anyone unknown"] --> Base["/agent/assistant<br/>read-only basics"]
+    Group["Chat of team members"] --> TeamTier["/agent/assistant-team<br/>shared tools"]
+    Leads["Chat of leads only"] --> LeadsTier["/agent/assistant-leads<br/>shared tools + billing"]
+    Alice["One-on-one<br/>with Alice"] --> PA["/agent/assistant-alice<br/>her tier + her accounts"]
+
+    Base -.-> TeamTier -.-> LeadsTier
 
     style Base fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
+    style TeamTier fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
+    style LeadsTier fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
     style PA fill:#dcfce7,stroke:#15803d,color:#14532d
-    style PB fill:#dcfce7,stroke:#15803d,color:#14532d
 ```
 
-Anyone else in a person's pool would act as that person, so those pools hold
-only the agent. [Organizing an agent's pools](./documentation/auth.md#organizing-an-agents-pools)
+Each tier builds on the one below it. A person's own pool builds on the
+highest tier they are cleared for and holds only the agent, since anyone else
+in it would act as that person. A tier can double as a team's own pool for
+the people cleared for it. [Organizing an agent's pools](./documentation/auth.md#organizing-an-agents-pools)
 has the full layout.
 
-### Who can do what
+### Whose account a connection uses
 
-|                              | Maintainer                        | Pool member                    | Agent       |
-| ---------------------------- | --------------------------------- | ------------------------------ | ----------- |
-| Use tools                    | Everything, plus pools they're in | Their pools                    | Their pools |
-| Connect shared accounts      | Yes                               | No                             | No          |
-| Connect their own accounts   | Yes                               | Yes, in their pools            | No          |
-| Issue or rotate agent tokens | Yes                               | No                             | No          |
-| Read activity                | Yes                               | No                             | No          |
-| Operator UI                  | Everything                        | Their addresses and own logins | No          |
+- **Shared** (the default): the deployment's account, connected once by a
+  maintainer.
+- **Personal**: each person's own account. Agents never see these.
+- **Google Workspace**: the signed-in person's account; for an agent, the
+  owner of a person's pool, or one fixed shared account.
 
 ## Reads and writes
 
-Every endpoint is writable or read-only, and you choose explicitly.
-
-```mermaid
-flowchart TB
-    Change["Your agent wants to change something"] --> Choice{"Is this endpoint<br/>read-only?"}
-    Choice -->|"Yes"| Refused["Refused; nothing is sent"]
-    Choice -->|"No"| Host["Your agent's host handles approval"]
-    Host --> Access["Connecta checks the caller's access"]
-    Access --> Services["The connected service receives the change"]
-
-    style Host fill:#fef3c7,stroke:#b45309,color:#78350f
-    style Access fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
-```
-
-On a read-only endpoint, search hides write tools and every write is refused.
-Neither setting grants access to more services.
-
-## Operator UI (optional)
-
-A web page for seeing connections, tools, access, and configuration. Changes
-to integrations and access rules still happen in deployment code.
-
-| Maintainers see                                                                                             | Pool members see                         |
-| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Every connection, its tools, and its status                                                                 | Their pool addresses and client setup    |
-| Shared credentials and OAuth controls                                                                       | Their own logins on personal connections |
-| Agent tokens: issue, rotate, revoke                                                                         |                                          |
-| Optional activity: who called what, when, and whether it worked. Never arguments, results, or program code. |                                          |
+Every endpoint is writable or read-only, and you choose explicitly. A
+read-only endpoint hides write tools and refuses every write. On a writable
+one, your agent's host decides what to approve.
 
 ## Where it runs
 
-|                 | Node or Docker | Cloudflare Workers                |
-| --------------- | -------------- | --------------------------------- |
-| People sign in  | Clerk          | Cloudflare Access                 |
-| Storage         | SQLite         | D1                                |
-| Program sandbox | QuickJS        | Worker Loader (Workers Paid plan) |
-
-Both serve the same agent tools.
+Node or Docker (Clerk sign-in, SQLite) or Cloudflare Workers (Cloudflare
+Access, D1). Both serve the same agent tools. An optional operator UI shows
+connections, access, and activity; integrations and access still change only
+in deployment code.
 
 ## Getting started
 

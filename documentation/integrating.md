@@ -19,8 +19,10 @@ To add one:
 3. Add the id (all its tools) or exact `id.tool` addresses to the intended
    pools' `tools`. Maintainers at plain `/mcp` already see the whole catalog.
    Follow [the agent pool layout](./auth.md#organizing-an-agents-pools) for an
-   agent: shared connectors go in its base constant, per-user connectors only
-   in that user's pool.
+   agent: a shared connector goes in the tool list of the lowest tier whose
+   entire audience is authorized to use it (billing restricted to leads goes
+   in the leads tier); per-user connectors and Workspace connectors with a
+   mapping `subject` go only in personal pools.
 4. Run the deployment's `npm run typecheck` (Worker copies: `tsc --noEmit`),
    restart Node or redeploy the Worker, and
    [connect its credential](./auth.md#connect-a-shared-credential) if needed.
@@ -38,14 +40,15 @@ const crm = remoteMcp("crm", {
   authScope: "shared",
   auth: { type: "credential", credential: { label: "CRM API token" } },
 });
-const assistant = { tools: ["crm", "tickets"], members: ["agent:assistant"] };
-// connectors: [crm, tickets], agents: ["assistant"], pools: { assistant }
+const base = ["crm", "tickets"]; // the agent's lowest tier
+// connectors: [crm, tickets], agents: ["assistant"],
+// pools: { assistant: { tools: base, members: ["agent:assistant"] } }
 ```
 
 To remove `crm`, first disconnect its OAuth grant or delete its saved
 credential while the connector still exists, using a signed-in maintainer
 for shared auth. Each person disconnects their own personal account. Remove
-`crm` and all `crm.*` addresses from every pool (including base constants),
+`crm` and all `crm.*` addresses from every pool (including tier tool lists),
 then remove its entry from `connectors`, unused imports, and unused secret
 configuration. Remove any pools left with no tools (empty `tools` fails
 construction), and update or retire clients pointing at those pools. Typecheck, restart/redeploy, run doctor, and confirm discovery
