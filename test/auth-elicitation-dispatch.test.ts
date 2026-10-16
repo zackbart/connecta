@@ -41,7 +41,7 @@ function setup(
     auth: [fakeClerkAuth({ token: "alice", userId: "alice" })],
     identity: { credentialAdministration: () => "all" },
     ...(options.catalogTtlSeconds === undefined ? {} : { discovery: { catalogTtlSeconds: options.catalogTtlSeconds } }),
-    pools: { trusted: { tools: connectors.map((item) => item.id), grant: () => true, readOnly: false } },
+    pools: { trusted: { tools: connectors.map((item) => item.id), members: ["alice"], readOnly: false } },
     executor: {
       execute: async (_code, providers) => {
         const call = required(providers.find((provider) => provider.name === "connecta")).fns.call!;

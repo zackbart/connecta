@@ -17,12 +17,14 @@ import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { ConnectaConfig, ResolvedConfig } from "./config.js";
 import { describedEndpoint, describedHref, describedOrigin, describedTools, describedUrl } from "./described.js";
 import { connectorGuideRequired, connectorGuideSummary } from "./skills.js";
+import type { ResolvedPool } from "./membership.js";
 import type {
   Connector,
   ConnectorAuthDescription,
   ConnectorDescription,
   ConnectorToolDescription,
   DescribedEndpoint,
+  IdentityReference,
 } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
 
@@ -34,6 +36,9 @@ export interface DescribedLimit<T = number> {
   value: T | null;
   source: ConfigValueSource;
 }
+
+/** A resolved pool member: a principal, or a declared agent by name. */
+export type DescribedMember = { kind: "human"; namespace: string; id: string } | { kind: "agent"; name: string };
 
 /** One connector as `describeConfig()` reports it. */
 export interface DescribedConnector {
@@ -94,19 +99,22 @@ export interface ConnectaConfigDescription {
   };
   /** Whether the default /mcp endpoint refuses every write, and exact classification overrides from deployment code. */
   readOnly: boolean;
-  /** Whether deployment code configures a grant for plain `/mcp`. */
-  hasGrant: boolean;
+  /** The principals plain `/mcp` admits, resolved, in declaration order. Empty on an open deployment. */
+  maintainers: Array<{ namespace: string; id: string }>;
   classification: Record<string, Record<string, "read" | "write">>;
   /** Inbound auth providers in the order they are tried. */
   auth: Array<{ kind: string; interactive: boolean; ui?: string }>;
   identity: Record<
-    "connectorAccess" | "activityAccess" | "credentialAdministration" | "accessTokenManagement" | "personalConnection",
+    "activityAccess" | "credentialAdministration" | "accessTokenManagement" | "personalConnection",
     "default" | "custom"
   >;
   /** Agents declared in code, by name, in declaration order. Never token state. */
   agents: string[];
-  /** `readOnly` is resolved: the pool's own value, else the deployment's. */
-  pools: Array<{ name: string; path: string; tools: string[]; hasGrant: boolean; readOnly: boolean }>;
+  /**
+   * `readOnly` is resolved: the pool's own value, else the deployment's.
+   * `members` are resolved references in declaration order.
+   */
+  pools: Array<{ name: string; path: string; tools: string[]; members: DescribedMember[]; readOnly: boolean }>;
   modules: {
     ui: { enabled: boolean };
     vault: { enabled: boolean; sealsOAuth?: boolean };
@@ -139,6 +147,10 @@ export interface DescribeConfigInput {
   registry: import("./registry.js").Registry;
   raw: ConnectaConfig;
   config: ResolvedConfig;
+  /** Resolved `maintainers`. */
+  maintainers: readonly IdentityReference[];
+  /** Resolved pools; members are read from here, never from raw references. */
+  pools: ReadonlyMap<string, ResolvedPool>;
   executorName: string | undefined;
   /** True when the executor owns admission, so `admission.code` is unused. */
   executorAdmits: boolean;
@@ -336,7 +348,6 @@ function describeConnector(
 }
 
 const IDENTITY_KEYS = [
-  "connectorAccess",
   "activityAccess",
   "credentialAdministration",
   "accessTokenManagement",
@@ -418,7 +429,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       ) as ConnectaConfigDescription["limits"]["requests"],
     },
     readOnly: config.readOnly,
-    hasGrant: typeof config.grant === "function",
+    maintainers: input.maintainers.map(({ namespace, id }) => ({ namespace: String(namespace), id: String(id) })),
     classification: structuredClone(config.classification ?? {}),
     auth: config.auth.map((provider) => ({
       kind: String(provider.kind),
@@ -434,7 +445,11 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       name,
       path: `/mcp/${name}`,
       tools: pool.tools.map(String),
-      hasGrant: typeof pool.grant === "function",
+      members: (input.pools.get(name)?.members ?? []).map((member): DescribedMember =>
+        member.kind === "agent"
+          ? { kind: "agent", name: member.name }
+          : { kind: "human", namespace: member.namespace, id: member.id },
+      ),
     })),
     modules: {
       ui: { enabled: config.ui !== undefined },

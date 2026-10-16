@@ -139,11 +139,10 @@ export type AuthDenialReason =
   | "email_domain_denied"
   | "gate_denied"
   | "gate_failed"
-  | "default_grant_denied"
-  | "default_grant_threw"
+  | "not_maintainer"
+  | "agent_not_maintainer"
   | "pool_not_declared"
-  | "pool_grant_denied"
-  | "pool_grant_threw";
+  | "not_pool_member";
 
 const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "authentication_failed",
@@ -159,11 +158,10 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "email_domain_denied",
   "gate_denied",
   "gate_failed",
-  "default_grant_denied",
-  "default_grant_threw",
+  "not_maintainer",
+  "agent_not_maintainer",
   "pool_not_declared",
-  "pool_grant_denied",
-  "pool_grant_threw",
+  "not_pool_member",
 ]);
 
 /** The registry's connector id grammar (src/registry.ts). */
@@ -472,7 +470,7 @@ export function failureRecord(subject: FailureSubject, failure?: unknown): Failu
 export type FailureEvent =
   | "negotiation cache read failed"
   | "negotiation cache write failed"
-  | "connectorAccess grant is unreachable"
+  | "pool tool grant is unreachable"
   | "call failed"
   | "input schema unusable; arguments are not validated"
   | "catalog read failed"

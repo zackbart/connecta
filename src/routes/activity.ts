@@ -109,21 +109,7 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
     }
     const list = opts.config.activity?.store.list?.bind(opts.config.activity?.store);
     if (!list) return yield* refuse("activity history is not configured", 404);
-    const admittedPools = new Set<string>();
-    for (const [name, pool] of opts.pools) {
-      if (
-        yield* Effect.promise(async () => {
-          try {
-            return (await pool.grant(authz.identity)) === true;
-          } catch {
-            return false;
-          }
-        })
-      )
-        admittedPools.add(name);
-    }
-    const visible = (event: ActivityPage["events"][number]) =>
-      activityEventVisible(context, authz, registry, admittedPools, event);
+    const visible = (event: ActivityPage["events"][number]) => activityEventVisible(context, authz, registry, event);
     const cursor = url.searchParams.get("cursor") ?? undefined;
     if (cursor && cursor.length > 500) return yield* refuse("invalid cursor", 400);
     const requestedLimit = Number(url.searchParams.get("limit") ?? "50");

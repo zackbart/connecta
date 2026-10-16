@@ -14,6 +14,7 @@ import {
 import { failureRecord, logFailure } from "../operator-record.js";
 import { runEdge, withDeadlineEffect } from "../runtime/run.js";
 import {
+  admitsMaintainer,
   authorizeUiIdentity,
   mayManageConnector,
   privateJson,
@@ -109,14 +110,17 @@ async function connect(context: RouteContext): Promise<Response> {
   );
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.
+    // The sign-in page returns to this link, which then sends a maintainer on
+    // to the operator UI. Pool members cannot use that UI yet (#837), so
+    // signing in there would strand them.
     if (
       authz.response.status === 401 &&
       authorizationCredential(request).kind === "absent" &&
       !runtimeContext?.access
     ) {
-      if (opts.config.ui) return authPage();
       const signIn = clerkSignIn(context);
       if (signIn) return signIn;
+      if (opts.config.ui) return authPage();
     }
     return authz.response;
   }
@@ -126,11 +130,17 @@ async function connect(context: RouteContext): Promise<Response> {
     return refuse("forbidden");
   }
   const connector = opts.registry.getConnector(id)!;
-  if (authz.principalKey !== handoff.principal || !mayManageConnector(authz, connector)) {
+  // Visibility is the caller's pools, or everything for a maintainer, so a
+  // member may connect a personal connector in a pool they belong to.
+  if (authz.principalKey !== handoff.principal || !mayManageConnector(opts, authz, connector)) {
     return refuse("Sign in as the user who requested this connection and has permission to manage it.");
   }
+  // The operator UI serves maintainers only until member views ship (#837).
+  // A member's OAuth link starts here directly, as it does without a UI.
+  const viaUi = Boolean(opts.config.ui) && admitsMaintainer(opts, authz);
   if (!connector.startAuth) {
     if (!connector.credential || !opts.config.ui || !opts.config.vault) return refuse("unknown OAuth connector", 404);
+    if (!viaUi) return refuse("Credential entry is in the operator UI, which only maintainers can use for now.");
     let target: URL;
     try {
       target = new URL(opts.config.ui.credentialHandoffUrl(baseUrl), baseUrl);
@@ -155,7 +165,7 @@ async function connect(context: RouteContext): Promise<Response> {
       authz.sessionCookies,
     );
   }
-  if (opts.config.ui && context.url.searchParams.get("start") !== "1")
+  if (viaUi && context.url.searchParams.get("start") !== "1")
     return withSessionCookies(authPage(), authz.sessionCookies);
   const registry = opts.registry.scoped({
     connectorIds: [id],

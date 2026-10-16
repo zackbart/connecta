@@ -237,7 +237,13 @@ function setup(
     identity: { credentialAdministration: () => (options.authFirst ? "all" : "none") },
     ...(options.authFirst ? { ui: operatorUi() } : {}),
     activity: activityHistory({ store: activity }),
-    pools: { trusted: { tools: ["service"], grant: () => true, readOnly: false } },
+    pools: {
+      trusted: {
+        tools: ["service"],
+        members: ["alice", "bob"].map((id) => ({ namespace: "https://clerk.example.test", id })),
+        readOnly: false,
+      },
+    },
     executor: {
       execute: async (_code, providers) => {
         try {

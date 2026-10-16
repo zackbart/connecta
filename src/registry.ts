@@ -243,15 +243,14 @@ export interface RegistryView {
 
 /**
  * Connector id → the only tool names this view may see on it. A connector
- * absent from the map is visible whole. Derived from `connectorAccess`
- * addresses at the auth gate; never from caller input.
+ * absent from the map is visible whole. Derived from a pool's `tools`
+ * addresses at construction; never from caller input.
  */
 export type ToolAccess = ReadonlyMap<string, ReadonlySet<string>>;
 
 export interface RegistryScope {
   connectorIds: "all" | readonly string[];
   toolAccess?: ToolAccess;
-  guardedToolAccess?: ToolAccess;
   subjectKey?: string;
   principalKey?: string;
   endpoint?: string;
@@ -550,7 +549,7 @@ export class Registry implements RegistryView {
     const requested = scope.connectorIds === "all" ? new Set(this.connectors.keys()) : new Set(scope.connectorIds);
     for (const id of requested) {
       if (!this.connectors.has(id)) {
-        throw new Error(`Identity access resolver returned unknown connector "${id}"`);
+        throw new Error(`Registry scope names unknown connector "${id}"`);
       }
     }
     return new ScopedRegistryView(this, requested, scope);
@@ -575,14 +574,14 @@ export class Registry implements RegistryView {
       if (oldest !== undefined) this.warnedAbsentGrants.delete(oldest);
     }
     if (hasControlCharacters(toolName)) {
-      logFailure(this.opts.logger, "connectorAccess grant is unreachable", failureRecord({ connector: connectorId }));
+      logFailure(this.opts.logger, "pool tool grant is unreachable", failureRecord({ connector: connectorId }));
       return;
     }
     // Grant names are operator data but may carry any non-control character;
     // quote them so a line terminator a log reader honours cannot forge a line.
     const quoted = JSON.stringify(key).replace(/[\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16)}`);
     this.opts.logger.warn(
-      `connectorAccess grants ${quoted} but connector "${connectorId}" lists no such tool; the grant is unreachable`,
+      `a pool grants ${quoted} but connector "${connectorId}" lists no such tool; the grant is unreachable`,
     );
   }
 
@@ -1317,9 +1316,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   canReadConnectorSkills(id: string): boolean {
-    return (
-      this.registryFor(id) !== undefined && !this.scope.toolAccess?.has(id) && !this.scope.guardedToolAccess?.has(id)
-    );
+    return this.registryFor(id) !== undefined && !this.scope.toolAccess?.has(id);
   }
 
   getConnector(id: string): Connector | undefined {
@@ -1327,7 +1324,7 @@ class ScopedRegistryView implements RegistryView {
   }
 
   getResourceConnector(id: string): Connector | undefined {
-    if (this.scope.toolAccess?.has(id) || this.scope.guardedToolAccess?.has(id)) return undefined;
+    if (this.scope.toolAccess?.has(id)) return undefined;
     return this.getConnector(id);
   }
 
@@ -1344,15 +1341,12 @@ class ScopedRegistryView implements RegistryView {
       throw new Error(`Unknown connector "${args[0]}"`);
     }
     const tools = await registry.getTools(args[0], args[1], args[2], args[3], this.scope);
-    const guarded = this.scope.guardedToolAccess?.get(args[0]);
-    const granted = this.scope.toolAccess?.get(args[0]) ?? guarded;
+    const granted = this.scope.toolAccess?.get(args[0]);
     if (!granted) return tools;
     // Every consumer — search, describe, call_tool, and a program's
     // connecta.call — resolves through this list, so an ungranted tool is
     // indistinguishable from one the connector never had.
-    const visible = tools.filter(
-      (tool) => granted.has(tool.name) && (!guarded?.has(tool.name) || tool.classification === "read"),
-    );
+    const visible = tools.filter((tool) => granted.has(tool.name));
     if (visible.length < granted.size) {
       const present = new Set(tools.map((tool) => tool.name));
       for (const name of granted) {

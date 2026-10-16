@@ -114,7 +114,7 @@ An admitted non-preflight `/mcp` request then takes five steps in
 
 1. **Admit.** Modern `subscriptions/listen` requests take no permit: their
    mirrored method and parsed body must both name the unsupported method.
-   They still pass auth, pool grants, and SDK validation, then receive HTTP
+   They still pass auth, endpoint admission, and SDK validation, then receive HTTP
    404 with JSON-RPC `-32601`. Their body classification and auth share the
    configured request lifetime, starting before classification. Other requests
    take one permit from the deployment-wide pool, taken before auth so an
@@ -128,20 +128,24 @@ An admitted non-preflight `/mcp` request then takes five steps in
    credential, configured providers are tried in order. A 401 takes its
    challenge from the actual protected-resource metadata owner. No providers
    means open development and warns at construction.
-3. **Narrow to the pool.** On `/mcp/<pool>`, look the name up, run its grant
-   against the identity, then `intersectAccess` the pool with the identity's own
-   access. A pool can never widen a view; anything else is a 404 naming no pool.
+3. **Admit to the endpoint.** Plain `/mcp` admits a principal listed in
+   `maintainers` (or, with no inbound auth, the anonymous caller) and serves the
+   whole catalog. `/mcp/<pool>` admits the pool's static `members`, matched by
+   principal or by `identity.agent`, and serves exactly the pool's tools
+   (`src/membership.ts`, `admitsMaintainer` and `memberPool` in
+   `src/routes/shared.ts`). Nothing intersects or widens either view; every
+   refusal is one 404 naming no pool.
    The endpoint's `readOnly` is the pool's own value, else the deployment's;
    plain `/mcp` uses the deployment's. It travels to the meta-tools and the
    program as one boolean that drops writes from `CatalogService` search and
    describe and makes `writeRefusal` (`src/tool-safety.ts`) refuse every write
    call. Guides and skills are not filtered.
 4. **Derive the registry view.** One `registry.scoped(...)` call with those
-   connector ids, exact `connector.tool` addresses when the identity declares a
+   connector ids, exact `connector.tool` addresses when the pool declares a
    narrower slice, and the subject and principal keys. Personal connectors use
    the principal partition and result paging the subject partition with principal,
-   endpoint/pool, origin, connector, and tool bindings. Paging rechecks current
-   grants, pool membership, and the endpoint's `readOnly`; no caller parameter selects a partition (`test/identity-scope.test.ts`).
+   endpoint/pool, origin, connector, and tool bindings. Paging re-admits the
+   caller at its endpoint and rechecks the endpoint's `readOnly`; no caller parameter selects a partition (`test/identity-scope.test.ts`).
 5. **Serve.** Refuse `?toolkit=` with a 404 — the toolkits are gone
    ([#178](https://github.com/zackbart/connecta/issues/178)) but their URLs were
    handed out, and retiring a scoping boundary into fail-open is worse than any
@@ -738,9 +742,9 @@ configuration, never runtime registration. `authScope: "shared" | "personal"`
 partitions connecta-owned context — state, credentials, OAuth, catalogs, observed
 shapes — by principal, and _only_ connecta-owned context: a secret a custom
 handler closes over is shared JavaScript state, and `remoteMcp()` refuses the
-literal-headers-plus-personal version of that mistake. Visibility
-(`identity.connectorAccess`) is a separate rule; hiding a connector does not
-change who owns its auth.
+literal-headers-plus-personal version of that mistake. Visibility (maintainers
+and pool `tools`) is a separate rule; hiding a connector does not change who
+owns its auth.
 
 ### Errors and records
 

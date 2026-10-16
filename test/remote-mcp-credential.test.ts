@@ -613,6 +613,7 @@ describe("remoteMcp() credential auth — the Test action", () => {
           activityActorNamespace: "test",
           authorize: () => ({ ok: true, userId: "operator" }),
         },
+        maintainers: ["operator"],
       });
       const response = connecta.fetch(
         new Request(`${BASE}/ui/credentials/down/test`, {
@@ -898,6 +899,7 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
       storage,
       vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
       auth: operator,
+      maintainers: ["user_1"],
       publicUrl: BASE,
       logger: silentLogger,
     });

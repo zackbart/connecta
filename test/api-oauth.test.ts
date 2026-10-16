@@ -11,6 +11,7 @@ import { oauthFlowKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, makeRegistry } from "./helpers.js";
 import { deferred } from "./fixtures/misc.js";
+import { CLERK_OPTIONS } from "./fixtures/ui.js";
 
 const BASE = "https://connecta.test";
 const AUTHORIZE = "https://oauth.provider.test/oauth/authorize";
@@ -29,6 +30,7 @@ describe("OAuth handoff lifetime", () => {
       storage,
       publicUrl: BASE,
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       vault: new CredentialVault(storage, SEAL_KEY),
       logger: "silent",
     });
@@ -65,6 +67,7 @@ describe("OAuth handoff lifetime", () => {
         storage: memoryStorage(),
         publicUrl: BASE,
         auth: callbackAuth,
+        maintainers: [CLERK_OPTIONS.userId],
         logger: "silent",
       });
       try {
@@ -134,6 +137,7 @@ describe("OAuth handoff lifetime", () => {
       storage,
       publicUrl: BASE,
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       vault: new CredentialVault(storage, SEAL_KEY),
       logger: "silent",
     });
@@ -522,6 +526,7 @@ describe("api() oauth callback exchange", () => {
     const connecta = createTestConnecta({
       connectors: [ccb()],
       auth: operator,
+      maintainers: ["operator"],
       storage,
       publicUrl: BASE,
       vault: new CredentialVault(storage, SEAL_KEY),
@@ -666,6 +671,7 @@ describe("api() oauth callback exchange", () => {
       connectors: [api("ccb", { oauth: { ...OAUTH, tokenEndpointAuthMethod: "client_secret_post" }, tools: [] })],
       storage: memoryStorage(),
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       publicUrl: BASE,
       logger: { debug() {}, info() {}, warn, error() {} },
     });

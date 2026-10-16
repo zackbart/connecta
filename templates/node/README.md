@@ -25,8 +25,10 @@ warning, and npm 12 does not block the script. A later esbuild version needs a
 new explicit review and approval; do not replace the pinned entry with a broad
 package-name approval.
 
-Point an MCP client at `http://localhost:8787/mcp` with
-`Authorization: Bearer <returned-cta-token>`. `CONNECTA_TOKEN` is a client and
+Point an agent's MCP client at `http://localhost:8787/mcp/local`, the pool
+that lists `agent:local-machine`, with
+`Authorization: Bearer <returned-cta-token>`. Plain `/mcp` serves only the
+`maintainers`, and an agent is never one. `CONNECTA_TOKEN` is a client and
 doctor variable only. Setting it never configures server authentication.
 
 `accessTokens(storage)` is always installed. With no issued agent token and
@@ -160,7 +162,10 @@ Connection management needs an interactive identity. A machine access token
 never authorizes browser credential mutations. `@clerk/backend`
 ships as a dependency of this template. To enable Clerk, set both
 `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` (one without the other refuses to
-start) and set `PUBLIC_URL`.
+start), set `PUBLIC_URL`, and list your Clerk user id in `CONNECTA_MAINTAINERS`
+(comma-separated; startup refuses Clerk without a maintainer). Maintainers
+alone use plain `/mcp` and the operator UI; add other people to a pool's
+`members` in `src/connecta.config.ts`.
 Enable `aud_claim_enabled: true` in Clerk's instance OAuth application settings
 (`PATCH /v1/instance/oauth_application_settings` in Clerk's Backend API), then
 read the setting back. Both JWT and opaque OAuth tokens are supported.
@@ -187,8 +192,9 @@ permissions to let a signed-in human issue, rotate, and revoke them. Trusted
 local rotation above works without Clerk and never requires opening the
 server.
 
-Set the code-owned identity resolvers deliberately. `connectorAccess` governs
-use; `credentialAdministration` permits shared-auth changes, and
+Set who uses what in code: `maintainers` for plain `/mcp` and the operator UI,
+and each pool's `members` for `/mcp/<pool>`, which serves exactly that pool's
+`tools`. `credentialAdministration` permits shared-auth changes, and
 `personalConnection` permits the signed-in principal's personal-auth changes.
 Both management permissions default to none. Use `authScope: "personal"` for a
 connector where each person should connect their own downstream account.
@@ -285,7 +291,8 @@ feature should not leave a tab behind.
 Upgrading from v0.23 does not require rotating managed `cta_…` tokens. Import
 `accessTokens` from `@zackbart/connecta/auth/access-tokens`, replace the old
 `accessTokens: true` with `accessTokens: accessTokens(storage)`, and keep the
-same persistent storage namespace and identity/tool/pool grant rules. Enable
+same persistent storage namespace. From 0.33 `maintainers` and pool `members`
+replace `identity.connectorAccess` and every `grant`. Enable
 `identity.accessTokenManagement` only for the interactive operators who should
 manage tokens. From 0.33 a stored token admits only once it is bound to a
 declared agent: follow "Tokens issued before agents" above. See the package's

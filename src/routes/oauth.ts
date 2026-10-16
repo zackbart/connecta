@@ -212,7 +212,7 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
     } catch {
       return refused();
     }
-    if (!mayManageConnector(browserIdentity, connector)) return refused();
+    if (!mayManageConnector(opts, browserIdentity, connector)) return refused();
     // CSRF / login-fixation guard: this route is intentionally public, so verify
     // the `state` matches the flow connecta started BEFORE exchanging the code.
     if (!connector.verifyState) {

@@ -55,7 +55,7 @@ describe("guest API contract (QuickJS executor)", () => {
     // The deployment fixture owns its executor and closes it with the app.
     await checkAuthHandoffProgram(quickJsExecutor({ cpuTimeMs: 5_000 }));
   });
-  it("INV-2 INV-3 INV-4: program return pages recheck identity, live grants, pool membership and trust", async () => {
+  it("INV-2 INV-3 INV-4: program return pages recheck identity, endpoint, pool membership and live authentication", async () => {
     await checkStashAuthority(executor, true);
   });
 
@@ -65,7 +65,7 @@ describe("guest API contract (QuickJS executor)", () => {
         custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor,
       );
     });
-    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages enforce contributing live grants`, async () => {
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages stay bound to their endpoint and live authentication`, async () => {
       await checkProgramReadDependencies(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
     it(`INV-2 INV-9: ${custom ? "customExecutor: " : ""}return paging warns only about writes completed in this run`, async () => {
@@ -113,7 +113,7 @@ describe("guest API contract (QuickJS executor)", () => {
     it(`INV-6 INV-7 INV-9: ${custom ? "customExecutor: " : ""}dispatched write timeouts retain diagnostics through caught guest errors`, async () => {
       await checkWriteDeadlineDiagnostics(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
-    it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}stash pages enforce bindings and live grants, pool membership and trust`, async () => {
+    it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}stash pages enforce bindings, pool membership and live authentication`, async () => {
       await checkStashAuthority(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
     it(`INV-3: ${custom ? "customExecutor: " : ""}provider preludes retain shared lexical bindings`, async () => {

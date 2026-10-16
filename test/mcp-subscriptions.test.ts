@@ -253,6 +253,7 @@ describe("MCP subscriptions", () => {
           return { ok: true };
         },
       },
+      maintainers: [{ namespace: "connecta:test", id: "operator" }],
       admission: { requests: { maxDurationMs: 100 } },
     });
     try {

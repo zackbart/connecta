@@ -2,7 +2,16 @@ import { describeConfigSources } from "./config-value-sources.js";
 import { credentialTestRule, describeCredentialTestMismatch } from "./credential-rules.js";
 import { Registry } from "./registry.js";
 import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
-import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
+import type { ConnectorAccess } from "./connector-access.js";
+import { assertsAgents } from "./agent-identity.js";
+import { ConfigError } from "./config-schema.js";
+import {
+  memberContext,
+  resolveMaintainers,
+  resolveMembers,
+  type MemberContext,
+  type ResolvedPool,
+} from "./membership.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls, droppedThemeTokens, droppedUiAuthUrls } from "./branding.js";
 import { readConfig, type ConnectaConfig, type ResolvedConfig } from "./config.js";
@@ -25,10 +34,12 @@ export type {
   ConnectorPermission,
   RequestAdmissionConfig,
 } from "./config.js";
+export type { MemberRef } from "./membership.js";
 export type {
   ConfigValueSource,
   ConnectaConfigDescription,
   DescribedConnector,
+  DescribedMember,
   DescribedLimit,
 } from "./describe-config.js";
 export interface Connecta {
@@ -49,22 +60,25 @@ export interface Connecta {
 }
 
 /**
- * Validate declared pools against the connector set. Everything checkable at
- * construction throws here: a malformed name, an unparseable grant, an
- * unknown connector id, a tool address on an `api()` connector whose static
- * catalog lacks it. Remote catalogs load lazily, so their addresses are
- * checked at catalog load instead and stay unreachable until they match.
+ * Validate declared pools against the connector set and the members against
+ * auth and agents. Everything checkable at construction throws here: a
+ * malformed name, an unparseable grant, an unknown connector id, a tool
+ * address on an `api()` connector whose static catalog lacks it, and an empty,
+ * ambiguous, unknown, or repeated member. Remote catalogs load lazily, so
+ * their addresses are checked at catalog load instead and stay unreachable
+ * until they match.
  */
 function resolvePools(
   pools: ResolvedConfig["pools"],
   readOnly: boolean,
   registry: Registry,
+  members: MemberContext,
 ): Map<string, ResolvedPool> {
   const resolved = new Map<string, ResolvedPool>();
   if (!pools) return resolved;
   // The schema has already refused a pool that is not an object, a missing or
-  // non-array `tools`, a non-function `grant`, and a misspelled key — a
-  // misspelled `grant` would otherwise boot as a deny-all pool.
+  // non-array `tools` or `members`, and a misspelled key; the retired `grant`
+  // is refused there with its replacement named.
   for (const [name, pool] of Object.entries(pools)) {
     if (!POOL_NAME_RE.test(name)) {
       throw new Error(`ConnectaConfig.pools: pool name "${name}" must match [a-z0-9_-]+`);
@@ -92,8 +106,19 @@ function resolvePools(
         }
       }
     }
+    const path = `ConnectaConfig.pools.${name}.members`;
+    if (pool.members.length === 0) {
+      throw new ConfigError(`${path} is empty; a pool serves only its members, so list at least one.`);
+    }
     // A pool inherits the deployment value unless it sets its own, either way.
-    resolved.set(name, { access, readOnly: pool.readOnly ?? readOnly, grant: pool.grant ?? (() => false) });
+    resolved.set(
+      name,
+      Object.freeze({
+        access,
+        readOnly: pool.readOnly ?? readOnly,
+        members: Object.freeze(resolveMembers(pool.members, path, members)),
+      }),
+    );
   }
   return resolved;
 }
@@ -255,7 +280,13 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     results: resolved.results,
     classification: resolved.classification,
   });
-  const pools = resolvePools(resolved.pools, resolved.readOnly, registry);
+  const members = memberContext(resolved.auth, resolved.agents);
+  const maintainers = resolveMaintainers(
+    input.maintainers,
+    resolved.auth.some((provider) => !assertsAgents(provider)),
+    members,
+  );
+  const pools = resolvePools(resolved.pools, resolved.readOnly, registry, members);
   warnInsecureConfig(resolved);
   const requestAdmission = new AdmissionController(resolved.admission.requests);
   let codeAdmission: AdmissionController | undefined;
@@ -279,6 +310,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     registry,
     raw: input,
     config: resolved,
+    maintainers,
+    pools,
     executorName: configuredExecutorName,
     executorAdmits,
   });
@@ -287,6 +320,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     configDescription: description,
     configValueSources: describeConfigSources(description, input),
     registry,
+    maintainers,
     pools,
     executor,
     executorName: configuredExecutorName,

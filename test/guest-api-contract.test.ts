@@ -463,14 +463,14 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
-    it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}program return pages recheck identity, live grants, pool membership and trust`, async () => {
+    it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}program return pages recheck identity, endpoint, pool membership and live authentication`, async () => {
       await checkStashAuthority(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
         true,
       );
     });
 
-    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages enforce contributing live grants`, async () => {
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages stay bound to their endpoint and live authentication`, async () => {
       await checkProgramReadDependencies(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
@@ -521,7 +521,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
-    it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}stash pages enforce bindings and live grants, pool membership and trust`, async () => {
+    it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}stash pages enforce bindings, pool membership and live authentication`, async () => {
       await checkStashAuthority(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );

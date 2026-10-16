@@ -3,6 +3,7 @@ import { recordToolActivity } from "../src/activity.js";
 import { Registry } from "../src/registry.js";
 import { createConnecta as createRuntimeConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { testMaintainerOf } from "./helpers/machine-auth.js";
 import type { CredentialVault } from "../src/credentials.js";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import type { Connector, Executor, KVStorage, Logger } from "../src/types.js";
@@ -24,12 +25,27 @@ const stubExecutor: Executor = {
  * from every suite that imports it. A suite that wants to observe that
  * refusal must call the real `createConnecta` from `../src/index.js`.
  */
-/** Writable unless a test chooses `readOnly`; deployments must choose it themselves. */
+/**
+ * Writable unless a test chooses `readOnly`; deployments must choose it
+ * themselves. With inbound auth and no `maintainers`, every principal the
+ * test's auth fixtures admit is a maintainer, so a suite about something
+ * other than access reaches plain `/mcp` as before (#837).
+ */
 export function createTestConnecta(
   config: Omit<ConnectaConfig, "executor" | "readOnly"> & { executor?: Executor; readOnly?: boolean },
 ) {
+  const auth = config.auth === undefined ? [] : Array.isArray(config.auth) ? config.auth : [config.auth];
+  const maintainers = [
+    ...new Map(
+      auth.flatMap((provider) => {
+        const principal = testMaintainerOf(provider);
+        return principal ? [[`${principal.namespace}\0${principal.id}`, principal] as const] : [];
+      }),
+    ).values(),
+  ];
   return createRuntimeConnecta({
     ui: operatorUi(),
+    ...(maintainers.length > 0 ? { maintainers } : {}),
     ...config,
     readOnly: config.readOnly ?? false,
     identity: { credentialAdministration: () => "all", personalConnection: () => "all", ...config.identity },

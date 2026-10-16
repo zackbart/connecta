@@ -13,7 +13,11 @@ import type {
   KVStorage,
 } from "../../src/types.js";
 import { required } from "../helpers.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "../helpers/machine-auth.js";
 import { mcpRpc, readJsonRpc } from "./http.js";
+
+const TOKEN = "things-deployment-token";
+const CALLER = { namespace: TEST_MACHINE_NAMESPACE, id: "machine" };
 
 type Guest = Record<string, (...args: unknown[]) => Promise<any>>;
 export type Program = (connecta: Guest) => Promise<unknown>;
@@ -41,7 +45,8 @@ function closureExecutor(programs: Map<string, Program>): Executor {
 /**
  * The root `/mcp` endpoint is writable unless `readOnly`; the `readonly` pool
  * at `/mcp/readonly` always refuses writes. Pass `"readonly"` as `pool` to
- * call or run there.
+ * call or run there. One bearer caller is both the maintainer (plain `/mcp`)
+ * and the pool's only member, since pools are closed without inbound auth.
  */
 export function thingsDeployment(
   connector: Connector,
@@ -56,11 +61,13 @@ export function thingsDeployment(
     logger: "silent",
     ...(execute ? { execute } : {}),
     readOnly,
-    pools: { readonly: { tools: [connector.id], readOnly: true, grant: () => true } },
+    auth: machineAuth(TOKEN),
+    maintainers: [CALLER],
+    pools: { readonly: { tools: [connector.id], readOnly: true, members: [CALLER] } },
     executor: customExecutor(closureExecutor(programs), { lifecycle: "self-managed" }),
   });
   const call = async (name: string, args: Record<string, unknown>, pool?: "readonly") =>
-    (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }, pool ? { pool } : {})))
+    (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }, { token: TOKEN, ...(pool ? { pool } : {}) })))
       .result as {
       isError?: boolean;
       structuredContent?: Record<string, any>;

@@ -102,12 +102,7 @@ test.beforeAll(async () => {
     disconnectAuth: async () => {},
   };
   app = createTestConnecta({
-    connectors: [
-      github,
-      slack,
-      { ...github, id: "slot", title: "Empty slot", credential: { label: "API key" } },
-      { ...github, id: "hidden", title: "Hidden connector" },
-    ],
+    connectors: [github, slack, { ...github, id: "slot", title: "Empty slot", credential: { label: "API key" } }],
     auth: fakeClerkAuth({ token: TOKEN, userId: "pages-user" }),
     publicUrl: origin,
     storage,
@@ -115,10 +110,11 @@ test.beforeAll(async () => {
     logger: "silent",
     serverInfo: { name: "Production", version: "1" },
     calls: { maxResultBytes: CONFIG_DEFAULTS.calls.maxResultBytes },
-    identity: { connectorAccess: () => ["github", "slack", "slot"], accessTokenManagement: () => true },
+    // pages-user is the default maintainer, and so sees every connector and
+    // pool (#837); it is also support's one member.
+    identity: { accessTokenManagement: () => true },
     pools: {
-      support: { tools: ["github.read"], readOnly: true, grant: () => true },
-      denied: { tools: ["hidden"], grant: () => false },
+      support: { tools: ["github.read"], readOnly: true, members: ["pages-user"] },
     },
     accessTokens: accessTokens(storage),
     activity: activityHistory({
@@ -155,7 +151,6 @@ async function session(page: Page) {
 async function clean(page: Page) {
   expect(await page.evaluate("window.__csp")).toEqual([]);
   await expect(page.locator("body")).not.toContainText(RAW_ERROR);
-  await expect(page.locator("body")).not.toContainText("Hidden connector");
 }
 
 test("connector status actions and signed authorize_connector hand off to Connection without starting OAuth", async ({
@@ -255,7 +250,7 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await clean(page);
 });
 
-test("Config provenance recognizes explicit defaults and excludes hidden keys", async ({ page }) => {
+test("Config provenance recognizes explicit defaults and the access model", async ({ page }) => {
   await session(page);
   await page.goto(origin + "/settings");
   await page
@@ -273,10 +268,10 @@ test("Config provenance recognizes explicit defaults and excludes hidden keys", 
   const contract = await page.request.get(origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
   const facts = (await contract.json()) as OperatorUiContract;
   expect(facts.configSources?.["config.limits.calls.maxResultBytes"]).toBe("config");
-  expect(facts.config.connectors.map((c) => c.id)).not.toContain("hidden");
-  expect(Object.keys(facts.configSources ?? {}).some((path) => path.startsWith("config.connectors.hidden."))).toBe(
-    false,
-  );
+  // Maintainers and pool members are code; no connector-access hook remains (#837).
+  expect(facts.configSources?.["config.maintainers.0.id"]).toBe("config");
+  expect(facts.configSources?.["config.pools.support.members.0.id"]).toBe("config");
+  expect(Object.keys(facts.configSources ?? {}).some((path) => path.includes("connectorAccess"))).toBe(false);
   expect(JSON.stringify(facts)).not.toContain(RAW_ERROR);
   await clean(page);
 });

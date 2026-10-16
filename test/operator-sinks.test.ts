@@ -1178,9 +1178,6 @@ describe("catalog intake finding lifecycle", () => {
   it("INV-6: rejects control-character grants and bounds warnings even for a manually scoped C1 grant", async () => {
     for (const name of ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085planted-7f3a9c"]) {
       expect(() => parseConnectorAccess([`svc.${name}`])).toThrow("invalid connector permission");
-      expect(() =>
-        parseConnectorAccess([{ tool: `svc.${name}`, requireReadOnly: true }], { allowReadOnly: true }),
-      ).toThrow("invalid connector permission");
     }
     const name = "x\u0085planted-7f3a9c";
     const { logger, lines } = capturingLogger();

@@ -9,6 +9,7 @@ import type { Connector, ConnectorContext, KVStorage } from "../src/types.js";
 import { createTestConnecta, required } from "./helpers.js";
 import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
 import { bindCallback, callbackAuth, consentKey, storedGrant } from "./fixtures/oauth.js";
+import { CLERK_OPTIONS } from "./fixtures/ui.js";
 
 // Every interleaving below is driven through remoteMcp()'s own verifyState and
 // finishAuth, so the SDK runs its real callback sequence: discovery, client,
@@ -839,6 +840,7 @@ describe("the callback route and a duplicate callback", () => {
       storage,
       logger,
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       connectors: [connector()],
     });
     try {

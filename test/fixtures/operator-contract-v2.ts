@@ -68,11 +68,15 @@ const config: ConnectaConfigDescription = {
     requests: defaults(CONFIG_DEFAULTS.admission.requests),
   },
   readOnly: false,
-  hasGrant: true,
+  // Resolved references, as describeConfig() reports them (#837): the same
+  // people the v2 root lists, without directory labels.
+  maintainers: [
+    { namespace: CLERK, id: "user_ada" },
+    { namespace: CLERK, id: "user_grace" },
+  ],
   classification: {},
   auth: [{ kind: "clerk", interactive: true, ui: "clerk" }],
   identity: {
-    connectorAccess: "custom",
     activityAccess: "default",
     credentialAdministration: "default",
     accessTokenManagement: "default",
@@ -80,9 +84,36 @@ const config: ConnectaConfigDescription = {
   },
   agents: ["simon-ada", "triage"],
   pools: [
-    { name: "ada", path: "/mcp/ada", tools: ["gmail", "github.read"], hasGrant: true, readOnly: false },
-    { name: "support", path: "/mcp/support", tools: ["github.read", "drive.search"], hasGrant: true, readOnly: true },
-    { name: "team", path: "/mcp/team", tools: ["slack", "notion", "calendar", "github.read"], hasGrant: true, readOnly: false },
+    {
+      name: "ada",
+      path: "/mcp/ada",
+      tools: ["gmail", "github.read"],
+      members: [
+        { kind: "human", namespace: CLERK, id: "user_ada" },
+        { kind: "agent", name: "simon-ada" },
+      ],
+      readOnly: false,
+    },
+    {
+      name: "support",
+      path: "/mcp/support",
+      tools: ["github.read", "drive.search"],
+      members: [
+        { kind: "human", namespace: CLERK, id: "user_lin" },
+        { kind: "agent", name: "triage" },
+      ],
+      readOnly: true,
+    },
+    {
+      name: "team",
+      path: "/mcp/team",
+      tools: ["slack", "notion", "calendar", "github.read"],
+      members: [
+        { kind: "human", namespace: CLERK, id: "user_ada" },
+        { kind: "human", namespace: CLERK, id: "user_lin" },
+      ],
+      readOnly: false,
+    },
   ],
   modules: {
     ui: { enabled: true },
@@ -219,7 +250,7 @@ export const OPERATOR_V2_MAINTAINER = {
   role: "maintainer",
   config,
   configSources: {
-    "config.hasGrant": "config",
+    "config.maintainers.0.id": "config",
     "config.readOnly": "default",
     "config.limits.calls.maxResultBytes": "default",
     "config.pools.support.readOnly": "config",

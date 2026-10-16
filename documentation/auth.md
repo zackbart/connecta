@@ -90,8 +90,9 @@ createConnecta({
   accessTokens: accessTokens(storage),
   auth: clerkAuth({ publishableKey, secretKey }),
   ui: operatorUi(),
+  maintainers: ["your-operator-id"],
+  pools: { ci: { tools: ["github"], members: ["agent:ci"] } },
   identity: {
-    connectorAccess: ({ agent, principal }) => (agent === "ci" ? ["github"] : "all"),
     accessTokenManagement: ({ principal }) =>
       principal?.namespace === "clerk:your-existing-namespace" &&
       principal.id === "your-operator-id",
@@ -130,9 +131,12 @@ request without any storage write. An admitted agent's identity is:
 inbound provider that carries `agent` is refused like an unknown token. An
 agent has no principal, so personal connectors are absent for it and it never
 qualifies for `activityAccess`. Its subject partitions result handles per
-agent. Activity attributes its calls to the agent name. Grant callbacks
-recognize agents by `identity.agent`. An agent never becomes an interactive
-operator: machine tokens manage neither tokens nor connection credentials.
+agent. Activity attributes its calls to the agent name. Pools list an agent as
+`"agent:<name>"`; an agent is never a maintainer, so plain `/mcp` refuses it
+with the pool 404. Until agent endpoints ship (#837 P4), an agent member
+reaches `/mcp/<pool>` with its `cta_` token; that path is interim and moves to
+`/agent/<pool>`. An agent never becomes an interactive operator: machine
+tokens manage neither tokens nor connection credentials.
 
 **The slot is the only authority.** A token admits iff its digest's lookup
 names a record, that record carries a currently declared `agent`, and that
@@ -266,85 +270,98 @@ deployment's anonymous admission. Otherwise, or on `undefined`, the call fails
 `auth_required` before any request leaves. Arguments, headers, and programs
 never reach it; a deployment's own connectors still cannot read the caller.
 
-The deployment's top-level `grant` decides who may use plain `/mcp`; named
-pools use their own grants. These endpoint decisions receive the admitted
-identity below and never widen its connector access.
+Access is read from one place, deployment code
+([decision 0006](../decisions/0006-pools-are-the-access-model.md)). Top-level
+`maintainers` lists the people who reach plain `/mcp`, which serves the whole
+catalog with the deployment's `readOnly`, and the operator routes. Each pool's
+`members` lists who reaches `/mcp/<pool>`, which serves exactly that pool's
+`tools`. A maintainer opens no pool implicitly; list them as a member to use
+one. Nothing intersects these lists with anything else, and a request never
+names its own scope.
 
-`identity.connectorAccess` returns `"all"` (the default) or grants, for
-discovery and use alike: a connector id opens every tool on it, a
-`connector.tool` address that tool alone, and
-`{ tool: "connector.tool", requireReadOnly: true }` that tool only while the
-loaded catalog says it is explicitly read-only, never connector-wide. Grants
-are additive, so a bare id or unrestricted address beside a guarded one wins.
+A member reference is one of:
 
-Tool grants are enforced in the scoped registry view, below the catalog service,
+- a bare principal id, `"user_2abc"`, resolved in the namespace of the
+  deployment's one interactive provider (its `activityActorNamespace`: Clerk's
+  Frontend API URL, or `"cloudflare-access"`);
+- `{ namespace, id }`, required when a deployment has zero or several
+  interactive providers, or when the id contains `:`;
+- `"agent:<name>"`, naming an agent declared in `agents` (pool `members` only).
+
+A person matches when the admitted principal equals the reference exactly; an
+agent matches by `identity.agent`, which only the built-in token adapter sets.
+Construction throws (INV-11) on a bare id without exactly one interactive
+provider, a bare id containing `:`, an undeclared agent, a repeated reference,
+an empty or missing pool `members`, an agent in `maintainers`, `maintainers`
+missing or empty when any inbound auth is configured, and `maintainers` on a
+deployment without inbound auth. `describeConfig()` lists `maintainers` as
+`{ namespace, id }` and each pool's resolved `members`.
+
+Pool tools are enforced in the scoped registry view, below the catalog service,
 so `search_tools`, `describe_tools`, both call tools, a program's
-`connecta.search`, `connecta.describe`, and `connecta.call`, and the connection
-UI read one filtered list. Connector-level discovery, guides, and
-`authorize_connector` keep a connector when any of its tools is granted —
-`docs.read` permits the `docs` handoff. Without one it is absent: discovery
-omits it, and `authorize_connector` returns the same "Unknown connector" refusal
-as for a connector that does not exist. An ungranted tool fails exactly like one
+`connecta.search`, `connecta.describe`, and `connecta.call` read one filtered
+list. Connector-level discovery, guides, and `authorize_connector` keep a
+connector when any of its tools is in the pool — `docs.read` permits the
+`docs` handoff. Without one it is absent: discovery omits it, and
+`authorize_connector` returns the same "Unknown connector" refusal as for a
+connector that does not exist. A tool outside the pool fails exactly like one
 the connector never had: `unknown_tool`, with no hint that it exists. That is
-the whole security claim, in one place on purpose. There is no _caller-selected_
-tool set: a narrower slice is a branch in this resolver or a pool, and a bot
-needing its own is its own declared agent. A request may never name its own
-scope.
+the whole security claim, in one place on purpose.
 
-### Team read sets
+`identity.connectorAccess`, including guarded
+`{ tool, requireReadOnly: true }` grants, the top-level `grant`, and pool
+`grant` are removed; each fails construction with a message naming its
+replacement. A guarded read grant becomes a pool with `readOnly: true`.
 
-Keep team membership in deployment code and review exact addresses:
+### Team pools
+
+Keep membership in deployment code; static lists can be built with ordinary
+code at construction:
 
 ```ts
-const engineering = new Set(["engineer-id"]);
-const marketing = new Set(["marketer-id"]);
-const engineeringGrants = ["issues", { tool: "campaigns.list", requireReadOnly: true }] as const;
-const marketingGrants = ["campaigns", { tool: "issues.search", requireReadOnly: true }] as const;
+const engineering = ["engineer-id"];
+const marketing = ["marketer-id"];
 createConnecta({
   auth: cloudflareAccessAuth(),
-  identity: {
-    connectorAccess: ({ principal }) => {
-      const id = principal?.id;
-      if (!id) return [];
-      return [...new Set([
-        ...(engineering.has(id) ? engineeringGrants : []),
-        ...(marketing.has(id) ? marketingGrants : []),
-      ])];
-    },
+  maintainers: ["owner-id"],
+  pools: {
+    engineering: { tools: ["issues", "campaigns.list"], members: engineering },
+    marketing: { tools: ["campaigns", "issues.search"], members: marketing },
+    reporting: { tools: ["issues", "campaigns"], readOnly: true, members: [...engineering, ...marketing] },
   },
   connectors: [issues, campaigns, billing], executor,
   readOnly: false, // required: true refuses every write call
 });
 ```
 
-Engineering sees all `issues` tools and only `campaigns.list`; Marketing sees all
-`campaigns` tools and only `issues.search`. Neither sees `billing`; both memberships
-grant both connectors in full. Unknown or unprincipalled identities get `[]`.
-Use a stable authenticated principal or subject, never request headers or tool
-arguments. An agent's name is vouched for by the built-in token adapter. Pools narrow their endpoint, not plain `/mcp`.
+Engineering's endpoint serves every `issues` tool and only `campaigns.list`;
+Marketing's every `campaigns` tool and only `issues.search`. Neither pool
+serves `billing`; only the owner's plain `/mcp` does. A person in both pools
+uses two endpoints, never a union.
 
-| Catalog change                                           | Guarded exact grant                                                                                                     | Unrestricted exact string grant                                     |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| New name                                                 | Excluded until reviewed and added                                                                                       | Excluded until reviewed and added                                   |
-| Removed or renamed name                                  | Unreachable; warned when the scoped view reads the catalog                                                              | Same                                                                |
-| Stored write verdict after overrides and provider review | Removed from discovery and every invocation path, including `call_destructive_tool` and programs on a writable endpoint | Still granted; `call_tool` refuses writes and write paths take over |
-| Schema change alone                                      | Does not revoke, unless it breaks a reviewed digest: then it is a write, as above                                       | Same as above                                                       |
+| Catalog change          | Exact `connector.tool` in a pool                                        |
+| ----------------------- | ----------------------------------------------------------------------- |
+| New name                | Excluded until reviewed and added                                       |
+| Removed or renamed name | Unreachable; warned when the scoped view reads the catalog              |
+| Stored write verdict    | Still in the pool; `call_tool` refuses writes and write paths take over |
+| Schema change alone     | Does not revoke, unless it breaks a reviewed digest: then it is a write |
 
-The example assumes both exact tools were reviewed as read-only; names imply no safety.
-Review schemas, annotations, and downstream behavior
+Names imply no safety. Review schemas, annotations, and downstream behavior
 before changing lists or upgrading providers. Remote catalogs can drift without
-upgrades; fresh cached facts are classified against the current review on every read; downstreams
-can change behavior while keeping read-only annotations. For `api()`, the author
-owns declarations and handlers. Connecta enforces loaded declarations, not
-absence of side effects. Restricted downstream credentials do not replace grants.
+upgrades; fresh cached facts are classified against the current review on
+every read; downstreams can change behavior while keeping read-only
+annotations. For `api()`, the author owns declarations and handlers. Connecta
+enforces loaded declarations, not absence of side effects. Restricted
+downstream credentials do not replace pools; a `readOnly` pool refuses every
+write whatever the catalog says.
 
-`[]` hides all connectors from discovery and the connection UI. Address-only or
-disqualified guarded grants can leave a connector visible with its tool unreachable.
 Failed remote loads are errors, not empty catalogs. A transient first-page tool
 listing failure may serve complete facts in the same auth partition for five
 minutes after expiry. Failed pagination, permission and auth failures do not
-use this fallback. The expired deadline cannot authorize auth recovery. Personal OAuth ownership and credential
-administration are separate from visibility; writes follow the endpoint's `readOnly` setting and client approval. `test/identity-scope.test.ts` exercises these boundaries.
+use this fallback. The expired deadline cannot authorize auth recovery.
+Personal OAuth ownership and credential administration are separate from
+endpoint access; writes follow the endpoint's `readOnly` setting and client
+approval. `test/identity-scope.test.ts` exercises these boundaries.
 
 ## Migrating static bearer clients
 
@@ -355,12 +372,13 @@ secrets. Declare each machine as an agent instead:
 1. Configure the existing D1 or SQLite store as `storage`, and install
    `accessTokens(storage)`. Keep its existing keys and namespaces.
 2. Add the machine's name to `agents`. Issue its token from the Access tokens
-   page as an operator granted `identity.accessTokenManagement`, or from trusted
+   page as a maintainer granted `identity.accessTokenManagement`, or from trusted
    deployment code with
    `new AccessTokenManager(storage, { agents }).rotate("machine-name", "deployment-provisioning")`.
    The Node template provides `npm run --silent rotate-token -- machine-name`.
-3. Update `identity.connectorAccess` and pool grants to match
-   `identity.agent === "machine-name"`.
+3. List `"agent:machine-name"` in the `members` of each pool it uses. Agents
+   are never maintainers, so a machine that used plain `/mcp` moves to a pool
+   holding its tools.
 4. Save the once-returned secret in the client's secret store and send
    `Authorization: Bearer cta_…`. Behind Worker Access, also satisfy the edge
    with Access service credentials; an Access-only machine no longer admits.
@@ -375,10 +393,9 @@ and reports.
 
 ## Pools
 
-A pool is a named slice of the deployment served at its own endpoint,
-`/mcp/<pool>`, for when one identity needs different capability sets on different
-clients: a support agent that sees three Notion tools and Linear, a calendar bot
-that sees one tool, both over the same credentials. Private remote catalog
+A pool is a named slice of the deployment served at `/mcp/<pool>` to its
+members: a support team that sees three Notion tools and Linear, a calendar
+bot that sees one tool, both over the same credentials. Private remote catalog
 cache entries remain partitioned by the admitted pool.
 
 ```ts
@@ -387,57 +404,44 @@ createConnecta({
   accessTokens: accessTokens(storage),
   auth: clerkAuth({ publishableKey, secretKey }),
   readOnly: false, // required; pools without their own readOnly inherit it
+  maintainers: ["user_owner"],
   agents: ["calendar-bot"],
-  grant: ({ agent }) => agent === undefined, // agents use their pools
   pools: {
-    support: {
-      tools: ["linear", "notion.search_pages", "notion.fetch_page"],
-      grant: ({ principal }) => supportTeam.has(principal?.id ?? ""),
-    },
-    calendar_bot: {
-      tools: ["calendar.create_event"],
-      grant: ({ agent }) => agent === "calendar-bot",
-    },
-    reporting: {
-      tools: ["linear", "notion"],
-      readOnly: true,
-      grant: ({ principal }) => analysts.has(principal?.id ?? ""),
-    },
+    support: { tools: ["linear", "notion.search_pages", "notion.fetch_page"], members: supportTeam },
+    calendar_bot: { tools: ["calendar.create_event"], members: ["agent:calendar-bot"] },
+    reporting: { tools: ["linear", "notion"], readOnly: true, members: analysts },
   },
-  identity: { connectorAccess },
   connectors, executor,
 });
 ```
 
 Without configured `auth`, an open deployment has one anonymous, non-interactive
-identity; grants like these return false and every pool path 404s.
+identity. It keeps plain `/mcp` with the whole catalog, as the construction
+warning says, and every pool path answers the 404: nobody can be a member.
 
-The optional top-level `grant: (identity) => boolean | Promise<boolean>`
-controls plain `/mcp`. Omitted, it admits everyone who passes auth, including
-anonymous callers on an open deployment. Configured, only literal `true`
-admits; other returns and throws deny. A refusal has the same 404 status,
-body bytes, and headers as a refused or undeclared pool, after auth. The
-operator log records `default_grant_denied` or `default_grant_threw`, never
-the callback's error text. Invalid config values throw at construction.
-Named pools use only their own grants, so a caller refused at `/mcp` may
-still use a pool that grants it.
+| Rule         | Contract                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope        | `/mcp/<pool>` serves exactly the pool's `tools` (connector ids or exact `connector.tool` addresses) to its members. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                                                                                                                         |
+| Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `agent_not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
+| Agents       | An agent member reaches `/mcp/<pool>` with its `cta_` token. This is interim: agent endpoints (`/agent/<pool>`, #837 P4) replace it, and human endpoints will then refuse `cta_`.                                                                                                                                                             |
+| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.                                                         |
+| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                          |
+| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                             |
 
 Protected-resource metadata stays public at both default aliases,
 `/.well-known/oauth-protected-resource` and
 `/.well-known/oauth-protected-resource/mcp`, just as at named-pool aliases.
-Discovery does not authenticate callers or evaluate endpoint grants, so fresh
-OAuth clients can discover how to authenticate. The grant applies after auth
-to MCP requests and result/page handles. Handles remain bound
-to their originating endpoint; paging rechecks the current endpoint grant,
-identity, and connector access. A granting pool cannot read a `/mcp` handle,
-and `/mcp` cannot read that pool's handle.
+Discovery does not authenticate callers or evaluate membership, so fresh
+OAuth clients can discover how to authenticate. Admission applies after auth
+to MCP requests and result/page handles. Handles remain bound to their
+originating endpoint; paging re-admits the caller at that endpoint. A pool
+cannot read a `/mcp` handle, and `/mcp` cannot read a pool's handle.
 
-`describeConfig().hasGrant` and the operator UI report whether plain `/mcp`
-has a configured grant without exposing callback source. `describeConfig()`
-does not evaluate it. Operator catalog, config, activity, and connector auth
-routes require the same default endpoint grant after their own authentication.
-A refused caller gets a private JSON 404; the UI provides no per-pool view.
-The public HTML shell carries no catalog data.
+Operator catalog, config, activity, connector auth, and access-token routes
+require a maintainer after their own authentication. Anyone else gets a
+private JSON 404 `{ "error": "not found" }`. Until the member view ships
+(#837 P6b), pool members who are not maintainers have no operator UI. The
+public HTML shell carries no catalog data.
 
 Each endpoint is writable or read-only. The deployment's `readOnly` sets the
 plain `/mcp` endpoint and is required: a deployment that omits it fails at
@@ -452,19 +456,9 @@ through `call_destructive_tool`, still run.
 Guides are documentation, not discovery: provider `SKILL.md` and usage guides,
 surfaced through `queryAnalysis.guideSummary`, `skills`, `connecta.skill`, and
 skill `resources/read`, are the same on every endpoint and may name tools a
-read-only endpoint refuses.
-Resource reads, grants, and `connectorAccess`, including guarded
-`requireReadOnly` grants, are the same on both. The removed `trust` option fails
-construction with a message naming `readOnly`.
-
-| Rule         | Contract                                                                                                                                                                                                                                                                |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scope        | `/mcp/<pool>` intersects pool tools with the identity's `connectorAccess`, never widening it. Plain `/mcp` serves the identity's `connectorAccess` after its optional top-level `grant` admits it.                                                                      |
-| Grant        | Pool grants default to deny; only literal `true` admits. Other returns, throws, and undeclared names produce an identical 404 status, body, and headers, after auth. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
-| Timing       | Declared names await grants, so timing is not hidden. Keep grants pure and fast and names unsecret; names grant no access. The operator log records the refusal reason.                                                                                                 |
-| Construction | Malformed names, unknown options or connectors, empty pools, a non-boolean `readOnly`, a retired `trust`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.                                                          |
-| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                    |
-| Drift        | No wildcards; tool grants are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                      |
+read-only endpoint refuses. Resource reads and pool tools are the same on
+both. The removed `trust` option fails construction with a message naming
+`readOnly`.
 
 ## Shared and personal auth
 
@@ -916,6 +910,16 @@ anything, so SDK hook order cannot mix servers or cross a reset.
 
 ## Management permissions
 
+Management permissions still exist until #837 P2 folds them into
+maintainers. Every operator route first requires a maintainer. Connecting a
+personal account through a `/connect/<id>` link (from `authorize_connector`)
+and its OAuth callback need visibility, which is every connector for a
+maintainer and otherwise the connectors of the caller's pools, so a member can
+connect their own personal connector in their pool. A maintainer's link
+continues in the operator UI; a member's link starts the authorization
+directly, as it does on a deployment without the UI. A personal credential
+handoff needs the operator UI and so a maintainer for now.
+
 Visibility grants no authentication-management permission. Two resolvers take
 `Readonly<AuthenticatedIdentity>` and return `"all"`, `"none"` (the default),
 or connector ids: `credentialAdministration` for shared credentials and OAuth
@@ -926,8 +930,9 @@ principal, whose partition they always use. Exceptions and unknown ids fail
 closed; permissions come from authenticated identity, never caller input.
 
 `identity.activityAccess` takes `Readonly<IdentityReference>` — `id` and
-`namespace` — and controls reading activity. When configured, an authenticated
-principal may pass it without an interactive session. This includes a
+`namespace` — and controls reading activity among maintainers, who alone reach
+the activity routes. When configured, an authenticated maintainer principal
+may pass it without an interactive session. This includes a
 non-interactive API principal; agents, subject-only callers, and anonymous
 requests have no principal and cannot qualify. The optional activity `readGate`
 also applies. Reads remain GET-only and filter connector/tool grants, personal
@@ -935,9 +940,11 @@ ownership and recorded pool access before any actor-label lookup. Personal rows
 use the admitted principal in the existing typed actor id and namespace fields;
 rows without a provable owner are withheld. Non-interactive
 reads return typed actors without directory labels. Old rows without a pool
-remain subject to connector, tool and owner checks. Undeclared, it admits every
-interactive human, the one default here that is open, because a single-operator
-deployment would otherwise be locked out of its own event stream. Team
+remain subject to connector, tool and owner checks. A maintainer sees rows
+from plain `/mcp` and from every declared pool within that pool's tools; rows
+from a pool no longer declared are withheld. Undeclared, it admits every
+interactive maintainer, the one default here that is open, because a
+single-operator deployment would otherwise be locked out of its own event stream. Team
 deployments should set it. There is no general administrator role and no
 implicit token-management authority. `identity.accessTokenManagement` is a separate boolean permission, false by default, evaluated only for interactive humans. Lifecycle routes also require a stable principal; they issue, rotate, and revoke declared agents' tokens, and never create, rename, or bind one.
 
@@ -951,13 +958,9 @@ boundary reads returns 503 without a cursor; cancellation starts no further read
 ```ts
 createConnecta({
   auth: cloudflareAccessAuth(),
+  maintainers: ["owner-id"],
+  pools: { team: { tools: ["shared_docs", "personal_linear", "notion.search_pages"], members: team } },
   identity: {
-    connectorAccess: ({ principal, agent }) =>
-      principal?.id === "owner-id"
-        ? "all"
-        : agent === "calendar-bot"
-          ? ["calendar.create_event"]
-          : ["shared_docs", "personal_linear", "notion.search_pages"],
     credentialAdministration: ({ principal }) =>
       principal?.id === "owner-id" ? "all" : "none",
     personalConnection: () => ["personal_linear"],
@@ -1096,7 +1099,7 @@ with no audience/resource claim from exact client IDs dedicated to this
 deployment. Never share these clients with another resource server. A present
 malformed or mismatched binding is rejected even for an allowlisted client.
 The list does not restrict correctly bound tokens. It applies to every pool;
-identity and pool grants still narrow access. Profile scopes do not identify a
+maintainers and pool members still decide access. Profile scopes do not identify a
 resource, and `scopes` remains metadata, not an admission rule.
 
 Each new DCR registration gets a new client ID and needs an operator update

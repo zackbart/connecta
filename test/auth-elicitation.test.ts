@@ -66,7 +66,13 @@ function setup(
     ...(options.uiPath ? { ui: { ...operatorUi(), credentialHandoffUrl: () => options.uiPath! } } : {}),
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
     identity: { credentialAdministration: () => (options.manage === false ? "none" : "all") },
-    pools: { trusted: { tools: ["service"], grant: () => true, readOnly: false } },
+    pools: {
+      trusted: {
+        tools: ["service"],
+        members: [{ namespace: "https://clerk.example.test", id: "alice" }],
+        readOnly: false,
+      },
+    },
     executor: {
       execute: async (_code, providers) => {
         const fn = required(providers.find((p) => p.name === "connecta")).fns.call!;

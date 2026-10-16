@@ -84,6 +84,13 @@ describe("operator contract v2 fixtures", () => {
       if (cell.pool === null && cell.runsAs.kind === "workspace") expect(cell.runsAs.agents).toBeNull();
     }
     expect(OPERATOR_V2_MAINTAINER.connectors).toEqual([]);
+    // The described config names the same maintainers and members, resolved
+    // and unlabelled (#837); grant facts are gone.
+    const ref = (m: (typeof root.maintainers)[number]) =>
+      m.kind === "agent" ? { kind: "agent", name: m.name } : { kind: "human", namespace: m.namespace, id: m.id };
+    expect(config.maintainers.map((m) => ({ kind: "human", ...m }))).toEqual(root.maintainers.map(ref));
+    expect(config.pools.map((p) => [p.name, p.members])).toEqual(pools.map((p) => [p.name, p.members.map(ref)]));
+    expect(config).not.toHaveProperty("hasGrant");
   });
 
   it("INV-4 INV-5: the member fixture matches the projection built from config and membership", () => {

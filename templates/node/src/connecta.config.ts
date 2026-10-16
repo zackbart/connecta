@@ -25,6 +25,7 @@ export interface Env {
   CONNECTA_DATABASE?: string;
   CLERK_PUBLISHABLE_KEY?: string;
   CLERK_SECRET_KEY?: string;
+  CONNECTA_MAINTAINERS?: string;
   CONNECTA_CREDENTIAL_KEY?: string;
   CONNECTA_ACTIVITY?: string;
 }
@@ -76,6 +77,20 @@ export default defineConfig((env: Env) => {
     // Required: model-written programs run in a bounded QuickJS child.
     executor: quickJsExecutor(),
     auth: clerk ? [clerk] : [],
+    // Required with Clerk: the Clerk user ids (comma-separated in
+    // CONNECTA_MAINTAINERS) who use plain /mcp, which serves every connector,
+    // and the operator UI. Everyone else uses a pool that lists them. Agents
+    // are never maintainers.
+    maintainers: clerk
+      ? (set("CONNECTA_MAINTAINERS") ?? "")
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean)
+      : [],
+    // Each pool serves exactly its tools at /mcp/<name> to its members: Clerk
+    // user ids, or "agent:<name>" for a declared agent. `npm run doctor`
+    // checks this one with the local-machine token.
+    pools: { local: { tools: ["time"], members: ["agent:local-machine"] } },
     // Machine clients are agents declared here by name, each with one cta_
     // token. Issue or rotate one locally with
     // `npm run --silent rotate-token -- local-machine`, or grant an interactive
@@ -87,10 +102,9 @@ export default defineConfig((env: Env) => {
     // binds each machine's token to an agent; human-bound tokens never do.
     accessTokens: accessTokens(storage),
     // Connection management permissions default to none, so the template
-    // grants them. Split members from operators with `connectorAccess`,
-    // `activityAccess`, and `accessTokenManagement`, each derived from the
-    // authenticated identity and never from an MCP argument. An agent is
-    // recognized by `identity.agent`, its declared name.
+    // grants them to maintainers, who alone reach the operator UI. Narrow them
+    // with `activityAccess` and `accessTokenManagement`, each derived from the
+    // authenticated identity and never from an MCP argument.
     identity: {
       credentialAdministration: () => "all",
       personalConnection: () => "all",

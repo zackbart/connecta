@@ -137,7 +137,7 @@ function operatorView({ opts }: RouteContext, authz: Authorized, registry: Regis
   const visible = registry.listConnectors();
   const mayManage = (id: string) => {
     const connector = registry.getConnector(id);
-    return Boolean(connector && mayManageConnector(authz, connector));
+    return Boolean(connector && mayManageConnector(opts, authz, connector));
   };
   const permissions = (connector: Connector) => ({
     use: true,
@@ -196,17 +196,9 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
       authz,
       registry,
     );
-    // Setup commands are offered per pool, but only for pools this identity's
-    // grant admits: `/mcp/<name>` answers every other name with one flat 404 so
-    // a credential cannot enumerate them, and the page must not undo that.
-    const pools: string[] = [];
-    for (const [name, pool] of opts.pools ?? []) {
-      const granted = yield* Effect.tryPromise(async () => (await pool.grant(authz.identity)) === true).pipe(
-        // A throwing grant is a refusal at the endpoint, and so a refusal here.
-        Effect.orElseSucceed(() => false),
-      );
-      if (granted) pools.push(name);
-    }
+    // Only maintainers reach here (#837); setup commands are offered for every
+    // declared pool, since they administer them all.
+    const pools = [...opts.pools.keys()];
     return privateJson({
       ...(pools.length ? { pools } : {}),
       serverInfo: opts.config.serverInfo,

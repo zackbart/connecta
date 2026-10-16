@@ -1,5 +1,5 @@
 import { AccessTokenError, type AccessTokenManager } from "../access-tokens.js";
-import { authorizeUiIdentity, isSameOrigin, privateJson, type RouteContext } from "./shared.js";
+import { admitsMaintainer, authorizeUiIdentity, isSameOrigin, privateJson, type RouteContext } from "./shared.js";
 
 /**
  * Interactive-operator lifecycle for agent tokens: list one slot per declared
@@ -27,6 +27,9 @@ export async function routeAccessTokens(context: RouteContext, manager: AccessTo
     opts.config.identity,
   );
   if (!admin.ok) return admin.response;
+  // Maintainers alone manage agent tokens (#837); anyone else gets the same
+  // private 404 every operator route gives them.
+  if (!admitsMaintainer(opts, admin)) return privateJson({ error: "not found" }, { status: 404 });
   if (!admin.accessTokenManagement || !admin.identity.principal) {
     return privateJson({ error: "access token management permission required" }, { status: 403 });
   }

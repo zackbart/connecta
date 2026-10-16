@@ -216,10 +216,10 @@ schemas when known; runtime observations cannot replace them.
 
 `authScope: "shared"` uses deployment-owned downstream auth; `"personal"` uses
 the admitted principal's partition. Visibility is a different decision,
-controlled by identity and pool grants. A personal connector must not close
+controlled by maintainers and pool membership. A personal connector must not close
 over a shared secret or derive its owner from arguments. Remote MCP refuses
 literal header credentials with personal scope. Review
-[principals and grants](./auth.md#principals-visibility-and-operators) and
+[maintainers and members](./auth.md#principals-visibility-and-operators) and
 [management permissions](./auth.md#management-permissions) before exposing a
 new integration or its authentication controls.
 

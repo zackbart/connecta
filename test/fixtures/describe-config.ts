@@ -10,7 +10,7 @@
 
 import { accessTokens } from "../../src/access-tokens.js";
 import { activityHistory, type ActivityStore } from "../../src/activity.js";
-import { machineAuth } from "../helpers/machine-auth.js";
+import { TEST_MACHINE_NAMESPACE, machineAuth } from "../helpers/machine-auth.js";
 import { clerkAuth } from "../../src/auth/clerk.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import {
@@ -114,6 +114,9 @@ export function secretBearingDeployment() {
         clerkAuth({ publishableKey, secretKey: SECRETS.clerkSecretKey, publicUrl: BASE }),
       ],
       agents: ["release-bot"],
+      // The machine operator by namespace, and a Clerk user by bare id, which
+      // resolves in the one interactive provider's namespace (#837).
+      maintainers: [{ namespace: TEST_MACHINE_NAMESPACE, id: "operator" }, "user_operator"],
       accessTokens: accessTokens(storage),
       vault,
       ui: operatorUi({
@@ -131,11 +134,10 @@ export function secretBearingDeployment() {
       }),
       activity: activityHistory({ store: activityStore, deploymentId: "production" }),
       identity: {
-        connectorAccess: fn("all") as never,
         credentialAdministration: fn("all") as never,
       },
       readOnly: false,
-      pools: { support: { tools: ["static_api"], grant: fn(true) as never } },
+      pools: { support: { tools: ["static_api"], members: ["agent:release-bot", "user_support"] } },
       serverInfo: {
         websiteUrl: `https://about.example/connecta?k=${SECRETS.websiteQuery}`,
         icons: [{ src: `data:image/svg+xml,${SECRETS.iconData}` }],

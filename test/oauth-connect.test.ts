@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { accessTokens } from "../src/access-tokens.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
@@ -20,7 +21,14 @@ afterEach(async () => {
 function setup(
   provider: "clerk" | "access",
   authScope: "personal" | "shared",
-  options: { vault?: boolean; interactive?: boolean; bobAdmin?: boolean; hostedSignIn?: boolean; ui?: boolean } = {},
+  options: {
+    vault?: boolean;
+    interactive?: boolean;
+    bobAdmin?: boolean;
+    bobMember?: boolean;
+    hostedSignIn?: boolean;
+    ui?: boolean;
+  } = {},
 ) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
@@ -57,10 +65,18 @@ function setup(
             }),
             activityActorNamespace: "https://clerk.example.test",
           }));
+  // Alice and Bob are both maintainers, so they reach plain /mcp and, with
+  // the operator UI mounted, a connect link hops through /connectors/service.
+  // `bobMember` makes Bob only a member of a pool holding the connector.
+  const namespace = provider === "access" ? "cloudflare-access" : "https://clerk.example.test";
   const app = createTestConnecta({
     ...(options.ui === false ? { ui: undefined } : {}),
     connectors: [connector],
     auth,
+    ...(options.interactive === false
+      ? {}
+      : { maintainers: (options.bobMember ? ["alice"] : ["alice", "bob"]).map((id) => ({ namespace, id })) }),
+    ...(options.bobMember ? { pools: { team: { tools: ["service"], members: [{ namespace, id: "bob" }] } } } : {}),
     storage,
     publicUrl: BASE,
     logger: "silent",
@@ -101,7 +117,10 @@ function setup(
             name: "authorize_connector",
             arguments: { connector: "service", force },
           },
-          options.interactive === false ? { token: "machine" } : provider === "clerk" ? { token: user } : {},
+          {
+            ...(options.interactive === false ? { token: "machine" } : provider === "clerk" ? { token: user } : {}),
+            ...(options.bobMember && user === "bob" ? { pool: "team" } : {}),
+          },
         ),
         undefined,
         runtime(user),
@@ -346,6 +365,45 @@ for (const provider of ["clerk", "access"] as const) {
       });
     });
   }
+  it.each(["personal", "shared"] as const)(
+    `INV-4: ${provider} starts a pool member's %s link directly, while a maintainer's hops through the UI`,
+    async (scope) => {
+      const flow = setup(provider, scope, { bobMember: true, bobAdmin: true });
+      // A member is not a maintainer: plain /mcp answers it with the 404.
+      const plain = await flow.app.fetch(
+        mcpRpc(
+          "tools/call",
+          { name: "authorize_connector", arguments: { connector: "service" } },
+          provider === "clerk" ? { token: "bob" } : {},
+        ),
+        undefined,
+        flow.runtime("bob"),
+      );
+      expect(plain.status).toBe(404);
+      const member = await flow.authorize("bob");
+      // The operator UI serves maintainers only until the member view (#837 P6b),
+      // so the member's link starts the flow without the /connectors hop.
+      const direct = await flow.app.fetch(
+        new Request(member.authorizationUrl, { headers: flow.headers("bob") }),
+        undefined,
+        flow.runtime("bob"),
+      );
+      expect(direct.status).toBe(302);
+      expect(direct.headers.get("Location")).toContain(AS);
+      expect(flow.startAuth).toHaveBeenCalledOnce();
+      expect((await flow.callback("bob")).status).toBe(200);
+      expect(flow.finishAuth).toHaveBeenCalledOnce();
+      const maintainer = await flow.authorize("alice");
+      const hop = await flow.app.fetch(
+        new Request(maintainer.authorizationUrl, { headers: flow.headers("alice") }),
+        undefined,
+        flow.runtime("alice"),
+      );
+      expect(hop.status).toBe(302);
+      expect(new URL(hop.headers.get("Location")!, BASE).pathname).toBe("/connectors/service");
+      expect(flow.startAuth).toHaveBeenCalledOnce();
+    },
+  );
   it(`${provider} requires shared credential administration`, async () => {
     const flow = setup(provider, "shared");
     expect((await flow.authorize("bob")).recovery).toBe("unavailable");
@@ -380,19 +438,25 @@ it("requires Clerk or Cloudflare Access rather than a machine bearer", async () 
   expect(flow.startAuth).not.toHaveBeenCalled();
 });
 
-it("returns an unauthenticated Clerk browser from hosted sign-in to the same connect link", async () => {
-  const flow = setup("clerk", "personal", { ui: false });
-  const link = await flow.authorize();
-  const response = await flow.browser(link.authorizationUrl);
-  expect(response.status).toBe(302);
-  const signin = new URL(response.headers.get("Location")!);
-  expect(signin.origin).toBe("https://accounts.example");
-  expect(signin.searchParams.get("redirect_url")).toBe(link.authorizationUrl);
-  expect(flow.startAuth).not.toHaveBeenCalled();
-});
+// With the operator UI mounted, the Clerk sign-in page is still preferred over
+// the UI hop (#837): sign-in returns to the link, which then routes a
+// maintainer to the UI and starts a pool member's flow directly.
+it.each([false, true])(
+  "returns an unauthenticated Clerk browser from hosted sign-in to the same connect link (ui %s)",
+  async (ui) => {
+    const flow = setup("clerk", "personal", { ui });
+    const link = await flow.authorize();
+    const response = await flow.browser(link.authorizationUrl);
+    expect(response.status).toBe(302);
+    const signin = new URL(response.headers.get("Location")!);
+    expect(signin.origin).toBe("https://accounts.example");
+    expect(signin.searchParams.get("redirect_url")).toBe(link.authorizationUrl);
+    expect(flow.startAuth).not.toHaveBeenCalled();
+  },
+);
 
-it("serves local Clerk sign-in when no hosted page is configured", async () => {
-  const flow = setup("clerk", "personal", { hostedSignIn: false, ui: false });
+it.each([false, true])("serves local Clerk sign-in when no hosted page is configured (ui %s)", async (ui) => {
+  const flow = setup("clerk", "personal", { hostedSignIn: false, ui });
   const link = await flow.authorize();
   const response = await flow.browser(link.authorizationUrl);
   expect(response.status).toBe(200);
@@ -534,9 +598,15 @@ describe("OAuth identity and signature boundaries", () => {
             access: { aud: "test-app", getIdentity: async () => (human ? { user_uuid: "alice" } : undefined) },
           }
         : undefined;
+    // Agents are never maintainers (#837), so the agent reaches the
+    // connector through a pool it is a member of.
     const app = createTestConnecta({
       connectors: [connector],
-      auth: [manager.auth, humanAuth],
+      auth: [humanAuth],
+      agents: ["machine"],
+      accessTokens: accessTokens(storage),
+      maintainers: ["alice"],
+      pools: { agents: { tools: ["service"], members: ["agent:machine"] } },
       storage,
       publicUrl: BASE,
       vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
@@ -544,7 +614,12 @@ describe("OAuth identity and signature boundaries", () => {
     });
     deployments.push(app);
     const rpc = await readJsonRpc(
-      await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token }),
+      await mcpRpc(
+        app,
+        "tools/call",
+        { name: "authorize_connector", arguments: { connector: "service" } },
+        { token, pool: "agents" },
+      ),
     );
     // An agent has no principal: a personal connector is absent for it, and
     // a shared one offers no browser consent.

@@ -712,7 +712,12 @@ describe("status UI", () => {
       kind: "clerk",
       authorize(request) {
         if (request.headers.get("authorization") === "Bearer hand-rolled") {
-          return { ok: true, userId: "user_123" };
+          // No namespace of its own, so it names its principal to be a maintainer (#837).
+          return {
+            ok: true,
+            userId: "user_123",
+            principal: { namespace: "https://hand-rolled.example", id: "user_123" },
+          };
         }
         return {
           ok: false,
@@ -723,6 +728,7 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [credentialConnector()],
       auth: handRolledClerk,
+      maintainers: [{ namespace: "https://hand-rolled.example", id: "user_123" }],
       storage: memoryStorage(),
       publicUrl: BASE,
       vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
@@ -1063,7 +1069,8 @@ describe("status UI", () => {
       activityActorLabel: actorLabel,
       authorize(request) {
         return request.headers.get("authorization") === "Bearer clerk-token"
-          ? { ok: true, userId: "operator" }
+          ? // No namespace of its own, so it names its principal to be a maintainer (#837).
+            { ok: true, userId: "operator", principal: { namespace: "https://clerk.labels.example", id: "operator" } }
           : {
               ok: false,
               response: Response.json({ error: "unauthorized" }, { status: 401 }),
@@ -1095,6 +1102,7 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth,
+      maintainers: [{ namespace: "https://clerk.labels.example", id: "operator" }],
       activity: activityHistory({
         store: {
           record() {},
@@ -1189,6 +1197,7 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [providerA, providerB, providerBSecondGate],
+      maintainers: [{ namespace: "https://id-b.example", id: "operator" }],
       activity: activityHistory({
         store: {
           record() {},
@@ -1280,6 +1289,7 @@ describe("status UI", () => {
       const c = createTestConnecta({
         connectors: [calcApi(CALC_OPTIONS)],
         auth: [ownerWithoutResolver, otherDirectory],
+        maintainers: [{ namespace: "https://id-b.example", id: "operator" }],
         activity: activityHistory({
           store: {
             record() {},
@@ -1344,6 +1354,7 @@ describe("status UI", () => {
             },
           },
         }),
+        maintainers: ["operator"],
         publicUrl: BASE,
       });
 

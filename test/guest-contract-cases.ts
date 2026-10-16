@@ -144,13 +144,18 @@ export async function checkNativeSnapshots(executor: Executor): Promise<void> {
   expect(outB.structuredContent).toMatchObject({ result: "asset://B" });
 }
 
-/** Every executor pages through the admitted route and rechecks live authority. */
+/**
+ * Every executor pages through the admitted route and rechecks live authority.
+ * Pool access is static (#837), so what can change between a stash and its
+ * page is the endpoint, the caller, and what the auth provider answers now.
+ */
 export async function checkStashAuthority(executor: Executor, programReturn = false): Promise<void> {
-  let granted = true;
-  let member = true;
-  let zero = false;
-  let toolOnly = false;
-  let mode: "grant" | "pool" = "grant";
+  // What `control.revoke` does to authentication mid-program: refuse it, or
+  // admit a different member of the same pool.
+  let revoke: "refused" | "swapped" = "refused";
+  let live: "admitted" | "refused" | "swapped" = "admitted";
+  const alice = { namespace: "owners", id: "alice" };
+  const bob = { namespace: "owners", id: "bob" };
   const storage = memoryStorage();
   const secret = "stash-disclosure-sentinel-".repeat(programReturn ? 2_000 : 100);
   const docs: Connector = {
@@ -170,8 +175,7 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
       return [readOnly("revoke")];
     },
     async callTool() {
-      if (mode === "grant") granted = false;
-      else member = false;
+      live = revoke;
       return true;
     },
   };
@@ -189,21 +193,21 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
         kind: "stash-test",
         activityActorNamespace: "stash-test",
         authorize(request) {
+          if (live === "refused") return { ok: false, response: new Response(null, { status: 401 }) };
           const token = request.headers.get("Authorization")?.slice(7) ?? "alice";
+          const id = live === "swapped" || token === "bob" ? "bob" : token === "carol" ? "carol" : "alice";
           return {
             ok: true,
             subjectId: token === "other" ? "other" : "shared",
-            principal: { namespace: "owners", id: token === "bob" ? "bob" : "alice" },
+            principal: { namespace: "owners", id },
           };
         },
       },
-      identity: {
-        connectorAccess: () =>
-          zero ? [] : toolOnly ? ["docs.read", "control"] : granted ? ["docs", "control"] : ["control"],
-      },
+      maintainers: [alice],
       pools: {
-        admin: { tools: ["docs", "control"], readOnly, grant: () => member },
-        empty: { tools: ["control"], readOnly: false, grant: () => true },
+        admin: { tools: ["docs", "control"], readOnly, members: [alice, bob] },
+        narrow: { tools: ["docs.read", "control"], readOnly: false, members: [alice] },
+        empty: { tools: ["control"], readOnly: false, members: [alice] },
       },
     });
   const app = build(false);
@@ -274,32 +278,59 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
       expect(result.structuredContent).toMatchObject({ error: { code: "not_found" } });
       expect(JSON.stringify(result)).not.toContain("stash-disclosure-sentinel");
     };
-    zero = true;
+    // Another pool the caller belongs to, narrower or without docs at all.
     await deny({ path: "/mcp/empty" });
-    zero = false;
+    await deny({ path: "/mcp/narrow" });
+    // Another member of the same pool, and the same principal under another subject.
     await deny({ token: "bob" });
     await deny({ token: "other" });
     await deny({ origin: "https://second.test" });
     await deny({ app: readonly });
-    toolOnly = true;
-    await deny();
-    toolOnly = false;
-    granted = false;
-    await deny();
-    granted = true;
+    // A non-member never reaches the stash: the pool is the endpoint-not-found 404.
+    const outsider = await app.fetch(
+      new Request(`${CONTRACT_BASE}/mcp/admin`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: "Bearer carol",
+          Origin: "https://first.test",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "execute_code", arguments: { code } },
+        }),
+      }),
+    );
+    expect(outsider.status).toBe(404);
+    expect(await outsider.text()).not.toContain("stash-disclosure-sentinel");
+    // Paging re-admits the caller: authentication refused, or answering for
+    // another member, mid-program denies the page.
+    revoke = "refused";
     await deny({}, 'await connecta.call("control.revoke")');
-    granted = true;
-    mode = "pool";
+    live = "admitted";
+    revoke = "swapped";
     await deny({}, 'await connecta.call("control.revoke")');
+    live = "admitted";
+    // Every refusal above was scoped; the admitted caller still pages it.
+    const again = await rpc("execute_code", { code });
+    expect(again.isError).toBeFalsy();
+    expect(again.structuredContent).toMatchObject({ result: { text: JSON.stringify(secret).slice(0, 20) } });
   } finally {
     await app.close();
     await readonly.close();
   }
 }
 
-/** Skill and catalog returns retain live grants through a second return stash. */
+/**
+ * Skill and catalog returns keep their bindings through a second return stash.
+ * Pool access is static (#837): a narrower pool is another endpoint, and the
+ * live part is re-admitting the caller when a page is read.
+ */
 export async function checkProgramReadDependencies(executor: Executor): Promise<void> {
-  let access: string[] = ["remote", "control"];
+  let refused = false;
   const uri = "skill://vendor/private/SKILL.md";
   const text = "s".repeat(30_000) + "private-skill-sentinel";
   const schema = { type: "object", description: "s".repeat(30_000) + "private-catalog-sentinel" };
@@ -336,10 +367,11 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
       return [readOnly("revoke")];
     },
     async callTool() {
-      access = ["control"];
+      refused = true;
       return true;
     },
   };
+  const alice = { namespace: "read-dependencies", id: "alice" };
   const app = createConnecta({
     readOnly: false,
     connectors: [remote, control],
@@ -350,15 +382,22 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
     auth: {
       kind: "read-dependencies",
       activityActorNamespace: "read-dependencies",
-      authorize: () => ({ ok: true, subjectId: "alice" }),
+      authorize: () =>
+        refused
+          ? { ok: false, response: new Response(null, { status: 401 }) }
+          : { ok: true, subjectId: "alice", principal: alice },
     },
-    identity: { connectorAccess: () => access },
+    maintainers: [alice],
     // Writable, so discovery still lists remote.write; no program here writes.
-    pools: { reader: { tools: ["remote", "control"], readOnly: false, grant: () => true } },
+    pools: {
+      reader: { tools: ["remote", "control"], readOnly: false, members: [alice] },
+      narrow: { tools: ["remote.read", "control"], readOnly: false, members: [alice] },
+      bare: { tools: ["control"], readOnly: false, members: [alice] },
+    },
   });
-  const run = async (code: string) => {
+  const run = async (code: string, pool = "reader") => {
     const response = await app.fetch(
-      new Request(`${CONTRACT_BASE}/mcp/reader`, {
+      new Request(`${CONTRACT_BASE}/mcp/${pool}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -378,30 +417,16 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
     return (await readJsonRpc(response)).result as ToolResult;
   };
   try {
-    for (const [read, grant, sentinel] of [
-      [
-        `(await connecta.skill(${JSON.stringify(downstreamSkillUri("remote", uri))})).text`,
-        "remote.read",
-        "private-skill-sentinel",
-      ],
-      ['(await connecta.skill("connector:remote")).text', "remote.read", "private-skill-sentinel"],
-      [
-        'await connecta.search({ connector: "remote", includeSchemas: "json" })',
-        "remote.read",
-        "private-catalog-sentinel",
-      ],
+    for (const [read, sentinel] of [
+      [`(await connecta.skill(${JSON.stringify(downstreamSkillUri("remote", uri))})).text`, "private-skill-sentinel"],
+      ['(await connecta.skill("connector:remote")).text', "private-skill-sentinel"],
+      ['await connecta.search({ connector: "remote", includeSchemas: "json" })', "private-catalog-sentinel"],
       [
         'await (async () => { try { await connecta.call("remote.failure"); } catch (e) { return e.message.repeat(100); } })()',
-        "remote.read",
         "private-error-sentinel",
       ],
-      [
-        'await connecta.describe({ address: "remote.write", format: "json" })',
-        "remote.write",
-        "private-catalog-sentinel",
-      ],
+      ['await connecta.describe({ address: "remote.write", format: "json" })', "private-catalog-sentinel"],
     ]) {
-      access = ["remote", "control"];
       const original = await run(`async () => ${read}`);
       expect(original.isError, JSON.stringify(original)).toBeFalsy();
       const id = (original.structuredContent!.result as { resultId: string }).resultId;
@@ -421,28 +446,17 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
         const visible = await run(`async () => { ${pageCode} }`);
         expect(visible.isError).toBeFalsy();
         expect(JSON.stringify(visible)).toContain(sentinel);
-        access = [grant!, "control"];
-        const narrowed = await run(`async () => { ${pageCode} }`);
-        if (read!.includes("skill://downstream/")) {
-          expect(narrowed.structuredContent).toMatchObject({ error: { code: "not_found" } });
-          expect(JSON.stringify(narrowed)).not.toContain(sentinel);
-        } else if (read!.includes("connecta.describe") || read!.includes('connecta.skill("connector:remote")')) {
-          // Describing a visible write is still a read.
-          expect(narrowed.isError).toBeFalsy();
-          expect(JSON.stringify(narrowed)).toContain(sentinel);
-        } else {
-          // Search included both tools; losing the write grant invalidates the stash.
-          expect(narrowed.structuredContent).toMatchObject({ error: { code: "not_found" } });
+        // A narrower pool, or one without remote, is another endpoint.
+        for (const pool of ["narrow", "bare"]) {
+          const elsewhere = await run(`async () => { ${pageCode} }`, pool);
+          expect(elsewhere.structuredContent).toMatchObject({ error: { code: "not_found" } });
+          expect(JSON.stringify(elsewhere)).not.toContain(sentinel);
         }
-        access = ["control"];
-        const revoked = await run(`async () => { ${pageCode} }`);
-        expect(revoked.structuredContent).toMatchObject({ error: { code: "not_found" } });
-        expect(JSON.stringify(revoked)).not.toContain(sentinel);
-        access = ["remote", "control"];
+        // Authentication refused mid-program denies the page.
         const live = await run(`async () => { await connecta.call("control.revoke"); ${pageCode} }`);
+        refused = false;
         expect(live.structuredContent).toMatchObject({ error: { code: "not_found" } });
         expect(JSON.stringify(live)).not.toContain(sentinel);
-        access = ["remote", "control"];
       }
     }
   } finally {
@@ -450,9 +464,13 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
   }
 }
 
-/** Pre-resolution failures and local guides keep visibility through inherited stashes. */
+/**
+ * Pre-resolution failures and local guides keep visibility through inherited
+ * stashes. Pool access is static (#837): a pool without remote is another
+ * endpoint, and the live part is re-admitting the caller when a page is read.
+ */
 export async function checkProgramVisibilityDependencies(executor: Executor): Promise<void> {
-  let access = ["remote", "control"];
+  let refused = false;
   let catalogFails = false;
   const sentinel = "private-catalog-error-sentinel";
   const remote: Connector = {
@@ -474,10 +492,11 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
       return [readOnly("revoke")];
     },
     async callTool() {
-      access = ["control"];
+      refused = true;
       return true;
     },
   };
+  const alice = { namespace: "visibility-dependencies", id: "alice" };
   const app = createConnecta({
     readOnly: false,
     connectors: [remote, control],
@@ -487,12 +506,16 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
     auth: {
       kind: "visibility-dependencies",
       activityActorNamespace: "visibility-dependencies",
-      authorize: () => ({ ok: true, subjectId: "alice" }),
+      authorize: () =>
+        refused
+          ? { ok: false, response: new Response(null, { status: 401 }) }
+          : { ok: true, subjectId: "alice", principal: alice },
     },
-    identity: { connectorAccess: () => access },
+    maintainers: [alice],
     pools: {
-      reader: { tools: ["remote", "control"], readOnly: true, grant: () => true },
-      narrow: { tools: ["remote.read", "control"], readOnly: true, grant: () => true },
+      reader: { tools: ["remote", "control"], readOnly: true, members: [alice] },
+      narrow: { tools: ["remote.read", "control"], readOnly: true, members: [alice] },
+      bare: { tools: ["control"], readOnly: true, members: [alice] },
     },
   });
   const run = async (code: string, pool: string) => {
@@ -520,7 +543,6 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
       catalogFails = scenario === "catalog";
       const local = scenario === "local-guide";
       const pool = local ? "narrow" : "reader";
-      access = [local ? "remote.read" : "remote", "control"];
       const operation =
         scenario === "missing-skill"
           ? 'await connecta.skill("missing")'
@@ -534,7 +556,7 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
       expect(id, scenario).toMatch(/^[a-f0-9-]{36}$/);
       if (local) {
         const first = await run(`async () => await connecta.result(${JSON.stringify(id)}, { maxBytes: 1000 })`, pool);
-        expect(first.isError, "local guide with initial exact-tool grants").toBeFalsy();
+        expect(first.isError, "local guide in an exact-tool pool").toBeFalsy();
         expect(first.structuredContent).toMatchObject({ result: { offset: 0, text: expect.stringContaining("rrr") } });
       }
       const pageCode = (saved: string) =>
@@ -558,20 +580,17 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
       for (const saved of [id, derivedId]) {
         const inherited = await run(`async () => ${pageCode(saved)}`, pool);
         expect(inherited.isError, scenario).toBeFalsy();
-        access = ["control"];
-        const denied = await run(`async () => ${pageCode(saved)}`, pool);
+        const denied = await run(`async () => ${pageCode(saved)}`, "bare");
         expect(denied.structuredContent, scenario).toMatchObject({ error: { code: "not_found" } });
         expect(JSON.stringify(denied)).not.toContain(sentinel);
-        access = [local ? "remote.read" : "remote", "control"];
         const live = await run(
           `async () => { await connecta.call("control.revoke"); return ${pageCode(saved)}; }`,
           pool,
         );
+        refused = false;
         expect(live.structuredContent, scenario).toMatchObject({ error: { code: "not_found" } });
-        access = [local ? "remote.read" : "remote", "control"];
       }
-      access = ["control"];
-      const fresh = await run('async () => await connecta.call("remote.read")', pool);
+      const fresh = await run('async () => await connecta.call("remote.read")', "bare");
       expect(fresh.structuredContent).toMatchObject({ error: { code: "unknown_address" } });
     }
   } finally {

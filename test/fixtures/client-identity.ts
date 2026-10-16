@@ -56,7 +56,13 @@ export async function checkClientActivity(
   const c = createTestConnecta({
     connectors: [calcApi()], logger: silentLogger,
     serverInfo: { name: "deployment-display", version: "999.0.0" },
-    auth: { kind: "test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
+    auth: {
+      kind: "test",
+      activityActorNamespace: "connecta:test",
+      interactiveOperator: true,
+      authorize: () => ({ ok: true, userId: "operator" }),
+    },
+    maintainers: ["operator"],
     activity: activityHistory({ store: {
       record(event) {
         events.push(event);

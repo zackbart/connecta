@@ -56,8 +56,8 @@ type Listing = Record<
   ListedTool
 >;
 
-async function listTools(deployment: Parameters<typeof mcpRpc>[0], token = TOKEN): Promise<Listing> {
-  const body = await readJsonRpc(await mcpRpc(deployment, "tools/list", {}, { token }));
+async function listTools(deployment: Parameters<typeof mcpRpc>[0], token = TOKEN, pool?: string): Promise<Listing> {
+  const body = await readJsonRpc(await mcpRpc(deployment, "tools/list", {}, { token, ...(pool ? { pool } : {}) }));
   return Object.fromEntries((body.result.tools as ListedTool[]).map((tool) => [tool.name, tool])) as Listing;
 }
 
@@ -116,6 +116,7 @@ describe("meta-tool input schema rendering", () => {
     });
     const users: InboundAuth = {
       kind: "test-users",
+      activityActorNamespace: "connecta:test-users",
       authorize(request) {
         const user = /^Bearer (alice|bob)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
         return user
@@ -127,15 +128,15 @@ describe("meta-tool input schema rendering", () => {
       executor: stubExecutor,
       connectors: [calcApi(), guided("notes")],
       auth: users,
-      identity: {
-        connectorAccess: ({ subject }) => (subject?.id === "alice" ? ["calc", "notes"] : ["calc"]),
-      },
+      // Alice maintains the whole deployment; Bob reaches only the calc pool (#837).
+      maintainers: [{ namespace: "connecta:test-users", id: "alice" }],
+      pools: { calc: { tools: ["calc"], members: [{ namespace: "connecta:test-users", id: "bob" }] } },
     });
 
     const base = await listTools(plain);
     const variant = await listTools(tuned);
     const alice = await listTools(scoped, "alice");
-    const bob = await listTools(scoped, "bob");
+    const bob = await listTools(scoped, "bob", "calc");
 
     // Deployment configuration reaches descriptions...
     expect(base.skills.description).not.toContain("connector guides");

@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, Executor, InboundAuth } from "../src/types.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
+import { registerTestMaintainer } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
+/** The maintainer every auth fixture here admits, so plain /mcp serves it (#837). */
+const PRINCIPAL = { namespace: "connecta:test", id: "operator" };
 
 function blockingAuth() {
   let release!: () => void;
@@ -11,14 +14,17 @@ function blockingAuth() {
     release = resolve;
   });
   let calls = 0;
-  const auth: InboundAuth = {
-    kind: "test",
-    async authorize() {
-      calls++;
-      await blocked;
-      return { ok: true };
+  const auth: InboundAuth = registerTestMaintainer(
+    {
+      kind: "test",
+      async authorize() {
+        calls++;
+        await blocked;
+        return { ok: true, principal: PRINCIPAL };
+      },
     },
-  };
+    PRINCIPAL,
+  );
   return { auth, release, calls: () => calls };
 }
 
@@ -166,6 +172,7 @@ describe("request admission", () => {
     const connecta = createTestConnecta({
       connectors: [],
       auth,
+      maintainers: [PRINCIPAL],
       logger: silentLogger,
       admission: {
         requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000, maxDurationMs: 100 },
@@ -337,6 +344,7 @@ describe("request admission", () => {
     const connecta = createTestConnecta({
       connectors: [],
       auth,
+      maintainers: [PRINCIPAL],
       logger: silentLogger,
       admission: {
         requests: {

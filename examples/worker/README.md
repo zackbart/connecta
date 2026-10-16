@@ -219,7 +219,10 @@ discover the skew in production ([#376](https://github.com/zackbart/connecta/iss
 no Clerk import, secret, package, or fallback provider. Docker deployments keep
 the Clerk path in the Node template.
 
-Then point an MCP client at `<PUBLIC_URL>/mcp`. The example explicitly enables
+Then list the maintainers' Access user ids (`user_uuid`, else email) in the
+`CONNECTA_MAINTAINERS` var and point a maintainer's MCP client at
+`<PUBLIC_URL>/mcp`. Agents and other people use `<PUBLIC_URL>/mcp/<pool>` for
+a pool that lists them in `members`. The example explicitly enables
 `ui: operatorUi()`; open `<PUBLIC_URL>/` for Connections and each connection's
 authentication controls. The page labels tool safety, offers fixed repair
 prompts for classified failures, and shows client setup commands for endpoints
@@ -230,13 +233,14 @@ declared agent, is available to permitted interactive operators.
 ## Select optional modules
 
 `cloudflareAccessAuth()` reads trusted identity after Access admits the Worker
-request. Humans may use their code-derived connector view and operator pages.
+request. Maintainers use plain `/mcp` and the operator pages; pool members use
+`/mcp/<pool>`, which serves exactly that pool's tools.
 Machines authenticate with `accessTokens(storage)` over the same D1 database;
 Access service headers alone never grant MCP access or interactive authority.
 Keep users, groups, and admission in Access. Connector visibility and management
 permissions belong in `src/connecta.config.ts`.
 
-`identity.connectorAccess` selects discoverable and callable connectors.
+`maintainers` and each pool's `members` select who reaches which endpoint.
 `credentialAdministration` separately allows shared credential and OAuth
 management, while `personalConnection` allows a human to connect their own
 account. Both management permissions default to none. Grant the intended
@@ -334,7 +338,9 @@ Interactive MCP clients use Access Managed OAuth. Machine clients need both
 Access service credentials and a declared agent's `cta_` bearer, issued as
 described in [Machine tokens](#machine-tokens). `accessTokens(storage)` is always
 enabled, and the example grants token management to every interactive Access operator.
-Keep token, connector, and pool grants in deployment code.
+Keep maintainers, pools, and their members in deployment code. Until agent
+endpoints ship, an agent reaches only `/mcp/<pool>` for a pool that lists it
+(the example's `ci` pool lists `agent:ci-client`); plain `/mcp` refuses it.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.CONNECTA_DB) })`,
 with `activityHistory` from `@zackbart/connecta/activity` and `d1ActivityStore`
@@ -348,7 +354,7 @@ Verify MCP health and the exact six tools with:
 CF_ACCESS_CLIENT_ID='REPLACE_WITH_ACCESS_CLIENT_ID' \
 CF_ACCESS_CLIENT_SECRET='REPLACE_WITH_ACCESS_CLIENT_SECRET' \
 CONNECTA_TOKEN='cta_REPLACE_WITH_STORED_SECRET' \
-connecta doctor --url "$PUBLIC_URL"
+connecta doctor --url "$PUBLIC_URL" --pool ci
 ```
 
 Doctor reports the configured `DynamicWorkerExecutor`, not a presumed Node
@@ -495,8 +501,8 @@ then `wrangler login` and check the prepared deployment with a dry run.
    invalid entry or mismatch. Keep traffic and writers stopped until these
    counts are resolved. A verification pass does not rewrite copied entries.
 5. Deploy the D1 configuration with `wrangler deploy` while maintenance remains.
-   Run `connecta doctor` using Access service credentials plus a stored `cta_`
-   bearer through `CONNECTA_TOKEN`. Verify an existing
+   Run `connecta doctor --pool <pool>` using Access service credentials plus a
+   stored `cta_` bearer through `CONNECTA_TOKEN`. Verify an existing
    OAuth connector without re-consent, an existing `cta_` token, a connector
    using a vault credential, and prior activity in the Activity view. Run
    these controlled checks with other traffic and background writers blocked.

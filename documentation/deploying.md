@@ -93,9 +93,11 @@ outside the database and source control, and preserve it across upgrades.
 existing-record migration.
 
 One deployment serves one tenant and may admit several people. Node uses Clerk
-for human auth; Access is Workers-only. Keep credential administration,
+for human auth; Access is Workers-only. With inbound auth, `maintainers` is
+required: only they reach plain `/mcp` and the operator UI. Everyone else
+reaches a pool that lists them in `members`. Keep credential administration,
 personal connection, token management, and activity access explicit.
-[Auth](./auth.md#principals-visibility-and-operators) owns identity and grants;
+[Auth](./auth.md#principals-visibility-and-operators) owns maintainers and members;
 [Clerk setup](./auth.md#clerk-oauth-tokens-and-operator-sessions) owns resource-bound
 tokens and `aud_claim_enabled`. A person's operator session is not an MCP token.
 
@@ -105,9 +107,8 @@ inherits that value unless it sets its own. A writable endpoint (`false`) allows
 writes through `call_destructive_tool` and programs and marks `execute_code` as
 a write; the client decides what to approve. A read-only endpoint (`true`) omits
 write tools from search and describe and refuses every write call; provider
-guides may still name those tools. Pool membership intersects
-the caller's grants; it never widens them. See [pools](./auth.md#pools) before
-changing `readOnly`.
+guides may still name those tools. A pool serves exactly its `tools` to its
+`members`. See [pools](./auth.md#pools) before changing `readOnly`.
 
 ## Verify and diagnose
 

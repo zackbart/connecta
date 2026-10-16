@@ -13,6 +13,9 @@
   "vars": {
     // "CONNECTA_ACTIVITY": "on",
     "PUBLIC_URL": "https://connecta.example.workers.dev",
+    // Comma-separated Access user ids (user_uuid, else email) of the
+    // maintainers. This one matches the local dev identity below.
+    "CONNECTA_MAINTAINERS": "operator@example.com",
   },
 
   // Local-only Access identity. Remove this block to exercise the

@@ -1,6 +1,6 @@
 import { connectRequest } from "./fixtures/oauth.js";
 import { describe, expect, it, vi } from "vitest";
-import { machineAuth } from "./helpers/machine-auth.js";
+import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { classifyTool } from "../src/tool-safety.js";
@@ -432,26 +432,29 @@ describe("operator action notices", () => {
 });
 
 describe("pools on the operator page", () => {
-  it("lists only the pools this identity's grant admits", async () => {
+  it("INV-4: lists every declared pool for a maintainer, and nothing for a pool member", async () => {
+    const MEMBER = "model-member-token";
+    const member = { namespace: TEST_MACHINE_NAMESPACE, id: "member" };
     const connecta = createTestConnecta({
       connectors: [docsApi()],
-      auth: machineAuth(TOKEN),
+      auth: [machineAuth(TOKEN), machineAuth(MEMBER, { subjectId: "member" })],
+      maintainers: [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }],
       storage: memoryStorage(),
       publicUrl: BASE,
       pools: {
-        support: { tools: ["docs"], grant: () => true },
-        finance: { tools: ["docs.read"], grant: async () => true },
-        closed: { tools: ["docs"], grant: () => false },
-        broken: {
-          tools: ["docs"],
-          grant: () => {
-            throw new Error("grant failed");
-          },
-        },
-        ungranted: { tools: ["docs"] },
+        support: { tools: ["docs"], members: [member] },
+        finance: { tools: ["docs.read"], members: [member] },
+        closed: { tools: ["docs"], members: [{ namespace: TEST_MACHINE_NAMESPACE, id: "someone-else" }] },
       },
     });
-    expect((await uiData(connecta)).pools).toEqual(["support", "finance"]);
+    // A maintainer administers every pool, so every pool gets setup commands.
+    expect((await uiData(connecta)).pools).toEqual(["support", "finance", "closed"]);
+    // Operator routes serve maintainers only until the member view (#837 P6b).
+    const refused = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, { headers: { Authorization: `Bearer ${MEMBER}` } }),
+    );
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toEqual({ error: "not found" });
   });
 
   it("omits the field when no pool is declared", async () => {

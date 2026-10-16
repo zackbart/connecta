@@ -12,6 +12,7 @@ import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
 const qualified = (id: string, uri = "docs://manual/start") => `resource://${id}/${encodeURIComponent(uri)}`;
@@ -67,7 +68,6 @@ it("INV-3, INV-4: hidden connectors and exact-tool grants cannot grant resource 
   const views = [
     registry.scoped({ connectorIds: [] }),
     registry.scoped({ connectorIds: ["docs"], toolAccess: new Map([["docs", new Set(["read"])]]) }),
-    registry.scoped({ connectorIds: ["docs"], guardedToolAccess: new Map([["docs", new Set(["read"])]]) }),
     registry.scoped({ connectorIds: ["docs"], toolAccess: new Map([["docs", new Set<string>()]]) }),
   ];
   for (const view of views) {
@@ -107,22 +107,27 @@ it.each([
   expect(registry.listConnectors()).toEqual([connector]);
 });
 
-it("INV-2, INV-4: endpoint pools intersect whole-connector resource grants even when writable", async () => {
+it("INV-2, INV-4: only a pool declaring the whole connector grants resource reads, even when writable", async () => {
   const { connector, readResource } = fixture();
+  const members = [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }];
   const app = createTestConnecta({
     connectors: [connector, fixture({ id: "other" }).connector],
+    auth: machineAuth("member"),
     logger: silentLogger,
     executor: scriptedExecutor((fns) => required(fns.read)(qualified("docs"))),
-    identity: { connectorAccess: () => ["docs"] },
     pools: {
-      whole: { tools: ["docs"], readOnly: true, grant: () => true },
-      tool: { tools: ["docs.read"], readOnly: false, grant: () => true },
-      hidden: { tools: ["other"], readOnly: false, grant: () => true },
+      whole: { tools: ["docs"], readOnly: true, members },
+      tool: { tools: ["docs.read"], readOnly: false, members },
+      hidden: { tools: ["other"], readOnly: false, members },
     },
   });
   try {
     for (const pool of ["whole", "tool", "hidden"]) {
-      const request = mcpRpc("tools/call", { name: "execute_code", arguments: { code: "async () => null" } });
+      const request = mcpRpc(
+        "tools/call",
+        { name: "execute_code", arguments: { code: "async () => null" } },
+        { token: "member" },
+      );
       const response = await app.fetch(
         new Request(`${BASE}/mcp/${pool}`, { method: "POST", headers: request.headers, body: await request.text() }),
       );

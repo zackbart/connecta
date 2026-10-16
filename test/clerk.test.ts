@@ -108,6 +108,7 @@ describe("OAuth browser token policy", () => {
         logger: "silent",
         vault: oauthVault(storage),
         auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }),
+        maintainers: ["alice"],
       });
       try {
         const rpc = await readJsonRpc(
@@ -531,6 +532,7 @@ describe("clerkAuth inbound auth", () => {
         logger: "silent",
         vault: oauthVault(storage),
         auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }),
+        maintainers: ["alice"],
       });
       try {
         const rpc = await readJsonRpc(
@@ -627,7 +629,8 @@ describe("clerkAuth inbound auth", () => {
             ],
           }),
         ],
-        pools: { support: { tools: ["calc"], grant: () => true } },
+        maintainers: ["user_123"],
+        pools: { support: { tools: ["calc"], members: ["user_123"] } },
       });
     }
 

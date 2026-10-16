@@ -6,6 +6,7 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { sentSecretsFor } from "../src/sent-secrets.js";
 import type { OperatorUiContract } from "../src/ui.js";
 import { bindCallback, callbackAuth, consentKey } from "./fixtures/oauth.js";
+import { CLERK_OPTIONS } from "./fixtures/ui.js";
 
 const BASE = "https://connecta.example";
 const ISSUER = "https://auth.example";
@@ -68,6 +69,7 @@ function setup(
   const app = createTestConnecta({
     connectors: [connector],
     auth: callbackAuth,
+    maintainers: [CLERK_OPTIONS.userId],
     storage: memoryStorage(),
     logger,
     ...(options.publicUrl === null ? {} : { publicUrl: options.publicUrl ?? BASE }),
