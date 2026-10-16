@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { accessTokens, AccessTokenManager, isSlotRevision } from "../src/access-tokens.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta } from "./helpers.js";
@@ -321,6 +321,108 @@ describe("token routes require expect", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+/**
+ * Hold the first two slot reads until both have started, so two operations
+ * decide from the same slot; `onCommit` sees each slot compare-and-set in
+ * order with its definitive answer and may make it unanswered by throwing.
+ */
+function sameSlotRace(base: KVStorage, onCommit: (index: number, committed: boolean) => void = () => {}): KVStorage {
+  let reads = 0;
+  let commits = 0;
+  let release!: () => void;
+  const both = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    ...base,
+    get: async (key) => {
+      const raw = await base.get(key);
+      if (key === SLOT && reads < 2) {
+        if (++reads === 2) release();
+        await both;
+      }
+      return raw;
+    },
+    compareAndSet: async (key, expected, next, options) => {
+      const committed = await base.compareAndSet(key, expected, next, options);
+      if (key === SLOT) onCommit(commits++, committed);
+      return committed;
+    },
+  };
+}
+
+describe("concurrent conditional revocations", () => {
+  const FIXED = new Date("2026-10-15T12:00:00.000Z");
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ["refused", false],
+    ["unanswered", true],
+  ] as const)(
+    "INV-9: two conditional revokes of one slot in one millisecond give exactly one 200 and one 409 (loser %s)",
+    async (_loser, ambiguous) => {
+      const base = memoryStorage();
+      const manager = new AccessTokenManager(base, { agents: ["simon"] });
+      const { agent } = await manager.rotate("simon");
+      // Both revocations are built at the same instant, so only a per-call id tells them apart.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FIXED);
+      const storage = sameSlotRace(base, (index, committed) => {
+        if (index === 1 && ambiguous) {
+          expect(committed).toBe(false);
+          throw new Error("connection reset before the answer");
+        }
+      });
+      const { app, send } = setup(storage);
+      try {
+        const responses = await Promise.all([
+          send("DELETE", { expect: agent.revision }),
+          send("DELETE", { expect: agent.revision }),
+        ]);
+        const bodies = await Promise.all(responses.map((response) => response.json()));
+        const outcomes = responses.map((response, i) => [response.status, bodies[i]] as const);
+        outcomes.sort(([a], [b]) => a - b);
+        expect(outcomes.map(([status]) => status)).toEqual([200, 409]);
+        expect(outcomes[1]![1]).toEqual({ error: expect.any(String), code: "slot_changed" });
+        const stored = JSON.parse((await base.get(SLOT))!) as { revokedAt: string; revocationId: string };
+        expect(stored.revokedAt).toBe(FIXED.toISOString());
+        // The winner reports exactly the slot that is stored.
+        expect((outcomes[0]![1] as { agent: { revision: string } }).agent.revision).toBe(
+          (await manager.list())[0]!.revision,
+        );
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it("INV-9: an unanswered conditional revoke that landed is recognized by its own revocation id", async () => {
+    const base = memoryStorage();
+    const manager = new AccessTokenManager(base, { agents: ["simon"] });
+    const issued = await manager.rotate("simon");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FIXED);
+    let commits = 0;
+    const storage: KVStorage = {
+      ...base,
+      compareAndSet: async (key, expected, next, options) => {
+        const committed = await base.compareAndSet(key, expected, next, options);
+        if (key === SLOT && commits++ === 0) throw new Error("connection reset after the write");
+        return committed;
+      },
+    };
+    const revoked = await new AccessTokenManager(storage, { agents: ["simon"] }).revoke("simon", {
+      expect: issued.agent.revision,
+    });
+    expect(revoked).toMatchObject({ state: "revoked", revision: (await manager.list())[0]!.revision });
+    // Read back, never written again.
+    expect(commits).toBe(1);
+    expect(await admits(manager, issued.token)).toBe(false);
   });
 });
 

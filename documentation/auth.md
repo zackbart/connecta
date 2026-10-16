@@ -110,9 +110,10 @@ revision }` per declared agent, never a secret, digest, or prefix.
 characters, the first 128 bits of a domain-separated SHA-256 of the agent name
 and the raw stored slot (`none` hashes the absent slot). Every commit stores a
 new slot value, since an issued slot names a fresh record id and a revoked one
-names the record it stopped, so the revision changes on every issue, rotate,
-revoke, and adopt and on nothing else. The stored slot holds a record id and
-times, never a secret or digest, and the id leaves only hashed. The token
+carries a random `revocationId` generated once per revoking call, so the
+revision changes on every issue, rotate, revoke, and adopt and on nothing
+else. The stored slot holds a record id or revocation id and times, never a
+secret or digest, and those ids leave only hashed. The token
 routes return it on every slot: `GET /ui/access-tokens` lists it, and issue,
 rotate, and revoke return the new slot's. Operator contract v2's
 `OperatorAgent.token.revision` carries the same value.
@@ -132,7 +133,13 @@ anything; reload the list and decide again. The check is part of the commit,
 not only the read: the slot's compare-and-set compares against exactly the raw
 slot whose revision matched, so a change that lands between the read and the
 commit refuses with `slot_changed` too, and this call publishes nothing. A
-revocation under `expect` never revokes a token issued after its read. Issuing
+revocation under `expect` never revokes a token issued after its read. A call
+decides that its own write landed only by an id no other call can produce: a
+rotation or adoption by the fresh record id its slot names, a revocation by its
+`revocationId`. Under `expect`, a compare-and-set that answers "not committed"
+is `slot_changed` at once, so of two conditional revocations of one slot,
+even within one millisecond, exactly one succeeds; an unanswered one is read
+back and succeeds only if the slot carries its own `revocationId`. Issuing
 from a `none`-era revision over a slot that now exists, or rotating over
 someone else's fresh rotation, therefore cannot happen. `aborted` (499) and
 `outcome_unknown` (503) are unchanged. `AccessTokenManager.rotate(name,

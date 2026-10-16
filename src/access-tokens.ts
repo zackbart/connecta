@@ -68,9 +68,10 @@ function parseClaim(raw: string): string {
  */
 type StoredSlot =
   | { version: 1; agent: string; state: "issued"; tokenId: string; issuedAt: string }
-  // `revokedTokenId` names the record the revocation stopped, so no two
-  // revocations store the same slot. Slots revoked before it carry none.
-  | { version: 1; agent: string; state: "revoked"; revokedAt: string; revokedTokenId?: string };
+  // `revocationId` is random per revoking call, so no two revocations store
+  // the same slot and a call recognizes only its own. Opaque, not secret.
+  // Slots revoked before it carry none.
+  | { version: 1; agent: string; state: "revoked"; revokedAt: string; revocationId?: string };
 
 /**
  * One declared agent's token slot as management sees it. Never secret
@@ -219,8 +220,9 @@ class OperationWindow {
   }
 }
 
-function revokedSlot(agent: string, tokenId: string): StoredSlot {
-  return { version: 1, agent, state: "revoked", revokedAt: new Date().toISOString(), revokedTokenId: tokenId };
+/** A revoked slot carrying `revocationId`, which one revoking call generates once and reuses. */
+function revokedSlot(agent: string, revocationId: string): StoredSlot {
+  return { version: 1, agent, state: "revoked", revokedAt: new Date().toISOString(), revocationId };
 }
 
 const recordKey = accessTokenKeys.record;
@@ -541,11 +543,12 @@ export class AccessTokenManager {
    * window. An unsettled outcome is reported, never swallowed.
    */
   private async revokeIfNamed(window: OperationWindow, agent: string, tokenId: string): Promise<void> {
+    const revocationId = crypto.randomUUID();
     for (let attempt = 0; attempt < RECONCILE_ATTEMPTS && window.open; attempt++) {
       try {
         const { raw, slot } = await window.run(() => this.readSlot(agent));
         if (slot?.state !== "issued" || slot.tokenId !== tokenId) return;
-        const revoked = JSON.stringify(revokedSlot(agent, tokenId));
+        const revoked = JSON.stringify(revokedSlot(agent, revocationId));
         if (await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, revoked))) return;
       } catch (error) {
         if (isOutcomeUnknown(error)) throw error;
@@ -580,42 +583,72 @@ export class AccessTokenManager {
     if (!(await matchesExpected(agent, raw, expect))) throw slotChanged();
     if (slot?.state !== "issued") return window.settle(await slotView(agent, raw, slot));
     throwIfAborted(signal);
-    const next = revokedSlot(agent, slot.tokenId);
+    // One id for this call's revocation, reused by every compare-and-set
+    // below: a stored slot carrying it is this call's own write, and no other
+    // call's revocation can carry it, even one built in the same millisecond.
+    const revocationId = crypto.randomUUID();
+    const next = revokedSlot(agent, revocationId);
     const nextRaw = JSON.stringify(next);
     let committed: boolean;
     try {
       committed = await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, nextRaw));
     } catch (error) {
       if (isOutcomeUnknown(error)) throw error;
+      if (expect !== undefined) return this.settleRevocation(window, agent, raw, revocationId);
       // Ambiguous: settled below, inside the window.
       committed = false;
     }
     if (committed) return window.settle(await slotView(agent, nextRaw, next));
+    // A definitive refusal under `expect`: someone else changed the slot.
+    if (expect !== undefined) throw slotChanged();
     // Unanswered, or a concurrent change won the slot, settled inside the
-    // window. Under `expect` only this call's own revocation counts, and only
-    // from the slot it read; otherwise whatever the slot names now is revoked
-    // the same way.
+    // window: whatever the slot names now is revoked the same way.
     for (let attempt = 0; attempt < RECONCILE_ATTEMPTS && window.open; attempt++) {
       try {
         const current = await window.run(() => this.readSlot(agent));
-        if (expect !== undefined) {
-          if (current.raw === nextRaw) return window.settle(await slotView(agent, nextRaw, next));
-          if (current.raw !== raw) throw slotChanged();
-          if (await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, nextRaw))) {
-            return window.settle(await slotView(agent, nextRaw, next));
-          }
-          continue;
-        }
         if (current.slot?.state !== "issued") {
           return window.settle(await slotView(agent, current.raw, current.slot));
         }
-        const revoked = revokedSlot(agent, current.slot.tokenId);
+        const revoked = revokedSlot(agent, revocationId);
         const revokedRaw = JSON.stringify(revoked);
         if (await window.run(() => this.storage.compareAndSet(slotKey(agent), current.raw, revokedRaw))) {
           return window.settle(await slotView(agent, revokedRaw, revoked));
         }
       } catch (error) {
         if (error instanceof AccessTokenError) throw error;
+      }
+    }
+    throw window.unknown();
+  }
+
+  /**
+   * Settle a conditional revocation whose commit went unanswered, inside the
+   * window. Only a slot carrying this call's own `revocationId` is its
+   * success. A slot still as read is revoked again from exactly that slot,
+   * with the same id; anything else is `slot_changed`.
+   */
+  private async settleRevocation(
+    window: OperationWindow,
+    agent: string,
+    raw: string | null,
+    revocationId: string,
+  ): Promise<AgentTokenSlot> {
+    for (let attempt = 0; attempt < RECONCILE_ATTEMPTS && window.open; attempt++) {
+      try {
+        const current = await window.run(() => this.readSlot(agent));
+        if (current.slot?.state === "revoked" && current.slot.revocationId === revocationId) {
+          return window.settle(await slotView(agent, current.raw, current.slot));
+        }
+        if (current.raw !== raw) throw slotChanged();
+        const next = revokedSlot(agent, revocationId);
+        const nextRaw = JSON.stringify(next);
+        if (await window.run(() => this.storage.compareAndSet(slotKey(agent), raw, nextRaw))) {
+          return window.settle(await slotView(agent, nextRaw, next));
+        }
+        // Refused: the next read decides whether the slot moved, and to whose value.
+      } catch (error) {
+        if (error instanceof AccessTokenError) throw error;
+        // Ambiguous or transient: the next read decides.
       }
     }
     throw window.unknown();
