@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { accessTokens } from "../src/access-tokens.js";
+import { activityHistory } from "../src/activity.js";
+import { d1ActivityStore } from "../src/d1.js";
 import { describeConfigSources } from "../src/config-value-sources.js";
 import { customExecutor, remoteMcp } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -128,4 +130,33 @@ describe("factory configuration provenance", () => {
       await app.close();
     }
   });
+
+  it.each([
+    ["store default", () => d1ActivityStore(D1), "default"],
+    ["set in code", () => d1ActivityStore(D1, { retentionDays: 30 }), "config"],
+    ["unreported", () => ({ record() {}, describe: () => ({ kind: "custom", retentionDays: 7 }) }), "default"],
+  ] as const)(
+    "INV-10: reads activity retention as set only when the store reports it: %s",
+    async (_, store, source) => {
+      const raw = {
+        readOnly: false,
+        executor,
+        publicUrl: "https://connecta.example",
+        logger: "silent" as const,
+        connectors: [],
+        activity: activityHistory({ store: store() }),
+      };
+      const app = createTestConnecta(raw);
+      try {
+        const sources = describeConfigSources(app.describeConfig(), raw);
+        expect(sources["config.modules.activity.store.retentionDays"]).toBe(source);
+        expect(sources["config.modules.activity.store.kind"]).toBe("config");
+        expect(app.describeConfig().modules.activity.store).not.toHaveProperty("optionSources");
+      } finally {
+        await app.close();
+      }
+    },
+  );
 });
+
+const D1 = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] } as never;

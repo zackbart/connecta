@@ -2,7 +2,15 @@ import type { OperatorState } from "../view.js";
 import { configSummary } from "../config-summary.js";
 import { accessChips } from "../endpoints.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
-import { FactChips, FeatureTiles, OverrideChips, SignInTiles, StatTiles, TileSection } from "./config-tiles.js";
+import {
+  DefaultLimits,
+  FactChips,
+  FeatureTiles,
+  OverrideChips,
+  SignInTiles,
+  StatTiles,
+  TileSection,
+} from "./config-tiles.js";
 import { Icon } from "./icons.js";
 
 export function SettingsPage({ state }: { state: OperatorState }) {
@@ -26,21 +34,17 @@ export function SettingsPage({ state }: { state: OperatorState }) {
       ) : (
         <div className="settings-board">
           <TileSection id="deploymentHeading" title="Deployment">
-            <FactChips facts={summary.deployment} brand={summary.brand} />
+            <FactChips facts={summary.deployment} />
           </TileSection>
           <TileSection id="signInHeading" title="Sign-in">
-            <SignInTiles
-              tiles={summary.signIn}
-              maintainers={accessChips(contract.root.maintainers)}
-              agents={accessChips(summary.agents.map((name) => ({ kind: "agent", name })))}
-            />
+            <SignInTiles tiles={summary.signIn} maintainers={accessChips(contract.root.maintainers)} />
           </TileSection>
           <TileSection id="featuresHeading" title="Features">
             <FeatureTiles tiles={summary.features} />
           </TileSection>
           <TileSection id="limitsHeading" title="Limits">
             <StatTiles tiles={summary.limits} label="Limits" />
-            <StatTiles tiles={summary.moreLimits} compact label="Default limits" />
+            <DefaultLimits groups={summary.defaults} />
           </TileSection>
           {summary.overrides.length ? (
             <TileSection id="overridesHeading" title="Overrides">

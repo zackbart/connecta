@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
-import type { ConnectorBadge, FactChip, FeatureTile, OverrideChip, SignInTile, StatTile } from "../config-summary.js";
+import type {
+  ConnectorBadge,
+  DefaultGroup,
+  FactChip,
+  FeatureTile,
+  OverrideChip,
+  SignInTile,
+  StatTile,
+} from "../config-summary.js";
 import type { AccessChip } from "../endpoints.js";
 import { Icon } from "./icons.js";
 
@@ -30,7 +38,9 @@ export function StatTiles({ tiles, compact, label }: { tiles: StatTile[]; compac
         <div key={tile.id} className={tile.set ? "stat-tile set" : "stat-tile"} data-config-path={tile.id}>
           <dt>{tile.label}</dt>
           <dd>
-            <span className="stat-value">{tile.value}</span>
+            <span className="stat-value" title={tile.title}>
+              {tile.value}
+            </span>
             {tile.set ? (
               <span className="set-dot" title="Set in code">
                 <span className="visually-hidden">, set in code</span>
@@ -45,6 +55,41 @@ export function StatTiles({ tiles, compact, label }: { tiles: StatTile[]; compac
   );
 }
 
+/**
+ * Default limits behind one disclosure, "17 defaults", that opens into a small
+ * card per group: each a dense list of value and label.
+ */
+export function DefaultLimits({ groups }: { groups: DefaultGroup[] }) {
+  const count = groups.reduce((total, group) => total + group.tiles.length, 0);
+  if (!count) return null;
+  return (
+    <details className="defaults">
+      <summary>
+        <Icon name="chevron" size={14} />
+        {count} {count === 1 ? "default" : "defaults"}
+      </summary>
+      <div className="default-groups">
+        {groups.map((group) => (
+          <section key={group.id} className="default-group" aria-labelledby={`defaults-${group.id}`}>
+            <h3 id={`defaults-${group.id}`}>{group.title}</h3>
+            <dl>
+              {group.tiles.map((tile) => (
+                <div key={tile.id} data-config-path={tile.id}>
+                  <dt>{tile.label}</dt>
+                  <dd title={tile.title}>
+                    {tile.value}
+                    <span className="visually-hidden">, default</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 /** An optional module: its icon filled when on, greyed when off, with a check or a dash. */
 export function FeatureTiles({ tiles }: { tiles: FeatureTile[] }) {
   return (
@@ -55,6 +100,12 @@ export function FeatureTiles({ tiles }: { tiles: FeatureTile[] }) {
             <Icon name={tile.icon} size={18} />
           </span>
           <span className="feature-name">{tile.label}</span>
+          {tile.detail ? (
+            <span className="feature-detail">
+              <Icon name="check" size={11} />
+              {tile.detail}
+            </span>
+          ) : null}
           <span className="feature-state">
             <Icon name={tile.on ? "check" : "minus"} size={14} />
             <span className="visually-hidden">{tile.on ? "On" : "Off"}</span>
@@ -112,18 +163,11 @@ function AvatarStack({ chips, label }: { chips: AccessChip[]; label: string }) {
 }
 
 /**
- * Each sign-in method: its mark, its name, who it admits, and the people (or
- * agents) behind it. An open deployment draws one tile that says so.
+ * Each sign-in method: its mark, its name and who it admits, with a count chip
+ * on agent tokens. The maintainers who may use /mcp follow once, whatever the
+ * methods are. An open deployment draws one tile that says so.
  */
-export function SignInTiles({
-  tiles,
-  maintainers,
-  agents,
-}: {
-  tiles: SignInTile[];
-  maintainers: AccessChip[];
-  agents: AccessChip[];
-}) {
+export function SignInTiles({ tiles, maintainers }: { tiles: SignInTile[]; maintainers: AccessChip[] }) {
   if (!tiles.length)
     return (
       <ul className="identity-grid">
@@ -138,45 +182,48 @@ export function SignInTiles({
     );
   return (
     <ul className="identity-grid">
-      {tiles.map((tile) => {
-        const people = tile.interactive ? maintainers : tile.mark === "tokens" ? agents : [];
-        return (
-          <li key={tile.id} className="identity-tile" data-sign-in={tile.id}>
-            <ProviderMark mark={tile.mark} />
-            <span className="identity-name">{tile.label}</span>
-            <span className="identity-kind">
-              <Icon name={tile.interactive ? "users" : "key"} size={13} />
-              {tile.interactive ? "People" : "Machines"}
-            </span>
-            {people.length ? (
-              <AvatarStack
-                chips={people}
-                label={tile.mark === "tokens" && !tile.interactive ? "Agents" : "Maintainers"}
-              />
-            ) : null}
-          </li>
-        );
-      })}
+      {tiles.map((tile) => (
+        <li key={tile.id} className="identity-tile" data-sign-in={tile.id}>
+          <ProviderMark mark={tile.mark} />
+          <span className="identity-name">{tile.label}</span>
+          <span className="identity-kind">
+            <Icon name={tile.interactive ? "users" : "key"} size={13} />
+            {tile.interactive ? "People" : "Machines"}
+          </span>
+          {tile.count ? <span className="count-chip">{tile.count}</span> : null}
+        </li>
+      ))}
+      <li className="identity-tile maintainers" data-sign-in="maintainers">
+        <span className="provider-mark other" aria-hidden="true">
+          <Icon name="users" size={18} />
+        </span>
+        <span className="identity-name">Maintainers</span>
+        <span className="identity-kind mono">/mcp</span>
+        {maintainers.length ? (
+          <AvatarStack chips={maintainers} label="Maintainers" />
+        ) : (
+          <span className="count-chip">None</span>
+        )}
+      </li>
     </ul>
   );
 }
 
 /** Deployment facts in one wrapping row of label and value chips. */
-export function FactChips({ facts, brand }: { facts: FactChip[]; brand?: string }) {
+export function FactChips({ facts }: { facts: FactChip[] }) {
   return (
     <dl className="fact-chips" aria-label="Deployment">
-      {brand ? (
-        <div className="fact-chip brand">
-          <dt className="visually-hidden">Brand</dt>
-          <dd>
-            <span className="brand-swatch" aria-hidden="true" />
-            {brand}
-          </dd>
-        </div>
-      ) : null}
       {facts.map((fact) => (
-        <div key={fact.id} className="fact-chip">
-          <dt>{fact.label}</dt>
+        <div
+          key={fact.id}
+          className={fact.tone ? `fact-chip ${fact.tone}` : "fact-chip"}
+          data-fact={fact.id}
+          title={fact.title}
+        >
+          <dt>
+            {fact.tone === "warn" ? <Icon name="alert" size={12} /> : null}
+            {fact.label}
+          </dt>
           <dd className={fact.mono ? "mono" : undefined}>{fact.value}</dd>
         </div>
       ))}
@@ -189,8 +236,14 @@ export function BadgeRow({ badges, label }: { badges: ConnectorBadge[]; label: s
   return (
     <ul className="config-badges" aria-label={label}>
       {badges.map((badge) => (
-        <li key={badge.id} className={badge.mono ? "config-badge mono" : "config-badge"} data-badge={badge.id}>
+        <li
+          key={badge.id}
+          className={badge.mono ? "config-badge mono" : "config-badge"}
+          data-badge={badge.id}
+          title={badge.title}
+        >
           {badge.icon ? <Icon name={badge.icon} size={13} /> : null}
+          {badge.prefix ? <span className="badge-prefix">{badge.prefix}</span> : null}
           {badge.label}
         </li>
       ))}

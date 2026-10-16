@@ -16,7 +16,8 @@ current server routes, using the types in `src/operator-ui/contract.ts` and
 `model.ts`; its people carry labels from a fake directory. It sets a few
 limits, an activity retention, one classification override and a GitHub call
 admission rule in code, so Settings and the connector Configuration card show
-set values beside defaults. Its Tokens agents
+set values beside defaults; Slack describes OAuth facts (scope, endpoints, an
+API origin, client secret, PKCE) for the card's auth row. Its Tokens agents
 (`claude-desktop` issued, `triage` none, `nightly` revoked) are real slots
 committed through the deployment's own store, so the contract's `agents` and
 `GET /ui/access-tokens` agree, revisions included; only their timestamps and

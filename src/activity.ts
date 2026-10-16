@@ -253,8 +253,14 @@ export interface ActivityStore extends ActivitySink {
   /**
    * The adapter and its retention, for `Connecta.describeConfig()`. Kinds
    * other than the shipped `"d1"` and `"sqlite"` are described as `"custom"`.
+   * `optionSources` says whether code set `retentionDays` (`"config"`) or the
+   * store chose it (`"default"`); without it the retention reads as a default.
    */
-  describe?(): { kind: string; retentionDays?: number };
+  describe?(): {
+    kind: string;
+    retentionDays?: number;
+    optionSources?: Readonly<Record<string, "default" | "config">>;
+  };
 }
 
 /** Reader implementations throw this for an opaque cursor they cannot decode. */

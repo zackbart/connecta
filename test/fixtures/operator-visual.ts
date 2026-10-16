@@ -98,6 +98,8 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
   const github: Connector = { id: "github", title: "GitHub", description: "Repositories and issues", callAdmission: { rules: [{ maxConcurrency: 4, budget: { kind: "rolling-window", maxCalls: 100, windowMs: 60_000 } }] }, staticTools: empty ? [] : catalog, listTools: async () => empty ? [] : catalog, callTool: async () => null, status: async () => ({ state: "ok" }) };
   const connectors: Connector[] = [github, {
     id: "slack", title: "Slack", description: "Messages and channels", authScope: "personal",
+    // The connector Configuration card draws these OAuth facts as badges.
+    describe: () => ({ source: { kind: "api", provider: "slack" }, endpoint: { origin: "https://slack.com", path: "/api" }, auth: { mode: "oauth", scope: "channels:read chat:write", authorizationEndpoint: { origin: "https://slack.com", path: "/oauth/v2/authorize" }, tokenEndpoint: { origin: "https://slack.com", path: "/api/oauth.v2.access" }, apiOrigins: ["https://slack.com"], confidentialClient: true, pkce: true } }),
     staticTools: [], listTools: async () => [], callTool: async () => null,
     status: async () => ({ state: "auth_required" }), startAuth: async () => ({ state: "auth_required" }), finishAuth: async () => {}, verifyState: async () => true, disconnectAuth: async () => {},
   }, { ...github, id: "slot", title: "Empty slot", credential: { label: "API key", description: "A deployment-managed service token" }, staticTools: [] },
@@ -118,7 +120,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     // agent use support; alice uses automation.
     pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, members: ["user_lin", "agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["alice", "agent:claude-desktop"] } },
     ...(empty || restricted ? {} : { agents: AGENTS }),
-    activity: activityHistory({ readGate: () => !restricted, store: { record() {}, list: async () => ({ events: empty ? [] : events }), describe: () => ({ kind: "sqlite", retentionDays: 30 }) } }),
+    activity: activityHistory({ readGate: () => !restricted, store: { record() {}, list: async () => ({ events: empty ? [] : events }), describe: () => ({ kind: "sqlite", retentionDays: 30, optionSources: { retentionDays: "config" } }) } }),
     accessTokens: accessTokens(storage),
     // Settings draws a value set in code apart from a default: these few are set.
     calls: { maxResultBytes: 1_000_000 },

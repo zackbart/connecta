@@ -132,12 +132,13 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
   );
 }
 
-/** What the connector is, as badges, and its limits as tiles. Defined in code; nothing here edits it. */
+/** What the connector is and how it signs in, as badges, and its limits as tiles. Defined in code; nothing here edits it. */
 function ConnectorConfigCard({ summary, name }: { summary: ConnectorSummary; name: string }) {
   return (
     <Card aria-label="Connector configuration" title="Configuration" className="connector-config">
       <BadgeRow badges={summary.badges} label={`${name} setup`} />
-      <StatTiles tiles={summary.tiles} compact label={`${name} limits`} />
+      {summary.auth.length ? <BadgeRow badges={summary.auth} label={`${name} auth`} /> : null}
+      <StatTiles tiles={summary.tiles} compact label={`${name} settings`} />
     </Card>
   );
 }
