@@ -68,9 +68,7 @@ function main() {
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i];
     if (!["--version", "--narrative", "--date"].includes(key) || !args[i + 1] || Object.hasOwn(options, key)) {
-      throw new Error(
-        "Usage: npm run changelog:assemble -- --version <version> --narrative <file> [--date YYYY-MM-DD]",
-      );
+      throw new Error("Usage: pnpm run changelog:assemble --version <version> --narrative <file> [--date YYYY-MM-DD]");
     }
     options[key] = args[i + 1];
   }

@@ -1,5 +1,5 @@
 /**
- * `npm run eval:selftest` — the harness checking itself, with no LLM.
+ * `pnpm run eval:selftest` — the harness checking itself, with no LLM.
  *
  * For every active task, a scripted MCP client plays the ideal route against a
  * fresh world and deployment, and the grader must pass it; an agent that does

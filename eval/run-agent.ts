@@ -1,5 +1,5 @@
 /**
- * `npm run eval:agent -- [options]` runs fake-only tasks through Codex or Claude Code.
+ * `pnpm run eval:agent [options]` runs fake-only tasks through Codex or Claude Code.
  *
  *   --runner       codex (default) or claude
  *   --models       comma-separated model ids; see eval/README.md for defaults

@@ -22,7 +22,7 @@ import { skill } from "./skill.generated.js";
  *
  * Drift. Google publishes a credential-free Discovery document per API.
  * `src/providers/forms/drift.json` records the five methods the tools
- * call, and `npm run providers:check -- --provider forms` reports a touched
+ * call, and `pnpm run providers:check --provider forms` reports a touched
  * contract that moved or a method that stopped accepting the scopes below.
  */
 import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";

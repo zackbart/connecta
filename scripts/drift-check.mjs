@@ -42,7 +42,7 @@ function usage(message) {
   if (message) console.error(`drift:check: ${message}`);
   console.error(
     [
-      "usage: npm run drift:check -- [options]",
+      "usage: pnpm run drift:check [options]",
       "",
       "  --specs                  only compare touched endpoints with published specs",
       "  --docs                   only compare public MCP catalogs, docs and connection metadata",

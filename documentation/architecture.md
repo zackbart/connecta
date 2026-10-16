@@ -970,7 +970,7 @@ manual review evidence instead of claiming a machine-checkable JSON pin.
 
 The generic REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
-`OperationIndex` that `npm run providers:spec` compiles offline from the
+`OperationIndex` that `pnpm run providers:spec` compiles offline from the
 provider's pinned `openapi.source.json` into `openapi.generated.ts`.
 Each call is matched to an operation and checked against its parameters before
 transport; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
@@ -1321,7 +1321,7 @@ Effect callers skip the Promise and take the program: `admit` and
 and `acquireCallScoped` for call admission, `closeScope` and `closeScopeOnExit`
 for a connector scope, `withDeadlineEffect` where Promise code has
 `withDeadline`. The build prunes every declaration no `exports` target reaches,
-and `npm run check:declarations` fails if what remains names an Effect type.
+and `pnpm run check:declarations` fails if what remains names an Effect type.
 
 ### One runner
 
@@ -1456,7 +1456,7 @@ resolve a single copy. Adopting an unstable subpath is its own pull request.
 
 The stable `4.0.0` release was re-evaluated on 2026-10-01 with
 [`scripts/probes/effect-v4-evaluation.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/probes/effect-v4-evaluation.mjs).
-Run `npm run build`, then `node scripts/probes/effect-v4-evaluation.mjs output.json`.
+Run `pnpm run build`, then `node scripts/probes/effect-v4-evaluation.mjs output.json`.
 The [raw observations](https://github.com/zackbart/connecta/blob/main/scripts/probes/effect-v4-evaluation-2026-10-01.json)
 are synthetic Node requests and neutral esbuild bundles, not live-client or
 workerd lifetime verification. Bundle figures add representative prototypes
@@ -1494,7 +1494,7 @@ replacement's benefit or compatibility.
 The core's cost is recorded rather than guessed. Against 0.24.4 the root entry
 grew from 235,346 to 279,526 bytes gzip, the Worker example from 263,949 to
 314,336, and each provider by about 36 KB, since each reaches Effect through
-`remoteMcp()`; `npm run check:bundle` caps every entry against
+`remoteMcp()`; `pnpm run check:bundle` caps every entry against
 `scripts/bundle-budget.json`. An install carries about 53 MB of `effect`, with
 no dependencies of its own.
 
@@ -1518,7 +1518,7 @@ src/
 
 There are exactly two deployment shapes — `templates/node/`, which
 `connecta init` copies with its container files, and `examples/worker/` — and
-`test/deployment-shapes.node.test.ts` with `npm run check:examples` keeps both
+`test/deployment-shapes.node.test.ts` with `pnpm run check:examples` keeps both
 compiling and configuring the real thing.
 
 ## Sharp edges

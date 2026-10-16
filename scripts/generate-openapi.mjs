@@ -14,7 +14,7 @@
 // operations the vendor's reviewed value-safety table must cover; every REST
 // vendor sets it.
 //
-// `npm run providers:spec` fetches `url`, refuses bytes whose digest differs
+// `pnpm run providers:spec` fetches `url`, refuses bytes whose digest differs
 // from the pin, and writes `openapi.generated.ts` beside it: every
 // non-deprecated operation as a search row, plus request-side details (path
 // and query parameters, the request body) with local `$ref`s expanded to a

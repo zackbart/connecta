@@ -1,5 +1,5 @@
 /**
- * `npm run eval:report -- --current <files|dir> [--baseline <files|dir>] [--notes <txt>] --out <report.html>`
+ * `pnpm run eval:report --current <files|dir> [--baseline <files|dir>] [--notes <txt>] --out <report.html>`
  *
  * `--notes` is plain text, blank-line-separated paragraphs, rendered as the
  * report's observations — what a human concluded from the numbers.

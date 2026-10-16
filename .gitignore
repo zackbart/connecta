@@ -16,3 +16,6 @@ eval/deploy/.wrangler/
 
 # Browser assets are generated before builds and tests.
 src/operator-ui/generated.ts
+
+# pnpm owns the lockfile; a stray npm install writes this one.
+/package-lock.json

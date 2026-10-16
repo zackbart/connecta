@@ -15,24 +15,24 @@ go-ahead for this release.
 
 - Every merged PR left a fragment in `.changes/<pr-or-slug>.md`:
   `type: added|changed|fixed|removed|security`, optional `breaking: true`.
-  `npm run check:changes` validates them.
+  `pnpm run check:changes` validates them.
 - A hand-written narrative: paragraphs, no headings. Say what changes, what
   breaks, and what deployments can ignore. The 0.29.0 draft is
   [release-notes/0.29.0.md](../../../release-notes/0.29.0.md).
 
 ## Steps
 
-1. Branch from current `origin/main`. Bump the version in `package.json` and
-   `package-lock.json` with `npm version <version> --no-git-tag-version`.
+1. Branch from current `origin/main`. Bump the version in `package.json` with
+   `pnpm version <version> --no-git-tag-version`.
 2. Commit `CHANGELOG.md` and everything under `.changes/` first. Assembly
    refuses untracked or modified inputs.
-3. `npm run changelog:assemble -- --version <version> --narrative <file> [--date YYYY-MM-DD]`.
+3. `pnpm run changelog:assemble --version <version> --narrative <file> [--date YYYY-MM-DD]`.
    It inserts `## <version> — <date>`, groups Added/Changed/Fixed/Removed/Security,
    marks breaking entries, and deletes the consumed fragments. Released
    sections stay untouched.
 4. On failure or interruption: `git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes`.
 5. Review the assembled section, commit it with the deletions, then run
-   `npm run release:check` (full `check`, `check:security`, `check:package`).
+   `pnpm run release:check` (full `check`, `check:security`, `check:package`).
    Open the PR and merge it like any other.
 6. After merge, tag the merge commit `v<version>` (must equal `package.json`;
    publish.yml verifies) and publish a GitHub Release with the narrative.

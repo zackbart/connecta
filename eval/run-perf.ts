@@ -1,5 +1,5 @@
 /**
- * `npm run eval:perf -- [--samples 40] [--out path]` — the two numbers P1 must
+ * `pnpm run eval:perf [--samples 40] [--out path]` — the two numbers P1 must
  * not regress without saying so: the size of the core a Worker ships, and how
  * long the common requests take on a running deployment.
  *

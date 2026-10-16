@@ -36,6 +36,8 @@ describe("CI browser paths", () => {
     ".github/workflows/publish.yml",
     "package.json",
     "package-lock.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
     "playwright.config.ts",
     "vitest.config.ts",
     "tsconfig.json",
@@ -90,7 +92,14 @@ describe("CI browser paths", () => {
 });
 
 describe("CI security paths", () => {
-  const inputs = ["package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc"];
+  const inputs = [
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "npm-shrinkwrap.json",
+    ".npmrc",
+  ];
   const directories = ["", "templates/node/", "examples/worker/", "packages/workspace/", "packages/nested/workspace/"];
   it.each(directories.flatMap((directory) => inputs.map((input) => `${directory}${input}`)))(
     "audits dependencies when %s changes",

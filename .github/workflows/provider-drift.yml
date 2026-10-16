@@ -28,16 +28,17 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci --ignore-scripts
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Compare public provider contracts
         id: report
         continue-on-error: true
         run: |
-          npm --silent run providers:check -- --json > "$RUNNER_TEMP/provider-drift.json" 2> "$RUNNER_TEMP/provider-drift.log"
+          pnpm --silent run providers:check --json > "$RUNNER_TEMP/provider-drift.json" 2> "$RUNNER_TEMP/provider-drift.log"
       - name: Summarize advisory findings
         if: always()
         env:

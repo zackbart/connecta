@@ -36,9 +36,24 @@ names (`assistant`, `alice`, `bob`, `crm`, `tickets`, `notes_alice`,
 `alice@example.com`), never real deployments, clients, people, or organizations.
 Maintained provider product names remain valid.
 
+## Setup
+
+This repository uses pnpm (`packageManager` in `package.json`). Run
+`pnpm install` in every fresh checkout or worktree; it hardlinks from the
+shared store instead of copying ~490 MB into each worktree. Never run
+`npm install` or `npm ci` here, and never commit a `package-lock.json`.
+Pass script flags straight after the name, `pnpm run <script> --flag`:
+pnpm hands a `--` separator to the script literally.
+If install fails with `ERR_PNPM_IGNORED_BUILDS`, confirm the named package
+needs its build script, then add that one package to `allowBuilds` in
+`pnpm-workspace.yaml`. Approve each package deliberately, never in bulk.
+`npm` stays correct wherever a deployment installs the published package:
+`templates/`, `bin/`, `check:package`'s consumer smoke, and the operator
+instructions in `examples/` and `documentation/`.
+
 ## Verification
 
-`npm run check:fast` is the inner loop: formatting, docs, fragment, Node-suite, UI, lint,
+`pnpm run check:fast` is the inner loop: formatting, docs, fragment, Node-suite, UI, lint,
 Knip, and typecheck checks run concurrently with `vitest related` on both
 projects for files changed since the `origin/main` merge base (uncommitted and
 untracked and deleted paths included, with both sides of renames), suites
@@ -47,27 +62,27 @@ guards. Related runs skip INV and spec coverage checks; `package.json` or
 Vitest config changes wait for `check`.
 Deleted modules require a full Vitest run because their import graph is gone.
 
-`npm run check` must pass before you claim anything is done. It runs
+`pnpm run check` must pass before you claim anything is done. It runs
 `check:core` (formatting, docs, fragments, Node-suite reasons, UI freshness, lint, unused,
 typecheck, both vitest projects, build, declarations, bundle, examples), then
-`test:browser` in Chromium; run `npm run test:browser:install` once per machine.
-`release:check` adds `check:security` (`npm audit`) and `check:package` (the
+`test:browser` in Chromium; run `pnpm run test:browser:install` once per machine.
+`release:check` adds `check:security` (`pnpm audit`) and `check:package` (the
 package smoke); use it when touching packaging, dependencies, or exports.
 
 CI runs `static` (formatting, generated providers, docs, changes, UI/Clerk
 freshness, lint, Knip, typecheck), `node` (the complete Node suite with invariant
 and spec enforcement through `vitest.config.node.ts`), `workers` (the complete
 Workers suite), and `build` (build, declarations, bundle, examples, package and
-Docker smoke) in parallel with a shared npm download cache. The build job packs
+Docker smoke) in parallel with a shared pnpm store cache. The build job packs
 its existing `dist/` without rebuilding. Superseded PR runs are cancelled;
 every push to main runs every check. `browser` skips a PR whose every path is
 in the safe set in `scripts/ci-browser-paths.sh`; `security` runs on PRs when
-root or nested `package.json`, `package-lock.json`, `npm-shrinkwrap.json`, or
-`.npmrc` changes, including the template installed by package/Docker smoke and
-published examples. The nightly Security workflow and publishing also audit
-dependencies. The single required `check` gate requires static, Node, Workers,
+a root or nested manifest, lockfile, `pnpm-workspace.yaml`, or `.npmrc` changes
+(the list is in `scripts/ci-security-paths.sh`), including the template
+installed by package/Docker smoke and published examples. The nightly Security
+workflow and publishing also audit dependencies. The single required `check` gate requires static, Node, Workers,
 build, and changes to succeed, and browser/security to pass or be intentionally
-skipped. Local `npm run check` remains the full core and browser gate.
+skipped. Local `pnpm run check` remains the full core and browser gate.
 
 ## Source map
 
@@ -124,7 +139,7 @@ missing and unknown IDs, and spec coverage titles that no passing test matches.
   Convert at the boundary. See [Effect inside](./documentation/architecture.md#effect-inside).
   Upgrading an unstable Effect subpath is its own deliberate PR. Replacing
   either MCP SDK edge needs proof of wire contracts and request lifetimes.
-- Run `npm run format` before committing; CI checks formatting.
+- Run `pnpm run format` before committing; CI checks formatting.
 - Keep Oxlint and Knip clean. Remove dead declarations instead of suppressing.
 - Commits use imperative behavior summaries with issue refs in parentheses:
   `Normalize maxResultBytes at every intake point (#32) (#39)`.

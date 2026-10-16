@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 // The agent inner loop. It is deliberately partial: Vitest runs only suites
 // related to the diff, so the coverage reporter skips invariant and spec checks.
-// `npm run check` remains the gate.
+// `pnpm run check` remains the gate.
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 // Cheap structural guards that run on every invocation, whatever changed.
@@ -112,21 +112,21 @@ async function main() {
   const args = process.argv.slice(2);
   const index = args.indexOf("--base");
   const base = index === -1 ? "origin/main" : args[index + 1];
-  if (!base || args.length !== (index === -1 ? 0 : 2)) throw new Error("usage: npm run check:fast [-- --base <ref>]");
+  if (!base || args.length !== (index === -1 ? 0 : 2)) throw new Error("usage: pnpm run check:fast [--base <ref>]");
   const changed = changedPaths(base);
   const deleted = changed.filter((path) => !existsSync(join(root, path)));
   const { related, deferred, fullRun } = relatedInputs({ changed, deleted, suites: suiteSources() });
   if (fullRun) console.log(`Deleted modules require a full Vitest run: ${deleted.join(", ")}.`);
   const vitest = join(root, "node_modules/vitest/vitest.mjs");
   const results = await Promise.all([
-    run("format", "npm", ["run", "-s", "format:check"]),
-    run("docs", "npm", ["run", "-s", "check:docs"]),
-    run("changes", "npm", ["run", "-s", "check:changes"]),
-    run("operator-ui", "npm", ["run", "-s", "check:operator-ui"]),
-    run("clerk-sdk", "npm", ["run", "-s", "check:clerk-sdk"]),
-    run("lint", "npm", ["run", "-s", "check:lint"]),
-    run("unused", "npm", ["run", "-s", "check:unused"]),
-    run("typecheck", "npm", ["run", "-s", "typecheck"]),
+    run("format", "pnpm", ["--silent", "run", "format:check"]),
+    run("docs", "pnpm", ["--silent", "run", "check:docs"]),
+    run("changes", "pnpm", ["--silent", "run", "check:changes"]),
+    run("operator-ui", "pnpm", ["--silent", "run", "check:operator-ui"]),
+    run("clerk-sdk", "pnpm", ["--silent", "run", "check:clerk-sdk"]),
+    run("lint", "pnpm", ["--silent", "run", "check:lint"]),
+    run("unused", "pnpm", ["--silent", "run", "check:unused"]),
+    run("typecheck", "pnpm", ["--silent", "run", "typecheck"]),
     fullRun
       ? run("vitest full (deleted modules)", process.execPath, [vitest, "run"])
       : run(`vitest related (${related.length} inputs)`, process.execPath, [vitest, "related", "--run", ...related]),
@@ -140,11 +140,11 @@ async function main() {
     }
   }
   if (deferred.length && !fullRun)
-    console.log(`Not run here (Vitest would rerun every suite): ${deferred.join(", ")}. npm run check covers them.`);
+    console.log(`Not run here (Vitest would rerun every suite): ${deferred.join(", ")}. pnpm run check covers them.`);
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   const failed = results.filter(({ ok }) => !ok).length;
   console.log(
-    `check:fast ${failed ? `failed (${failed} steps)` : "passed"} in ${seconds}s against ${base}. Partial: run npm run check before claiming done.`,
+    `check:fast ${failed ? `failed (${failed} steps)` : "passed"} in ${seconds}s against ${base}. Partial: run pnpm run check before claiming done.`,
   );
   if (failed) process.exitCode = 1;
 }

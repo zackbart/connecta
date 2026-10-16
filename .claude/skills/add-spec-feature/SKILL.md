@@ -24,7 +24,7 @@ URL), and non-empty `notes`.
 
 `title` is the leaf `it()` name, not the describe path. The coverage reporter
 matches it exactly against tests that **passed** in that file during the full
-Node run; a skipped, renamed, or failing test fails `npm run test`.
+Node run; a skipped, renamed, or failing test fails `pnpm run test`.
 
 ## Steps
 
@@ -39,5 +39,5 @@ Node run; a skipped, renamed, or failing test fails `npm run test`.
 4. Implement. Effect stays inside; published declarations name no Effect type.
 5. Update the feature's row: status, notes, `tests`, and `issue` for gaps.
 6. Add a `.changes/<slug>.md` fragment.
-7. `npm run check:fast` while iterating (it skips coverage checks), then
-   `npm run check`, whose full Node run enforces INV and spec references.
+7. `pnpm run check:fast` while iterating (it skips coverage checks), then
+   `pnpm run check`, whose full Node run enforces INV and spec references.

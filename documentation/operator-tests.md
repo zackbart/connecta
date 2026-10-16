@@ -121,7 +121,7 @@ cannot prove these rules.
 
 The source of truth is `*-linux.png`, produced on `ubuntu-latest` with the
 lockfile's Playwright Chromium. Both CI workflows use the same runner, Node 22,
-and `npm run test:browser:install -- --with-deps`. macOS runs fixture routing and
+and `pnpm run test:browser:install --with-deps`. macOS runs fixture routing and
 readiness checks but omits screenshot comparison. The update script refuses
 non-Linux hosts. Do not commit Darwin baselines.
 
@@ -140,9 +140,9 @@ images and changed files, commit the intentional changes, and push again. The
 normal CI browser job must compare and pass against that commit. Snapshot
 updates run only through `workflow_dispatch`.
 
-On a matching Linux runner, `npm ci`, install Chromium with the command above,
-then run `npm run test:browser:snapshots`. The normal command is
-`npm run test:browser`. Missing baselines fail CI; retries cannot bless them.
+On a matching Linux runner, `pnpm install --frozen-lockfile`, install Chromium with the command above,
+then run `pnpm run test:browser:snapshots`. The normal command is
+`pnpm run test:browser`. Missing baselines fail CI; retries cannot bless them.
 Set `OPERATOR_VISUAL_INSPECT=1` to retain local screenshots under ignored
 `test-results/` for inspection, without updating committed baselines.
 

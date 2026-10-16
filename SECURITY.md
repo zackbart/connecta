@@ -20,5 +20,5 @@ The MCP TypeScript SDK 2.x packages and Effect are exact-pinned. Effect is the
 runtime core, and its unstable modules can break in a minor release, so its pin
 moves in a dedicated upgrade. The split client and server packages no longer
 install Hono or `@hono/node-server`, so the temporary root-project override
-used with SDK 1.x is gone. A dependency bump must pass `npm run release:check`
+used with SDK 1.x is gone. A dependency bump must pass `pnpm run release:check`
 and the Node/Workers runtime suites before a pin moves.

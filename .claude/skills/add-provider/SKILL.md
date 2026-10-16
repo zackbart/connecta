@@ -91,7 +91,7 @@ Keep any narrower provider limits on auxiliary requests.
 
 The REST connector reads `openapi.generated.ts`. Pin the vendor's document in
 `openapi.source.json` (`url`, `revision`, `digest`, optional `latest` and
-generation `options`), run `npm run providers:spec -- --provider <name>
+generation `options`), run `pnpm run providers:spec --provider <name>
 --record` to accept a pin, and add `{ "type": "openapi-index", "source":
 "openapi.source.json" }` to `drift.json`. Shrink details (depth, descriptions,
 long enums; for very large documents `operationIds: false`, `pathParams:
@@ -164,12 +164,12 @@ vendors"). The steps:
 
 ## Derived lists
 
-Run `npm run providers:generate`. Folder discovery derives provider exports,
+Run `pnpm run providers:generate`. Folder discovery derives provider exports,
 Knip entries, bundle membership and budgets, packed smoke fixtures, portable
 convention imports, and the bounded README inventory. Drift discovery reads the
 local records. Do not hand-edit generated provider membership lists.
 
-`npm run check:providers-generated` compares expected outputs without writing.
+`pnpm run check:providers-generated` compares expected outputs without writing.
 Adding a folder must require no central provider list edit. Public export names
 and non-provider entries must remain unchanged.
 
@@ -181,7 +181,7 @@ meaningful test titles. For mechanical migrations, capture connector metadata,
 usage guides, registry-served names/classifications, and `describe()` before
 and after and compare serialized bytes for every provider and relevant mode.
 
-`npm run providers:check` reads public contracts only. Parser failures are
+`pnpm run providers:check` reads public contracts only. Parser failures are
 provider-local findings; report them alongside other drift and manual review
 requirements. The `mcp-catalog` check compares credential-free public `tools/list` names and
 four behavioral hints against reviewed evidence. Catalog access does not prove
@@ -192,7 +192,7 @@ a new baseline. Recording endpoint evidence is an explicit action.
 The Provider drift workflow runs on provider-path PRs and weekly. Its summary
 and artifacts are advisory; it is not a dependency of the aggregate `check` gate.
 
-Add a unique `.changes/<slug>.md` fragment. Run `npm run check:fast` while
-iterating, then `VITEST_MAX_WORKERS=2 npm run release:check` for provider
+Add a unique `.changes/<slug>.md` fragment. Run `pnpm run check:fast` while
+iterating, then `VITEST_MAX_WORKERS=2 pnpm run release:check` for provider
 registration, packaging, or export changes. Independent review is required
 before merge.

@@ -5,7 +5,7 @@ import { skill } from "./skill.generated.js";
  * generated model graph. The token connector reads a pinned operation index
  * compiled from Vercel's published OpenAPI document (https://openapi.vercel.sh/,
  * unversioned, so pinned by content hash in `openapi.source.json`);
- * `npm run providers:check -- --provider vercel` reports when the live document
+ * `pnpm run providers:check --provider vercel` reports when the live document
  * moves, and `src/providers/vercel/drift.json` also records the contract digest
  * of every endpoint a named tool is written against.
  */
