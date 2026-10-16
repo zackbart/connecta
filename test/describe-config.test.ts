@@ -230,6 +230,7 @@ describe("describeConfig", () => {
               { kind: "human", namespace: "https://clerk.example.com", id: "user_support" },
             ],
             readOnly: false,
+            owner: "support@workspace.example",
           },
         ],
         modules: {

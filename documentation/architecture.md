@@ -1237,8 +1237,11 @@ admitted identity to a deployment-config `subject` function and mints a
 service-account token as whatever Workspace address it returns. The caller
 carries whether an inbound provider _authenticated_ it: an open deployment
 admits everyone as the anonymous actor, and the function is never asked about
-them. No caller, an unauthenticated one, or no address fails `auth_required`
-before any request leaves. The provider never chooses the account and a
+them. It also carries the admitted pool's `owner`, which core copies from
+config: an agent acts as it, before and instead of the function, and an agent
+in a pool without one fails closed. A fixed `subject` address is every
+caller's. No caller, an unauthenticated one, or no address fails
+`auth_required` before any request leaves. The provider never chooses the account and a
 deployment's own connector still cannot read the caller (PRINCIPLES.md, INV-3; `test/google-workspace-delegation.test.ts`). Its tokens live in a
 bounded module-level map, in memory only, keyed by the key's own digest as well
 as the account, subject, and scopes. A mint in flight is shared across requests

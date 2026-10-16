@@ -150,6 +150,7 @@ describe("operator config contract", () => {
         tools: ["shared", "hidden"],
         members: [{ kind: "human", namespace: "directory", id: "bob" }],
         readOnly: false,
+        owner: null,
       },
       {
         name: "reader",
@@ -157,6 +158,7 @@ describe("operator config contract", () => {
         tools: ["shared.read"],
         members: [{ kind: "human", namespace: "directory", id: "alice" }],
         readOnly: true,
+        owner: null,
       },
     ]);
     expect(alice.live.connectors[0]?.tools.map((t) => [t.address, t.classification])).toEqual([

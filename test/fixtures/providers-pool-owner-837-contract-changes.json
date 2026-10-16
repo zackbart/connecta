@@ -1,0 +1,104 @@
+{
+  "docs": {
+    "padded-purpose": {
+      "guide": "6b541562b6497e1387f03d4b8e1fcfbe3efe977cc5f5f15c95b6c563a15b64c9"
+    },
+    "empty-title": {
+      "guide": "6b541562b6497e1387f03d4b8e1fcfbe3efe977cc5f5f15c95b6c563a15b64c9"
+    },
+    "blank-title": {
+      "guide": "6b541562b6497e1387f03d4b8e1fcfbe3efe977cc5f5f15c95b6c563a15b64c9"
+    },
+    "default": {
+      "guide": "6b541562b6497e1387f03d4b8e1fcfbe3efe977cc5f5f15c95b6c563a15b64c9"
+    },
+    "instructions": {
+      "guide": "1b8a8d2173968bc7aa0d1813168b2da2c5bec40bdb95aabfc310705ebc29c993"
+    }
+  },
+  "drive": {
+    "padded-purpose": {
+      "guide": "097e780bdcdd7e953181f6129100b3994b1ea4cf63ddf2cd98b581b7e48021fc"
+    },
+    "empty-title": {
+      "guide": "097e780bdcdd7e953181f6129100b3994b1ea4cf63ddf2cd98b581b7e48021fc"
+    },
+    "blank-title": {
+      "guide": "097e780bdcdd7e953181f6129100b3994b1ea4cf63ddf2cd98b581b7e48021fc"
+    },
+    "default": {
+      "guide": "097e780bdcdd7e953181f6129100b3994b1ea4cf63ddf2cd98b581b7e48021fc"
+    },
+    "instructions": {
+      "guide": "231e9a2da1a160c2469a679a0f4685f63d88978c494b96da99596ae11eb06fa1"
+    }
+  },
+  "forms": {
+    "padded-purpose": {
+      "guide": "aab4a6d6fd27e6c2aff954f816ffad6e058528267e8a1e6f710f40b20388921a"
+    },
+    "empty-title": {
+      "guide": "aab4a6d6fd27e6c2aff954f816ffad6e058528267e8a1e6f710f40b20388921a"
+    },
+    "blank-title": {
+      "guide": "aab4a6d6fd27e6c2aff954f816ffad6e058528267e8a1e6f710f40b20388921a"
+    },
+    "default": {
+      "guide": "aab4a6d6fd27e6c2aff954f816ffad6e058528267e8a1e6f710f40b20388921a"
+    },
+    "instructions": {
+      "guide": "46f305eec2e303317243d7efd217eedc6ff9ddc125a6fc365c54b86a84dc7cf8"
+    }
+  },
+  "gmail": {
+    "padded-purpose": {
+      "guide": "8ec15aa4c14b9ab9832829271950ac4eb09d4997b5dfa253a06696ed1a10aeff"
+    },
+    "empty-title": {
+      "guide": "8ec15aa4c14b9ab9832829271950ac4eb09d4997b5dfa253a06696ed1a10aeff"
+    },
+    "blank-title": {
+      "guide": "8ec15aa4c14b9ab9832829271950ac4eb09d4997b5dfa253a06696ed1a10aeff"
+    },
+    "default": {
+      "guide": "8ec15aa4c14b9ab9832829271950ac4eb09d4997b5dfa253a06696ed1a10aeff"
+    },
+    "instructions": {
+      "guide": "c40f9b20f1df7d9425de304eadac01571ab3f6573f50c7d7313958ccc1d01950"
+    }
+  },
+  "sheets": {
+    "padded-purpose": {
+      "guide": "ad767b907712c4903dd78f66bbfe6a3a7f990ae7996862509857379e81cd5cdd"
+    },
+    "empty-title": {
+      "guide": "ad767b907712c4903dd78f66bbfe6a3a7f990ae7996862509857379e81cd5cdd"
+    },
+    "blank-title": {
+      "guide": "ad767b907712c4903dd78f66bbfe6a3a7f990ae7996862509857379e81cd5cdd"
+    },
+    "default": {
+      "guide": "ad767b907712c4903dd78f66bbfe6a3a7f990ae7996862509857379e81cd5cdd"
+    },
+    "instructions": {
+      "guide": "a398327a473066398497d734806c70c7e574780ca82936352e6d9f18f88e9a49"
+    }
+  },
+  "slides": {
+    "padded-purpose": {
+      "guide": "3a06f98115c4b476ac8d4570230cd83294285d3f967fcede26fe05092bd6ac7e"
+    },
+    "empty-title": {
+      "guide": "3a06f98115c4b476ac8d4570230cd83294285d3f967fcede26fe05092bd6ac7e"
+    },
+    "blank-title": {
+      "guide": "3a06f98115c4b476ac8d4570230cd83294285d3f967fcede26fe05092bd6ac7e"
+    },
+    "default": {
+      "guide": "3a06f98115c4b476ac8d4570230cd83294285d3f967fcede26fe05092bd6ac7e"
+    },
+    "instructions": {
+      "guide": "efdd2d5572852a2d161e82bf21427a5f3fd0f066f8ce2b97434831ca538e3ec3"
+    }
+  }
+}

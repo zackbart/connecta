@@ -27,6 +27,8 @@ export interface ResolvedPool {
   /** Exactly the pool's `tools`; nothing intersects or widens it. */
   access: ConnectorAccess;
   members: readonly Member[];
+  /** Trimmed `owner`: the Workspace address agents in this pool act as. */
+  owner?: string;
 }
 
 const AGENT_PREFIX = "agent:";

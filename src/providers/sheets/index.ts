@@ -1379,6 +1379,9 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  * });
  * ```
  *
+ *    Agents never reach that function: give each pool they use an `owner`,
+ *    the address they act as there (decisions/0006).
+ *
  * Reads are read-only. `create_spreadsheet`, `add_sheet`, and `append_values`
  * are additive writes the host approves through call_destructive_tool or a
  * program on a writable endpoint; the value writes, `clear_values`, and the raw

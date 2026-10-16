@@ -19,8 +19,9 @@ Connection purpose: <!-- endfragment -->
 
 Every call acts as the Workspace address deployment config maps the caller
 to, and reaches exactly the files that person can open, shared drives
-included. No argument names an account. A call with none mapped fails
-`auth_required`; only an operator can change the mapping. A missing file
+included; an agent acts as the owner of the pool it came through. No
+argument names an account. A call with none mapped, or from an agent whose
+pool has no owner, fails `auth_required`; only an operator can change either. A missing file
 and one this person cannot see fail alike — Google does not distinguish them.
 
 ## Finding files

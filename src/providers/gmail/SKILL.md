@@ -18,8 +18,9 @@ Connection purpose: <!-- endfragment -->
 ## Whose mailbox
 
 Every call reads and writes the mailbox deployment config maps the caller
-to. No argument names a mailbox. A call with none mapped fails
-`auth_required`; only an operator can change the mapping.
+to; an agent acts as the owner of the pool it came through. No argument
+names a mailbox. A call with none mapped, or from an agent whose pool has no
+owner, fails `auth_required`; only an operator can change either.
 
 ## Reading
 

@@ -25,6 +25,9 @@ import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } 
 import { createMetaTools } from "../src/meta-tools.js";
 import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { scriptedExecutor } from "./fixtures/misc.js";
+import { issueAgentToken } from "./helpers/agent-tokens.js";
+import { accessTokens } from "../src/access-tokens.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -627,6 +630,237 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
     expect(result.result.isError).toBeFalsy();
     expect(mapping).toHaveBeenCalledTimes(1);
     expect(decodeSegment(tokenCalls[0]!.assertion.split(".")[1]!).sub).toBe("robot@org.example");
+  });
+});
+
+// --- Pool owners --------------------------------------------------------------------
+
+describe("pool owners: agents act as the pool's owner, humans as themselves (decisions/0006)", () => {
+  const agent = (name: string): AuthenticatedIdentity => ({
+    actor: { kind: "access_token", id: `agent:${name}` },
+    subject: { namespace: "connecta:agent", id: name },
+    agent: name,
+    interactive: false,
+  });
+  const inPool = (who: AuthenticatedIdentity, pool?: string, poolOwner?: string): ConnectorContext =>
+    attachCaller(
+      { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" },
+      { identity: who, authenticated: true, ...(pool ? { pool } : {}), ...(poolOwner ? { poolOwner } : {}) },
+    );
+  const sub = (index = 0) => decodeSegment(tokenCalls[index]!.assertion.split(".")[1]!).sub;
+
+  it("INV-3: a human in an owned pool acts as themselves through the mapping", async () => {
+    const mapping = vi.fn((who: AuthenticatedIdentity) => DIRECTORY[who.principal?.id ?? ""]);
+    await labels(mailbox({ subject: mapping }), inPool(identity("alice"), "simon-bob", "bob@org.example"));
+    expect(mapping).toHaveBeenCalledTimes(1);
+    expect(sub()).toBe("alice@org.example");
+  });
+
+  it("INV-3: an agent in an owned pool acts as the owner, and the mapping is never asked", async () => {
+    const mapping = vi.fn(() => "alice@org.example");
+    await labels(mailbox({ subject: mapping }), inPool(agent("simon"), "simon-bob", "bob@org.example"));
+    expect(mapping).not.toHaveBeenCalled();
+    expect(sub()).toBe("bob@org.example");
+    expect(apiCalls).toHaveLength(1);
+  });
+
+  it("INV-3: an agent in an ownerless pool, or in no pool, fails auth_required before anything leaves", async () => {
+    const mapping = vi.fn(() => "alice@org.example");
+    for (const ctx of [
+      inPool(agent("simon"), "team"),
+      inPool(agent("simon")),
+      // An owner without the pool it belongs to is not one core set.
+      inPool(agent("simon"), undefined, "bob@org.example"),
+    ]) {
+      const failure = await labels(mailbox({ subject: mapping }), ctx).catch((error) => error);
+      expect(failure).toBeInstanceOf(ConnectorCallError);
+      expect(failure).toMatchObject({ code: "auth_required", message: expect.stringContaining("has no owner") });
+      expect(failure.message).not.toContain("@");
+    }
+    expect(mapping).not.toHaveBeenCalled();
+    expect(tokenCalls).toEqual([]);
+    expect(apiCalls).toEqual([]);
+  });
+
+  it("INV-3: a fixed subject applies to humans and agents alike, and the pool owner is ignored", async () => {
+    const shared = mailbox({ subject: "shared-inbox@org.example" });
+    await labels(shared, inPool(identity("alice"), "simon-bob", "bob@org.example"));
+    await labels(shared, inPool(agent("simon"), "simon-bob", "bob@org.example"));
+    await labels(shared, inPool(agent("simon"), "team"));
+    expect(tokenCalls.map((_, index) => sub(index))).toEqual(["shared-inbox@org.example"]);
+    expect(apiCalls).toHaveLength(3);
+  });
+
+  describe("over MCP", () => {
+    const NAMESPACE = "https://identity.test";
+    function people(): InboundAuth {
+      return {
+        kind: "test-users",
+        interactiveOperator: true,
+        activityActorNamespace: NAMESPACE,
+        authorize(request) {
+          const user = /^Bearer (alice|bob)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
+          return user
+            ? { ok: true, userId: user, subjectId: user }
+            : { ok: false, response: Response.json({ error: "unauthorized" }, { status: 401 }) };
+        },
+      };
+    }
+
+    // One gmail() serves a pool per person, built in code from the team list.
+    const team = [
+      { id: "alice", email: "alice@org.example" },
+      { id: "bob", email: "bob@org.example" },
+    ];
+
+    async function deployment(options: { executor?: Parameters<typeof createTestConnecta>[0]["executor"] } = {}) {
+      const storage = memoryStorage();
+      const mapping = vi.fn((who: AuthenticatedIdentity) => DIRECTORY[who.principal?.id ?? ""]);
+      const connecta = createTestConnecta({
+        connectors: [mailbox({ subject: mapping })],
+        auth: people(),
+        maintainers: ["alice"],
+        agents: ["simon"],
+        accessTokens: accessTokens(storage),
+        storage,
+        pools: {
+          ...Object.fromEntries(
+            team.map((person) => [
+              `simon-${person.id}`,
+              { tools: ["mail"], owner: person.email, members: [person.id, "agent:simon"] },
+            ]),
+          ),
+          // Alice assists Bob: Bob owns it, and Alice still acts as herself.
+          "assist-bob": { tools: ["mail"], owner: "bob@org.example", members: ["alice"] },
+          // A group pool names no owner, so its agents have no mailbox.
+          group: { tools: ["mail"], members: ["alice", "bob", "agent:simon"] },
+        },
+        ...(options.executor ? { executor: options.executor } : {}),
+        logger: silentLogger,
+      });
+      return { connecta, mapping, simon: await issueAgentToken(storage, "simon") };
+    }
+
+    const callOver = async (
+      connecta: { fetch(request: Request): Promise<Response> },
+      token: string,
+      pool: string,
+      args: Record<string, unknown> = {},
+      headers: Record<string, string> = {},
+    ) => {
+      const request = mcpRpc(
+        "tools/call",
+        { name: "call_tool", arguments: { address: "mail.list_labels", args } },
+        { token, pool },
+      );
+      for (const [name, value] of Object.entries(headers)) request.headers.set(name, value);
+      return (await readJsonRpc(await connecta.fetch(request))).result;
+    };
+
+    it("INV-3: one connector serves per-person pools, and each agent call reaches only its pool owner's mailbox", async () => {
+      const { connecta, mapping, simon } = await deployment();
+      expect((await callOver(connecta, simon, "simon-alice")).isError).toBeFalsy();
+      expect((await callOver(connecta, simon, "simon-bob")).isError).toBeFalsy();
+      expect((await callOver(connecta, simon, "simon-alice")).isError).toBeFalsy();
+      expect(mapping).not.toHaveBeenCalled();
+      // The delegated subject in each token request; the third reuses Alice's token.
+      expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example", "bob@org.example"]);
+      expect(apiCalls.map((call) => call.authorization)).toEqual([
+        "Bearer token-1",
+        "Bearer token-2",
+        "Bearer token-1",
+      ]);
+      await connecta.close();
+    });
+
+    it("INV-3: a human in someone else's owned pool still acts as themselves", async () => {
+      const { connecta, mapping } = await deployment();
+      expect((await callOver(connecta, "alice", "assist-bob")).isError).toBeFalsy();
+      expect(mapping).toHaveBeenCalledTimes(1);
+      expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example"]);
+      await connecta.close();
+    });
+
+    it("INV-3: an agent in an ownerless pool gets auth_required with no outbound request", async () => {
+      const { connecta, mapping, simon } = await deployment();
+      const result = await callOver(connecta, simon, "group");
+      expect(result.isError).toBe(true);
+      const text = JSON.stringify(result);
+      expect(text).toContain("auth_required");
+      for (const person of team) expect(text).not.toContain(person.email);
+      expect(mapping).not.toHaveBeenCalled();
+      expect(tokenCalls).toEqual([]);
+      expect(apiCalls).toEqual([]);
+      await connecta.close();
+    });
+
+    it("INV-3: nothing an agent sends — arguments, headers, or a program — moves it off its pool owner", async () => {
+      const { connecta, simon } = await deployment({
+        executor: scriptedExecutor(async (fns) => {
+          const forged = await fns.call!("mail.list_labels", { subject: "bob@org.example" }).catch((error) =>
+            String((error as { code?: string }).code ?? error),
+          );
+          await fns.call!("mail.list_labels", {});
+          return forged;
+        }),
+      });
+      const forged = await callOver(connecta, simon, "simon-alice", { userId: "bob@org.example" });
+      expect(forged.isError).toBe(true);
+      expect(JSON.stringify(forged)).toContain("invalid_args");
+      const headed = await callOver(
+        connecta,
+        simon,
+        "simon-alice",
+        {},
+        {
+          "X-Goog-Subject": "bob@org.example",
+          "X-Connecta-Pool-Owner": "bob@org.example",
+        },
+      );
+      expect(headed.isError).toBeFalsy();
+      const program = (
+        await readJsonRpc(
+          await connecta.fetch(
+            mcpRpc(
+              "tools/call",
+              { name: "execute_code", arguments: { code: "async () => null" } },
+              { token: simon, pool: "simon-alice" },
+            ),
+          ),
+        )
+      ).result;
+      expect(program.isError).toBeFalsy();
+      expect(JSON.stringify(program)).toContain("invalid_args");
+      expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example"]);
+      expect(apiCalls).toHaveLength(2);
+      await connecta.close();
+    });
+
+    it("INV-11: construction refuses an owner that is not a Workspace address", () => {
+      for (const owner of ["bob", "bob@", "two@at@org.example", "bob @org.example", "", 42]) {
+        expect(() =>
+          createTestConnecta({
+            connectors: [mailbox()],
+            auth: people(),
+            maintainers: ["alice"],
+            pools: { mine: { tools: ["mail"], members: ["alice"], owner: owner as string } },
+            logger: silentLogger,
+          }),
+        ).toThrow("ConnectaConfig.pools.mine.owner must be a Google Workspace email address.");
+      }
+    });
+
+    it("INV-11: describeConfig names each pool's trimmed owner, or null", async () => {
+      const { connecta } = await deployment();
+      const owners = connecta.describeConfig().pools.map((pool) => [pool.name, pool.owner]);
+      expect(owners).toEqual([
+        ["simon-alice", "alice@org.example"],
+        ["simon-bob", "bob@org.example"],
+        ["assist-bob", "bob@org.example"],
+        ["group", null],
+      ]);
+      await connecta.close();
+    });
   });
 });
 

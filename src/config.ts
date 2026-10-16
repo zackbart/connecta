@@ -44,6 +44,7 @@ import type {
   Logger,
 } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
+import { isWorkspaceAddress } from "./workspace-address.js";
 
 /** Config-owned identity rules for one deployment and tenant. */
 export type ConnectorPermission = "all" | "none" | readonly string[];
@@ -286,6 +287,20 @@ const pool = {
     (path) =>
       `${path} is required: list who may open this pool, as principal ids, { namespace, id }, or "agent:<name>".`,
   ),
+  /**
+   * The Google Workspace address agents in this pool act as, on a Workspace
+   * connector whose `subject` is a mapping function. Humans always act as
+   * themselves through that mapping, and a fixed `subject` address applies to
+   * everyone. Without an owner, an agent's Workspace calls fail
+   * `auth_required`.
+   */
+  owner: opaque<string>({
+    check: (value, path) => {
+      if (typeof value !== "string" || !isWorkspaceAddress(value.trim())) {
+        throw new ConfigError(`${path} must be a Google Workspace email address.`);
+      }
+    },
+  }),
 };
 
 const icon = {

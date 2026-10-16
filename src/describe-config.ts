@@ -112,9 +112,17 @@ export interface ConnectaConfigDescription {
   agents: string[];
   /**
    * `readOnly` is resolved: the pool's own value, else the deployment's.
-   * `members` are resolved references in declaration order.
+   * `members` are resolved references in declaration order. `owner` is the
+   * Workspace address agents act as, or null.
    */
-  pools: Array<{ name: string; path: string; tools: string[]; members: DescribedMember[]; readOnly: boolean }>;
+  pools: Array<{
+    name: string;
+    path: string;
+    tools: string[];
+    members: DescribedMember[];
+    readOnly: boolean;
+    owner: string | null;
+  }>;
   modules: {
     ui: { enabled: boolean };
     vault: { enabled: boolean; sealsOAuth?: boolean };
@@ -450,6 +458,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
           ? { kind: "agent", name: member.name }
           : { kind: "human", namespace: member.namespace, id: member.id },
       ),
+      owner: input.pools.get(name)?.owner ?? null,
     })),
     modules: {
       ui: { enabled: config.ui !== undefined },
