@@ -1,6 +1,0 @@
----
-type: changed
-breaking: true
----
-
-Management follows `maintainers` and pool `members` (#837). Shared credentials and OAuth grants, and agent token list, issue, rotate, and revoke, take an interactive maintainer; activity reads take a maintainer principal, interactive or not, within the optional `readGate`. A personal connector's own account may be connected and disconnected, always in the caller's own partition, by an interactive maintainer or by an interactive member of a pool containing that connector, through `authorize_connector` at their pool, the `/connect` link and callback, and `/ui/oauth/<id>` and `/ui/credentials/<id>`, which now admit such a member for their pools' personal connectors. Agents and other machine credentials manage nothing; members and agents get the private 404 on activity and token routes. Breaking: `identity.credentialAdministration`, `identity.personalConnection`, `identity.accessTokenManagement`, and `identity.activityAccess` are removed and each fails construction naming its replacement; `describeConfig()` drops `identity`; the `ConnectaIdentityConfig` and `ConnectorPermission` types are no longer exported. The v1 operator contract's `permissions` are computed from these rules.
