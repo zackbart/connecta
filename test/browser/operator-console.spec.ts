@@ -243,22 +243,30 @@ test.describe("agent tokens", () => {
     // Back on the row, whose primary action is now Rotate.
     const rotate = page.getByRole("button", { name: "Rotate triage's token", exact: true });
     await expect(rotate).toBeFocused();
-    // Rotate asks first; Escape on the dialog also drops the secret.
-    page.once("dialog", (prompt) => {
-      expect(prompt.message()).toContain("Rotate triage's token?");
-      void prompt.accept();
-    });
+    // Rotate asks first, in the row, with focus on Cancel; Escape on the dialog also drops the secret.
     await rotate.click();
+    const rotateQuestion = page.getByRole("group", { name: /^Rotate triage's token\?/ });
+    await expect(rotateQuestion).toBeVisible();
+    await expect(page.locator("#confirm-cancel-token-triage")).toBeFocused();
+    await rotateQuestion.getByRole("button", { name: "Rotate", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "New token for triage", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator("#createdToken")).toHaveCount(0);
     expect(await page.content()).not.toContain(SECRET);
     await expect(rotate).toBeFocused();
-    // A declined confirm sends nothing.
-    page.once("dialog", (prompt) => void prompt.dismiss());
-    await page.getByRole("button", { name: "Revoke simon-ada's token", exact: true }).click();
-    page.once("dialog", (prompt) => void prompt.accept());
-    await page.getByRole("button", { name: "Revoke simon-ada's token", exact: true }).click();
+    // A cancelled question sends nothing and hands focus back; Escape cancels too.
+    const revoke = page.getByRole("button", { name: "Revoke simon-ada's token", exact: true });
+    await revoke.click();
+    const revokeQuestion = page.getByRole("group", { name: /^Revoke simon-ada's token\?/ });
+    await revokeQuestion.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(revokeQuestion).toHaveCount(0);
+    await expect(revoke).toBeFocused();
+    await revoke.click();
+    await page.keyboard.press("Escape");
+    await expect(revokeQuestion).toHaveCount(0);
+    await expect(revoke).toBeFocused();
+    await revoke.click();
+    await revokeQuestion.getByRole("button", { name: "Revoke", exact: true }).click();
     await expect(page.locator('tr[data-agent="simon-ada"] .badge')).toHaveText("Revoked");
     await expect(page.locator("#tokenNotice")).toHaveText("simon-ada's token revoked.");
     await expect(page.getByRole("button", { name: "Issue simon-ada's token", exact: true })).toBeVisible();
@@ -297,8 +305,14 @@ test.describe("agent tokens", () => {
           : undefined,
       );
       await page.goto(VISUAL_ORIGIN + "/tokens");
-      page.on("dialog", (prompt) => void prompt.accept());
       await page.getByRole("button", { name: action, exact: true }).click();
+      // Rotation and revocation ask in the row first; an issue sends at once.
+      const verb = /^(Rotate|Revoke)/.exec(action)?.[1];
+      if (verb)
+        await page
+          .getByRole("group", { name: /token\?/ })
+          .getByRole("button", { name: verb, exact: true })
+          .click();
       const notice = page.locator("#tokenNotice");
       await expect(notice).toHaveText(copy);
       await expect(notice).toHaveAttribute("role", "alert");
@@ -340,6 +354,7 @@ test.describe("agent token slot agreement", () => {
     await expect(page.getByRole("button", { name: "Issue triage's token", exact: true })).toBeEnabled();
     await page.waitForTimeout(300);
     expect(prompted).toBe(0);
+    await expect(page.locator(".token-confirm-row")).toHaveCount(0);
     expect(mutations(sent)).toEqual([]);
     await noCsp(page);
   });
@@ -433,8 +448,13 @@ test.describe("agent token slot agreement", () => {
     await expect(rotate).toBeEnabled();
     await expect(page.locator('tr[data-agent="triage"]')).not.toContainText("Outcome unknown");
     await rotate.click();
+    // A settled slot asks once, in the row, before the rotation goes out.
+    await page
+      .getByRole("group", { name: /^Rotate triage's token\?/ })
+      .getByRole("button", { name: "Rotate", exact: true })
+      .click();
     await expect(page.getByRole("dialog", { name: "New token for triage", exact: true })).toBeVisible();
-    expect(prompted).toBe(1);
+    expect(prompted).toBe(0);
     expect(mutations(sent)).toEqual(["POST /ui/access-tokens/triage", "POST /ui/access-tokens/triage"]);
     await noCsp(page);
   });
@@ -860,6 +880,10 @@ test("review: a delayed revoke must not permit an unconfirmed issue after a newe
     await page.goto(VISUAL_ORIGIN + "/tokens");
     const deleting = page.waitForRequest((request) => request.method() === "DELETE");
     await page.getByRole("button", { name: "Revoke triage's token", exact: true }).click();
+    await page
+      .getByRole("group", { name: /^Revoke triage's token\?/ })
+      .getByRole("button", { name: "Revoke", exact: true })
+      .click();
     await deleting;
     // The revoke has committed, and someone else has since issued another token.
     current = structuredClone(current);
@@ -887,7 +911,9 @@ test("review: a delayed revoke must not permit an unconfirmed issue after a newe
     for (const action of await actions.all()) await action.click({ force: true });
     await page.waitForTimeout(200);
     expect(sent.filter((request) => request.method === "POST")).toHaveLength(0);
-    expect(confirmations).toBe(1);
+    // Confirmations are in the row now; no native prompt ever opens.
+    expect(confirmations).toBe(0);
+    await expect(page.locator(".token-confirm-row")).toHaveCount(0);
   } finally {
     release();
   }

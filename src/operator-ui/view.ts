@@ -385,6 +385,8 @@ export interface OperatorState {
   createdToken: string | null;
   /** The agent `createdToken` belongs to. */
   createdTokenFor: string | null;
+  /** A rotation or revocation waiting on its in-row confirmation. */
+  tokenConfirm: { name: string; action: "rotate" | "revoke" } | null;
   /**
    * Agents whose last token operation ended with an unknown outcome (503,
    * 499, or a dropped connection). Their actions stay off until a slot list
@@ -563,6 +565,7 @@ function identityScopedState() {
     tokens: [],
     createdToken: null,
     createdTokenFor: null,
+    tokenConfirm: null,
     unresolvedSlots: [],
     tokenBusy: false,
     activityPhase: "idle" as LoadPhase,
@@ -602,6 +605,7 @@ export function withPage(state: OperatorState, page: OperatorPage): OperatorStat
     page,
     createdToken: null,
     createdTokenFor: null,
+    tokenConfirm: null,
     tokenNotice: null,
     credentialEditing: null,
     credentialNotice: null,

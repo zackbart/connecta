@@ -675,6 +675,13 @@ details[open] > .disclosure::before {
   justify-content: flex-end;
   gap: 0.375rem;
 }
+.data-table.token-table .token-confirm-row td {
+  text-align: left;
+  background: var(--surface-2);
+}
+.token-confirm-row .confirm {
+  margin: 0;
+}
 .token-unavailable {
   font-size: var(--text-xs);
 }

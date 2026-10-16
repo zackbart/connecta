@@ -1,13 +1,23 @@
-import { useRef } from "react";
+import { Fragment, useRef } from "react";
 import { agentRows, lastSeenLabel, slotBadge, slotSince, type AgentRow } from "../agents.js";
 import { accessTokenUnavailableCopy, contractRecovering, formatDate, type OperatorState } from "../view.js";
-import { Badge, CopyButton, Empty, NoticeLine, StateBlock, Unavailable } from "./parts.js";
+import { Badge, ConfirmBar, CopyButton, Empty, focusableId, NoticeLine, StateBlock, Unavailable } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
-import { dismissCreatedToken, loadAccessTokens, revokeAgentToken, rotateAgentToken } from "./store.js";
+import { useCloseOnRecovery } from "./contract-state.js";
+import {
+  cancelTokenAction,
+  confirmTokenAction,
+  dismissCreatedToken,
+  loadAccessTokens,
+  revokeAgentToken,
+  rotateAgentToken,
+} from "./store.js";
 
 /**
  * The new secret, once. Closing the dialog by any route drops it from the
- * page; the row's own primary action takes focus back.
+ * page; the row's own primary action takes focus back, or the recovery
+ * banner's Retry while the page is stale. Recovery never closes it: a minted
+ * secret nobody has seen cannot be shown again.
  */
 function SecretDialog({ state }: { state: OperatorState }) {
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -50,6 +60,30 @@ function SecretDialog({ state }: { state: OperatorState }) {
   );
 }
 
+/** The in-row question before a rotation or revocation, in its own table row under the agent's. */
+function SlotConfirm({ name, action }: { name: string; action: "rotate" | "revoke" }) {
+  const copy =
+    action === "rotate"
+      ? { question: `Rotate ${name}'s token? Its current token stops working immediately.`, confirm: "Rotate" }
+      : { question: `Revoke ${name}'s token? The agent will immediately lose access.`, confirm: "Revoke" };
+  return (
+    <tr className="token-confirm-row">
+      <td colSpan={6}>
+        <ConfirmBar
+          id={`token-${name}`}
+          {...copy}
+          onConfirm={() => void confirmTokenAction()}
+          onCancel={() =>
+            cancelTokenAction(
+              focusableId(action === "rotate" ? `token-primary-${name}` : `token-revoke-${name}`, "tokensHeading"),
+            )
+          }
+        />
+      </td>
+    </tr>
+  );
+}
+
 function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
   const badge = slotBadge(row.slot);
   return (
@@ -89,6 +123,7 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
             action === "revoke" ? (
               <Button
                 key={action}
+                id={`token-revoke-${row.name}`}
                 variant="danger"
                 disabled={busy || Boolean(row.blocked)}
                 {...(row.blocked ? { "aria-describedby": `token-unavailable-${row.name}` } : {})}
@@ -121,6 +156,8 @@ export function TokensPage({ state }: { state: OperatorState }) {
   const available = state.data?.accessTokenManagement === "available";
   // While the shell's recovery banner owns Retry, this page offers none of its own.
   const recovering = contractRecovering(state);
+  // A rotation or revocation question closes when recovery starts; the secret dialog does not.
+  useCloseOnRecovery(state, () => cancelTokenAction());
   const rows = agentRows(state.contract, state.tokens, state.unresolvedSlots);
   return (
     <section id="tokensView">
@@ -180,7 +217,12 @@ export function TokensPage({ state }: { state: OperatorState }) {
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <SlotRow key={row.name} row={row} busy={state.tokenBusy} />
+                    <Fragment key={row.name}>
+                      <SlotRow row={row} busy={state.tokenBusy} />
+                      {state.tokenConfirm?.name === row.name ? (
+                        <SlotConfirm name={row.name} action={state.tokenConfirm.action} />
+                      ) : null}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

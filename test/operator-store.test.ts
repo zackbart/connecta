@@ -679,6 +679,7 @@ describe("operator collection ordering", () => {
     };
     fetchMock.mockResolvedValueOnce(Response.json({ agent: revoked }));
     await store.revokeAgentToken("simon");
+    await store.confirmTokenAction();
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/ui/access-tokens/simon",
       expect.objectContaining({ method: "DELETE" }),
@@ -738,6 +739,8 @@ describe("operator collection ordering", () => {
     const before = fetchMock.mock.calls.length;
     fetchMock.mockResolvedValueOnce(Response.json({ error: "server words" }, { status }));
     await store.rotateAgentToken("simon");
+    // Answers the in-row question a rotation asks; an issue sends at once.
+    await store.confirmTokenAction();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fetchMock.mock.calls.slice(before).map(([path, init]) => [path, init.method])).toEqual([
       ["/ui/access-tokens/simon", "POST"],
@@ -763,12 +766,13 @@ describe("operator collection ordering", () => {
     await store.revokeAgentToken("simon-ada");
     expect(fetchMock.mock.calls.length - before).toBe(0);
     expect(confirm).not.toHaveBeenCalled();
+    expect(store.getState().tokenConfirm).toBeNull();
     // A live issued slot still asks first, and a declined confirm sends nothing.
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("simon-ada"), none("triage")] }));
     await store.loadAccessTokens();
-    window.confirm = vi.fn(() => false);
     await store.rotateAgentToken("simon-ada");
-    expect(window.confirm).toHaveBeenCalledOnce();
+    expect(store.getState().tokenConfirm).toEqual({ name: "simon-ada", action: "rotate" });
+    store.cancelTokenAction();
     expect(fetchMock.mock.calls.length - before).toBe(1);
   });
 
@@ -783,6 +787,7 @@ describe("operator collection ordering", () => {
       Response.json({ error: "Revocation outcome unknown; revoke again" }, { status: 503 }),
     );
     await store.revokeAgentToken("simon");
+    await store.confirmTokenAction();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fetchMock.mock.calls.length - before).toBe(1);
     expect(store.getState().tokenNotice?.message).toBe(
@@ -1980,8 +1985,10 @@ describe("actions revalidate at dispatch", () => {
     for (const act of [store.rotateAgentToken, store.revokeAgentToken]) {
       fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("simon-ada"), none("triage")] }));
       await store.loadAccessTokens();
+      // Asked and confirmed; the reload lands while the send waits on its token.
+      await act("simon-ada");
       held.hold();
-      const acting = act("simon-ada");
+      const acting = store.confirmTokenAction();
       fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("triage")] }));
       await store.loadAccessTokens();
       held.release();
@@ -2221,10 +2228,12 @@ describe("token mutations compare and swap on the slot revision (P3b, #837)", ()
     window.confirm = vi.fn(() => true);
     fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_a", agent: { ...simon, revision: "r2" } }));
     await store.rotateAgentToken("simon-ada");
+    await store.confirmTokenAction();
     fetchMock.mockResolvedValueOnce(
       Response.json({ agent: { name: "simon-ada", state: "revoked", revokedAt: NOW, revision: "r3" } }),
     );
     await store.revokeAgentToken("simon-ada");
+    await store.confirmTokenAction();
     fetchMock.mockResolvedValueOnce(
       Response.json({ token: "cta_b", agent: { name: "triage", state: "issued", issuedAt: NOW, revision: "t2" } }),
     );
@@ -2249,12 +2258,16 @@ describe("token mutations compare and swap on the slot revision (P3b, #837)", ()
       Response.json({ error: "slot moved: route text", code: "slot_changed" }, { status: 409 }),
     );
     await store.rotateAgentToken("simon-ada");
+    expect(store.getState().tokenConfirm).toEqual({ name: "simon-ada", action: "rotate" });
+    await store.confirmTokenAction();
     expect(store.getState().tokenNotice).toEqual({ message: "Changed since you looked, refresh.", tone: "error" });
     expect(store.getState().unresolvedSlots).toEqual(["simon-ada"]);
     await store.rotateAgentToken("simon-ada");
     await store.revokeAgentToken("simon-ada");
+    // Unresolved: neither asks again, and nothing more is sent.
+    expect(store.getState().tokenConfirm).toBeNull();
+    await store.confirmTokenAction();
     expect(calls(fetchMock)).toHaveLength(1);
-    expect(window.confirm).toHaveBeenCalledOnce();
   });
 
   it("TODO(P3b): sends no expect while the list carries no revision", async () => {
@@ -2266,8 +2279,10 @@ describe("token mutations compare and swap on the slot revision (P3b, #837)", ()
     window.confirm = vi.fn(() => true);
     fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_a", agent: simon }));
     await store.rotateAgentToken("simon-ada");
+    await store.confirmTokenAction();
     fetchMock.mockResolvedValueOnce(Response.json({ agent: { name: "simon-ada", state: "revoked", revokedAt: NOW } }));
     await store.revokeAgentToken("simon-ada");
+    await store.confirmTokenAction();
     expect(calls(fetchMock)).toEqual([
       ["POST", "/ui/access-tokens/simon-ada", undefined],
       ["DELETE", "/ui/access-tokens/simon-ada", undefined],
@@ -2417,14 +2432,15 @@ describe("review round 4: one generation fence per agent slot", () => {
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageIssued(NOW, "r1")] }));
     await store.loadAccessTokens();
     window.confirm = vi.fn(() => true);
+    await store.revokeAgentToken("triage");
+    expect(store.getState().tokenConfirm).toEqual({ name: "triage", action: "revoke" });
     armed = true;
-    const pending = store.revokeAgentToken("triage");
+    const pending = store.confirmTokenAction();
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageIssued(NOW, "r2")] }));
     await store.loadAccessTokens();
     authToken.resolve("token");
     await pending;
     expect(writes(fetchMock)).toHaveLength(0);
-    expect(window.confirm).toHaveBeenCalledOnce();
   });
 
   it("review: rapid double issue dispatches only one mutation", async () => {
@@ -2720,5 +2736,44 @@ describe("round 6: member refresh deadline and authorization return", () => {
     windowListeners.get("focus")?.();
     await vi.advanceTimersByTimeAsync(200);
     expect(configMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("token confirmations live in the row", () => {
+  const simon = { name: "simon-ada", state: "issued" as const, issuedAt: "2026-10-01T09:30:00.000Z" };
+  const writes = (fetchMock: ReturnType<typeof vi.fn>) =>
+    fetchMock.mock.calls.filter(([, init]) =>
+      ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""),
+    );
+
+  it("asks before rotating or revoking, sends only on confirm, and refuses when the slot changed meanwhile", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [simon] }));
+    await store.loadAccessTokens();
+    await store.revokeAgentToken("simon-ada");
+    expect(store.getState()).toMatchObject({
+      tokenConfirm: { name: "simon-ada", action: "revoke" },
+      pendingFocus: "confirm-cancel-token-simon-ada",
+    });
+    // Cancel sends nothing.
+    store.cancelTokenAction("token-revoke-simon-ada");
+    expect(store.getState()).toMatchObject({ tokenConfirm: null, pendingFocus: "token-revoke-simon-ada" });
+    // Asked again; a list read lands before the confirm: the slot moved, so nothing is sent.
+    await store.rotateAgentToken("simon-ada");
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [simon] }));
+    await store.loadAccessTokens();
+    await store.confirmTokenAction();
+    expect(writes(fetchMock)).toEqual([]);
+    expect(store.getState().tokenNotice?.message).toContain("changed before the request was sent");
+    // Asked and confirmed on a settled slot: one request.
+    await store.rotateAgentToken("simon-ada");
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_r", agent: { ...simon, issuedAt: NOW } }));
+    await store.confirmTokenAction();
+    expect(writes(fetchMock).map(([path, init]) => [path, (init as RequestInit).method])).toEqual([
+      ["/ui/access-tokens/simon-ada", "POST"],
+    ]);
+    expect(store.getState().createdToken).toBeNull();
   });
 });

@@ -538,19 +538,18 @@ function listsAction(contract: OperatorUiContractV2 | null, connector: string, a
 }
 
 /**
- * A member action's dispatch check: listed now, and still listed under the
- * same `manage` revision immediately before `fetch`. `undefined` for a
- * maintainer, whose actions follow `/ui/data` permissions instead; `null`
- * when the member may not take it at all right now.
+ * A member action's dispatch check. It must be listed now, which also spares
+ * an OAuth start its blank tab. At dispatch, `send()` checks again that the
+ * current contract lists it; this adds the stricter condition that `manage`
+ * has not changed at all since the member chose it. `undefined` for a
+ * maintainer, whose writes `send()` alone gates; `null` when the member may
+ * not take it right now.
  */
 function memberDispatch(connector: string, action: MemberAction): (() => boolean) | null | undefined {
   if (state.role !== "member") return undefined;
   if (!listsAction(state.contract, connector, action)) return null;
   const revision = manageRevisions.get(connector) ?? 0;
-  return () =>
-    state.role === "member" &&
-    listsAction(state.contract, connector, action) &&
-    (manageRevisions.get(connector) ?? 0) === revision;
+  return () => (manageRevisions.get(connector) ?? 0) === revision;
 }
 
 /**
@@ -1742,6 +1741,7 @@ let confirmedAgents = new Set<string>();
  * from the old one never touches it again (see `SlotTicket.identity`).
  */
 function forgetSlotFence(): void {
+  tokenConfirmChecked = null;
   memberAuthorizations.clear();
   slotGeneration.clear();
   unresolvedAt.clear();
@@ -1963,10 +1963,53 @@ export function rotateAgentToken(name: string): Promise<void> {
   // The same resolution the row renders from: only a live, resolved slot is acted on.
   const checked = slotCheck(name, ["issue", "rotate"]);
   if (!checked) return Promise.resolve();
-  const { action } = checked;
-  if (action === "rotate" && !window.confirm(`Rotate ${name}'s token? Its current token stops working immediately.`)) {
+  // Rotation takes a working token away: it asks in the row first.
+  if (checked.action === "rotate") return askTokenAction(name, checked);
+  return sendRotation(name, checked);
+}
+
+/** Ask in the row before a rotation or revocation; nothing is sent until `confirmTokenAction`. */
+function askTokenAction(name: string, checked: SlotChecked): Promise<void> {
+  tokenConfirmChecked = checked;
+  set({
+    tokenConfirm: { name, action: checked.action === "revoke" ? "revoke" : "rotate" },
+    pendingFocus: `confirm-cancel-token-${name}`,
+  });
+  return Promise.resolve();
+}
+
+/** What the open token confirmation was asked against. */
+let tokenConfirmChecked: SlotChecked | null = null;
+
+/**
+ * Close the token confirmation without acting. Recovery closes it too
+ * (`useCloseOnRecovery`), with focus then going to the banner's Retry.
+ */
+export function cancelTokenAction(returnFocusTo?: string): void {
+  tokenConfirmChecked = null;
+  if (state.tokenConfirm) set({ tokenConfirm: null, ...(returnFocusTo ? { pendingFocus: returnFocusTo } : {}) });
+}
+
+/**
+ * The operator confirmed. Sent only if the slot is exactly as it was when the
+ * question was asked; otherwise the row says it changed and nothing goes out.
+ */
+export function confirmTokenAction(): Promise<void> {
+  const pending = state.tokenConfirm;
+  const checked = tokenConfirmChecked;
+  tokenConfirmChecked = null;
+  if (!pending || !checked) return Promise.resolve();
+  set({ tokenConfirm: null });
+  const now = slotCheck(pending.name, [checked.action]);
+  if (!now || now.generation !== checked.generation) {
+    set(tokenFailure(checked.action, pending.name, { kind: "stale" }));
     return Promise.resolve();
   }
+  return checked.action === "revoke" ? sendRevocation(pending.name, checked) : sendRotation(pending.name, checked);
+}
+
+function sendRotation(name: string, checked: SlotChecked): Promise<void> {
+  const { action } = checked;
   const ticket = slotTicket();
   return mutate({
     request: (current) =>
@@ -2011,7 +2054,10 @@ export function dismissCreatedToken(): void {
 export function revokeAgentToken(name: string): Promise<void> {
   const checked = slotCheck(name, ["revoke"]);
   if (!checked) return Promise.resolve();
-  if (!window.confirm(`Revoke ${name}'s token? The agent will immediately lose access.`)) return Promise.resolve();
+  return askTokenAction(name, checked);
+}
+
+function sendRevocation(name: string, checked: SlotChecked): Promise<void> {
   const ticket = slotTicket();
   return mutate({
     request: (current) =>

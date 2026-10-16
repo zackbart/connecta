@@ -13,6 +13,7 @@ import { CredentialForm } from "./credentials.js";
 import { Badge, ConfirmBar, focusableId, NoticeLine, StateBlock } from "./parts.js";
 import { Button } from "./primitives.js";
 import { ClientSetupDialog, EndpointLine, endpointUrl, type SetupTarget } from "./endpoints.js";
+import { useCloseOnRecovery } from "./contract-state.js";
 import {
   askConfirm,
   cancelConfirm,
@@ -167,6 +168,10 @@ function AccountRow({ account, state }: { account: MemberAccount; state: Operato
 
 export function MemberPage({ state }: { state: OperatorState }) {
   const [setup, setSetup] = useState<SetupTarget | null>(null);
+  // Members never get the maintainer recovery banner, so this is a no-op for
+  // them; their confirmations and credential form close with the
+  // member-unavailable transition instead.
+  useCloseOnRecovery(state, () => setSetup(null));
   const returnFocus = useRef<HTMLElement | null>(null);
   const page = memberPage(state.contract);
   const heading = (

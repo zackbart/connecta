@@ -603,3 +603,84 @@ test("INV-4: a failed refresh closes an open client setup drawer and hands focus
   expect(await page.evaluate("document.querySelectorAll('[data-state=open], .dialog-overlay').length")).toBe(0);
   await noCsp(page);
 });
+
+/** Tokens with a catalog row in error, so a focus return refreshes the contract; the slot list matches it. */
+async function tokensUnderRecovery(page: Page) {
+  const contract = structuredClone(maintainer.contract) as OperatorUiContractV2;
+  contract.live.connectors = contract.live.connectors.map((c) => (c.id === "slack" ? { ...c, status: "error" } : c));
+  const data = structuredClone(maintainer.data);
+  data.connectors = data.connectors.map((c) => (c.id === "slack" ? { ...c, status: "error" } : c));
+  const slots = contract.agents.map((agent) => ({ name: agent.name, ...agent.token }));
+  await install(page, contract, data, "controlled");
+  const control = { failing: false, writes: [] as string[] };
+  await page.route(`${VISUAL_ORIGIN}/ui/**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/ui/api/config") {
+      return control.failing
+        ? route.fulfill({ status: 503, json: { error: "unavailable" } })
+        : route.fulfill({ json: contract });
+    }
+    if (url.pathname === "/ui/access-tokens") return route.fulfill({ json: { agents: slots } });
+    if (url.pathname.startsWith("/ui/access-tokens/")) {
+      control.writes.push(`${route.request().method()} ${url.pathname}`);
+      const name = url.pathname.split("/").pop()!;
+      return route.fulfill({
+        json: { token: "cta_ui834-recovery-secret", agent: { name, state: "issued", issuedAt: VISUAL_NOW } },
+      });
+    }
+    return route.fallback();
+  });
+  await page.goto(VISUAL_ORIGIN + "/tokens");
+  await expect(page.getByRole("rowheader", { name: "simon-ada", exact: true })).toBeVisible();
+  const fail = async () => {
+    control.failing = true;
+    await page.evaluate("window.dispatchEvent(new Event('focus'))");
+    await page.clock.runFor(300);
+    await expect(page.locator("#recoveryBanner")).toContainText("Configuration couldn't be loaded");
+  };
+  return { control, fail };
+}
+
+test("INV-4: a failed refresh closes Tokens' rotate confirmation, hands focus to Retry and sends nothing", async ({
+  page,
+}) => {
+  const { control, fail } = await tokensUnderRecovery(page);
+  await page.getByRole("button", { name: "Rotate simon-ada's token", exact: true }).click();
+  const question = page.getByRole("group", { name: /^Rotate simon-ada's token\?/ });
+  await expect(question).toBeVisible();
+  await fail();
+  await expect(question).toHaveCount(0);
+  const retry = page.locator("#recoveryRetry");
+  await expect(retry).toBeFocused();
+  // The page is back after Retry, and the closed question never sent anything.
+  control.failing = false;
+  await retry.click();
+  await expect(page.locator("#recoveryBanner")).toHaveCount(0);
+  await expect(question).toHaveCount(0);
+  await page.clock.runFor(300);
+  expect(control.writes).toEqual([]);
+  await noCsp(page);
+});
+
+test("INV-4: recovery never closes an unseen minted secret; Retry takes focus once it is dismissed", async ({
+  page,
+}) => {
+  const { control, fail } = await tokensUnderRecovery(page);
+  await page.getByRole("button", { name: "Issue triage's token", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "New token for triage", exact: true });
+  await expect(dialog.locator("#createdToken")).toHaveText("cta_ui834-recovery-secret");
+  await fail();
+  // The secret cannot be shown again, so it stays open, readable and usable over the banner.
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("#createdToken")).toHaveText("cta_ui834-recovery-secret");
+  const copy = dialog.getByRole("button", { name: "Copy token", exact: true });
+  await copy.focus();
+  await expect(copy).toBeFocused();
+  await dialog.getByRole("button", { name: "I stored it", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await page.content()).not.toContain("cta_ui834-recovery-secret");
+  // The row behind is inert; the way on is the banner's Retry.
+  await expect(page.locator("#recoveryRetry")).toBeFocused();
+  expect(control.writes).toEqual(["POST /ui/access-tokens/triage"]);
+  await noCsp(page);
+});

@@ -1387,8 +1387,11 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
     expect(await authenticate(secret)).toBe(true);
     await page.getByRole("button", { name: "I stored it" }).click();
     await expect(page.locator("#createdToken")).toHaveCount(0);
-    page.once("dialog", (dialog) => dialog.accept());
     await card.getByRole("button", { name: "Rotate desktop-client's token", exact: true }).click();
+    await page
+      .getByRole("group", { name: /^Rotate desktop-client's token\?/ })
+      .getByRole("button", { name: "Rotate", exact: true })
+      .click();
     await expect(page.locator("#createdToken")).toContainText("cta_");
     const rotated = (await page.locator("#createdToken").textContent())!;
     expect(rotated).not.toBe(secret);
@@ -1398,8 +1401,11 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
     await page.reload();
     await expect(card.locator(".badge")).toHaveText("Issued");
     expect(await page.content()).not.toContain(rotated);
-    page.once("dialog", (dialog) => dialog.accept());
     await card.getByRole("button", { name: "Revoke desktop-client's token", exact: true }).click();
+    await page
+      .getByRole("group", { name: /^Revoke desktop-client's token\?/ })
+      .getByRole("button", { name: "Revoke", exact: true })
+      .click();
     await expect(card).toHaveClass(/revoked/);
     expect(await authenticate(rotated)).toBe(false);
   } finally {
