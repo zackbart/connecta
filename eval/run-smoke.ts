@@ -102,6 +102,8 @@ async function waitForHealth(origin: string, child: ChildProcess, output: () => 
 
 interface Battery {
   origin: string;
+  /** The endpoint the credential reaches: an agent's pool, or plain /mcp for a maintainer. */
+  mcpPath: string;
   headers: Record<string, string>;
   readCode: string;
   expectRead(result: unknown): string;
@@ -120,7 +122,7 @@ async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void>
   });
   let session: McpSession | undefined;
   await step(checks, "MCP initialize", async () => {
-    session = await connectMcp(`${battery.origin}/mcp`, battery.headers);
+    session = await connectMcp(`${battery.origin}${battery.mcpPath}`, battery.headers);
     return `server ${session.serverName ?? "?"}`;
   });
   if (!session) return;
@@ -239,6 +241,7 @@ async function nodeTemplate(): Promise<SmokeTarget> {
     const headers = { Authorization: `Bearer ${token}` };
     await mcpBattery(checks, {
       origin,
+      mcpPath: "/mcp/local",
       headers,
       readCode: `async () => (await connecta.call("time.get_now", {})).data.now`,
       expectRead: (result) => {
@@ -252,7 +255,8 @@ async function nodeTemplate(): Promise<SmokeTarget> {
         verify: () => "route exercised; the template ships no write-capable tool, so there is no write to verify",
       },
     });
-    target.screenshot = await uiCheck(checks, origin, token);
+    // The operator UI serves maintainers only (#837), so the agent token stays out.
+    target.screenshot = await uiCheck(checks, origin);
     return target;
   } finally {
     if (proc) await stopProcess(proc.child);
@@ -276,6 +280,7 @@ async function nodeFakes(): Promise<SmokeTarget> {
     const headers = { Authorization: `Bearer ${deployment.token}` };
     await mcpBattery(checks, {
       origin: deployment.origin,
+      mcpPath: new URL(deployment.mcpUrl).pathname,
       headers,
       readCode: `async () => (await connecta.call("tracker.search_issues", { project: "web", status: "open" })).data.total`,
       expectRead: (result) => {
@@ -295,7 +300,7 @@ async function nodeFakes(): Promise<SmokeTarget> {
         },
       },
     });
-    target.screenshot = await uiCheck(checks, deployment.origin, deployment.token);
+    target.screenshot = await uiCheck(checks, deployment.origin);
     return target;
   } finally {
     await deployment.close();
@@ -322,6 +327,8 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
   const origin = `http://127.0.0.1:${port}`;
   const vars = [
     `PUBLIC_URL:${origin}`,
+    // The Access stand-in's user is the example's maintainer (#837).
+    "CONNECTA_MAINTAINERS:eval-operator",
     `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
     ...(kind === "worker-example" ? ["DOWNSTREAM_TOKEN:unused-in-smoke"] : []),
     ...(world ? [`TRACKER_URL:${world.service("tracker").url}`, `CHAT_URL:${world.service("chat").url}`] : []),
@@ -353,6 +360,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
       kind === "worker-example"
         ? {
             origin,
+            mcpPath: "/mcp",
             headers: {},
             readCode: `async () => (await connecta.call("echo.shout", { text: "hello" })).data.shouted`,
             expectRead: (result) => {
@@ -367,6 +375,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
           }
         : {
             origin,
+            mcpPath: "/mcp",
             headers: {},
             readCode: `async () => (await connecta.call("tracker.search_issues", { project: "web", status: "open" })).data.total`,
             expectRead: (result) => {

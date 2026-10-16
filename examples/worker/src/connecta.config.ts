@@ -32,8 +32,11 @@
  *      https://chatgpt.com/connector_platform_oauth_redirect and
  *      https://chatgpt.com/connector/oauth/* forms (see ../AGENTS.md).
  *   5. Use the Workers Paid plan required by the `worker_loaders` binding.
- *   6. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
- *      lives. Point your MCP client at `<PUBLIC_URL>/mcp`.
+ *   6. List the maintainers' Access user ids (the identity's user_uuid, else
+ *      its email) in the CONNECTA_MAINTAINERS var, comma-separated.
+ *   7. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
+ *      lives. Point a maintainer's MCP client at `<PUBLIC_URL>/mcp`, and an
+ *      agent's at `<PUBLIC_URL>/mcp/ci`.
  */
 import { api, defineConfig, remoteMcp } from "@zackbart/connecta";
 import { activityHistory } from "@zackbart/connecta/activity";
@@ -55,6 +58,8 @@ export interface Env {
   CREDENTIAL_ENCRYPTION_KEY?: string;
   DOWNSTREAM_TOKEN: string;
   PUBLIC_URL: string;
+  /** Comma-separated Access user ids (user_uuid, else email) of the maintainers. */
+  CONNECTA_MAINTAINERS: string;
   /** "on" switches on activity history, in CONNECTA_DB. */
   CONNECTA_ACTIVITY?: string;
   /**
@@ -87,12 +92,19 @@ export default defineConfig((env: Env) => {
     // Always installed over the same D1 storage. An agent with no issued token
     // admits nothing.
     accessTokens: accessTokens(storage),
-    // Code-owned roster. Access proves the identity; connecta derives
-    // connector visibility and management permissions from the stable id it
-    // supplies. Add `connectorAccess` and `activityAccess` to split members
-    // from operators, matching agents by `identity.agent`; here every
-    // signed-in human may manage every connector and agent token. Agent tokens
-    // never receive interactive authority.
+    // Code-owned roster. Access proves the identity; maintainers alone use
+    // plain /mcp, which serves every connector, and the operator UI. Startup
+    // refuses an empty list.
+    maintainers: env.CONNECTA_MAINTAINERS.split(",")
+      .map((id) => id.trim())
+      .filter(Boolean),
+    // Everyone else, agents included, uses a pool that lists them: exactly
+    // its tools at /mcp/<name>. Members are Access user ids or "agent:<name>".
+    pools: { ci: { tools: ["echo"], members: ["agent:ci-client"] } },
+    // Management permissions apply to maintainers; here every maintainer may
+    // manage every connector and agent token. Narrow them with
+    // `activityAccess` and friends. Agent tokens never receive interactive
+    // authority.
     identity: {
       credentialAdministration: () => "all",
       personalConnection: () => "all",

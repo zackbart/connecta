@@ -935,6 +935,7 @@ describe("server /mcp end-to-end", () => {
     const c = createTestConnecta({
       connectors: [calcApi()],
       auth,
+      maintainers: [{ namespace: "https://identity.example", id: "local-user-1" }],
       storage: memoryStorage(),
       publicUrl: BASE,
       activity: activityHistory({

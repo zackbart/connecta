@@ -182,6 +182,7 @@ describe("cloudflareAccessAuth", () => {
           interactiveOperator: true,
           authorize: async () => ({ ok: false, response: Response.json({ error: "refused" }, { status }) }),
         },
+        maintainers: [{ namespace: "test", id: "operator" }],
       });
       try {
         for (const path of ["/ui/data", "/ui/api/config", "/ui/connectors/hidden"]) {
@@ -196,7 +197,7 @@ describe("cloudflareAccessAuth", () => {
   );
 
   it("selects Access for an Access-only shell even before trusted context is available", async () => {
-    const deployment = makeDeployment({ auth: cloudflareAccessAuth() });
+    const deployment = makeDeployment({ auth: cloudflareAccessAuth(), maintainers: ["operator"] });
     try {
       const shell = await deployment.fetch(new Request(`${BASE}/`));
       expect(await shell.text()).toContain('"auth":{"kind":"cloudflare-access"}');
@@ -208,6 +209,7 @@ describe("cloudflareAccessAuth", () => {
   it("refuses Access-only machine MCP calls and operator mutation", async () => {
     const deployment = makeDeployment({
       auth: cloudflareAccessAuth(),
+      maintainers: ["operator-1"],
       connectors: [
         {
           id: "oauth",
@@ -246,6 +248,7 @@ describe("cloudflareAccessAuth", () => {
   it("lets a human Access identity use same-origin operator mutation", async () => {
     const deployment = makeDeployment({
       auth: cloudflareAccessAuth(),
+      maintainers: ["operator-1"],
       vault: oauthVault(memoryStorage()),
       connectors: [
         {

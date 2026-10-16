@@ -209,15 +209,29 @@ describe("describeConfig", () => {
           { kind: "access_token", interactive: false },
           { kind: "clerk", interactive: true, ui: "clerk" },
         ],
+        maintainers: [
+          { namespace: "connecta:test-machine", id: "operator" },
+          { namespace: "https://clerk.example.com", id: "user_operator" },
+        ],
         identity: {
-          connectorAccess: "custom",
           activityAccess: "default",
           credentialAdministration: "custom",
           accessTokenManagement: "default",
           personalConnection: "default",
         },
         agents: ["release-bot"],
-        pools: [{ name: "support", path: "/mcp/support", tools: ["static_api"], hasGrant: true }],
+        pools: [
+          {
+            name: "support",
+            path: "/mcp/support",
+            tools: ["static_api"],
+            members: [
+              { kind: "agent", name: "release-bot" },
+              { kind: "human", namespace: "https://clerk.example.com", id: "user_support" },
+            ],
+            readOnly: false,
+          },
+        ],
         modules: {
           ui: { enabled: true },
           vault: { enabled: true, sealsOAuth: true },
@@ -228,6 +242,18 @@ describe("describeConfig", () => {
         branding: { productName: "Connecta" },
         deploymentInfo: ["token"],
       });
+      // The access model is maintainers and pool members (#837): no grant
+      // fact survives at the root or in a pool, and identity has no
+      // connector-access hook.
+      expect(snapshot).not.toHaveProperty("hasGrant");
+      expect(snapshot.pools[0]).not.toHaveProperty("hasGrant");
+      expect(snapshot.identity).not.toHaveProperty("connectorAccess");
+      expect(Object.keys(snapshot.identity).sort()).toEqual([
+        "accessTokenManagement",
+        "activityAccess",
+        "credentialAdministration",
+        "personalConnection",
+      ]);
       expect(snapshot.limits.discovery.concurrency).toEqual({ value: 2, source: "config" });
       expect(snapshot.limits.discovery.probeTimeoutMs).toEqual({ value: 30_000, source: "default" });
       expect(snapshot.limits.calls.defaultTimeoutMs).toEqual({ value: 9_000, source: "config" });
@@ -279,6 +305,8 @@ describe("describeConfig", () => {
     const snapshot = app.describeConfig();
     expect(snapshot.limits.calls.defaultTimeoutMs).toEqual({ value: null, source: "default" });
     expect(snapshot.executor.admission).toBe("executor");
+    // An open deployment has no inbound auth, so no maintainers.
+    expect(snapshot.maintainers).toEqual([]);
     expect(snapshot.storage).toEqual({ configured: false, kind: "memory" });
     expect(snapshot.modules).toEqual({
       ui: { enabled: false },

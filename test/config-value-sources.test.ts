@@ -5,6 +5,7 @@ import { customExecutor, remoteMcp } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { KVStorage } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
+import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
 
 const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 
@@ -45,6 +46,29 @@ describe("factory configuration provenance", () => {
       }
     },
   );
+
+  it("INV-10: reports declared maintainers as configuration", async () => {
+    const raw = {
+      readOnly: false,
+      executor,
+      publicUrl: "https://connecta.example",
+      logger: "silent" as const,
+      connectors: [],
+      auth: machineAuth("provenance-token"),
+      maintainers: [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }],
+    };
+    const app = createTestConnecta(raw);
+    try {
+      expect(app.describeConfig().maintainers).toEqual([{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }]);
+      const sources = Object.entries(describeConfigSources(app.describeConfig(), raw)).filter(([path]) =>
+        path.startsWith("config.maintainers"),
+      );
+      expect(sources.length).toBeGreaterThan(0);
+      for (const [, source] of sources) expect(source).toBe("config");
+    } finally {
+      await app.close();
+    }
+  });
 
   it.each([{}, { versionNegotiation: "auto" as const, redirects: "none" as const, requireHttps: false }])(
     "INV-10: distinguishes omitted and explicit remoteMcp transport defaults: %j",

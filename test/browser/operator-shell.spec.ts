@@ -62,7 +62,13 @@ test.beforeAll(async () => {
       storage: memoryStorage(),
     }),
   );
-  const accessApp = createTestConnecta({ connectors: [], auth: cloudflareAccessAuth(), storage: memoryStorage() });
+  const accessApp = createTestConnecta({
+    connectors: [],
+    auth: cloudflareAccessAuth(),
+    // cloudflareAccessAuth() registers no test maintainer; the Access identity below is one (#837).
+    maintainers: [{ namespace: "cloudflare-access", id: "access-operator" }],
+    storage: memoryStorage(),
+  });
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", origin);
     const clerk = url.searchParams.has("clerk");

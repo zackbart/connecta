@@ -3,10 +3,15 @@ import type { ActivityActor } from "../activity.js";
 import type { DeferredWork } from "../connector-scope.js";
 import { htmlSecurityHeaders } from "../html-security.js";
 import type { AdmissionController } from "../executor-admission.js";
-import type { Registry, ToolAccess } from "../registry.js";
-import { parseConnectorAccess } from "../connector-access.js";
-import type { ConnectorAccess, ResolvedPool } from "../connector-access.js";
-import type { AuthenticatedIdentity, Executor, InboundAuth, InboundAuthRuntimeContext } from "../types.js";
+import type { Registry } from "../registry.js";
+import { isMaintainer, isMember, type ResolvedPool } from "../membership.js";
+import type {
+  AuthenticatedIdentity,
+  Executor,
+  IdentityReference,
+  InboundAuth,
+  InboundAuthRuntimeContext,
+} from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
 import { assertsAgents, isAgentName } from "../agent-identity.js";
 import type { ConnectorPermission, ConnectaIdentityConfig, ResolvedConfig } from "../config.js";
@@ -23,6 +28,8 @@ export interface ServerOptions {
   configDescription: import("../describe-config.js").ConnectaConfigDescription;
   configValueSources?: Readonly<Record<string, "default" | "config">>;
   registry: Registry;
+  /** Resolved `maintainers`: the only principals plain `/mcp` and operator routes admit. */
+  maintainers: readonly IdentityReference[];
   /** Validated named pools served at `/mcp/<name>`; empty when none declared. */
   pools: ReadonlyMap<string, ResolvedPool>;
   /** Required sandbox backing execute_code, wrapped in fallback admission if needed. */
@@ -166,11 +173,6 @@ export async function authorize(
       sessionCookies?: readonly string[];
       subjectKey?: string;
       principalKey?: string;
-      connectorIds: "all" | readonly string[];
-      /** Per-connector tool allowlist for connectors granted by address only. */
-      toolAccess?: ToolAccess;
-      /** Granted addresses that still require the catalog's read-only hint. */
-      guardedToolAccess?: ToolAccess;
       operator: boolean;
       accessTokenManagement: boolean;
       credentialAdministration: ConnectorPermission;
@@ -210,23 +212,10 @@ export async function authorize(
   if (auth.length === 0 && !interactiveOnly && !explicit) {
     const actor = { kind: "anonymous" } as const;
     const identity: AuthenticatedIdentity = { actor, interactive: false };
-    let access: ConnectorAccess;
-    try {
-      access = parseConnectorAccess(
-        identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all",
-        { allowReadOnly: true },
-      );
-    } catch {
-      return {
-        ok: false,
-        response: privateJson({ error: "identity access resolution failed" }, { status: 403 }),
-      };
-    }
     return {
       ok: true,
       actor,
       identity,
-      ...access,
       operator: false,
       accessTokenManagement: false,
       credentialAdministration: "none",
@@ -323,15 +312,10 @@ export async function authorize(
       let accessTokenManagement = false;
       let credentialAdministration: ConnectorPermission = "none";
       let personalConnection: ConnectorPermission = "none";
-      let access: ConnectorAccess;
       try {
         if (identityConfig?.activityAccess) {
           operator = principal ? await identityConfig.activityAccess(principal) : false;
         }
-        access = parseConnectorAccess(
-          identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all",
-          { allowReadOnly: true },
-        );
         if (interactive) {
           accessTokenManagement = identityConfig?.accessTokenManagement
             ? await identityConfig.accessTokenManagement(identity)
@@ -368,7 +352,6 @@ export async function authorize(
         ...(result.sessionCookies?.length ? { sessionCookies: result.sessionCookies } : {}),
         ...(subject && partitionIdentity ? { subjectKey: await identityStorageKey(subject) } : {}),
         ...(principal && partitionIdentity ? { principalKey: await identityStorageKey(principal) } : {}),
-        ...access,
         accessTokenManagement,
         credentialAdministration,
         personalConnection,
@@ -444,9 +427,45 @@ export function withSecurityHeaders(response: Response, requestUrl: URL, _path: 
 
 type AuthorizedIdentity = Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>;
 
+/**
+ * Plain `/mcp` and every operator route admit a maintainer (#837). An open
+ * deployment has no inbound auth and so no maintainers: its one anonymous
+ * caller keeps the whole default endpoint, as the startup warning says.
+ */
+export function admitsMaintainer(opts: ServerOptions, authz: AuthorizedIdentity): boolean {
+  return opts.config.auth.length === 0 || isMaintainer(opts.maintainers, authz.identity);
+}
+
+/** The declared pool `/mcp/<name>` serves to this identity, or undefined for the same 404. */
+export function memberPool(
+  opts: ServerOptions,
+  name: string,
+  identity: Readonly<AuthenticatedIdentity>,
+): ResolvedPool | undefined {
+  const pool = opts.pools.get(name);
+  return pool?.members.some((member) => isMember(member, identity)) ? pool : undefined;
+}
+
+/**
+ * Connectors whose auth this identity may manage, at most: every connector
+ * for a maintainer, else the connectors of the pools it belongs to. The
+ * management permissions still decide within this set.
+ */
+function manageableConnectors(opts: ServerOptions, authz: AuthorizedIdentity): "all" | ReadonlySet<string> {
+  if (admitsMaintainer(opts, authz)) return "all";
+  const ids = new Set<string>();
+  for (const name of opts.pools.keys()) {
+    const pool = memberPool(opts, name, authz.identity);
+    if (!pool) continue;
+    if (pool.access.connectorIds === "all") return "all";
+    for (const id of pool.access.connectorIds) ids.add(id);
+  }
+  return ids;
+}
+
 /** Unknown configured ids refuse the complete view, including management rights. */
 export function validateAuthPermissions(authz: AuthorizedIdentity, registry: Registry): void {
-  for (const value of [authz.connectorIds, authz.credentialAdministration, authz.personalConnection]) {
+  for (const value of [authz.credentialAdministration, authz.personalConnection]) {
     if (value === "all" || value === "none") continue;
     if (!Array.isArray(value) || value.some((id) => !registry.getConnector(id))) {
       throw new Error("invalid identity permission connector ids");
@@ -454,15 +473,26 @@ export function validateAuthPermissions(authz: AuthorizedIdentity, registry: Reg
   }
 }
 
+/**
+ * Whether this identity may start, finish, or remove a connector's auth.
+ * Shared auth is deployment-wide, so only a maintainer may change it (#837);
+ * a pool member may manage only a personal connector in one of their pools,
+ * always in their own partition, which callers bind by principal. Every path
+ * that issues a link, starts, completes, or disconnects auth, or writes a
+ * credential, asks this, and the management permissions still apply on top
+ * until P2.
+ */
 export function mayManageConnector(
+  opts: ServerOptions,
   authz: AuthorizedIdentity,
   connector: { id: string; authScope?: "shared" | "personal" },
 ): boolean {
   if (!authz.identity.interactive) return false;
-  if (authz.connectorIds !== "all" && !authz.connectorIds.includes(connector.id)) {
-    return false;
-  }
-  const permission = connector.authScope === "personal" ? authz.personalConnection : authz.credentialAdministration;
+  const personal = connector.authScope === "personal";
+  if (!personal && !admitsMaintainer(opts, authz)) return false;
+  const visible = manageableConnectors(opts, authz);
+  if (visible !== "all" && !visible.has(connector.id)) return false;
+  const permission = personal ? authz.personalConnection : authz.credentialAdministration;
   return permission === "all" || (permission !== "none" && permission.includes(connector.id));
 }
 

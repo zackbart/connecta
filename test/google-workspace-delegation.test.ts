@@ -561,6 +561,7 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
     const connecta = createTestConnecta({
       connectors: [mailbox()],
       auth: users(),
+      maintainers: ["alice", "bob"],
       logger: silentLogger,
     });
     const call = async (user: "alice" | "bob", args: Record<string, unknown>) => {

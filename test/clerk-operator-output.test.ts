@@ -89,6 +89,9 @@ async function assertDenialSinks(
   const app = createTestConnecta({
     publicUrl: BASE,
     auth: provider,
+    // A bare id resolves in the one interactive provider's namespace; nobody
+    // these tests admit is a maintainer or a pool member (#837).
+    maintainers: ["maintainer"],
     pools: options.pools,
     connectors: [
       {
@@ -139,7 +142,7 @@ describe("Clerk operator output with the real SDK", () => {
   it("INV-6: checks inbound denial reasons against the operator record allowlist", () => {
     expect(failureRecord({ reason: "email_domain_denied" })).toEqual({ reason: "email_domain_denied" });
     expect(failureRecord({ reason: SENTINEL as never })).toEqual({});
-    for (const reason of ["pool_not_declared", "pool_grant_denied", "pool_grant_threw"] as const) {
+    for (const reason of ["not_maintainer", "agent_not_maintainer", "pool_not_declared", "not_pool_member"] as const) {
       expect(failureRecord({ reason })).toEqual({ reason });
     }
     expect(failureRecord({ userId: "denied-canary@example.test" } as never)).toEqual({});
@@ -292,7 +295,7 @@ describe("Clerk operator output with the real SDK", () => {
 
   it.each(
     ["clerk", "access-uuid", "access-email"].flatMap((provider) =>
-      ["pool_not_declared", "pool_grant_denied", "pool_grant_threw"].map((reason) => ({ provider, reason })),
+      ["pool_not_declared", "not_pool_member"].map((reason) => ({ provider, reason })),
     ),
   )(
     "INV-4 INV-6: $provider $reason exposes no provider identity in pool refusal sinks",
@@ -331,10 +334,6 @@ describe("Clerk operator output with the real SDK", () => {
         );
         headers.set("Authorization", `Bearer ${token}`);
       }
-      const grant = vi.fn((_caller: Parameters<NonNullable<ConnectaPoolConfig["grant"]>>[0]) => {
-        if (reason === "pool_grant_threw") throw new Error(`${userId} ${email} ${name}`);
-        return false;
-      });
       await assertDenialSinks(
         kind === "clerk" ? auth() : cloudflareAccessAuth(),
         new Request(`${BASE}/mcp/support`, {
@@ -346,14 +345,12 @@ describe("Clerk operator output with the real SDK", () => {
         spies,
         context,
         {
-          pools: reason === "pool_not_declared" ? {} : { support: { tools: ["service"], grant } },
+          // The pool's one member is someone else, so the caller is refused.
+          pools: reason === "pool_not_declared" ? {} : { support: { tools: ["service"], members: ["someone-else"] } },
           reason,
           canaries: [userId, email, "example.test", name],
         },
       );
-      expect(grant).toHaveBeenCalledTimes(reason === "pool_not_declared" ? 0 : 1);
-      if (reason !== "pool_not_declared")
-        expect(grant.mock.calls[0]![0].principal?.id).toBe(kind === "access-email" ? email : userId);
       if (context) expect(getIdentity).toHaveBeenCalledTimes(1);
     },
   );
@@ -481,6 +478,8 @@ describe("Clerk operator output with the real SDK", () => {
       publicUrl: BASE,
       auth: auth(),
       accessTokens: accessTokens(storage),
+      // Both are maintainers, so only the permission decides which principal wins.
+      maintainers: ["header_user", "cookie_user"],
       identity: { accessTokenManagement: permission },
       logger: "silent",
     });

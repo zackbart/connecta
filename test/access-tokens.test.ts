@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AccessTokenError, accessTokens, AccessTokenManager } from "../src/access-tokens.js";
 import { CredentialVault } from "../src/credentials.js";
-import { machineAuth } from "./helpers/machine-auth.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { authorize } from "../src/routes/shared.js";
 import { createTestConnecta } from "./helpers.js";
@@ -13,6 +13,8 @@ const BASE = "https://connecta.test";
 const NAMESPACE = "connecta:access-tokens:v1";
 const owner = { namespace: "clerk:test", id: "owner" };
 const human = { ...fakeClerkAuth({ userId: "owner" }), activityActorNamespace: owner.namespace };
+/** The person behind `human`; a spread fixture is never a default maintainer. */
+const maintainers = [owner];
 const recordKey = `access-token:v1:record:${fixture.unbound.accessToken.id}`;
 function request(token: string, path = "/mcp", method = "GET", body?: unknown) {
   return new Request(BASE + path, {
@@ -119,6 +121,7 @@ describe("agent token slots", () => {
     const app = createTestConnecta({
       connectors: [],
       auth: human,
+      maintainers,
       agents: ["simon", "ci"],
       accessTokens: accessTokens(storage),
       identity: { accessTokenManagement: () => true },
@@ -204,19 +207,26 @@ describe("agent token slots", () => {
       connectors: [],
       vault: new CredentialVault(storage, btoa("x".repeat(32))),
       auth: [human, machineAuth("static")],
+      // The machine principal is a maintainer too, so its refusal is the
+      // interactive-user requirement, not the maintainer gate.
+      maintainers: [owner, { namespace: TEST_MACHINE_NAMESPACE, id: "machine" }],
       agents: ["simon"],
       accessTokens: accessTokens(storage),
       identity: { accessTokenManagement: () => permission },
     });
     try {
-      for (const token of ["clerk-operator", "static", agentToken]) {
+      // Operator routes admit interactive people only; an agent (never a
+      // maintainer) and a machine are refused before any maintainer check.
+      const expected: Record<string, number> = { "clerk-operator": 403, static: 403, [agentToken]: 403 };
+      for (const [token, status] of Object.entries(expected)) {
         const res = await app.fetch(request(token, "/ui/access-tokens/simon", "POST"));
-        expect([401, 403]).toContain(res.status);
+        expect(res.status, token).toBe(status);
       }
       permission = true;
       for (const token of ["static", agentToken]) {
-        expect([401, 403]).toContain((await app.fetch(request(token, "/ui/access-tokens"))).status);
-        expect([401, 403]).toContain((await app.fetch(request(token, "/ui/access-tokens/simon", "DELETE"))).status);
+        const status = expected[token]!;
+        expect((await app.fetch(request(token, "/ui/access-tokens"))).status).toBe(status);
+        expect((await app.fetch(request(token, "/ui/access-tokens/simon", "DELETE"))).status).toBe(status);
       }
       const foreign = request("clerk-operator", "/ui/access-tokens/simon", "POST");
       foreign.headers.set("Origin", "https://evil.test");
@@ -233,7 +243,7 @@ describe("agent token slots", () => {
   it("omitting the module leaves token authentication and management unavailable", async () => {
     const storage = memoryStorage();
     const token = (await new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon")).token;
-    const app = createTestConnecta({ connectors: [], auth: human, storage });
+    const app = createTestConnecta({ connectors: [], auth: human, maintainers, storage });
     try {
       expect((await mcpRpc(app, "tools/list", {}, { token })).status).toBe(401);
       expect((await app.fetch(request("clerk-operator", "/tokens"))).status).toBe(404);
@@ -559,7 +569,7 @@ describe("agent identity", () => {
       const authz = await authorize(request("custom"), BASE, [provider]);
       expect(authz.ok).toBe(false);
       if (!authz.ok) expect(authz.response.status).toBe(401);
-      const app = createTestConnecta({ connectors: [calcApi()], auth: provider });
+      const app = createTestConnecta({ connectors: [calcApi()], auth: provider, maintainers });
       try {
         expect((await mcpRpc(app, "tools/list", {}, { token: "custom" })).status).toBe(401);
       } finally {
@@ -571,31 +581,48 @@ describe("agent identity", () => {
     expect((await authorize(request("custom"), BASE, [plain])).ok).toBe(true);
   });
 
-  it("INV-4: connectorAccess and pool grants recognize agents by identity.agent", async () => {
+  it("INV-4: pool members recognize agents by identity.agent, and an agent never opens plain /mcp", async () => {
     const storage = memoryStorage();
     const manager = new AccessTokenManager(storage, { agents: ["simon", "ci"] });
     const simon = (await manager.rotate("simon")).token;
     const ci = (await manager.rotate("ci")).token;
-    const app = createTestConnecta({
+    const config = {
       connectors: [calcApi()],
+      auth: human,
+      maintainers,
       agents: ["simon", "ci"],
       accessTokens: accessTokens(storage),
-      identity: { connectorAccess: ({ agent }) => (agent === "simon" ? ["calc.add"] : []) },
-      pools: { desktop: { tools: ["calc.add"], grant: ({ agent }) => agent === "simon" } },
-    });
+      pools: { desktop: { tools: ["calc.add"], members: ["agent:simon"] } },
+    };
+    expect(() => createTestConnecta({ ...config, maintainers: ["owner", "agent:simon"] })).toThrow(
+      "ConnectaConfig.maintainers[1] is an agent. Agents are never maintainers",
+    );
+    const app = createTestConnecta(config);
     try {
-      const call = (token: string) =>
+      // Interim until /agent/<pool>: an agent member reaches its pool with its cta_ token.
+      const call = (token: string, pool?: string) =>
         mcpRpc(
           app,
           "tools/call",
           { name: "call_tool", arguments: { address: "calc.add", args: { a: 2, b: 3 } } },
-          { token },
+          { token, ...(pool ? { pool } : {}) },
         );
-      expect((await readJsonRpc(await call(simon))).result.isError).not.toBe(true);
-      expect((await readJsonRpc(await call(ci))).result.isError).toBe(true);
-      const pool = (token: string) => app.fetch(mcpRpc("tools/list", {}, { token, pool: "desktop" }));
-      expect((await pool(simon)).status).toBe(200);
-      expect((await pool(ci)).status).toBe(404);
+      const served = await call(simon, "desktop");
+      expect(served.status).toBe(200);
+      expect((await readJsonRpc(served)).result.isError).not.toBe(true);
+      // A non-member agent, the member agent at plain /mcp, and the maintainer
+      // outside the pool's members all get the one endpoint-not-found refusal.
+      const notFound = { jsonrpc: "2.0", error: { code: -33004, message: "MCP endpoint not found." } };
+      for (const response of [
+        await call(ci, "desktop"),
+        await call(simon),
+        await call(ci),
+        await call("clerk-operator", "desktop"),
+      ]) {
+        expect(response.status).toBe(404);
+        expect(await readJsonRpc(response)).toMatchObject(notFound);
+      }
+      expect((await call("clerk-operator")).status).toBe(200);
     } finally {
       await app.close();
     }
@@ -621,17 +648,30 @@ describe("agent identity", () => {
     const app = createTestConnecta({
       connectors: [calcApi(), personal],
       auth: human,
+      maintainers,
       agents: ["simon"],
       accessTokens: accessTokens(storage),
+      // The agent and the person share one pool that declares the personal connector.
+      pools: { shared: { tools: ["calc", "mine"], members: ["agent:simon", "owner"] } },
     });
     try {
       const call = (address: string, credential: string) =>
-        mcpRpc(app, "tools/call", { name: "call_tool", arguments: { address, args: {} } }, { token: credential });
+        mcpRpc(
+          app,
+          "tools/call",
+          { name: "call_tool", arguments: { address, args: {} } },
+          { token: credential, pool: "shared" },
+        );
       const denied = await readJsonRpc(await call("mine.read", token));
       expect(denied.result.isError).toBe(true);
       expect(JSON.stringify(denied)).not.toContain("personal data");
       const search = await readJsonRpc(
-        await mcpRpc(app, "tools/call", { name: "search_tools", arguments: { query: "read" } }, { token }),
+        await mcpRpc(
+          app,
+          "tools/call",
+          { name: "search_tools", arguments: { query: "read" } },
+          { token, pool: "shared" },
+        ),
       );
       expect(JSON.stringify(search)).not.toContain("mine");
       // The same connector is there for a human with a principal.
@@ -650,6 +690,7 @@ describe("agent identity", () => {
       connectors: [calcApi()],
       agents: ["simon"],
       accessTokens: accessTokens(storage),
+      pools: { desktop: { tools: ["calc"], members: ["agent:simon"] } },
       activity: activityHistory({ store: { record: (event) => void recorded.push(event) } }),
     });
     try {
@@ -658,7 +699,7 @@ describe("agent identity", () => {
           app,
           "tools/call",
           { name: "call_tool", arguments: { address: "calc.add", args: { a: 4242, b: 1717 } } },
-          { token },
+          { token, pool: "desktop" },
         ),
       );
       await expect.poll(() => recorded.length).toBeGreaterThan(0);

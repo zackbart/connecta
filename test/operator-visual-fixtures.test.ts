@@ -19,8 +19,15 @@ describe("operator visual fixture contract", () => {
     const { contract, data } = fixture;
     expect(contract.schemaVersion).toBe(1);
     expect(contract.config.schemaVersion).toBe(1);
-    expect(contract.config.hasGrant).toBe(state !== "empty");
-    expect(contract.configSources?.["config.hasGrant"]).toBe(state === "empty" ? "default" : "config");
+    // Inbound auth is configured, so maintainers gate plain /mcp in every
+    // state; v1 reports that as hasGrant (#837).
+    expect(contract.config.hasGrant).toBe(true);
+    expect(contract.configSources?.["config.hasGrant"]).toBe("config");
+    expect(contract.config.maintainers).toEqual([{ namespace: "https://clerk.example.test", id: "alice" }]);
+    expect(contract.config).not.toHaveProperty("pools.0.hasGrant");
+    // A maintainer is granted every connector whole and sees every pool.
+    expect(contract.you.grants).toEqual(contract.config.connectors.map((c) => ({ connectorId: c.id, tools: "all" })));
+    expect(contract.you.pools.map((p) => p.name)).toEqual(contract.config.pools.map((p) => p.name));
     expect(contract.configSources?.["config.limits.calls.maxResultBytes"]).toBe("config");
     const ids = contract.config.connectors.map((c) => c.id);
     expect(contract.live.connectors.map((c) => c.id)).toEqual(ids);
@@ -41,10 +48,14 @@ describe("operator visual fixture contract", () => {
     }
     for (const pool of contract.you.pools) {
       expect(contract.config.pools.find((p) => p.name === pool.name)?.readOnly).toBe(pool.readOnly);
+      expect(contract.config.pools.find((p) => p.name === pool.name)?.members).toEqual([
+        { kind: "human", namespace: "https://clerk.example.test", id: "alice" },
+      ]);
       for (const grant of pool.grants) expect(ids).toContain(grant.connectorId);
     }
     if (state === "restricted") {
       expect(ids).toEqual(["github", "slot"]);
+      expect(contract.live.connectors[0]?.tools.map((t) => t.address)).toEqual(["github.read"]);
       expect(contract.you.permissions).toMatchObject({ activity: false, accessTokenManagement: false });
       expect(contract.you.permissions.connectors.every((p) => !p.manageSharedAuth && !p.connectPersonal)).toBe(true);
     } else if (state === "empty") {

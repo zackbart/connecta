@@ -52,11 +52,12 @@ credential or token management authority.
 `GET /ui/api/config`, owned by `operatorUi()`, returns `OperatorUiContract`
 from `connecta/ui`. `src/operator-ui/contract.ts` is also the browser's type
 source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, and `you`.
-`config` is the construction-time `describeConfig()` snapshot, filtered to
-visible connectors, granted tools, classification overrides, and admitted
-pools. `config.hasGrant` reports whether deployment code configures a grant for
-plain `/mcp`; Settings displays that fact and its provenance.
-Pool tools are the intersection with the caller's identity grants.
+`config` is the construction-time `describeConfig()` snapshot, including
+`maintainers` and each pool's `members`; only maintainers receive it. v1 alone
+adds `config.hasGrant`, true whenever inbound auth is configured, because
+`maintainers` then gate plain `/mcp`; Settings displays that fact.
+`describeConfig()` itself no longer has `hasGrant`. Pool tools are the pool's
+declared tools, never intersected.
 `configSources` labels each serialized leaf as `default` or `config`, based on
 option presence rather than equality with the default. Factory descriptions carry
 relative `optionSources` paths so resolved module and transport defaults retain
@@ -66,10 +67,13 @@ ids and pool names and are filtered after disclosure; hidden values leave no
 provenance keys. It contains no source code or credential material.
 Every response is private, `no-store` JSON. Only GET is allowed, with the
 same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
-These catalog reads, activity reads, and connector auth routes also require
-admission through the default `/mcp` grant. Refusals return private JSON 404s;
-there is no per-pool UI view. Public HTML shells and static assets carry no
-catalog data. Access-token management retains its interactive permission gate.
+These catalog reads, activity reads, connector auth routes, and access-token
+routes require a maintainer. Anyone else gets a private JSON 404
+`{ "error": "not found" }`; until the member view ships in P6b of
+[#837](https://github.com/zackbart/connecta/issues/837), pool members who are
+not maintainers have no operator UI. Public HTML shells and static assets carry
+no catalog data. Access-token management also retains its interactive
+permission gate.
 
 `live.connectors` carries status and problem codes, complete registry tools
 with their final read/write classification, catalog age in milliseconds, and
@@ -87,8 +91,10 @@ personal connectors to the caller's activity identity. Each retained fact
 copies a validated timestamp and outcome only. A null call means unknown or
 absent in that window, not proof of no calls. `live.activity` distinguishes
 available, unconfigured, forbidden, and unavailable history. `you` names no
-identity or auth material; it reports grants, whether the root and admitted pools are read-only,
-and effective activity, token, and per-connector auth permissions.
+identity or auth material; for a maintainer `grants` is `"all"` on every
+connector, `pools` lists every declared pool with its declared tools (no
+`requireReadOnly` is ever true), and it reports whether each is read-only and
+the effective activity, token, and per-connector auth permissions.
 
 `contract.ts` also declares `OperatorUiContractV2` and its member, pool, agent,
 connector and matrix types, frozen by

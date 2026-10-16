@@ -25,6 +25,7 @@ import { Effect } from "effect";
 import type { RegistryScope, RegistryView } from "../registry.js";
 import { runEdge } from "../runtime/run.js";
 import {
+  admitsMaintainer,
   authorize,
   authorizeUiIdentity,
   msg,
@@ -73,44 +74,31 @@ export function authorizedPerson(
   );
 }
 
-/** The partition and tool grants an identity carries into a registry view. */
-export function scopeFor(
-  authz: Authorized,
-  connectorIds: RegistryScope["connectorIds"] = authz.connectorIds,
-): RegistryScope {
+/** The partition an identity carries into a registry view of the given connectors. */
+export function scopeFor(authz: Authorized, connectorIds: RegistryScope["connectorIds"] = "all"): RegistryScope {
   return {
     connectorIds,
-    ...(authz.toolAccess ? { toolAccess: authz.toolAccess } : {}),
-    ...(authz.guardedToolAccess ? { guardedToolAccess: authz.guardedToolAccess } : {}),
     ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
     ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
   };
 }
 
 /**
- * The registry as this identity may see it. A configured permission naming a
+ * The whole registry, for a maintainer only (#837). Everyone else gets the
+ * private 404 plain `/mcp` gives them. A configured permission naming a
  * connector that does not exist refuses the whole view, management rights
  * included, rather than quietly granting what remains.
  */
 export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
   // Operator catalogs describe the default endpoint's view, never a pool view.
-  // Authentication alone cannot admit a caller that deployment code refuses.
-  const admission = opts.config.grant
-    ? Effect.tryPromise(async () => (await opts.config.grant!(authz.identity)) === true).pipe(
-        Effect.orElseSucceed(() => false),
-      )
-    : Effect.succeed(true);
-  return Effect.flatMap(admission, (allowed) =>
-    allowed
-      ? Effect.try({
-          try: () => {
-            validateAuthPermissions(authz, opts.registry);
-            return opts.registry.scoped(scopeFor(authz));
-          },
-          catch: (error) => new Answer(privateJson({ error: msg(error) }, { status: 403 })),
-        })
-      : refuse("not found", 404),
-  );
+  if (!admitsMaintainer(opts, authz)) return refuse("not found", 404);
+  return Effect.try({
+    try: () => {
+      validateAuthPermissions(authz, opts.registry);
+      return opts.registry.scoped(scopeFor(authz));
+    },
+    catch: (error) => new Answer(privateJson({ error: msg(error) }, { status: 403 })),
+  });
 }
 
 /**

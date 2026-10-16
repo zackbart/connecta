@@ -1,5 +1,5 @@
 import { api } from "../../src/connectors/api.js";
-import { machineAuth } from "../helpers/machine-auth.js";
+import { machineAuth, registerTestMaintainer } from "../helpers/machine-auth.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type { ConnectaConfig } from "../../src/index.js";
 import type { Connector, InboundAuth } from "../../src/types.js";
@@ -109,7 +109,7 @@ export function fakeClerkAuth(options: {
   const matches = (request: Request) => request.headers.has("authorization")
     ? request.headers.get("authorization") === `Bearer ${options.token ?? "clerk-operator"}`
     : Boolean(request.headers.get("cookie")?.split(/;\s*/).includes(`__session=${options.token ?? "clerk-operator"}`));
-  return {
+  return registerTestMaintainer({
     kind: "clerk",
     recognizesCredential: matches,
     activityActorNamespace: options.frontendApiUrl ?? "https://clerk.example.test",
@@ -131,7 +131,7 @@ export function fakeClerkAuth(options: {
           Response.json({ error: "unauthorized" }, { status: 401 }),
       };
     },
-  };
+  }, { namespace: options.frontendApiUrl ?? "https://clerk.example.test", id: options.userId ?? "user_operator" });
 }
 
 export function calcApi(options: {

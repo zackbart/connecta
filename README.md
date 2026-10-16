@@ -31,8 +31,10 @@ flowchart LR
     style Connecta fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
 ```
 
-You choose which services to connect and who can use them. Your agent keeps
-the same connection as those services change.
+You choose which services to connect and who can use them: the maintainers
+you name reach everything, and everyone else, people and agents alike, reaches
+only the pools of tools you list them in. Your agent keeps the same connection
+as those services change.
 
 ## From a question to an answer
 

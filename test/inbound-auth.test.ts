@@ -112,6 +112,7 @@ describe("inbound credential ownership", () => {
     const app = createTestConnecta({
       connectors: [api("secret", { credential: { label: "API token" }, tools: [] })],
       auth: cloudflareAccessAuth(),
+      maintainers: ["human"],
       storage,
       vault: encryptedCredentialVault(storage, btoa("x".repeat(32))),
       publicUrl: BASE,
@@ -251,7 +252,13 @@ describe("inbound credential ownership", () => {
 describe("metadata-owned challenges", () => {
   it("INV-4: an unrelated metadata hook cannot override Clerk's 401 challenge", async () => {
     const providers = [unrelated(), clerk()];
-    const app = createTestConnecta({ connectors: [], auth: providers, publicUrl: BASE, logger: "silent" });
+    const app = createTestConnecta({
+      connectors: [],
+      auth: providers,
+      maintainers: [{ namespace: "https://clerk.example.com", id: "user_operator" }],
+      publicUrl: BASE,
+      logger: "silent",
+    });
     try {
       const metadata = await app.fetch(request("/.well-known/oauth-protected-resource/mcp/support"));
       expect(await metadata.json()).toMatchObject({ resource: `${BASE}/mcp/support` });

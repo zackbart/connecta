@@ -20,7 +20,7 @@ function usage() {
   console.log(`Usage:
   connecta init [directory]
   connecta migrate-state <state.json> <connecta.sqlite>
-  CONNECTA_TOKEN=<bearer> connecta doctor [--config] [--url http://localhost:8787]
+  CONNECTA_TOKEN=<bearer> connecta doctor [--config] [--url http://localhost:8787] [--pool <name>]
   CF_ACCESS_CLIENT_ID=<id> CF_ACCESS_CLIENT_SECRET=<secret> connecta doctor --url https://worker.example`);
 }
 
@@ -138,13 +138,19 @@ async function doctorFetch(url, init = {}) {
 async function doctor() {
   for (let index = 0; index < args.length; index++) {
     if (args[index] === "--config") continue;
-    if (args[index] !== "--url" || !args[++index] || args[index].startsWith("--")) {
+    if (!["--url", "--pool"].includes(args[index]) || !args[++index] || args[index].startsWith("--")) {
       usage();
       process.exitCode = 1;
       return;
     }
   }
   const requestedUrl = option("--url", "http://localhost:8787");
+  // An agent token reaches only the pools that list the agent; plain /mcp
+  // admits maintainers alone.
+  const pool = option("--pool", undefined);
+  if (pool !== undefined && !/^[a-z0-9_-]+$/.test(pool)) {
+    throw new Error("Doctor --pool must be a pool name: lowercase letters, digits, _ and -.");
+  }
   const parsedUrl = new URL(requestedUrl);
   if (parsedUrl.username || parsedUrl.password) {
     throw new Error("Doctor URL must not contain credentials.");
@@ -222,7 +228,7 @@ async function doctor() {
     { name: "connecta-doctor", version: CONNECTA_VERSION },
     { versionNegotiation: { mode: "auto", probe: { timeoutMs: DOCTOR_TIMEOUT_MS } } },
   );
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp${pool ? `/${pool}` : ""}`), {
     requestInit: { headers: authHeaders },
     fetch: doctorFetch,
   });

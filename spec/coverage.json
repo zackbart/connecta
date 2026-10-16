@@ -163,7 +163,7 @@
       "id": "authorization",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
-      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource and owns its protected-resource challenge with scopes. Cloudflare Access is supported for humans on direct Worker invocations through edge-validated application AUD and ctx.access; Node uses Clerk. Machines are agents declared in code, each with one stored cta_ token that rotates with immediate cutover; static bearer is removed. Downstream auth and auth elicitation follow-ups remain in #707. An optional deployment grant gates plain /mcp and operator catalog reads after auth, independently of named-pool grants. Protected-resource metadata stays public for credential-free OAuth discovery.",
+      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource and owns its protected-resource challenge with scopes. Cloudflare Access is supported for humans on direct Worker invocations through edge-validated application AUD and ctx.access; Node uses Clerk. Machines are agents declared in code, each with one stored cta_ token that rotates with immediate cutover; static bearer is removed. Downstream auth and auth elicitation follow-ups remain in #707. Maintainers listed in code alone reach plain /mcp and the operator routes after auth; each named pool admits only its static members and serves exactly its tools. Protected-resource metadata stays public for credential-free OAuth discovery.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -186,16 +186,16 @@
           "title": "uses the trusted Worker identity as ambient operator auth"
         },
         {
-          "file": "test/default-grant.test.ts",
-          "title": "INV-4 INV-6: refuses /mcp byte-identically to pools after auth and still admits a granting pool"
+          "file": "test/identity-scope.test.ts",
+          "title": "INV-4: answers a non-member, an undeclared pool, and a non-maintainer at /mcp identically after auth"
         },
         {
-          "file": "test/default-grant.test.ts",
-          "title": "INV-4 INV-10: credential-free Clerk discovery with a default grant completes through the MCP SDK"
+          "file": "test/maintainers.test.ts",
+          "title": "INV-4 INV-10: credential-free Clerk discovery for a maintainer-only /mcp completes through the MCP SDK"
         },
         {
-          "file": "test/default-grant.test.ts",
-          "title": "INV-4: refuses default-denied machine tokens on every operator catalog route and admits humans"
+          "file": "test/identity-scope.test.ts",
+          "title": "INV-4: refuses non-maintainers on every operator route with the private 404"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"
@@ -438,7 +438,7 @@
         },
         {
           "file": "test/skills-extension.test.ts",
-          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only grants"
+          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only pools"
         },
         {
           "file": "test/skills-extension.test.ts",
@@ -863,7 +863,7 @@
         },
         {
           "file": "test/skills-extension.test.ts",
-          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only grants"
+          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only pools"
         },
         {
           "file": "test/skills-extension.test.ts",

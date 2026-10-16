@@ -12,7 +12,6 @@
 // reads, with defaults applied once, so no later layer re-derives a value or
 // re-plumbs a field.
 
-import type { ConnectorGrant } from "./connector-access.js";
 import type { CredentialVault } from "./credential-contract.js";
 import { CONFIG_DEFAULTS as D } from "./config-defaults.js";
 import {
@@ -31,6 +30,7 @@ import {
   type ConfigOutput,
 } from "./config-schema.js";
 import { assertAgentNames } from "./agent-identity.js";
+import type { MemberRef } from "./membership.js";
 import { assertExecutor } from "./executor-contract.js";
 import type { AccessTokensModule, ActivityModule, OperatorSurface } from "./module-contracts.js";
 import { memoryStorage } from "./storage/memory.js";
@@ -229,21 +229,6 @@ const admission = {
 };
 
 const identity = {
-  /**
-   * What this admitted identity may discover and call: `"all"`, or a list
-   * whose entries are connector ids (the whole connector) and `connector.tool`
-   * addresses (that tool only), or `{ tool: "connector.tool",
-   * requireReadOnly: true }` for an exact tool only while its loaded catalog
-   * explicitly classifies it read-only. Grants are additive: an unrestricted
-   * connector or address grant wins over the guarded form. An address naming
-   * a tool the catalog lacks is unreachable and warned once, never widened.
-   */
-  connectorAccess:
-    fn<
-      (
-        identity: Readonly<AuthenticatedIdentity>,
-      ) => "all" | readonly ConnectorGrant[] | Promise<"all" | readonly ConnectorGrant[]>
-    >(),
   /** Global payload-free activity reads. Defaults to interactive humans. */
   activityAccess: fn<(principal: Readonly<IdentityReference>) => boolean | Promise<boolean>>(),
   /** Shared credential and OAuth administration. Defaults to none. */
@@ -265,6 +250,13 @@ function assertFlag(value: unknown, path: string): void {
   if (typeof value !== "boolean") throw new ConfigError(`${path} must be true or false.`);
 }
 
+/** Shape only; each reference resolves against auth and agents in createConnecta. */
+function assertMemberList(value: unknown, path: string): void {
+  if (!Array.isArray(value)) {
+    throw new ConfigError(`${path} must be an array of principal ids, { namespace, id }, or "agent:<name>".`);
+  }
+}
+
 const pool = {
   /**
    * Whether this pool's endpoint refuses every write: write tools are absent
@@ -284,11 +276,16 @@ const pool = {
     }),
   ),
   /**
-   * Whether this admitted identity may open the pool. Denied by default:
-   * a pool with no grant serves nobody. A false return, a throw, and an
-   * undeclared pool name are the same 404.
+   * Who may open `/mcp/<name>`: principal ids in the namespace of the one
+   * interactive auth provider, `{ namespace, id }`, or `"agent:<name>"` for a
+   * declared agent. Required and non-empty; the pool serves exactly its
+   * `tools` to these members and the same 404 to everyone else.
    */
-  grant: fn<(identity: Readonly<AuthenticatedIdentity>) => boolean | Promise<boolean>>(),
+  members: required(
+    opaque<readonly MemberRef[]>({ check: assertMemberList }),
+    (path) =>
+      `${path} is required: list who may open this pool, as principal ids, { namespace, id }, or "agent:<name>".`,
+  ),
 };
 
 const icon = {
@@ -364,7 +361,7 @@ const connectaConfig = {
     },
     resolve: (value) => normalizeAuth(value === undefined ? [] : Array.isArray(value) ? value : [value]),
   }),
-  /** Code-derived connection visibility and independent management permissions. */
+  /** Management permissions, evaluated for admitted identities. */
   identity: object(identity),
   /**
    * Agents, declared by name: lowercase letters, digits, `_` and `-`, each
@@ -379,12 +376,13 @@ const connectaConfig = {
     resolve: (value) => Object.freeze([...(value ?? [])]),
   }),
   /**
-   * Whether this admitted identity may open plain `/mcp`. Omitted admits
-   * everyone; only literal true admits when configured. Other returns and
-   * throws receive the same 404 as a refused or undeclared pool.
+   * The people who may use plain `/mcp`, which serves the whole catalog with
+   * the deployment's `readOnly`, and who administer the deployment. Same
+   * reference forms as pool `members`, people only. Required with inbound
+   * auth; a maintainer opens no pool unless listed among its members.
    */
-  grant: fn<(identity: Readonly<AuthenticatedIdentity>) => boolean | Promise<boolean>>(),
-  /** Named tool pools, each served at `/mcp/<name>` to identities its grant admits. */
+  maintainers: opaque<readonly MemberRef[]>({ check: assertMemberList }),
+  /** Named tool pools, each served at `/mcp/<name>` to its members only. */
   pools: record(object(pool)),
   /** Exact connector id -> tool name -> verdict. Unknown names fail at catalog publication. */
   classification: record(
@@ -573,9 +571,8 @@ export type RequestAdmissionConfig = ConfigInput<typeof requestAdmission>;
 export type ConnectaAdmissionConfig = ConfigInput<typeof admission>;
 export type ConnectaIdentityConfig = ConfigInput<typeof identity>;
 /**
- * A named tool pool served at `/mcp/<name>`. The pool is the slice a client
- * pointed at that endpoint may see; the identity's own `connectorAccess`
- * remains its ceiling and the pool can only narrow it.
+ * A named tool pool served at `/mcp/<name>`: exactly its `tools`, to its
+ * `members` only.
  */
 export type ConnectaPoolConfig = ConfigInput<typeof pool>;
 
@@ -599,6 +596,9 @@ export interface ResolvedConfig extends Omit<Parsed, "serverInfo"> {
 /** Pause-only options #672 removed with `resume_execution`. */
 const RETIRED_PAUSE_OPTIONS = ["ConnectaConfig.execute.resumableWrites", "ConnectaConfig.execute.pausedRunTtlSeconds"];
 
+/** Access options pools replaced (#837, decisions/0006). */
+const isRetiredPoolGrant = (path: string): boolean => /^ConnectaConfig\.pools\.[^.]+\.grant$/.test(path);
+
 /** `trust`, on the deployment or a pool, was replaced by `readOnly` (#820). */
 const isRetiredTrust = (path: string): boolean =>
   path === "ConnectaConfig.trust" || (path.startsWith("ConnectaConfig.pools.") && path.endsWith(".trust"));
@@ -619,6 +619,15 @@ function rejectUnknownOptions(paths: string[]): void {
         : "") +
       (paths.some((path) => RETIRED_PAUSE_OPTIONS.includes(path))
         ? "\nPrograms no longer pause at writes, so there is nothing to configure: writable endpoints let programs and call_destructive_tool write; readOnly endpoints refuse every write (issue #672). Delete the option."
+        : "") +
+      (paths.includes("ConnectaConfig.identity.connectorAccess")
+        ? "\nidentity.connectorAccess was removed (#837): pools are the access model. List who may use plain /mcp in maintainers, and give each pool its tools and members. A guarded { tool, requireReadOnly: true } grant becomes a pool with readOnly: true."
+        : "") +
+      (paths.includes("ConnectaConfig.grant")
+        ? "\nThe top-level grant was removed (#837); list the people who may use plain /mcp in maintainers."
+        : "") +
+      (paths.some(isRetiredPoolGrant)
+        ? "\nPool grant was removed (#837); list who may open the pool in its members."
         : "") +
       (paths.some(isRetiredTrust)
         ? '\ntrust was removed (#820); set readOnly, which every deployment now chooses explicitly. trust: "read-only" becomes readOnly: true, which now also refuses call_destructive_tool. trust: "trusted" becomes readOnly: false. A pool inherits the deployment readOnly unless it sets its own.'

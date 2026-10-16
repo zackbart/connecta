@@ -2,7 +2,7 @@ import { guestFailureFacts } from "./fixtures/misc.js";
 import type { Tool } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { machineAuth } from "./helpers/machine-auth.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { MAX_CATALOG_CHUNK_BYTES, MAX_SERIALIZED_CATALOG_BYTES } from "../src/catalog-limits.js";
 import { createExecuteTool } from "../src/execute.js";
 import type { Executor } from "../src/types.js";
@@ -161,8 +161,8 @@ describe.each(cases)("downstream definitions from $cache via $caller in $view", 
             executor,
             logger: silentLogger,
             auth: machineAuth("reader", { subjectId: "reader" }),
-            identity: { connectorAccess: () => allowed },
-            pools: { readers: { tools: allowed, grant: () => true } },
+            // The pool serves exactly its tools to its one member (#837).
+            pools: { readers: { tools: allowed, members: [{ namespace: TEST_MACHINE_NAMESPACE, id: "reader" }] } },
           })
         : undefined;
     if (deployment) {

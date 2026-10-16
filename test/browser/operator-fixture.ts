@@ -15,7 +15,9 @@ export async function fixtureContract(data: UiData): Promise<OperatorUiContract>
     })),
     ...(data.serverInfo ? { serverInfo: data.serverInfo } : {}),
   });
-  const config = structuredClone(app.describeConfig());
+  // v1 alone adds hasGrant: whether maintainers gate plain /mcp, which they
+  // do only with inbound auth, and this snapshot has none (#837).
+  const config = { ...structuredClone(app.describeConfig()), hasGrant: false };
   await app.close();
   return {
     schemaVersion: 1,

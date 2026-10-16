@@ -55,14 +55,20 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     status: async () => ({ state: "auth_required" }), startAuth: async () => ({ state: "auth_required" }), finishAuth: async () => {}, verifyState: async () => true, disconnectAuth: async () => {},
   }, { ...github, id: "slot", title: "Empty slot", credential: { label: "API key", description: "A deployment-managed service token" }, staticTools: [] },
   { ...github, id: "broken", title: "Hosted proxy", staticTools: [], status: async () => ({ state: "error" }) }];
+  // Operator routes serve maintainers only (#837), and a maintainer sees every
+  // connector whole. The restricted state keeps its old view (GitHub's read
+  // tool and the credential slot) by declaring only those, and stays a
+  // maintainer without management, activity, or token permissions.
+  const readOnlyGithub: Connector = { ...github, staticTools: catalog.filter(t => t.name === "read"), listTools: async () => catalog.filter(t => t.name === "read") };
+  const restrictedConnectors: Connector[] = [readOnlyGithub, connectors[2]!];
   const app = createTestConnecta({
-    connectors: empty ? keepEmptyConnector ? [github] : [] : connectors, publicUrl: VISUAL_ORIGIN,
+    connectors: empty ? keepEmptyConnector ? [github] : [] : restricted ? restrictedConnectors : connectors, publicUrl: VISUAL_ORIGIN,
     serverInfo: { name: "Production", version: "1" }, auth: fakeClerkAuth({ token: VISUAL_TOKEN, userId: "alice" }),
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
-    identity: { connectorAccess: () => empty ? keepEmptyConnector ? ["github"] : [] : restricted ? ["github.read", "slot"] : "all", activityAccess: () => !restricted,
+    // alice, the fake Clerk operator, is the default maintainer.
+    identity: { activityAccess: () => !restricted,
       credentialAdministration: () => restricted ? [] : "all", personalConnection: () => restricted ? [] : "all", accessTokenManagement: () => !restricted },
-    grant: empty ? undefined : () => true,
-    pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, grant: () => true }, automation: { tools: ["github"], readOnly: false, grant: () => true } },
+    pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, members: ["alice"] }, automation: { tools: ["github"], readOnly: false, members: ["alice"] } },
     activity: activityHistory({ store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),
     accessTokens: accessTokens(storage),
     calls: { maxResultBytes: 1_000_000 },

@@ -4,7 +4,7 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import { createTestConnecta } from "./helpers.js";
-import { machineAuth } from "./helpers/machine-auth.js";
+import { machineAuth, registerTestMaintainer } from "./helpers/machine-auth.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
 import type { CredentialVault } from "../src/credential-contract.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -249,18 +249,22 @@ describe("dropped uiAuth URL warnings", () => {
     frontendApiUrl: string,
     portal: { signInUrl?: string; signUpUrl?: string } = {},
   ): InboundAuth {
-    return {
-      kind: "clerk",
-      uiAuth: {
+    // The principal it admits is the default maintainer (#837).
+    return registerTestMaintainer(
+      {
         kind: "clerk",
-        publishableKey: "pk_test_fake",
-        frontendApiUrl,
-        ...portal,
+        uiAuth: {
+          kind: "clerk",
+          publishableKey: "pk_test_fake",
+          frontendApiUrl,
+          ...portal,
+        },
+        authorize() {
+          return { ok: true, userId: "user_123" };
+        },
       },
-      authorize() {
-        return { ok: true, userId: "user_123" };
-      },
-    };
+      { namespace: "connecta:test", id: "user_123" },
+    );
   }
 
   it.each([

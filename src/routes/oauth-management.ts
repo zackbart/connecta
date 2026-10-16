@@ -29,7 +29,7 @@ function oauthManagementRequest(context: RouteContext, connectorId: string): Eff
     if (!connector || !disconnectAuth || !startAuth) {
       return yield* refuse("unknown OAuth connector", 404);
     }
-    if (!mayManageConnector(authz, connector)) {
+    if (!mayManageConnector(opts, authz, connector)) {
       return yield* refuse("credential management is not permitted", 403);
     }
     if (connector.authScope === "personal" && !authz.principalKey) {

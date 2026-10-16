@@ -54,7 +54,11 @@ export async function startNodeDeployment(
   oauth?: FakeOAuth,
   surface: Surface = "six",
 ): Promise<Deployment> {
-  const { pool, ...passthrough } = extra;
+  const { pool: selected, pools: taskPools, ...passthrough } = extra;
+  // Plain /mcp serves maintainers only and an agent is never one (#837): the
+  // agent token reaches every connector through the `eval` pool instead.
+  const ids = [...(oauth ? ["oauth"] : []), ...connectors.map((spec) => spec.id)];
+  const pool = typeof selected === "string" ? selected : oauth ? undefined : "eval";
   const dir = await mkdtemp(join(tmpdir(), "connecta-eval-"));
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
@@ -71,7 +75,11 @@ export async function startNodeDeployment(
     storage,
     agents: ["eval-machine"],
     accessTokens: accessTokens(storage),
-    ...(oauth ? { auth: oauth.inbound() } : {}),
+    ...(oauth ? { auth: oauth.inbound(), maintainers: ["eval-human"] } : {}),
+    pools: {
+      eval: { tools: ids, members: ["agent:eval-machine"] },
+      ...(taskPools as Record<string, { tools: string[]; members: string[]; readOnly?: boolean }> | undefined),
+    },
     identity: {
       credentialAdministration: () => "all",
       personalConnection: () => "all",

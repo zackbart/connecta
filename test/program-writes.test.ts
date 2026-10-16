@@ -15,6 +15,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
 import type { JsonSchema } from "../src/types.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -553,7 +554,9 @@ describe("writable-endpoint programs (#706, #820)", () => {
     ["the deployment", (trust: unknown) => ({ trust }), "ConnectaConfig.trust"],
     [
       "a pool",
-      (trust: unknown) => ({ pools: { named: { tools: ["notes"], grant: () => true, trust } } }),
+      (trust: unknown) => ({
+        pools: { named: { tools: ["notes"], members: [{ namespace: "people", id: "alice" }], trust } },
+      }),
       "ConnectaConfig.pools.named.trust",
     ],
   ])("INV-11: refuses the retired trust option on %s, pointing at readOnly", (_where, config, path) => {
@@ -757,6 +760,8 @@ describe("read-only and writable endpoints (#820)", () => {
     ],
   ]);
 
+  const TOKEN = "endpoint-caller";
+  const CALLER = { namespace: TEST_MACHINE_NAMESPACE, id: "machine" };
   function deployment(config: { readOnly: boolean; pools: Record<string, { readOnly?: boolean }> }) {
     let writes = 0;
     const notes = api("notes", {
@@ -782,8 +787,11 @@ describe("read-only and writable endpoints (#820)", () => {
       logger: "silent",
       executor: customExecutor(scriptedExecutor(PROGRAMS), { lifecycle: "self-managed" }),
       readOnly: config.readOnly,
+      // Pools need inbound auth: one bearer caller is the maintainer and every pool's member.
+      auth: machineAuth(TOKEN),
+      maintainers: [CALLER],
       pools: Object.fromEntries(
-        Object.entries(config.pools).map(([name, pool]) => [name, { tools: ["notes"], grant: () => true, ...pool }]),
+        Object.entries(config.pools).map(([name, pool]) => [name, { tools: ["notes"], members: [CALLER], ...pool }]),
       ),
     });
     const rpc = async (path: string, method: string, params: unknown) =>
@@ -791,7 +799,11 @@ describe("read-only and writable endpoints (#820)", () => {
         await app.fetch(
           new Request(`http://localhost${path}`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              Authorization: `Bearer ${TOKEN}`,
+            },
             body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
           }),
         ),
@@ -918,7 +930,11 @@ describe("read-only and writable endpoints (#820)", () => {
 
   it("INV-11: requires every deployment to choose readOnly, while pools inherit it", () => {
     const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
-    for (const config of [{}, { readOnly: undefined }, { pools: { named: { tools: [], readOnly: true } } }]) {
+    for (const config of [
+      {},
+      { readOnly: undefined },
+      { pools: { named: { tools: [], members: [{ namespace: "people", id: "alice" }], readOnly: true } } },
+    ]) {
       const construct = () =>
         (createConnecta as (config: unknown) => unknown)({ connectors: [], executor, logger: "silent", ...config });
       expect(construct).toThrow("ConnectaConfig.readOnly is required");

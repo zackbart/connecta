@@ -11,6 +11,8 @@ import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 const BASE = "https://connecta.test";
 const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 const auth = { ...fakeClerkAuth({ token: "human" }), activityActorNamespace: "test-humans" };
+// The spread copy is not a registered test fixture, so it names its maintainer (#837).
+const maintainers = ["user_operator"];
 const headers = { Authorization: "Bearer human", Origin: BASE, "Content-Type": "application/json" };
 function connector(id = "shared", personal = false): Connector {
   return {
@@ -30,6 +32,7 @@ function deployment(identity?: ConnectaIdentityConfig) {
     executor,
     logger: "silent",
     auth,
+    maintainers,
     publicUrl: BASE,
     storage,
     vault: encryptedCredentialVault(storage, btoa("a".repeat(32))),
@@ -69,6 +72,7 @@ describe("optional deployment modules", () => {
       connectors: [connector()],
       executor,
       auth,
+      maintainers,
       ui: operatorUi(),
       logger: "silent",
     });
@@ -89,6 +93,7 @@ describe("optional deployment modules", () => {
       connectors: [connector()],
       executor,
       auth,
+      maintainers,
       logger: "silent",
       publicUrl: BASE,
       ...(modules.ui ? { ui: operatorUi() } : {}),
@@ -125,6 +130,7 @@ describe("optional deployment modules", () => {
       connectors: [slow, fast],
       executor,
       auth,
+      maintainers,
       ui: operatorUi(),
       logger: "silent",
       discovery: { probeTimeoutMs: 20 },
@@ -179,6 +185,7 @@ describe("optional deployment modules", () => {
       connectors: [c],
       executor,
       auth,
+      maintainers,
       ui: operatorUi(),
       vault,
       logger: "silent",
@@ -227,14 +234,12 @@ describe("optional deployment modules", () => {
   });
 
   it.each([
-    { connectorAccess: () => undefined },
-    { connectorAccess: () => null },
     { activityAccess: () => "false" },
     { activityAccess: () => ({}) },
     { personalConnection: () => undefined },
     { credentialAdministration: () => ["invalid.id"] },
     {
-      connectorAccess: () => {
+      activityAccess: () => {
         throw new Error("resolver failed");
       },
     },
@@ -264,6 +269,7 @@ describe("optional deployment modules", () => {
       connectors: [oauth],
       executor,
       auth,
+      maintainers,
       vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))),
       logger: "silent",
       publicUrl: BASE,
@@ -300,6 +306,7 @@ describe("optional deployment modules", () => {
         connectors: [oauth],
         executor,
         auth,
+        maintainers,
         ui: operatorUi(),
         logger: "silent",
         identity: { credentialAdministration: () => (admin ? "all" : "none") },
@@ -331,6 +338,7 @@ describe("optional deployment modules", () => {
       connectors: [oauth],
       executor,
       auth,
+      maintainers,
       vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))),
       logger: "silent",
       publicUrl: BASE,
@@ -372,6 +380,7 @@ describe("optional deployment modules", () => {
       connectors: [],
       executor,
       auth,
+      maintainers,
       ui: operatorUi(),
       activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
       logger: "silent",
@@ -382,6 +391,7 @@ describe("optional deployment modules", () => {
       connectors: [],
       executor,
       auth,
+      maintainers,
       ui: operatorUi(),
       activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
       identity: { activityAccess: () => false },

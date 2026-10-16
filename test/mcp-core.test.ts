@@ -142,7 +142,13 @@ describe("2026-07-28 core", () => {
     const c = createTestConnecta({
       connectors: [calcApi()],
       logger: silentLogger,
-      auth: { kind: "test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
+      auth: {
+        kind: "test",
+        activityActorNamespace: "connecta:test",
+        interactiveOperator: true,
+        authorize: () => ({ ok: true, userId: "operator" }),
+      },
+      maintainers: ["operator"],
       activity: activityHistory({ store: { record() {}, list: async () => ({ events }) } }),
     });
     try {
@@ -180,6 +186,7 @@ describe("2026-07-28 core", () => {
           interactiveOperator: true,
           authorize: () => ({ ok: true, userId: "operator" }),
         },
+        maintainers: ["operator"],
         identity: { activityAccess: () => operator },
         activity: activityHistory({
           readGate: () => gate,
@@ -258,8 +265,14 @@ describe("2026-07-28 core", () => {
     const c = createTestConnecta({
       connectors: [],
       logger: silentLogger,
-      auth: { kind: "test", authorize: () => ({ ok: true }) },
-      identity: { connectorAccess: () => ["missing"] },
+      auth: {
+        kind: "test",
+        activityActorNamespace: "connecta:test",
+        interactiveOperator: true,
+        authorize: () => ({ ok: true, userId: "operator" }),
+      },
+      maintainers: ["operator"],
+      identity: { credentialAdministration: () => ["missing"] },
     });
     try {
       const response = await c.fetch(modern("tools/list"));
@@ -301,6 +314,7 @@ describe("2026-07-28 core", () => {
       connectors: [],
       logger: silentLogger,
       admission: { requests: { concurrency: 1, maxQueueSize: 0, maxDurationMs: 100 } },
+      maintainers: [{ namespace: "connecta:test", id: "operator" }],
       auth: {
         kind: "blocked",
         authorize: async () => {
@@ -328,6 +342,7 @@ describe("2026-07-28 core", () => {
       connectors: [],
       logger: silentLogger,
       admission: { requests: { maxDurationMs: 25 } },
+      maintainers: [{ namespace: "connecta:test", id: "operator" }],
       auth: {
         kind: "abort-aware",
         authorize: (request) =>

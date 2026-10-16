@@ -17,11 +17,14 @@ import { api } from "../src/connectors/api.js";
 import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta, makeRegistry, activitySink, invokeTestCall } from "./helpers.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { Registry } from "../src/registry.js";
 import type { Connector, InboundAuth } from "../src/types.js";
 import type { OperatorUiContract } from "../src/ui.js";
 
 const BASE = "https://connecta.test";
+const alice = { namespace: "directory", id: "alice" };
+const bob = { namespace: "directory", id: "bob" };
 const apps: ReturnType<typeof createTestConnecta>[] = [];
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -108,54 +111,71 @@ describe("Phase 4 behavior fixes", () => {
     expect((await makeRegistry([c]).statusFor("slot", BASE)).state).toBe("credential_required");
   });
 
-  it("INV-4 INV-6: permits API principals only through activityAccess and filters connectors, tools, owners and pools", async () => {
+  it("INV-4 INV-6: permits maintainers only through activityAccess and filters connectors, pool tools, owners and undeclared pools", async () => {
     const storage = memoryStorage();
     const principal = { namespace: "directory", id: "owner" };
     const agentToken = (await new AccessTokenManager(storage, { agents: ["machine"] }).rotate("machine")).token;
     const reader: InboundAuth = {
       kind: "api",
-      recognizesCredential: (request) => request.headers.get("authorization") === "Bearer reader",
-      authorize: (request) =>
-        request.headers.get("authorization") === "Bearer reader"
-          ? { ok: true, principal }
-          : { ok: false, response: new Response(null, { status: 401 }) },
+      recognizesCredential: (request) => /^Bearer (reader|member)$/.test(request.headers.get("authorization") ?? ""),
+      authorize: (request) => {
+        const token = request.headers.get("authorization");
+        if (token === "Bearer reader") return { ok: true, principal };
+        if (token === "Bearer member") return { ok: true, principal: { namespace: "directory", id: "member" } };
+        return { ok: false, response: new Response(null, { status: 401 }) };
+      },
     };
     let permitted = true;
     let readGate = true;
+    const own = { kind: "api", id: principal.id, namespace: principal.namespace };
     const read = vi.fn(async () => ({
       events: [
         event("yes"),
+        // Plain /mcp serves the whole catalog, so its rows show every tool.
         event("tool", { toolName: "write" }),
-        event("hidden", { connectorId: "hidden" }),
-        event("pool", { pool: "denied" }),
+        event("gone", { connectorId: "gone" }),
+        // Every declared pool's rows, members or not, within that pool's tools.
+        event("pool", { pool: "others" }),
+        event("pool-read", { pool: "narrow" }),
         event("pool-tool", { pool: "narrow", toolName: "write" }),
+        event("retired", { pool: "retired" }),
         event("personal", { connectorId: "personal", actor: { kind: "clerk", id: "other" } }),
+        event("personal-own", { connectorId: "personal", actorBasis: "principal", actor: own }),
       ],
     }));
     const deployment = app({
-      connectors: [connector("visible"), connector("hidden"), { ...connector("personal"), authScope: "personal" }],
+      connectors: [connector("visible"), { ...connector("personal"), authScope: "personal" }],
       storage,
       auth: reader,
+      maintainers: [principal],
       agents: ["machine"],
       accessTokens: accessTokens(storage),
       logger: "silent",
-      identity: {
-        activityAccess: (value) => permitted && value.id === principal.id,
-        connectorAccess: () => ["visible.read", "personal"],
-      },
+      identity: { activityAccess: () => permitted },
       pools: {
-        denied: { tools: ["visible"], grant: () => false },
-        narrow: { tools: ["visible.read"], grant: () => true },
+        others: { tools: ["visible"], members: [{ namespace: "directory", id: "member" }] },
+        narrow: { tools: ["visible.read"], members: [principal, { namespace: "directory", id: "member" }] },
       },
       activity: activityHistory({ store: { record() {}, list: read }, readGate: () => readGate }),
     });
     const request = (method = "GET", token = "reader") =>
       new Request(BASE + "/ui/api/activity", { method, headers: { Authorization: `Bearer ${token}` } });
-    // An agent has no principal, so activityAccess can never admit it.
-    expect((await deployment.fetch(request("GET", agentToken))).status).toBe(403);
+    // Activity access is not enough: a pool member that is not a maintainer,
+    // and an agent (never one), get the operator routes' private 404.
+    for (const token of ["member", agentToken]) {
+      const refused = await deployment.fetch(request("GET", token));
+      expect(refused.status, token).toBe(404);
+      expect(await refused.json()).toEqual({ error: "not found" });
+    }
     const response = await deployment.fetch(request());
     expect(response.status).toBe(200);
-    expect(((await response.json()) as { events: ToolCallActivityEvent[] }).events.map((e) => e.id)).toEqual(["yes"]);
+    expect(((await response.json()) as { events: ToolCallActivityEvent[] }).events.map((e) => e.id)).toEqual([
+      "yes",
+      "tool",
+      "pool",
+      "pool-read",
+      "personal-own",
+    ]);
     expect((await deployment.fetch(request("POST"))).status).toBe(405);
     permitted = false;
     expect((await deployment.fetch(request())).status).toBe(403);
@@ -166,20 +186,24 @@ describe("Phase 4 behavior fixes", () => {
   });
 
   it("INV-4: permits a non-interactive API principal and denies missing principals or missing activityAccess", async () => {
-    for (const [hasPrincipal, hasGate, expected] of [
-      [true, true, 200],
-      [false, true, 403],
-      [true, false, 403],
+    for (const [id, hasGate, expected] of [
+      ["reader", true, 200],
+      // Without a principal no one can be a maintainer.
+      [undefined, true, 404],
+      ["reader", false, 403],
+      // A principal activityAccess admits is still not a maintainer.
+      ["other", true, 404],
     ] as const) {
       const auth: InboundAuth = {
         kind: "api",
-        authorize: () => ({ ok: true, ...(hasPrincipal ? { principal: { namespace: "api", id: "reader" } } : {}) }),
+        authorize: () => ({ ok: true, ...(id ? { principal: { namespace: "api", id } } : {}) }),
       };
       const deployment = app({
         connectors: [connector("visible")],
         auth,
+        maintainers: [{ namespace: "api", id: "reader" }],
         logger: "silent",
-        identity: hasGate ? { activityAccess: (p) => p.id === "reader" } : {},
+        identity: hasGate ? { activityAccess: () => true } : {},
         activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
       });
       expect((await deployment.fetch(new Request(BASE + "/ui/activity"))).status).toBe(expected);
@@ -261,11 +285,13 @@ describe("Phase 4 behavior fixes", () => {
     const events: ToolCallActivityEvent[] = [];
     let description = "Initial catalog";
     const c = remoteCatalog("dynamic", () => [{ name: "read", description, annotations: { readOnlyHint: true } }]);
+    // Pools need inbound auth; the bearer caller is the pool's member.
     const deployment = app({
       connectors: [c],
+      auth: machineAuth("member"),
       logger: "silent",
       discovery: { catalogTtlSeconds: 0 },
-      pools: { support: { tools: ["dynamic"], grant: () => true } },
+      pools: { support: { tools: ["dynamic"], members: [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }] } },
       activity: activityHistory({
         store: {
           record: (e) => {
@@ -276,6 +302,7 @@ describe("Phase 4 behavior fixes", () => {
     });
     const call = async () => {
       const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "dynamic.read" } });
+      request.headers.set("Authorization", "Bearer member");
       const response = await readJsonRpc(await deployment.fetch(new Request(BASE + "/mcp/support", request)));
       expect(response.result.isError).not.toBe(true);
     };
@@ -346,8 +373,10 @@ describe("Phase 4 behavior fixes", () => {
         auth,
         storage: memoryStorage(),
         logger: "silent",
+        // Both read activity as maintainers, so the drift row's owner decides.
+        maintainers: [alice, bob],
         identity: { activityAccess: () => true },
-        pools: { support: { tools: ["partitioned"], grant: () => true } },
+        pools: { support: { tools: ["partitioned"], members: [alice, bob] } },
         activity: activityHistory({
           store: {
             record: (e) => {
@@ -408,6 +437,7 @@ describe("Phase 4 behavior fixes", () => {
       const deployment = app({
         connectors: [{ ...connector("personal"), authScope: "personal" }],
         auth,
+        maintainers: [alice, bob],
         logger: "silent",
         identity: { activityAccess: () => true },
         activity: activityHistory({
@@ -454,11 +484,12 @@ describe("Phase 4 behavior fixes", () => {
     ];
     const auth: InboundAuth = {
       kind: "api",
-      authorize: () => ({ ok: true, principal: { namespace: "directory", id: "bob" } }),
+      authorize: () => ({ ok: true, principal: bob }),
     };
     const deployment = app({
       connectors: [connector("visible"), { ...connector("personal"), authScope: "personal" }],
       auth,
+      maintainers: [bob],
       logger: "silent",
       identity: { activityAccess: () => true },
       activity: activityHistory({
@@ -508,6 +539,7 @@ describe("Phase 4 behavior fixes", () => {
     const deployment = app({
       connectors: [connector("visible")],
       auth: { kind: "api", authorize: () => ({ ok: true, principal: { namespace: "directory", id: "reader" } }) },
+      maintainers: [{ namespace: "directory", id: "reader" }],
       identity: { activityAccess: () => true },
       logger: "silent",
       activity: activityHistory({ store: { record() {}, list } }),
@@ -547,6 +579,7 @@ describe("Phase 4 behavior fixes", () => {
       const deployment = app({
         connectors: [c],
         auth,
+        maintainers: [alice, bob],
         identity: { activityAccess: () => true },
         logger: "silent",
         discovery: { catalogTtlSeconds: 0 },
@@ -590,9 +623,10 @@ describe("Phase 4 behavior fixes", () => {
     const deployment = app({
       connectors: [connector("visible")],
       auth,
+      maintainers: [bob],
       logger: "silent",
       identity: { activityAccess: () => true },
-      pools: { [pool]: { tools: ["visible"], grant: (identity) => identity.principal?.id === "alice" } },
+      pools: { [pool]: { tools: ["visible.read"], members: [alice] } },
       activity: activityHistory({
         store: {
           record: (e) => {
@@ -607,8 +641,16 @@ describe("Phase 4 behavior fixes", () => {
       (await readJsonRpc(await deployment.fetch(new Request(BASE + "/mcp/" + pool, request)))).result.isError,
     ).not.toBe(true);
     expect(events[0]?.pool).toBe(pool);
-    const read = await deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": "bob" } }));
-    expect(((await read.json()) as { events: ToolCallActivityEvent[] }).events).toEqual([]);
+    // Outside the pool's declared tools, and in a pool whose name a
+    // truncation would produce, rows are withheld.
+    events.push(event("outside", { pool, toolName: "write" }), event("truncated", { pool: pool.slice(0, 64) }));
+    const read = (principal: string) =>
+      deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": principal } }));
+    // The maintainer finds the row under its full pool name; the member, not a maintainer, gets the 404.
+    expect(((await (await read("bob")).json()) as { events: ToolCallActivityEvent[] }).events.map((e) => e.id)).toEqual(
+      [events[0]!.id],
+    );
+    expect((await read("alice")).status).toBe(404);
   });
 
   it.each(["/ui/api/config", "/ui/connectors/dynamic"])(

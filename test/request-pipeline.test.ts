@@ -40,6 +40,9 @@ const ONE_PERMIT = {
   requests: { concurrency: 1, maxQueueSize: 2, queueTimeoutMs: 5_000 },
 };
 
+/** The maintainer the auth fixtures here admit, so plain /mcp serves them (#837). */
+const OPERATOR = { namespace: "connecta:test", id: "operator" };
+
 describe("request pipeline lifetime", () => {
   it("releases the permit of an /mcp request whose client leaves during authorization", async () => {
     let calls = 0;
@@ -53,6 +56,7 @@ describe("request pipeline lifetime", () => {
     const connecta = createTestConnecta({
       connectors: [],
       auth,
+      maintainers: [OPERATOR],
       logger: silentLogger,
       admission: ONE_PERMIT,
     });
@@ -85,12 +89,14 @@ describe("request pipeline lifetime", () => {
     };
     const auth: InboundAuth = {
       kind: "operator",
+      activityActorNamespace: OPERATOR.namespace,
       interactiveOperator: true,
       authorize: () => ({ ok: true, userId: "operator" }),
     };
     const connecta = createTestConnecta({
       connectors: [connector],
       auth,
+      maintainers: ["operator"],
       logger: silentLogger,
       admission: ONE_PERMIT,
     });
@@ -116,12 +122,13 @@ describe("request pipeline lifetime", () => {
       kind: "stalled-first",
       authorize() {
         calls++;
-        return calls === 1 ? new Promise(() => {}) : { ok: true };
+        return calls === 1 ? new Promise(() => {}) : { ok: true, principal: OPERATOR };
       },
     };
     const connecta = createTestConnecta({
       connectors: [],
       auth,
+      maintainers: [OPERATOR],
       logger: silentLogger,
       admission: ONE_PERMIT,
     });

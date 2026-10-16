@@ -71,8 +71,8 @@ export type { GoogleServiceAccount } from "./service-account.js";
  * email, say), and receives the call's cancellation signal for that; it runs
  * once per tool call and should cache what it fetches. A string is one fixed
  * account for every caller who can reach the connector, for a shared mailbox
- * or scheduled work with no caller; limit who reaches it with
- * `identity.connectorAccess`.
+ * or scheduled work with no caller; limit who reaches it with `maintainers`
+ * and the `members` of the pools that list it.
  */
 export type GoogleWorkspaceSubject =
   | string

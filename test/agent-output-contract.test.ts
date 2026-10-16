@@ -137,7 +137,7 @@ it.each([
   "access-403",
   "pool-404",
   "pool-refused-404",
-  "pool-threw-404",
+  "not-maintainer-404",
   "overload-503",
   "shutdown-503",
   "deadline-504",
@@ -181,27 +181,24 @@ it.each([
               return { ok: true as const };
             },
           },
+          maintainers: [{ namespace: "connecta:test", id: "caller" }],
         }
-      : {}),
-    ...(kind === "access-403"
-      ? {
-          auth: { kind: "test", authorize: () => ({ ok: true as const }) },
-          identity: { connectorAccess: () => ["missing"] },
-        }
-      : {}),
-    pools: {
-      refused: { tools: ["calc"], grant: () => false },
-      threw: {
-        tools: ["calc"],
-        grant: () => {
-          throw new Error("private");
-        },
-      },
-    },
+      : {
+          auth: {
+            kind: "test",
+            activityActorNamespace: "connecta:test",
+            interactiveOperator: true,
+            authorize: () => ({ ok: true as const, userId: "caller" }),
+          },
+          // The caller is a maintainer except where the refusal is that it is not one (#837).
+          maintainers: [kind === "not-maintainer-404" ? "other" : "caller"],
+        }),
+    ...(kind === "access-403" ? { identity: { credentialAdministration: () => ["missing"] } } : {}),
+    pools: { refused: { tools: ["calc"], members: [{ namespace: "connecta:test", id: "other" }] } },
   });
   let occupied: Promise<Response> | undefined;
   try {
-    const pool = kind === "pool-refused-404" ? "refused" : kind === "pool-threw-404" ? "threw" : "missing";
+    const pool = kind === "pool-refused-404" ? "refused" : "missing";
     const request = kind.startsWith("pool-")
       ? new Request(`https://connecta.test/mcp/${pool}`, modernRequest("tools/list"))
       : modernRequest("tools/list");

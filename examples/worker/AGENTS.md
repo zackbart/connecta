@@ -59,7 +59,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
   `remoteMcp()` follows the downstream server's evolving tool catalog.
 - Unattended clients and `connecta doctor` need Access service credentials
   plus a stored `cta_` bearer. Set `CF_ACCESS_CLIENT_ID`,
-  `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN` together for doctor.
+  `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN` together for doctor, and
+  pass `--pool ci`: an agent reaches only the pools that list it, never plain
+  `/mcp`, which serves `maintainers` alone.
   Machine clients are the `agents` declared in `src/connecta.config.ts`. Issue
   or rotate a token through the Access-authenticated operator page or trusted
   `AccessTokenManager.rotate` tooling against this same D1 storage, as README

@@ -1,5 +1,5 @@
 import { api } from "../src/connectors/api.js";
-import { machineAuth } from "./helpers/machine-auth.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { operatorUi } from "../src/ui.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { activityHistory } from "../src/activity.js";
@@ -169,7 +169,7 @@ describe("ConnectaConfig boundary", () => {
           readOnly: false,
           connectors,
           executor,
-          ...(auth ? { auth } : {}),
+          ...(auth ? { auth, maintainers: [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }] } : {}),
           logger: { ...silentLogger, warn },
         });
         const warnings = warn.mock.calls.filter(([message]) => String(message).includes("no inbound authentication"));
@@ -206,8 +206,8 @@ describe("ConnectaConfig boundary", () => {
       readOnly: false,
       connectors: [],
       auth: fakeClerkAuth(),
+      maintainers: ["user_operator"],
       identity: {
-        connectorAccess: () => "all",
         activityAccess: () => true,
       },
       storage: memoryStorage(),
@@ -502,9 +502,25 @@ describe("ConnectaConfig schema", () => {
     ["auth", [{ kind: "access_token" }], "ConnectaConfig.auth[0] must be an inbound auth adapter"],
     ["publicUrl", "connecta.example", "ConnectaConfig.publicUrl must be an absolute http(s) URL"],
     ["publicUrl", "https://user:pass@connecta.example", "without credentials"],
-    ["identity", { connectorAccess: "all" }, "ConnectaConfig.identity.connectorAccess must be a function"],
-    ["pools", { support: { grant: () => true } }, "ConnectaConfig.pools.support.tools is required"],
-    ["pools", { support: { tools: ["x"], grant: true } }, "ConnectaConfig.pools.support.grant must be a function"],
+    ["maintainers", "alice", "ConnectaConfig.maintainers must be an array"],
+    ["pools", { support: { members: ["alice"] } }, "ConnectaConfig.pools.support.tools is required"],
+    ["pools", { support: { tools: ["x"] } }, "ConnectaConfig.pools.support.members is required"],
+    // Options #837 removed fail as unknown, naming their replacement.
+    [
+      "identity",
+      { connectorAccess: () => "all" },
+      "- ConnectaConfig.identity.connectorAccess\nidentity.connectorAccess was removed (#837): pools are the access model. List who may use plain /mcp in maintainers, and give each pool its tools and members.",
+    ],
+    [
+      "grant",
+      () => true,
+      "- ConnectaConfig.grant\nThe top-level grant was removed (#837); list the people who may use plain /mcp in maintainers.",
+    ],
+    [
+      "pools",
+      { support: { tools: ["x"], members: ["alice"], grant: () => true } },
+      "- ConnectaConfig.pools.support.grant\nPool grant was removed (#837); list who may open the pool in its members.",
+    ],
     ["deploymentInfo", "v1", "ConnectaConfig.deploymentInfo must be an object"],
   ] as const)("INV-11: refuses a wrong %s value with its path", (key, value, message) => {
     expect(() => unsafeCreateConnecta({ connectors: [], executor, [key]: value })).toThrow(message);
@@ -851,11 +867,11 @@ describe("ConnectaConfig accessors and keyed maps", () => {
   });
 
   it("INV-11: keeps __proto__, constructor, and prototype as ordinary pool names", async () => {
-    const grant = () => true;
+    const members = [{ namespace: "people", id: "alice" }];
     const pools = {
-      ["__proto__"]: { tools: ["notes"], grant },
-      constructor: { tools: ["notes"], grant },
-      prototype: { tools: ["notes"], grant },
+      ["__proto__"]: { tools: ["notes"], members },
+      constructor: { tools: ["notes"], members },
+      prototype: { tools: ["notes"], members },
     };
     expect(Object.keys(pools)).toEqual(["__proto__", "constructor", "prototype"]);
     const notes: Connector = { id: "notes", listTools: async () => [], callTool: async () => null };
@@ -874,7 +890,7 @@ describe("ConnectaConfig accessors and keyed maps", () => {
       readOnly: false,
       connectors: [notes],
       executor,
-      pools: { support: { tools: ["notes"] } },
+      pools: { support: { tools: ["notes"], members } },
     });
     expect(Object.getPrototypeOf(resolved.pools)).toBeNull();
     expect(resolved.pools?.["constructor"]).toBeUndefined();

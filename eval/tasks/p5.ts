@@ -10,8 +10,8 @@ import type { AgentTrace } from "../agent/trace.js";
 const base = { status: "active" as const, introducedIn: "P5" as const };
 // The root is read-only; the programs pool overrides it, and reads inherits it.
 const pools = {
-  programs: { tools: ["tracker", "chat"], grant: () => true, readOnly: false },
-  reads: { tools: ["tracker", "chat"], grant: () => true },
+  programs: { tools: ["tracker", "chat"], members: ["agent:eval-machine"], readOnly: false },
+  reads: { tools: ["tracker", "chat"], members: ["agent:eval-machine"] },
 };
 const WRITE_CODE = `async () => (await connecta.call("tracker.close_issue", { id: "WEB-105" })).data`;
 

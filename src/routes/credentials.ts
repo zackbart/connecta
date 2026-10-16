@@ -117,7 +117,7 @@ function credentialRequest(
     const connector = registry.getConnector(connectorId);
     const credential = connector?.credential;
     if (!connector || !credential) return yield* refuse("unknown credential slot", 404);
-    if (!mayManageConnector(authz, connector)) {
+    if (!mayManageConnector(opts, authz, connector)) {
       return yield* refuse("credential management is not permitted", 403);
     }
     const personal = connector.authScope === "personal";

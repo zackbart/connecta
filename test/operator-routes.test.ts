@@ -455,6 +455,8 @@ describe("operator data routes", () => {
     const connecta = createTestConnecta({
       connectors: [calcApi({ title: "Calculator", inputSchema: "object" })],
       auth,
+      // The bare id resolves in the one interactive provider's namespace.
+      maintainers: ["operator"],
       activity: activityHistory({
         store: {
           record() {},

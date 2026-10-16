@@ -16,7 +16,7 @@ import { createTestConnecta, fetchTestUiDetails, required, silentLogger } from "
 import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
 import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
 import { bindCallback, callbackAuth, consentKey, oauthVault, seedGrant, storedGrant } from "./fixtures/oauth.js";
-import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+import { CLERK_OPTIONS, CREDENTIAL_KEY } from "./fixtures/ui.js";
 
 // remoteMcp()'s OAuth lifecycle — status, startAuth's Continue and Restart,
 // finishAuth, the callback route, an authorization server the downstream
@@ -308,6 +308,7 @@ describe("remoteMcp() startAuth", () => {
       const connecta = createTestConnecta({
         connectors: [connector()],
         auth: clerk,
+        maintainers: ["user_123"],
         storage,
         vault: oauthVault(storage),
         publicUrl: BASE,
@@ -904,6 +905,7 @@ describe("remoteMcp() continue and restart starts", () => {
           }),
         ],
         auth: users,
+        maintainers: ["alice", "bob"],
         storage: memoryStorage(),
         vault: oauthVault(memoryStorage()),
         publicUrl: BASE,
@@ -1638,6 +1640,7 @@ describe("/oauth/callback/<id> route", () => {
     const connecta = createTestConnecta({
       publicUrl: BASE,
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       storage,
       logger,
       connectors: [
@@ -1684,6 +1687,7 @@ describe("/oauth/callback/<id> route", () => {
       const connecta = createTestConnecta({
         publicUrl: BASE,
         auth: callbackAuth,
+        maintainers: [CLERK_OPTIONS.userId],
         logger: silentLogger,
         connectors: [connector],
       });
@@ -1717,6 +1721,8 @@ describe("/oauth/callback/<id> route", () => {
         interactiveOperator: true,
         authorize: () => ({ ok: false, response: new Response(null, { status }) }),
       },
+      // Required with inbound auth; nobody here ever signs in as them.
+      maintainers: [{ namespace: "https://identity.test", id: "operator" }],
       connectors: [callbackConnector("svc", finish, async (state) => state === "verified-state")],
     });
     const response = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
@@ -1741,6 +1747,8 @@ describe("/oauth/callback/<id> route", () => {
             ? { ok: false, response: new Response(null, { status: 403 }) }
             : { ok: false, response: new Response(null, { status: 401 }) },
       },
+      // Required with inbound auth; nobody here ever signs in as them.
+      maintainers: [{ namespace: "https://identity.test", id: "operator" }],
       connectors: [callbackConnector("svc", finish, async (state) => state === "verified-state")],
     });
     const refused = await connecta.fetch(
@@ -1781,6 +1789,7 @@ describe("/oauth/callback/<id> route", () => {
     const connecta = createTestConnecta({
       publicUrl: BASE,
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       storage: counting,
       logger: silentLogger,
       accessTokens: accessTokens(counting),
@@ -1826,6 +1835,7 @@ describe("/oauth/callback/<id> route", () => {
     const edgeConnecta = createTestConnecta({
       publicUrl: BASE,
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [
@@ -1919,6 +1929,7 @@ describe("/oauth/callback/<id> route", () => {
     const connecta = createTestConnecta({
       publicUrl: BASE,
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       storage: counting,
       logger: silentLogger,
       connectors: [
@@ -1979,6 +1990,7 @@ describe("/oauth/callback/<id> route", () => {
     const connecta = createTestConnecta({
       publicUrl: BASE,
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       storage: memoryStorage(),
       logger: { ...silentLogger, warn },
       connectors: [

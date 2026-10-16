@@ -810,9 +810,14 @@ try {
       "not declared",
       serverEnv,
     );
-    const doctorOutput = run(generatedConnecta, ["doctor", "--url", `http://127.0.0.1:${port}`], generatedRoot, {
-      CONNECTA_TOKEN: smokeToken,
-    });
+    const doctorOutput = run(
+      generatedConnecta,
+      ["doctor", "--url", `http://127.0.0.1:${port}`, "--pool", "local"],
+      generatedRoot,
+      {
+        CONNECTA_TOKEN: smokeToken,
+      },
+    );
     if (!doctorOutput.includes("QuickJS executed")) {
       throw new Error(`Doctor did not prove execution: ${doctorOutput}`);
     }
@@ -858,7 +863,7 @@ try {
   const legacyDoctor = (token) =>
     spawnSync(
       join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`],
+      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`, "--pool", "local"],
       { cwd: generatedRoot, encoding: "utf8", env: { ...process.env, CONNECTA_TOKEN: token } },
     );
   try {
@@ -998,7 +1003,7 @@ try {
       await assertClosed(`http://127.0.0.1:${containerPort}`);
       const containerDoctor = run(
         join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-        ["doctor", "--url", `http://127.0.0.1:${containerPort}`],
+        ["doctor", "--url", `http://127.0.0.1:${containerPort}`, "--pool", "local"],
         generatedRoot,
         { CONNECTA_TOKEN: containerToken },
       );

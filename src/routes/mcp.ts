@@ -25,7 +25,6 @@ import { registerExecuteTool } from "../execute.js";
 import { ExecutorAdmissionError, type AdmissionController, type AdmissionLease } from "../executor-admission.js";
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
-import { intersectAccess } from "../connector-access.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { CONNECTA_INSTRUCTIONS } from "../skills.js";
 import { registerSkills } from "./skills.js";
@@ -34,8 +33,10 @@ import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../s
 import { detach } from "../runtime/run.js";
 import type { Logger } from "../types.js";
 import {
+  admitsMaintainer,
   authorize,
   mayManageConnector,
+  memberPool,
   validateAuthPermissions,
   type RouteContext,
   type RuntimeExecutionContext,
@@ -749,51 +750,35 @@ export function createMcpRoute(opts: ServerOptions): {
               ),
             );
           }
-          // A pool endpoint narrows the identity's own view and nothing else. An
-          // undeclared name, a grant that refuses, and a grant that throws are
-          // one identical 404 so a credential never enumerates the other pools;
+          // Plain /mcp admits maintainers and serves the whole catalog; a pool
+          // admits its members and serves exactly its tools (INV-4). A
+          // non-maintainer, a non-member, and an undeclared pool are one
+          // identical 404 so a credential never enumerates the other pools;
           // the operator log is where the reason lives.
-          let access: ConnectorAccess = authz;
+          let access: ConnectorAccess = { connectorIds: "all" };
           let readOnly = opts.config.readOnly;
-          if (poolName === undefined && opts.config.grant) {
-            const denialReason = yield* Effect.promise(async () => {
-              try {
-                return (await opts.config.grant!(authz.identity)) === true
-                  ? undefined
-                  : ("default_grant_denied" as const);
-              } catch {
-                return "default_grant_threw" as const;
-              }
-            });
-            if (denialReason !== undefined) {
+          if (poolName === undefined) {
+            if (!admitsMaintainer(opts, authz)) {
               logFailure(
                 opts.config.logger,
                 "MCP default endpoint request denied",
-                failureRecord({ reason: denialReason }),
+                failureRecord({
+                  reason: authz.identity.agent !== undefined ? "agent_not_maintainer" : "not_maintainer",
+                }),
               );
               return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
             }
-          }
-          if (poolName !== undefined) {
-            const pool = opts.pools?.get(poolName);
-            const denialReason = !pool
-              ? "pool_not_declared"
-              : yield* Effect.promise(async () => {
-                  try {
-                    return (await pool.grant(authz.identity)) === true ? undefined : ("pool_grant_denied" as const);
-                  } catch {
-                    return "pool_grant_threw" as const;
-                  }
-                });
-            if (!pool || denialReason !== undefined) {
+          } else {
+            const pool = memberPool(opts, poolName, authz.identity);
+            if (!pool) {
               logFailure(
                 opts.config.logger,
                 "MCP pool request denied",
-                failureRecord({ reason: denialReason ?? "pool_not_declared" }),
+                failureRecord({ reason: opts.pools.has(poolName) ? "not_pool_member" : "pool_not_declared" }),
               );
               return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
             }
-            access = intersectAccess(authz, pool.access);
+            access = pool.access;
             readOnly = pool.readOnly;
           }
           let scopedRegistry: RegistryView;
@@ -802,7 +787,6 @@ export function createMcpRoute(opts: ServerOptions): {
             scopedRegistry = opts.registry.scoped({
               connectorIds: access.connectorIds,
               ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
-              ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}),
               ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
               ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
               endpoint: new URL(request.url).pathname,
@@ -823,14 +807,15 @@ export function createMcpRoute(opts: ServerOptions): {
                 if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
                   return false;
                 validateAuthPermissions(current, opts.registry);
-                if (poolName === undefined && opts.config.grant && (await opts.config.grant(current.identity)) !== true)
-                  return false;
-                let currentAccess: ConnectorAccess = current;
+                // Paging re-admits the caller at this endpoint, as a new request would.
+                let currentAccess: ConnectorAccess = { connectorIds: "all" };
                 let currentReadOnly = opts.config.readOnly;
-                if (poolName !== undefined) {
-                  const pool = opts.pools.get(poolName);
-                  if (!pool || (await pool.grant(current.identity)) !== true) return false;
-                  currentAccess = intersectAccess(current, pool.access);
+                if (poolName === undefined) {
+                  if (!admitsMaintainer(opts, current)) return false;
+                } else {
+                  const pool = memberPool(opts, poolName, current.identity);
+                  if (!pool) return false;
+                  currentAccess = pool.access;
                   currentReadOnly = pool.readOnly;
                 }
                 const view = opts.registry.scoped({
@@ -892,7 +877,7 @@ export function createMcpRoute(opts: ServerOptions): {
               scopedRegistry,
               (id) => {
                 const connector = scopedRegistry.getConnector(id);
-                return Boolean(connector && mayManageConnector(authz, connector));
+                return Boolean(connector && mayManageConnector(opts, authz, connector));
               },
               authz.principalKey,
               runtimeContext,

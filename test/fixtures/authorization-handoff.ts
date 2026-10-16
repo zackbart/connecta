@@ -80,7 +80,7 @@ export function handoffFixture(options: {
     connectors: [connector], storage, vault, publicUrl: HANDOFF_BASE, logger: "silent", executor,
     auth: ["alice", "bob"].map(user => fakeClerkAuth({ token: user, userId: user })),
     identity: { credentialAdministration: () => options.manage === false ? "none" : "all", personalConnection: () => options.manage === false ? "none" : "all" },
-    pools: { team: { tools: ["service"], grant: () => true, readOnly: true } },
+    pools: { team: { tools: ["service"], members: [{ namespace: "https://clerk.example.test", id: "alice" }], readOnly: true } },
   });
   const rpc = async (name: string, args: Record<string, unknown>, pool = "team") => {
     const request = mcpRpc("tools/call", { name, arguments: args }, { token: "alice" });

@@ -7,12 +7,15 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
-import { machineAuth } from "./helpers/machine-auth.js";
+import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
 import { operatorUi } from "../src/ui.js";
+import { accessTokens } from "../src/access-tokens.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
 import { listen } from "../src/node.js";
 import { customExecutor, createConnecta, CONNECTA_VERSION, META_TOOL_NAMES } from "../src/index.js";
-import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
+import type { Executor, IdentityReference, InboundAuth, KVStorage } from "../src/types.js";
 
 // `connecta doctor` is a claim an operator reads and believes. It used to
 // print "QuickJS executed" against every deployment, including the Workers
@@ -20,6 +23,8 @@ import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
 // exercised end to end: real CLI, real HTTP, one deployment per sandbox.
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "connecta.mjs");
 const TOKEN = "doctor-cli-token";
+/** The principal `machineAuth(TOKEN)` admits; doctor opens plain /mcp, so it is a maintainer (#837). */
+const MACHINE: IdentityReference = { namespace: TEST_MACHINE_NAMESPACE, id: "machine" };
 const run = promisify(execFile);
 
 const teardown: Array<() => Promise<void>> = [];
@@ -32,6 +37,7 @@ async function doctorAgainst(
   executor: Executor,
   options: {
     auth?: InboundAuth;
+    maintainers?: IdentityReference[];
     env?: Record<string, string>;
     storage?: KVStorage;
   } = {},
@@ -58,6 +64,7 @@ async function doctorAgainst(
     ],
     executor: customExecutor(executor, { lifecycle: "self-managed" }),
     auth: options.auth ?? machineAuth(TOKEN),
+    maintainers: options.maintainers ?? [MACHINE],
     logger: "silent",
     ...(options.storage ? { storage: options.storage } : {}),
   });
@@ -130,7 +137,7 @@ describe("connecta doctor's executor line", () => {
           request.headers.get("CF-Access-Client-Id") === "client-id" &&
           request.headers.get("CF-Access-Client-Secret") === "client-secret";
         return admitted
-          ? { ok: true, subjectId: "doctor" }
+          ? { ok: true, subjectId: "doctor", principal: { namespace: "test-access-edge", id: "doctor" } }
           : {
               ok: false,
               response: Response.json({ error: "unauthorized" }, { status: 401 }),
@@ -141,6 +148,7 @@ describe("connecta doctor's executor line", () => {
       { execute: async () => ({ result: 42 }) },
       {
         auth: accessAuth,
+        maintainers: [{ namespace: "test-access-edge", id: "doctor" }],
         env: {
           CF_ACCESS_CLIENT_ID: "client-id",
           CF_ACCESS_CLIENT_SECRET: "client-secret",
@@ -298,7 +306,9 @@ describe("connecta doctor --config", () => {
           CF_ACCESS_CLIENT_SECRET: "",
         },
       });
-      expect(JSON.parse(stdout)).toEqual(app.describeConfig());
+      // Doctor prints the v1 contract's config, which alone adds `hasGrant`
+      // (#837); everything else is describeConfig() verbatim.
+      expect(JSON.parse(stdout)).toEqual({ ...app.describeConfig(), hasGrant: true });
       expect(stderr).toBe("");
       for (const [position, secret] of Object.entries(SECRETS)) expect(stdout + stderr, position).not.toContain(secret);
       expect(stdout).not.toContain(VAULT_KEY);
@@ -307,8 +317,12 @@ describe("connecta doctor --config", () => {
     }
   });
 
-  it("INV-4: prints the caller's scoped snapshot and does not execute a diagnostic program", async () => {
+  it("INV-4: prints the snapshot only for a maintainer and does not execute a diagnostic program", async () => {
+    // Operator routes serve maintainers only until the member view (#837
+    // P6b): a maintainer reads every connector, anyone else gets the private
+    // 404 and doctor prints nothing.
     let executed = 0;
+    const OTHER = "doctor-cli-other-token";
     const app = createConnecta({
       readOnly: false,
       connectors: [
@@ -332,18 +346,56 @@ describe("connecta doctor --config", () => {
         },
         { lifecycle: "self-managed" },
       ),
-      auth: machineAuth(TOKEN),
+      auth: [machineAuth(TOKEN), machineAuth(OTHER, { subjectId: "other" })],
+      maintainers: [MACHINE],
+      pools: { visible: { tools: ["visible"], members: [{ namespace: TEST_MACHINE_NAMESPACE, id: "other" }] } },
       ui: operatorUi(),
       logger: "silent",
-      identity: { connectorAccess: () => ["visible"] },
     });
     const url = await deploymentUrl(app);
     const { stdout } = await run(process.execPath, [CLI, "doctor", "--config", "--url", url], {
       env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
     });
-    expect(JSON.parse(stdout).connectors.map((c: { id: string }) => c.id)).toEqual(["visible"]);
-    expect(stdout).not.toContain("hidden");
+    expect(JSON.parse(stdout).connectors.map((c: { id: string }) => c.id)).toEqual(["visible", "hidden"]);
+    try {
+      await run(process.execPath, [CLI, "doctor", "--config", "--url", url], {
+        env: { ...process.env, CONNECTA_TOKEN: OTHER, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+      });
+      throw new Error("Expected failure");
+    } catch (error) {
+      const result = error as { stdout: string; stderr: string };
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("HTTP 404");
+      expect(result.stderr).not.toContain("hidden");
+    }
     expect(executed).toBe(0);
+  });
+
+  it("INV-4: --pool checks a pool that lists its agent, which plain /mcp refuses", async () => {
+    const storage = memoryStorage();
+    const app = createConnecta({
+      readOnly: false,
+      storage,
+      connectors: [
+        api("echo", {
+          tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => null }],
+        }),
+      ],
+      executor: customExecutor({ execute: async () => ({ result: 42 }) }, { lifecycle: "self-managed" }),
+      agents: ["bot"],
+      accessTokens: accessTokens(storage),
+      pools: { bots: { tools: ["echo"], members: ["agent:bot"] } },
+      logger: "silent",
+    });
+    const token = await issueAgentToken(storage, "bot");
+    const url = await deploymentUrl(app);
+    const env = { ...process.env, CONNECTA_TOKEN: token, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" };
+    const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "bots"], { env });
+    expect(stdout).toContain("Connecta doctor passed");
+    await expect(run(process.execPath, [CLI, "doctor", "--url", url], { env })).rejects.toThrow();
+    await expect(run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "Bad/Name"], { env })).rejects.toThrow(
+      "--pool must be a pool name",
+    );
   });
 
   it("INV-5 INV-6: refuses config redirects and withholds an authentication failure body", async () => {

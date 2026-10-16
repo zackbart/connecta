@@ -29,7 +29,7 @@ export interface OperatorConnectorOverlay {
   lastCall: OperatorLastCall | null;
 }
 
-/** Whole connector access, or exact tool grants. Guarded grants still require a live read verdict. */
+/** Whole connector access, or exact tool grants. `requireReadOnly` is always false since guarded grants were removed (#837). */
 export interface OperatorGrant {
   connectorId: string;
   tools: "all" | Array<{ name: string; requireReadOnly: boolean }>;
@@ -40,7 +40,7 @@ export interface OperatorPool {
   path: string;
   /** Whether this pool's endpoint refuses every write. */
   readOnly: boolean;
-  /** Pool access intersected with the caller's grants. */
+  /** The pool's declared tools. */
   grants: OperatorGrant[];
 }
 
@@ -59,8 +59,12 @@ export interface OperatorViewer {
 
 export interface OperatorUiContract {
   schemaVersion: 1;
-  /** describeConfig's allowlisted snapshot, restricted to this caller's view. */
-  config: ConnectaConfigDescription;
+  /**
+   * describeConfig's allowlisted snapshot. v1 alone adds `hasGrant`: whether
+   * code gates plain /mcp, which `maintainers` do whenever inbound auth is
+   * configured (#837).
+   */
+  config: ConnectaConfigDescription & { hasGrant: boolean };
   /** Leaf provenance, built from the same allowlisted snapshot and scoped with it. */
   configSources?: Record<string, "default" | "config">;
   live: {

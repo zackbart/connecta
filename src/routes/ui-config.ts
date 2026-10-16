@@ -4,7 +4,7 @@ import { bindActivityRequest } from "../activity-request.js";
 import { configValuePaths } from "../config-value-sources.js";
 import { Effect } from "effect";
 import type { ActivityOutcome, ActivityRequestContext } from "../activity.js";
-import { intersectAccess, type ConnectorAccess } from "../connector-access.js";
+import type { ConnectorAccess } from "../connector-access.js";
 import { describedTools } from "../described.js";
 import { resolveDiscoveryConcurrency } from "../concurrency.js";
 import type {
@@ -32,22 +32,9 @@ function grants(access: ConnectorAccess, ids: readonly string[]): OperatorGrant[
       const tools = access.toolAccess?.get(connectorId);
       return {
         connectorId,
-        tools: tools
-          ? [...tools].filter(validName).map((name) => ({
-              name,
-              requireReadOnly: access.guardedToolAccess?.get(connectorId)?.has(name) === true,
-            }))
-          : "all",
+        tools: tools ? [...tools].filter(validName).map((name) => ({ name, requireReadOnly: false })) : "all",
       };
     });
-}
-
-function toolVisible(authz: Authorized, id: string, name: string, classification?: "read" | "write"): boolean {
-  return (
-    validName(name) &&
-    (!authz.toolAccess?.get(id) || authz.toolAccess.get(id)!.has(name)) &&
-    (!authz.guardedToolAccess?.get(id)?.has(name) || classification === "read")
-  );
 }
 
 function observe(
@@ -135,7 +122,6 @@ function lastCalls(
   authz: Authorized,
   registry: RegistryView,
   rows: OperatorConnectorOverlay[],
-  admittedPools: ReadonlySet<string>,
 ): Effect.Effect<OperatorUiContract["live"]["activity"]> {
   const activity = context.opts.config.activity;
   if (!activity?.store.list) return Effect.succeed("unconfigured");
@@ -160,7 +146,7 @@ function lastCalls(
           if (event.kind === "catalog_drift") continue;
           const row = byId.get(event.connectorId);
           if (!row || !isTimestamp(event.occurredAt) || !OUTCOMES.has(event.outcome)) continue;
-          if (!activityEventVisible(context, authz, registry, admittedPools, event)) continue;
+          if (!activityEventVisible(context, authz, registry, event)) continue;
           if (!row.lastCall || event.occurredAt > row.lastCall.at)
             row.lastCall = { at: event.occurredAt, outcome: event.outcome };
         }
@@ -188,67 +174,58 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
     const visible = registry.listConnectors().filter((connector) => selected === null || connector.id === selected);
     if (selected !== null && visible.length === 0) return yield* refuse("unknown connector", 404);
     const ids = visible.map((c) => c.id);
-    const pools: OperatorPool[] = [];
-    for (const [name, pool] of opts.pools) {
-      const admitted = yield* attempt(async () => (await pool.grant(authz.identity)) === true).pipe(
-        Effect.orElseSucceed(() => false),
-      );
-      if (admitted)
-        pools.push({
-          name,
-          path: `/mcp/${name}`,
-          readOnly: pool.readOnly,
-          grants: grants(intersectAccess(authz, pool.access), ids),
-        });
-    }
-    const config = structuredClone(opts.configDescription);
+    // Only maintainers reach here (#837), and a maintainer's view is every
+    // pool's declared tools, never intersected with anything else.
+    const pools: OperatorPool[] = [...opts.pools].map(([name, pool]) => ({
+      name,
+      path: `/mcp/${name}`,
+      readOnly: pool.readOnly,
+      grants: grants(pool.access, ids),
+    }));
+    // Contract v1 still names whether code gates plain /mcp; maintainers do
+    // whenever inbound auth is configured. describeConfig() no longer says.
+    const config = { ...structuredClone(opts.configDescription), hasGrant: opts.config.auth.length > 0 };
+    // A connector-filtered read (`?connector=`) discloses only that connector.
     config.connectors = config.connectors
       .filter((c) => ids.includes(c.id))
       .map((c) => ({
         ...c,
-        ...(c.tools
-          ? { tools: c.tools.filter((tool) => toolVisible(authz, c.id, tool.name, tool.classification)) }
-          : {}),
+        ...(c.tools ? { tools: c.tools.filter((tool) => validName(tool.name)) } : {}),
       }));
     config.classification = Object.fromEntries(
       Object.entries(config.classification)
         .filter(([id]) => ids.includes(id))
-        .map(([id, tools]) => [
-          id,
-          Object.fromEntries(
-            Object.entries(tools).filter(([name, classification]) => toolVisible(authz, id, name, classification)),
-          ),
-        ]),
+        .map(([id, tools]) => [id, Object.fromEntries(Object.entries(tools).filter(([name]) => validName(name)))]),
     );
-    config.pools = config.pools.flatMap((pool) => {
-      const admitted = pools.find((p) => p.name === pool.name);
-      if (!admitted) return [];
-      return [
-        {
-          ...pool,
-          tools: admitted.grants.flatMap((grant) =>
-            grant.tools === "all"
-              ? [grant.connectorId]
-              : grant.tools.map((tool) => `${grant.connectorId}.${tool.name}`),
-          ),
-        },
-      ];
-    });
+    config.pools = config.pools.map((pool) => ({
+      ...pool,
+      tools: (pools.find((p) => p.name === pool.name)?.grants ?? []).flatMap((grant) =>
+        grant.tools === "all" ? [grant.connectorId] : grant.tools.map((tool) => `${grant.connectorId}.${tool.name}`),
+      ),
+    }));
     const requestActivity = operatorActivityContext(context, authz);
     const rows = yield* Effect.forEach(visible, (c) => observe(context, registry, c, requestActivity), {
       concurrency: resolveDiscoveryConcurrency(opts.config.discovery.concurrency),
     });
-    const activity = yield* lastCalls(context, authz, registry, rows, new Set(pools.map((pool) => pool.name)));
+    const activity = yield* lastCalls(context, authz, registry, rows);
     const contract: OperatorUiContract = {
       schemaVersion: 1,
       config,
       configSources: Object.fromEntries(
-        configValuePaths(config).map((path) => [path, opts.configValueSources?.[path] ?? "config"]),
+        configValuePaths(config).map((path) => [
+          path,
+          // hasGrant is v1's own leaf: code sets it exactly when inbound auth is configured.
+          path === "config.hasGrant"
+            ? config.hasGrant
+              ? "config"
+              : "default"
+            : (opts.configValueSources?.[path] ?? "config"),
+        ]),
       ),
       live: { connectors: rows, activity },
       you: {
         interactive: authz.identity.interactive,
-        grants: grants(authz, ids),
+        grants: grants({ connectorIds: "all" }, ids),
         readOnly: opts.config.readOnly,
         pools,
         permissions: {
@@ -259,8 +236,8 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
           connectors: visible.map((c) => ({
             id: c.id,
             use: true,
-            manageSharedAuth: c.authScope !== "personal" && mayManageConnector(authz, c),
-            connectPersonal: c.authScope === "personal" && mayManageConnector(authz, c),
+            manageSharedAuth: c.authScope !== "personal" && mayManageConnector(opts, authz, c),
+            connectPersonal: c.authScope === "personal" && mayManageConnector(opts, authz, c),
           })),
         },
       },

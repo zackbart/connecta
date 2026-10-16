@@ -7,10 +7,13 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { createTestConnecta, required, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
+import { CLERK_OPTIONS } from "./fixtures/ui.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "route-contract-token";
 const CREDENTIAL_KEY = btoa("0123456789abcdef0123456789abcdef");
+/** Required beside inbound auth; these tests' providers never admit this person. */
+const NOBODY = [{ namespace: "test", id: "maintainer" }];
 
 function testConnector(id: string): Connector {
   return api(id, {
@@ -81,7 +84,12 @@ async function responseShape(response: Response) {
 describe("server route contracts", () => {
   it("refuses disallowed origins before auth and admission, including preflight", async () => {
     const authorize = vi.fn(() => ({ ok: false as const, response: new Response("auth", { status: 401 }) }));
-    const connecta = createTestConnecta({ connectors: [], publicUrl: BASE, auth: { kind: "test", authorize } });
+    const connecta = createTestConnecta({
+      connectors: [],
+      publicUrl: BASE,
+      auth: { kind: "test", authorize },
+      maintainers: NOBODY,
+    });
     for (const path of ["/mcp", "/mcp/Support"]) {
       for (const method of ["GET", "POST", "DELETE", "OPTIONS"]) {
         const response = await connecta.fetch(
@@ -158,7 +166,12 @@ describe("server route contracts", () => {
 
   it("permits MCP preflight without auth and mirrors valid Mcp-Param header names only", async () => {
     const authorize = vi.fn(() => ({ ok: false as const, response: new Response(null, { status: 401 }) }));
-    const connecta = createTestConnecta({ connectors: [], publicUrl: BASE, auth: { kind: "test", authorize } });
+    const connecta = createTestConnecta({
+      connectors: [],
+      publicUrl: BASE,
+      auth: { kind: "test", authorize },
+      maintainers: NOBODY,
+    });
     const response = await connecta.fetch(
       new Request(`${BASE}/mcp`, {
         method: "OPTIONS",
@@ -184,18 +197,15 @@ describe("server route contracts", () => {
       connectors: [testConnector("docs")],
       auth: machineAuth(TOKEN),
       publicUrl: BASE,
+      // The caller is a maintainer but no pool's member; a declared pool it is
+      // not in, an undeclared one, and a malformed suffix refuse identically.
       pools: {
-        support: { tools: ["docs"], grant: () => false },
-        broken: {
-          tools: ["docs"],
-          grant: () => {
-            throw new Error("private");
-          },
-        },
+        support: { tools: ["docs"], members: NOBODY },
+        others: { tools: ["docs"], members: [{ namespace: "test", id: "other" }] },
       },
     });
     let baseline: Awaited<ReturnType<typeof responseShape>> | undefined;
-    for (const suffix of ["support", "broken", "missing", "Support", "日本語", "support.extra", "nested/path", ""]) {
+    for (const suffix of ["support", "others", "missing", "Support", "日本語", "support.extra", "nested/path", ""]) {
       const url = `${BASE}/mcp/${suffix}`;
       const unauthenticated = await connecta.fetch(new Request(url));
       expect(unauthenticated.status).toBe(401);
@@ -214,7 +224,7 @@ describe("server route contracts", () => {
     }
     // MCP pool refusals stay JSON-RPC even when the client asks for HTML.
     const pages = new Set<string>();
-    for (const suffix of ["support", "broken", "missing"]) {
+    for (const suffix of ["support", "others", "missing"]) {
       const response = await connecta.fetch(
         new Request(`${BASE}/mcp/${suffix}`, {
           headers: { Authorization: `Bearer ${TOKEN}`, Accept: "text/html" },
@@ -267,6 +277,7 @@ describe("server route contracts", () => {
     const connecta = createTestConnecta({
       connectors: [],
       admission: { requests: { concurrency: 1, maxQueueSize: 0 } },
+      maintainers: NOBODY,
       auth: {
         kind: "test",
         authorize: () => ({ ok: false, response: new Response(new ReadableStream({ pull() {} }), { status: 401 }) }),
@@ -668,6 +679,7 @@ describe("server route contracts", () => {
       ],
       storage: memoryStorage(),
       auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
       publicUrl: BASE,
       logger: silentLogger,
     });

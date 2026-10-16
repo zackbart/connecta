@@ -162,6 +162,7 @@ describe("deployment shapes", () => {
           PUBLIC_URL: "https://connecta.example",
           CLERK_PUBLISHABLE_KEY: PUBLISHABLE_KEY,
           CLERK_SECRET_KEY: "sk_test_template",
+          CONNECTA_MAINTAINERS: "user_one, user_two",
           CONNECTA_CREDENTIAL_KEY: VAULT_KEY,
           CONNECTA_ACTIVITY: "on",
         }),
@@ -180,7 +181,18 @@ describe("deployment shapes", () => {
         },
       });
       expect(full.connectors.map((connector) => connector.id)).toEqual(["time"]);
+      expect(full.maintainers.map(({ id }) => id)).toEqual(["user_one", "user_two"]);
+      expect(full.pools.map(({ name, members }) => ({ name, members }))).toEqual([
+        { name: "local", members: [{ kind: "agent", name: "local-machine" }] },
+      ]);
       await on.close();
+      // Clerk admits people, so startup refuses it without a maintainer.
+      expect(() =>
+        createConnecta({
+          ...nodeConfig({ ...base(), CLERK_PUBLISHABLE_KEY: PUBLISHABLE_KEY, CLERK_SECRET_KEY: "sk_test_template" }),
+          logger: "silent",
+        }),
+      ).toThrow("ConnectaConfig.maintainers is required with inbound auth");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -188,6 +200,7 @@ describe("deployment shapes", () => {
     for (const variable of [
       "CLERK_PUBLISHABLE_KEY",
       "CLERK_SECRET_KEY",
+      "CONNECTA_MAINTAINERS",
       "CONNECTA_CREDENTIAL_KEY",
       "CONNECTA_DATABASE",
       "CONNECTA_ACTIVITY",
@@ -215,6 +228,7 @@ describe("deployment shapes", () => {
       CONNECTA_DB: d1,
       DOWNSTREAM_TOKEN: "downstream",
       PUBLIC_URL: "https://worker.example",
+      CONNECTA_MAINTAINERS: "operator@example.com",
       LOADER: { get: () => ({}) },
     };
     const env = (extra: Record<string, unknown>) =>
@@ -228,6 +242,7 @@ describe("deployment shapes", () => {
     ).toBe(true);
     const off = createConnecta({ ...config, logger: "silent" });
     const quiet = off.describeConfig();
+    expect(quiet.maintainers).toEqual([{ namespace: "cloudflare-access", id: "operator@example.com" }]);
     expect(quiet.auth).toEqual([
       { kind: "access_token", interactive: false },
       { kind: "cloudflare-access", interactive: true, ui: "cloudflare-access" },
@@ -280,9 +295,9 @@ describe("deployment shapes", () => {
     const env = { CONNECTA_DATABASE: join(dir, "state.sqlite"), CONNECTA_TOKEN: staticToken };
     const config = nodeConfig(env);
     const app = createConnecta({ ...config, logger: "silent" });
-    const initialize = async (token?: string) => {
+    const initialize = async (token?: string, path = "/mcp/local") => {
       const response = await app.fetch(
-        new Request("http://localhost:8787/mcp", {
+        new Request(`http://localhost:8787${path}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -314,6 +329,8 @@ describe("deployment shapes", () => {
       const { token } = await manager.rotate("local-machine", "local-provisioning");
       expect(token).toMatch(/^cta_[A-Za-z0-9_-]{43}$/);
       expect((await initialize(token)).status).toBe(200);
+      // Plain /mcp serves maintainers only; an agent is never one (#837).
+      expect((await initialize(token, "/mcp")).status).toBe(404);
       const { token: rotated } = await manager.rotate("local-machine", "local-provisioning");
       expect((await initialize(token)).status).toBe(401);
       expect((await initialize(rotated)).status).toBe(200);

@@ -86,8 +86,9 @@ it("INV-4: prioritizes usage and required guides within five-entry skill pages",
   await expect(registry.list("forged")).rejects.toMatchObject({ code: "invalid_args" });
 });
 
-it("INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only grants", async () => {
+it("INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only pools", async () => {
   const touched: string[] = [];
+  const person = (id: string) => ({ namespace: "https://clerk.skills.test", id });
   const remote = downstream("remote", {
     list: async (ctx) => {
       const caller = callerOf(ctx)!;
@@ -108,15 +109,26 @@ it("INV-4 INV-5: isolates skill disclosure across principals, pools and tool-onl
         return id ? { ok: true, userId: id } : { ok: false, response: new Response(null, { status: 401 }) };
       },
     },
-    identity: { connectorAccess: ({ principal }) => (principal?.id === "alice" ? "all" : ["other"]) },
-    pools: { remote: { tools: ["remote"], grant: () => true }, narrow: { tools: ["remote.read"], grant: () => true } },
+    maintainers: [person("alice")],
+    pools: {
+      remote: { tools: ["remote"], members: [person("alice")] },
+      narrow: { tools: ["remote.read"], members: [person("alice")] },
+      others: { tools: ["other"], members: [person("bob")] },
+    },
   });
   const alice = await rpc(c, "skills/list", {}, "/mcp/remote", "alice");
   expect(JSON.stringify(alice.result)).toContain('"owner":"alice"');
   expect(JSON.stringify(alice.result)).not.toContain("connectors/other");
-  const bob = await rpc(c, "skills/list", {}, "/mcp", "bob");
+  const bob = await rpc(c, "skills/list", {}, "/mcp/others", "bob");
+  expect(JSON.stringify(bob.result)).toContain("connectors/other");
   expect(JSON.stringify(bob.result)).not.toContain("downstream/remote");
   expect(JSON.stringify(bob.result)).not.toContain("connectors/remote");
+  // Bob is neither a maintainer nor a member of the remote pool.
+  for (const path of ["/mcp", "/mcp/remote"]) {
+    const refused = await rpc(c, "skills/list", {}, path, "bob");
+    expect(refused).toMatchObject({ error: { code: -33004 } });
+    expect(JSON.stringify(refused)).not.toContain("remote");
+  }
   const narrow = await rpc(c, "skills/list", {}, "/mcp/narrow", "alice");
   expect(JSON.stringify(narrow.result)).toContain("connectors/remote");
   expect(JSON.stringify(narrow.result)).not.toContain("downstream/remote");

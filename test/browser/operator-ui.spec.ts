@@ -1304,6 +1304,8 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
   const connecta = createTestConnecta({
     connectors: [],
     auth: { ...fakeClerkAuth(), activityActorNamespace: "clerk:test" },
+    // A spread copy is not a registered test maintainer, so name it (#837).
+    maintainers: [{ namespace: "clerk:test", id: "user_operator" }],
     agents: ["desktop-client", "ci"],
     accessTokens: accessTokens(storage),
     identity: { accessTokenManagement: () => true },
