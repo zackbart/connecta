@@ -7,6 +7,12 @@ import { useCloseOnRecovery } from "./contract-state.js";
 
 const THEME_KEY = "connecta:scheme";
 type Scheme = "light" | "dark" | "system";
+/**
+ * The deployment's own pin, read once when the bundle loads, before the
+ * viewer's saved choice is applied to the same attribute. The controls mount
+ * only in a ready session, later, and must still tell the two apart.
+ */
+const DEPLOYMENT_PINNED = Boolean(document.documentElement.dataset.scheme);
 function readScheme(): Scheme {
   const pinned = document.documentElement.dataset.scheme;
   if (pinned === "light" || pinned === "dark") return pinned;
@@ -18,6 +24,17 @@ function readScheme(): Scheme {
   }
   return "system";
 }
+/**
+ * Apply the viewer's saved scheme at startup. It holds on the sign-in gate,
+ * while the session is checked, and on the member page, none of which mount
+ * the Appearance control.
+ */
+export function applySavedScheme(): void {
+  if (DEPLOYMENT_PINNED) return;
+  const scheme = readScheme();
+  if (scheme !== "system") document.documentElement.dataset.scheme = scheme;
+}
+
 export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: OperatorState }) {
   // Each dialog keeps its own return target, including when ⌘K opens over
   // Appearance. Closing the palette returns to the still-open appearance tab.
@@ -35,7 +52,7 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
     activeDialogs.current = { command: commandOpen, appearance: appearanceOpen };
   }, [commandOpen, appearanceOpen]);
   const [scheme, setScheme] = useState<Scheme>(readScheme);
-  const [pinned] = useState(Boolean(document.documentElement.dataset.scheme));
+  const pinned = DEPLOYMENT_PINNED;
   useEffect(() => {
     if (scheme === "system") delete document.documentElement.dataset.scheme;
     else document.documentElement.dataset.scheme = scheme;

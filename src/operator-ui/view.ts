@@ -2,6 +2,7 @@ import type { OperatorRole, OperatorUiContractV2 } from "./contract.js";
 import type { CatalogDriftReport } from "../types.js";
 import type { CredentialManagementCapability, UiConnector, UiData, UiProblem } from "./model.js";
 import type { FixPromptKind } from "./fix-prompts.js";
+import type { AgentSlot } from "./agents.js";
 
 /**
  * Everything the operator app knows, and every rule for changing it, with no
@@ -155,13 +156,17 @@ export function failure(message: string, fix?: NoticeFix): Notice {
  *   mutation that is a permission, not an expired session, so it stays inline.
  * - `network` — the browser could not reach the deployment at all.
  * - `refused` — the route answered, and said no.
+ * - `stale` — never sent: what the action was checked against changed before
+ *   dispatch (a refreshed slot list or member contract).
  */
-export type RequestFailureKind = "session" | "forbidden" | "network" | "refused";
+export type RequestFailureKind = "session" | "forbidden" | "network" | "refused" | "stale";
 
 export interface RequestFailureFacts {
   kind: RequestFailureKind;
   status?: number | undefined;
   problem?: unknown;
+  /** A refusal's machine `code` from a closed set, such as `slot_changed`; checked, never shown. */
+  code?: unknown;
 }
 
 /**
@@ -260,6 +265,9 @@ function credentialRefusedCopy(
   return `The credential wasn't ${verb}. Try again; if it keeps failing, the deployment's log has the reason.`;
 }
 
+/** An action whose permission or target changed before it was sent. */
+export const STALE_COPY = "This changed before the request was sent, so nothing was sent. Check it and try again.";
+
 /**
  * Every row action's failure, in one voice. The page's own failures — a
  * lapsed session, a denied identity, a dropped connection — read the same for
@@ -280,6 +288,7 @@ export function actionFailedNotice(
   if (facts.kind === "network") {
     return failure(`Couldn't reach ${productName}. Check your connection and try again.`);
   }
+  if (facts.kind === "stale") return failure(STALE_COPY);
   if (action === "credential_save" || action === "credential_remove") {
     return failure(credentialRefusedCopy(action, facts.status, facts.problem));
   }
@@ -361,16 +370,6 @@ export function confirmCopy(action: PendingConfirm["action"], name: string): { q
  */
 type LoadPhase = "idle" | "loading" | "ready" | "error";
 
-export interface UiAccessToken {
-  id: string;
-  name: string;
-  tokenPrefix: string;
-  createdAt: string;
-  revokedAt?: string;
-  /** The slot revision the row was read at; token mutations send it as `expect`. */
-  revision?: string;
-}
-
 export function accessTokenUnavailableCopy(capability?: string): string {
   return capability === undefined
     ? "Access tokens are not configured for this deployment."
@@ -380,9 +379,18 @@ export function accessTokenUnavailableCopy(capability?: string): string {
 export interface OperatorState {
   tokenPhase: LoadPhase;
   tokenNotice: Notice | null;
-  tokens: UiAccessToken[];
+  /** One slot per declared agent, from `/ui/access-tokens`. */
+  tokens: AgentSlot[];
+  /** A just-issued secret, shown once in its dialog and dropped when that closes. */
   createdToken: string | null;
-  tokenRenaming: string | null;
+  /** The agent `createdToken` belongs to. */
+  createdTokenFor: string | null;
+  /**
+   * Agents whose last token operation ended with an unknown outcome (503,
+   * 499, or a dropped connection). Their actions stay off until a slot list
+   * read that started after the failure succeeds.
+   */
+  unresolvedSlots: string[];
   tokenBusy: boolean;
   page: OperatorPage;
   /**
@@ -442,6 +450,11 @@ export interface OperatorState {
    * new tab: its row offers the link instead of the button.
    */
   oauthBlocked: string | null;
+  /**
+   * The authorization link the route returned for `oauthBlocked`. A member has
+   * no `/ui/data` connector to keep it on, so it is held here.
+   */
+  oauthBlockedUrl: string | null;
   /** A row action waiting for its in-page confirmation. */
   confirming: PendingConfirm | null;
   /** Connectors whose details failed on this side of the deployment. */
@@ -538,6 +551,7 @@ function identityScopedState() {
     oauthNoticeFor: null,
     oauthBusy: null,
     oauthBlocked: null,
+    oauthBlockedUrl: null,
     confirming: null,
     connectorFailures: {},
     credentialNotice: null,
@@ -548,7 +562,8 @@ function identityScopedState() {
     tokenNotice: null,
     tokens: [],
     createdToken: null,
-    tokenRenaming: null,
+    createdTokenFor: null,
+    unresolvedSlots: [],
     tokenBusy: false,
     activityPhase: "idle" as LoadPhase,
     activityNotice: null,
@@ -586,7 +601,7 @@ export function withPage(state: OperatorState, page: OperatorPage): OperatorStat
     ...state,
     page,
     createdToken: null,
-    tokenRenaming: null,
+    createdTokenFor: null,
     tokenNotice: null,
     credentialEditing: null,
     credentialNotice: null,

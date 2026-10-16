@@ -104,6 +104,13 @@ async function installFixture(
     } else if (path === "/ui/access-tokens") {
       json = fixture.tokens;
       target = name === "tokens";
+    } else if (path.startsWith("/ui/access-tokens/") && route.request().method() === "POST") {
+      // A fixed, synthetic secret: the dialog's one showing of a new token.
+      const agent = path.split("/").pop()!;
+      json = {
+        token: "cta_visual_00000000000000000000000000000000",
+        agent: { name: agent, state: "issued", issuedAt: VISUAL_NOW },
+      };
     }
     if (json !== undefined) {
       if (target && state === "loading") await held;
@@ -151,9 +158,10 @@ async function ready(page: Page, name: string, state: VisualState) {
       ),
     ).toBeVisible();
   } else if (state === "restricted") {
-    // A pool member gets their own endpoints on every path, and one tab.
-    await expect(page.locator("#memberView .endpoint-entry").first()).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Operator pages" }).getByRole("link")).toHaveText(["Endpoints"]);
+    // A pool member gets their own page on every path, and no tabs.
+    await expect(page.locator("#memberView .member-endpoint").first()).toBeVisible();
+    await expect(page.locator("#memberView .account-row").first()).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Operator pages" })).toHaveCount(0);
   } else if (name.includes("activity")) {
     await expect(
       state === "empty" ? page.getByText("No connector tool calls recorded yet.") : page.locator("#activityList"),
@@ -162,7 +170,7 @@ async function ready(page: Page, name: string, state: VisualState) {
     await expect(
       state === "empty"
         ? page.getByText("No agents are declared. Add them to agents in the deployment code.")
-        : page.getByRole("heading", { name: "claude-desktop", exact: true }),
+        : page.getByRole("rowheader", { name: "claude-desktop", exact: true }),
     ).toBeVisible();
   } else {
     await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
@@ -241,6 +249,7 @@ function variantPath(variant: VisualVariant): string {
   if (variant === "config-provenance") return "/settings";
   if (variant === "connectors-matrix" || variant === "matrix-popover" || variant === "narrow-matrix")
     return "/connectors?view=matrix";
+  if (variant === "token-secret") return "/tokens";
   return "/";
 }
 for (const variant of VISUAL_VARIANTS)
@@ -258,7 +267,13 @@ for (const variant of VISUAL_VARIANTS)
         else {
           await expect(page.locator("#app")).toBeVisible();
           await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
-          if (variant === "endpoints-expanded" || variant === "narrow-endpoints") {
+          if (variant === "member-page" || variant === "narrow-member") {
+            await expect(page.getByRole("heading", { name: "Your connections", exact: true })).toBeVisible();
+            await expect(page.locator("#memberView .account-row")).toHaveCount(3);
+          } else if (variant === "token-secret") {
+            await page.getByRole("button", { name: "Issue triage's token", exact: true }).click();
+            await expect(page.getByRole("dialog", { name: "New token for triage", exact: true })).toBeVisible();
+          } else if (variant === "endpoints-expanded" || variant === "narrow-endpoints") {
             // /mcp shows every runs-as kind; /mcp/ada adds an agent URL and a pool owner.
             const rows = variant === "endpoints-expanded" ? [0, 1] : [1];
             for (const row of rows) {

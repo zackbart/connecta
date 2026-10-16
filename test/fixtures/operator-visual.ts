@@ -8,7 +8,9 @@ import { encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { createTestConnecta } from "../helpers.js";
 import { fakeClerkAuth } from "./http.js";
-import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./operator-contract-v2.js";
+import { OPERATOR_V2_MEMBER } from "./operator-contract-v2.js";
+import { crowdedMaintainer, memberWithNotion } from "./operator-console.js";
+import type { AgentSlot } from "../../src/operator-ui/agents.js";
 
 export const VISUAL_NOW = "2026-10-08T12:00:00.000Z";
 export const VISUAL_ORIGIN = "https://connecta.example";
@@ -26,7 +28,7 @@ export interface OperatorVisualFixture {
   contract: OperatorUiContractV2;
   data: UiData;
   activity: { events: UiActivityEvent[]; nextCursor?: string };
-  tokens: { agents: Array<{ name: string; state: "issued"; issuedAt: string }> };
+  tokens: { agents: AgentSlot[] };
 }
 
 const catalog = [
@@ -115,6 +117,12 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
       if (!response.ok) throw new Error(`Visual fixture connector ${connector.id} failed`);
       Object.assign(connector, await response.json());
     }
+    // The bridge has no agents; give Tokens one slot in each state, with pools and last seen.
+    if (!restricted && !empty) contract.agents = [
+      { name: "claude-desktop", pools: ["automation"], token: { state: "issued", issuedAt: VISUAL_NOW }, lastSeenAt: VISUAL_NOW },
+      { name: "triage", pools: ["support"], token: { state: "none" }, lastSeenAt: null },
+      { name: "nightly", pools: [], token: { state: "revoked", revokedAt: "2026-10-05T08:00:00.000Z" }, lastSeenAt: "2026-10-04T23:10:00.000Z" },
+    ];
     if (contract.config) contract.config.connectaVersion = data.connectaVersion = "0.29.0";
     else data.connectaVersion = "0.29.0";
     for (const connector of data.connectors) {
@@ -123,7 +131,11 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     return {
       contract, data,
       activity: { events: empty ? [] : events, ...(empty ? {} : { nextCursor: "older" }) },
-      tokens: { agents: empty ? [] : [{ name: "claude-desktop", state: "issued", issuedAt: VISUAL_NOW }] },
+      tokens: { agents: empty ? [] : [
+        { name: "claude-desktop", state: "issued", issuedAt: VISUAL_NOW },
+        { name: "triage", state: "none" },
+        { name: "nightly", state: "revoked", revokedAt: "2026-10-05T08:00:00.000Z" },
+      ] },
     } satisfies OperatorVisualFixture;
   } finally { await app.close(); }
 }
@@ -132,16 +144,17 @@ export const VISUAL_VARIANTS = [
   "credential-configured", "credential-mismatch", "credential-unreadable", "credential-fields",
   "oauth-static", "oauth-cimd", "oauth-dcr", "drift-clean", "drift-unobserved", "legacy-activity",
   "endpoints-expanded", "command-search", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix",
+  "token-secret", "member-page", "narrow-member",
   "client-setup", "schema", "tools-read", "tools-write", "config-provenance", "narrow-gate", "narrow-auth", "branded",
 ] as const;
 export type VisualVariant = typeof VISUAL_VARIANTS[number];
 
-/** Variants that need every runs-as kind, agents and three pools: the frozen v2 maintainer fixture. */
+/** Variants that need every runs-as kind, agents and three pools: the frozen v2 maintainer fixture, team crowded. */
 const RICH_VARIANTS: readonly VisualVariant[] = ["endpoints-expanded", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix"];
 
 /** `/ui/data` for the frozen maintainer fixture: the same connectors, statuses and tools. */
 function richFixture(base: OperatorVisualFixture): OperatorVisualFixture {
-  const contract = structuredClone(OPERATOR_V2_MAINTAINER) as OperatorUiContractV2;
+  const contract = crowdedMaintainer();
   const config = contract.config!;
   const data: UiData = {
     ...structuredClone(base.data),
@@ -164,6 +177,12 @@ function richFixture(base: OperatorVisualFixture): OperatorVisualFixture {
 
 export function operatorVisualVariant(base: OperatorVisualFixture, variant: VisualVariant): OperatorVisualFixture {
   if (RICH_VARIANTS.includes(variant)) return richFixture(base);
+  // A pool member's page: two OAuth accounts, a credential account with nothing saved, two shared connectors.
+  if (variant === "member-page" || variant === "narrow-member") {
+    // A member never reads `/ui/data` (P6b answers them 404), so it carries no connector.
+    const fixture = structuredClone(base);
+    return { ...fixture, contract: memberWithNotion(["save"]), data: { ...fixture.data, connectors: [] } };
+  }
   const fixture = structuredClone(base);
   const slot = fixture.data.connectors.find(c => c.id === "slot")!;
   const slotLive = fixture.contract.live.connectors.find(c => c.id === "slot")!;

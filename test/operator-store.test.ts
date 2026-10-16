@@ -605,12 +605,19 @@ describe("managed token secret lifetime", () => {
     });
     fetchMock.mockResolvedValueOnce(Response.json(uiData("a")));
     await store.boot();
+    // Only a live slot is acted on: seed it, so the POST really goes out.
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ name: "desktop", state: "none" }] }));
+    await store.loadAccessTokens();
     const slow = deferred<Response>();
     fetchMock.mockImplementationOnce(() => slow.promise);
     const pending = store.rotateAgentToken("desktop");
-    // Let the POST capture its original session before switching identities.
-    await Promise.resolve();
-    await Promise.resolve();
+    // The POST is in flight under the original session before identities switch.
+    await vi.waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/ui/access-tokens/desktop",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
     fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
     changeSession({ id: "b", getToken: async () => "b" });
     slow.resolve(
@@ -627,18 +634,7 @@ describe("managed token secret lifetime", () => {
 
 describe("operator collection ordering", () => {
   const none = (name: string) => ({ name, state: "none" as const });
-  const issued = (name: string) => ({
-    name,
-    state: "issued" as const,
-    issuedAt: NOW,
-  });
-  const row = (name: string, createdAt = "", revokedAt?: string) => ({
-    id: name,
-    name,
-    tokenPrefix: "",
-    createdAt,
-    ...(revokedAt ? { revokedAt } : {}),
-  });
+  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW });
 
   it("loads agent slots and keeps an issuance when an earlier list finishes later", async () => {
     const loaded = await loadStore({
@@ -647,16 +643,19 @@ describe("operator collection ordering", () => {
     });
     const { store, fetchMock } = loaded;
     await bootMaintainer(loaded);
+    // Only a live slot is acted on, so a first list has to land.
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon"), none("ci")] }));
+    await store.loadAccessTokens();
     const old = deferred<Response>();
     fetchMock.mockReturnValueOnce(old.promise);
     const listing = store.loadAccessTokens();
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     fetchMock.mockResolvedValueOnce(Response.json({ token: "secret", agent: issued("simon") }));
     await store.rotateAgentToken("simon");
     expect(fetchMock).toHaveBeenLastCalledWith("/ui/access-tokens/simon", expect.objectContaining({ method: "POST" }));
     old.resolve(Response.json({ agents: [none("simon"), none("ci")] }));
     await listing;
-    expect(store.getState().tokens).toEqual([row("simon", NOW), row("ci")]);
+    expect(store.getState().tokens).toEqual([issued("simon"), none("ci")]);
     expect(store.getState().tokenPhase).toBe("ready");
   });
 
@@ -686,7 +685,7 @@ describe("operator collection ordering", () => {
     );
     old.resolve(Response.json({ agents: [issued("simon"), none("ci")] }));
     await listing;
-    expect(store.getState().tokens).toEqual([row("simon", "", revoked.revokedAt), row("ci")]);
+    expect(store.getState().tokens).toEqual([revoked, none("ci")]);
   });
 
   it("sends the listed slot revision as expect, then the one each mutation returns", async () => {
@@ -723,7 +722,73 @@ describe("operator collection ordering", () => {
     await store.rotateAgentToken("simon");
     expect(store.getState().createdToken).toBeNull();
     expect(store.getState().tokenNotice?.tone).toBe("error");
-    expect(store.getState().tokens).toEqual([row("simon")]);
+    expect(store.getState().tokens).toEqual([none("simon")]);
+  });
+
+  it.each([
+    [503, "issued", "Rotation outcome unknown for simon: no secret was returned, so rotate again for a replacement."],
+    [503, "none", "Issue outcome unknown for simon: no secret was returned, so rotate again for a replacement."],
+    [499, "issued", "The request ended before simon's token was delivered, so no secret was returned."],
+  ] as const)("shows a %i on %s as a failure and never retries it", async (status, slot, copy) => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [slot === "issued" ? issued("simon") : none("simon")] }));
+    await store.loadAccessTokens();
+    const before = fetchMock.mock.calls.length;
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "server words" }, { status }));
+    await store.rotateAgentToken("simon");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchMock.mock.calls.slice(before).map(([path, init]) => [path, init.method])).toEqual([
+      ["/ui/access-tokens/simon", "POST"],
+    ]);
+    expect(store.getState().tokenNotice).toMatchObject({ tone: "error" });
+    expect(store.getState().tokenNotice?.message).toContain(copy);
+    expect(store.getState().tokenNotice?.message).not.toContain("server words");
+    expect(store.getState()).toMatchObject({ createdToken: null, tokenBusy: false });
+  });
+
+  it("never rotates or revokes an agent the live slot list does not show, even when the contract says issued", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    // The contract says simon-ada is issued; the live list has no slot for it.
+    expect(store.getState().contract?.agents.find((a) => a.name === "simon-ada")?.token.state).toBe("issued");
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("triage")] }));
+    await store.loadAccessTokens();
+    const confirm = vi.fn(() => true);
+    window.confirm = confirm;
+    const before = fetchMock.mock.calls.length;
+    await store.rotateAgentToken("simon-ada");
+    await store.revokeAgentToken("simon-ada");
+    expect(fetchMock.mock.calls.length - before).toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
+    // A live issued slot still asks first, and a declined confirm sends nothing.
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("simon-ada"), none("triage")] }));
+    await store.loadAccessTokens();
+    window.confirm = vi.fn(() => false);
+    await store.rotateAgentToken("simon-ada");
+    expect(window.confirm).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.length - before).toBe(1);
+  });
+
+  it("shows an unknown revocation as a failure and sends nothing more", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("simon")] }));
+    await store.loadAccessTokens();
+    const before = fetchMock.mock.calls.length;
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ error: "Revocation outcome unknown; revoke again" }, { status: 503 }),
+    );
+    await store.revokeAgentToken("simon");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchMock.mock.calls.length - before).toBe(1);
+    expect(store.getState().tokenNotice?.message).toBe(
+      "Revocation outcome unknown for simon: revoke again to be sure its token is stopped.",
+    );
+    expect(store.getState().tokens).toEqual([issued("simon")]);
   });
 });
 
@@ -814,11 +879,12 @@ describe("operator unreadable collections", () => {
       fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
       await store.loadAccessTokens();
       expect(store.getState().tokenPhase).toBe("error");
-      expect(store.getState().tokenNotice?.tone).toBe("error");
+      // The page's error block says it once; the notice line stays empty.
+      expect(store.getState().tokenNotice).toBeNull();
       fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ name: "recovered", state: "none" }] }));
       await store.loadAccessTokens();
       expect(store.getState().tokenPhase).toBe("ready");
-      expect(store.getState().tokens[0]?.id).toBe("recovered");
+      expect(store.getState().tokens[0]?.name).toBe("recovered");
     },
   );
 });
@@ -1852,5 +1918,599 @@ describe("operator connection writes", () => {
     expect(writes(paths)).toEqual(["/ui/oauth/slack?mode=continue", "/ui/credentials/notion"]);
     expect(store.getState().oauthNotice?.tone).toBe("error");
     expect(store.getState().credentialNotice?.tone).toBe("error");
+  });
+});
+
+describe("actions revalidate at dispatch", () => {
+  const none = (name: string) => ({ name, state: "none" as const });
+  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW });
+  /** A session whose next token read waits until released; every other read answers at once. */
+  function heldSession() {
+    let armed = false;
+    let taken: ReturnType<typeof deferred<string>> | null = null;
+    return {
+      session: {
+        id: "session",
+        getToken: () => {
+          if (!armed) return Promise.resolve("token");
+          armed = false;
+          taken = deferred<string>();
+          return taken.promise;
+        },
+      } as FakeSession,
+      hold() {
+        armed = true;
+      },
+      release() {
+        taken!.resolve("token");
+      },
+    };
+  }
+  const sent = (fetchMock: ReturnType<typeof vi.fn>, method: string) =>
+    fetchMock.mock.calls
+      .filter(([, init]) => (init as RequestInit | undefined)?.method === method)
+      .map(([path]) => path);
+
+  it("does not issue when a reload turns the slot issued during the session-token await", async () => {
+    const held = heldSession();
+    const loaded = await loadStore(held.session);
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("triage")] }));
+    await store.loadAccessTokens();
+    const confirm = vi.fn(() => true);
+    window.confirm = confirm;
+    held.hold();
+    const issuing = store.rotateAgentToken("triage");
+    // Meanwhile another tab issued it: the list now says issued.
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("triage")] }));
+    await store.loadAccessTokens();
+    held.release();
+    await issuing;
+    expect(sent(fetchMock, "POST")).toEqual([]);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(store.getState().tokenNotice?.message).toContain("changed before the request was sent");
+  });
+
+  it("does not rotate or revoke a confirmed slot that a reload removed before dispatch", async () => {
+    const held = heldSession();
+    const loaded = await loadStore(held.session);
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    for (const act of [store.rotateAgentToken, store.revokeAgentToken]) {
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("simon-ada"), none("triage")] }));
+      await store.loadAccessTokens();
+      held.hold();
+      const acting = act("simon-ada");
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("triage")] }));
+      await store.loadAccessTokens();
+      held.release();
+      await acting;
+    }
+    expect([...sent(fetchMock, "POST"), ...sent(fetchMock, "DELETE")]).toEqual([]);
+  });
+
+  it.each([503, 499])("leaves a slot unresolved after %i until a list read that started afterwards", async (status) => {
+    {
+      const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+      const { store, fetchMock, window } = loaded;
+      await bootMaintainer(loaded);
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("triage")] }));
+      await store.loadAccessTokens();
+      // A list read already in flight when the outcome went unknown proves nothing.
+      const early = deferred<Response>();
+      fetchMock.mockReturnValueOnce(early.promise);
+      const earlyRead = store.loadAccessTokens();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      fetchMock.mockResolvedValueOnce(Response.json({ error: "unknown" }, { status }));
+      await store.rotateAgentToken("triage");
+      early.resolve(Response.json({ agents: [none("triage")] }));
+      await earlyRead;
+      window.confirm = vi.fn(() => true);
+      await store.rotateAgentToken("triage");
+      expect(sent(fetchMock, "POST")).toEqual(["/ui/access-tokens/triage"]);
+      expect(window.confirm).not.toHaveBeenCalled();
+      expect(store.getState().unresolvedSlots).toEqual(["triage"]);
+      // A read that started after the failure settles it; the slot works again.
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("triage")] }));
+      await store.loadAccessTokens();
+      expect(store.getState().unresolvedSlots).toEqual([]);
+      fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_x", agent: issued("triage") }));
+      await store.rotateAgentToken("triage");
+      expect(sent(fetchMock, "POST")).toEqual(["/ui/access-tokens/triage", "/ui/access-tokens/triage"]);
+    }
+  });
+
+  /** A member contract with Notion's credential actions replaced. */
+  function memberContract(actions: Array<"save" | "test" | "clear">): Response {
+    const body = structuredClone(OPERATOR_V2_MEMBER) as typeof OPERATOR_V2_MEMBER & Record<string, unknown>;
+    const notion = body.connectors.find((c) => c.id === "notion")!;
+    (notion.manage as { actions: string[] }).actions = actions;
+    return Response.json(body);
+  }
+
+  async function bootMember(session: FakeSession, actions: Array<"save" | "test" | "clear">) {
+    const loaded = await loadStore(session);
+    loaded.configMock.mockResolvedValueOnce(memberContract(actions));
+    await loaded.store.boot();
+    expect(loaded.store.getState()).toMatchObject({ session: "ready", role: "member" });
+    return loaded;
+  }
+
+  it("closes a member's open Clear confirmation when a refresh drops clear, and never sends it", async () => {
+    const { store, fetchMock, configMock } = await bootMember({ id: "session", getToken: async () => "token" }, [
+      "save",
+      "test",
+      "clear",
+    ]);
+    store.askConfirm("notion", "credential_remove");
+    expect(store.getState().confirming).toEqual({ connectorId: "notion", action: "credential_remove" });
+    configMock.mockResolvedValueOnce(memberContract(["save"]));
+    await store.loadOperatorContract();
+    expect(store.getState().confirming).toBeNull();
+    // The bar's callback, had it survived, is refused before dispatch.
+    await store.removeCredential("notion");
+    expect(sent(fetchMock, "DELETE")).toEqual([]);
+    expect(store.getState().credentialNotice?.tone).toBe("error");
+  });
+
+  it("refuses a member's confirmed Clear when a refresh during the token await drops clear", async () => {
+    const held = heldSession();
+    const { store, fetchMock, configMock } = await bootMember(held.session, ["save", "test", "clear"]);
+    held.hold();
+    const clearing = store.removeCredential("notion");
+    configMock.mockResolvedValueOnce(memberContract(["save"]));
+    const refresh = store.loadOperatorContract();
+    await vi.waitFor(() => expect(configMock).toHaveBeenCalledTimes(2));
+    await refresh;
+    held.release();
+    await clearing;
+    expect(sent(fetchMock, "DELETE")).toEqual([]);
+  });
+
+  it("refuses a member's edit and save without save, and closes the form when a refresh drops it", async () => {
+    const { store, fetchMock, configMock } = await bootMember({ id: "session", getToken: async () => "token" }, [
+      "save",
+    ]);
+    store.editCredential("notion");
+    expect(store.getState().credentialEditing).toBe("notion");
+    configMock.mockResolvedValueOnce(memberContract([]));
+    await store.loadOperatorContract();
+    expect(store.getState().credentialEditing).toBeNull();
+    store.editCredential("notion");
+    expect(store.getState().credentialEditing).toBeNull();
+    await store.saveCredential("notion", { values: { workspace: "a", token: "b" } });
+    await store.testCredential("notion");
+    expect([...sent(fetchMock, "PUT"), ...sent(fetchMock, "POST")]).toEqual([]);
+  });
+
+  it("refuses member OAuth actions the refreshed contract no longer lists", async () => {
+    const { store, fetchMock, configMock } = await bootMember({ id: "session", getToken: async () => "token" }, [
+      "save",
+    ]);
+    vi.stubGlobal("window", { ...globalThis.window, open: () => null });
+    const body = structuredClone(OPERATOR_V2_MEMBER);
+    (body.connectors.find((c) => c.id === "slack")!.manage as { actions: string[] }).actions = [];
+    configMock.mockResolvedValueOnce(Response.json(body));
+    await store.loadOperatorContract();
+    await store.startOAuth("slack", "continue");
+    await store.startOAuth("slack", "restart");
+    await store.disconnectOAuth("slack");
+    expect([...sent(fetchMock, "POST"), ...sent(fetchMock, "DELETE")]).toEqual([]);
+  });
+});
+
+describe("a token slot is resolved only by a list read that started after its last change", () => {
+  const none = (name: string) => ({ name, state: "none" as const });
+  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW });
+  // simon-ada as the fixture contract reports it, so the two agree.
+  const simon = { name: "simon-ada", state: "issued" as const, issuedAt: "2026-10-01T09:30:00.000Z" };
+  const posts = (fetchMock: ReturnType<typeof vi.fn>) =>
+    fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST").map(([p]) => p);
+
+  /** A 200 whose body breaks off: the connection drops while `json()` reads it. */
+  function droppedBody(): Response {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"token":"cta_'));
+        controller.error(new Error("connection reset"));
+      },
+    });
+    return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+
+  for (const [label, answer] of [
+    ["a truncated 200 body", () => new Response('{"token":"cta_half', { status: 200 })],
+    ["a connection that drops during json()", droppedBody],
+  ] as const) {
+    it(`leaves the slot unresolved after ${label}, so a second Issue sends nothing`, async () => {
+      const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+      const { store, fetchMock, window } = loaded;
+      await bootMaintainer(loaded);
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("triage")] }));
+      await store.loadAccessTokens();
+      fetchMock.mockResolvedValueOnce(answer());
+      await store.rotateAgentToken("triage");
+      expect(store.getState().tokenNotice?.tone).toBe("error");
+      // The issuance may have committed: no unconfirmed rotation can follow it.
+      const confirm = vi.fn(() => true);
+      window.confirm = confirm;
+      await store.rotateAgentToken("triage");
+      expect(posts(fetchMock)).toEqual(["/ui/access-tokens/triage"]);
+      expect(confirm).not.toHaveBeenCalled();
+      expect(store.getState().unresolvedSlots).toEqual(["triage"]);
+      // Only a list read that starts now settles it.
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("triage")] }));
+      await store.loadAccessTokens();
+      expect(store.getState().unresolvedSlots).toEqual([]);
+    });
+  }
+
+  it("aborts a pending issue when a newer contract reports a different token state for that agent", async () => {
+    let armed = false;
+    let taken: ReturnType<typeof deferred<string>> | null = null;
+    const session: FakeSession = {
+      id: "session",
+      getToken: () => {
+        if (!armed) return Promise.resolve("token");
+        armed = false;
+        taken = deferred<string>();
+        return taken.promise;
+      },
+    };
+    const loaded = await loadStore(session);
+    const { store, fetchMock, configMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [simon, none("triage")] }));
+    await store.loadAccessTokens();
+    window.confirm = vi.fn(() => true);
+    armed = true;
+    const issuing = store.rotateAgentToken("triage");
+    // The contract, read later, says triage is issued; the cached list still says none.
+    const newer = structuredClone(OPERATOR_V2_MAINTAINER);
+    newer.agents = newer.agents.map((agent) =>
+      agent.name === "triage" ? { ...agent, token: { state: "issued" as const, issuedAt: NOW } } : agent,
+    );
+    configMock.mockResolvedValueOnce(Response.json(newer));
+    await store.loadOperatorContract();
+    taken!.resolve("token");
+    await issuing;
+    expect(posts(fetchMock)).toEqual([]);
+    expect(store.getState().unresolvedSlots).toEqual(["triage"]);
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it("leaves a slot unresolved when a contract refresh removes its agent", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, configMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [simon, none("triage")] }));
+    await store.loadAccessTokens();
+    const newer = structuredClone(OPERATOR_V2_MAINTAINER);
+    newer.agents = newer.agents.filter((agent) => agent.name !== "triage");
+    configMock.mockResolvedValueOnce(Response.json(newer));
+    await store.loadOperatorContract();
+    expect(store.getState().unresolvedSlots).toEqual(["triage"]);
+  });
+});
+
+describe("token mutations compare and swap on the slot revision (P3b, #837)", () => {
+  const simon = { name: "simon-ada", state: "issued" as const, issuedAt: "2026-10-01T09:30:00.000Z" };
+  const calls = (fetchMock: ReturnType<typeof vi.fn>) =>
+    fetchMock.mock.calls
+      .filter(([, init]) => ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? "GET"))
+      .map(([path, init]) => [
+        (init as RequestInit).method,
+        path,
+        (init as RequestInit).body === undefined ? undefined : JSON.parse(String((init as RequestInit).body)),
+      ]);
+
+  it("sends expect with the revision the operator confirmed against", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        agents: [
+          { ...simon, revision: "r1" },
+          { name: "triage", state: "none", revision: "t1" },
+        ],
+      }),
+    );
+    await store.loadAccessTokens();
+    window.confirm = vi.fn(() => true);
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_a", agent: { ...simon, revision: "r2" } }));
+    await store.rotateAgentToken("simon-ada");
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ agent: { name: "simon-ada", state: "revoked", revokedAt: NOW, revision: "r3" } }),
+    );
+    await store.revokeAgentToken("simon-ada");
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ token: "cta_b", agent: { name: "triage", state: "issued", issuedAt: NOW, revision: "t2" } }),
+    );
+    await store.rotateAgentToken("triage");
+    expect(calls(fetchMock)).toEqual([
+      ["POST", "/ui/access-tokens/simon-ada", { expect: "r1" }],
+      // The revocation was confirmed against the slot the rotation returned.
+      ["DELETE", "/ui/access-tokens/simon-ada", { expect: "r2" }],
+      ["POST", "/ui/access-tokens/triage", { expect: "t1" }],
+    ]);
+    expect(store.getState().tokens.find((slot) => slot.name === "simon-ada")?.revision).toBe("r3");
+  });
+
+  it("says a 409 slot_changed in fixed words, leaves the slot unresolved and sends nothing more", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ ...simon, revision: "r1" }] }));
+    await store.loadAccessTokens();
+    window.confirm = vi.fn(() => true);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ error: "slot moved: route text", code: "slot_changed" }, { status: 409 }),
+    );
+    await store.rotateAgentToken("simon-ada");
+    expect(store.getState().tokenNotice).toEqual({ message: "Changed since you looked, refresh.", tone: "error" });
+    expect(store.getState().unresolvedSlots).toEqual(["simon-ada"]);
+    await store.rotateAgentToken("simon-ada");
+    await store.revokeAgentToken("simon-ada");
+    expect(calls(fetchMock)).toHaveLength(1);
+    expect(window.confirm).toHaveBeenCalledOnce();
+  });
+
+  it("TODO(P3b): sends no expect while the list carries no revision", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [simon, { name: "triage", state: "none" }] }));
+    await store.loadAccessTokens();
+    window.confirm = vi.fn(() => true);
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_a", agent: simon }));
+    await store.rotateAgentToken("simon-ada");
+    fetchMock.mockResolvedValueOnce(Response.json({ agent: { name: "simon-ada", state: "revoked", revokedAt: NOW } }));
+    await store.revokeAgentToken("simon-ada");
+    expect(calls(fetchMock)).toEqual([
+      ["POST", "/ui/access-tokens/simon-ada", undefined],
+      ["DELETE", "/ui/access-tokens/simon-ada", undefined],
+    ]);
+    const headers = (fetchMock.mock.calls.at(-1)![1] as RequestInit).headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBeUndefined();
+  });
+});
+
+describe("review round 4: one generation fence per agent slot", () => {
+  const triageNone = (revision?: string) => ({
+    name: "triage",
+    state: "none",
+    ...(revision === undefined ? {} : { revision }),
+  });
+  const triageIssued = (issuedAt = NOW, revision?: string) => ({
+    name: "triage",
+    state: "issued",
+    issuedAt,
+    ...(revision === undefined ? {} : { revision }),
+  });
+  const writes = (mock: ReturnType<typeof vi.fn>) =>
+    mock.mock.calls.filter(([, init]) => ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""));
+
+  for (const failure of ["truncated", "503", "slot_changed"] as const) {
+    it(`review: a list read during a pending mutation must not resolve its later ${failure}`, async () => {
+      const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+      const { store, fetchMock, window } = loaded;
+      await bootMaintainer(loaded);
+      const revision = failure === "slot_changed" ? "r0" : undefined;
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone(revision)] }));
+      await store.loadAccessTokens();
+      const response = deferred<Response>();
+      fetchMock.mockReturnValueOnce(response.promise);
+      const pending = store.rotateAgentToken("triage");
+      await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+      // This GET can read the old slot before the in-flight POST commits.
+      fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone(revision)] }));
+      await store.loadAccessTokens();
+      response.resolve(
+        failure === "truncated"
+          ? new Response('{"token":"cta_half', { status: 200 })
+          : Response.json(
+              { code: failure === "slot_changed" ? "slot_changed" : "outcome_unknown" },
+              { status: failure === "slot_changed" ? 409 : 503 },
+            ),
+      );
+      await pending;
+      expect.soft(store.getState().unresolvedSlots).toContain("triage");
+      window.confirm = vi.fn(() => true);
+      fetchMock.mockResolvedValueOnce(
+        Response.json({ token: "cta_second", agent: triageIssued(NOW, revision === undefined ? undefined : "r1") }),
+      );
+      await store.rotateAgentToken("triage");
+      expect.soft(writes(fetchMock)).toHaveLength(1);
+      expect(window.confirm).not.toHaveBeenCalled();
+    });
+  }
+
+  it("review: a late mutation success must not replace a newer list revision", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone("r0")] }));
+    await store.loadAccessTokens();
+    const response = deferred<Response>();
+    fetchMock.mockReturnValueOnce(response.promise);
+    const pending = store.rotateAgentToken("triage");
+    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+    // POST committed r1, then another operator rotated r2, then this GET observed r2.
+    const newer = triageIssued("2026-10-15T12:01:00.000Z", "r2");
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [newer] }));
+    await store.loadAccessTokens();
+    response.resolve(Response.json({ token: "cta_old", agent: triageIssued(NOW, "r1") }));
+    await pending;
+    const snapshot = store.getState();
+    expect.soft(snapshot.unresolvedSlots.includes("triage") || snapshot.tokens[0]?.revision === "r2").toBe(true);
+    window.confirm = vi.fn(() => true);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ agent: { name: "triage", state: "revoked", revokedAt: NOW, revision: "r3" } }),
+    );
+    await store.revokeAgentToken("triage");
+    const last = writes(fetchMock).at(-1)!;
+    expect(last[1]?.body).not.toBe(JSON.stringify({ expect: "r1" }));
+  });
+
+  it("review: a late mutation success must not clear a newer contract invalidation", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, configMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone()] }));
+    await store.loadAccessTokens();
+    const response = deferred<Response>();
+    fetchMock.mockReturnValueOnce(response.promise);
+    const pending = store.rotateAgentToken("triage");
+    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+    const newer = structuredClone(OPERATOR_V2_MAINTAINER);
+    newer.agents = newer.agents.map((agent) =>
+      agent.name === "triage"
+        ? { ...agent, token: { state: "revoked" as const, revokedAt: "2026-10-15T12:01:00.000Z" } }
+        : agent,
+    );
+    configMock.mockResolvedValueOnce(Response.json(newer));
+    await store.loadOperatorContract();
+    expect(store.getState().unresolvedSlots).toContain("triage");
+    response.resolve(Response.json({ token: "cta_old", agent: triageIssued() }));
+    await pending;
+    expect(store.getState().unresolvedSlots).toContain("triage");
+  });
+
+  it("review: an older list cannot clear a later contract invalidation", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, configMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone()] }));
+    await store.loadAccessTokens();
+    const response = deferred<Response>();
+    fetchMock.mockReturnValueOnce(response.promise);
+    const pending = store.loadAccessTokens();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const newer = structuredClone(OPERATOR_V2_MAINTAINER);
+    newer.agents = newer.agents.map((agent) =>
+      agent.name === "triage" ? { ...agent, token: { state: "issued" as const, issuedAt: NOW } } : agent,
+    );
+    configMock.mockResolvedValueOnce(Response.json(newer));
+    await store.loadOperatorContract();
+    response.resolve(Response.json({ agents: [triageNone()] }));
+    await pending;
+    expect(store.getState().unresolvedSlots).toContain("triage");
+  });
+
+  it("review: a revision-only list change invalidates a pending confirmation", async () => {
+    let armed = false;
+    const authToken = deferred<string>();
+    const loaded = await loadStore({
+      id: "session",
+      getToken: () => {
+        if (armed) {
+          armed = false;
+          return authToken.promise;
+        }
+        return Promise.resolve("token");
+      },
+    });
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageIssued(NOW, "r1")] }));
+    await store.loadAccessTokens();
+    window.confirm = vi.fn(() => true);
+    armed = true;
+    const pending = store.revokeAgentToken("triage");
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageIssued(NOW, "r2")] }));
+    await store.loadAccessTokens();
+    authToken.resolve("token");
+    await pending;
+    expect(writes(fetchMock)).toHaveLength(0);
+    expect(window.confirm).toHaveBeenCalledOnce();
+  });
+
+  it("review: rapid double issue dispatches only one mutation", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone()] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_a", agent: triageIssued() }));
+    await Promise.all([store.rotateAgentToken("triage"), store.rotateAgentToken("triage")]);
+    expect(writes(fetchMock)).toHaveLength(1);
+  });
+
+  it("review: an older overlapping list failure cannot invalidate a newer success", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    const response = deferred<Response>();
+    fetchMock.mockReturnValueOnce(response.promise);
+    const pending = store.loadAccessTokens();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone("r1")] }));
+    await store.loadAccessTokens();
+    response.resolve(new Response("truncated", { status: 200 }));
+    await pending;
+    expect(store.getState().unresolvedSlots).toEqual([]);
+    expect(store.getState().tokens).toEqual([triageNone("r1")]);
+  });
+
+  it.each([
+    { token: "", agent: triageIssued() },
+    { token: "cta_a", agent: { name: "triage", state: "issued" } },
+    { token: "cta_a", agent: triageNone() },
+  ])("review: malformed 200 does not resolve a slot: %j", async (payload) => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone()] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json(payload));
+    await store.rotateAgentToken("triage");
+    expect(store.getState().unresolvedSlots).toContain("triage");
+  });
+
+  it("review: extra response fields are not retained as slot state", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ ...triageNone(), credential: "SENTINEL" }] }));
+    await store.loadAccessTokens();
+    expect(store.getState().tokens).toEqual([triageNone()]);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ token: "cta_a", agent: { ...triageIssued(), credential: "SENTINEL" } }),
+    );
+    await store.rotateAgentToken("triage");
+    expect(store.getState().tokens).toEqual([triageIssued()]);
+  });
+
+  it("keeps a newer list read's slot when a delayed issue success arrives after it", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone()] }));
+    await store.loadAccessTokens();
+    const response = deferred<Response>();
+    fetchMock.mockReturnValueOnce(response.promise);
+    const pending = store.rotateAgentToken("triage");
+    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+    // The issue committed, then someone revoked it; this read, started after dispatch, saw that.
+    const revoked = { name: "triage", state: "revoked", revokedAt: "2026-10-15T12:02:00.000Z" };
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
+    await store.loadAccessTokens();
+    response.resolve(Response.json({ token: "cta_late", agent: triageIssued() }));
+    await pending;
+    // The newer evidence stays; the late result is not restored, and the slot stays unresolved.
+    expect(store.getState().tokens).toEqual([revoked]);
+    expect(store.getState().unresolvedSlots).toEqual(["triage"]);
+    expect(store.getState().tokenNotice?.message).toBe(
+      "triage's token changed while this request was in flight. Refresh to check it.",
+    );
+    window.confirm = vi.fn(() => true);
+    await store.rotateAgentToken("triage");
+    expect(writes(fetchMock)).toHaveLength(1);
+    // A read that starts now settles it.
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
+    await store.loadAccessTokens();
+    expect(store.getState().unresolvedSlots).toEqual([]);
   });
 });

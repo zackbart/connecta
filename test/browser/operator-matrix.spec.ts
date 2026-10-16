@@ -18,7 +18,7 @@ import {
 } from "../fixtures/operator-visual.js";
 
 // Operator contract v2 in the browser: the maintainer's connector × endpoint
-// matrix and endpoint breakdown, and the member placeholder. Every API read is
+// matrix and endpoint breakdown, and the role gate. Every API read is
 // intercepted with the frozen v2 fixtures; HTML and assets come from a real
 // deployment, so its production CSP applies.
 
@@ -201,28 +201,24 @@ test("INV-4: endpoint rows show agent URLs only for agent pools and runs-as from
     "Shared · saved Oct 1, 2026",
     "Everyone acts as support@workspace.example",
   ]);
-  // Who can use an endpoint arrives with UI-3; no member or agent name renders yet.
-  for (const name of ["Ada Lovelace", "Lin Chen", "simon-ada", "triage"]) {
-    await expect(page.locator("body")).not.toContainText(name);
-  }
+  // Who can use each endpoint: operator-console.spec.ts covers the chips.
+  await expect(ada.getByRole("group", { name: "Who can use /mcp/ada", exact: true })).toContainText("agent:simon-ada");
   await noCsp(page);
 });
 
-test("INV-4 INV-6: a member sees only their endpoints and client setup on every path", async ({ page }) => {
+test("INV-4 INV-6: a member gets their own page on every path and never asks for maintainer data", async ({ page }) => {
   const requested = await install(page, OPERATOR_V2_MEMBER, PRIVATE_404);
   const served = page.waitForResponse((response) => new URL(response.url()).pathname === "/ui/api/config");
   await page.goto(VISUAL_ORIGIN + "/");
   // The body the page received withholds every maintainer fact.
   expectMemberViewWithholds(await (await served).json(), OPERATOR_V2_MEMBER_EXPECTED);
-  await expect(page.getByRole("heading", { name: "Your endpoints", exact: true })).toBeVisible();
-  const rows = page.locator("#memberView .endpoint-entry");
-  await expect(rows).toHaveCount(2);
-  await expect(rows.locator(".endpoint-title code")).toHaveText(["/mcp/support", "/mcp/team"]);
+  await expect(page.getByRole("heading", { name: "Your connections", exact: true })).toBeVisible();
+  const rows = page.locator("#memberView .member-endpoint");
   await expect(rows.locator(".endpoint code")).toHaveText([
     VISUAL_ORIGIN + "/mcp/support",
     VISUAL_ORIGIN + "/mcp/team",
   ]);
-  await expect(page.getByRole("navigation", { name: "Operator pages" }).getByRole("link")).toHaveText(["Endpoints"]);
+  await expect(navLinks(page)).toHaveCount(0);
   const trigger = page.getByRole("button", { name: "Client setup for support", exact: true });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Client setup", exact: true });
@@ -233,23 +229,14 @@ test("INV-4 INV-6: a member sees only their endpoints and client setup on every 
   // Maintainer paths render the same page, and fetch nothing maintainer-only.
   for (const path of ["/connectors?view=matrix", "/connectors/github#tools", "/settings", "/activity", "/tokens"]) {
     await page.goto(VISUAL_ORIGIN + path);
-    await expect(page.getByRole("heading", { name: "Your endpoints", exact: true })).toBeVisible();
-    await expect(page.locator(".endpoint-table, #memberView")).not.toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Your connections", exact: true })).toBeVisible();
+    await expect(page.locator(".endpoint-table, .matrix-table")).toHaveCount(0);
   }
-  await page.getByRole("button", { name: "Search" }).click();
-  await page.getByPlaceholder("Search pages, connectors, tools…").fill("github");
-  await expect(page.getByText("No matching pages, connectors, tools or actions.")).toBeVisible();
-  await page.keyboard.press("Escape");
   // The contract alone admits a member: nothing maintainer-only is ever asked for.
   expect(requested.filter((path) => path === "/ui/api/config").length).toBeGreaterThan(0);
   expect(maintainerOnly(requested)).toEqual([]);
   const body = page.locator("body");
   for (const fact of [
-    "GitHub",
-    "Drive",
-    "Slack",
-    "Notion",
-    "Calendar",
     "Workspace",
     "workspace.example",
     "/agent/",
@@ -370,8 +357,8 @@ test("INV-4: an unknown role shows its loading or error state with no maintainer
   // The retry resolves the role: a member, who still never asks for maintainer data.
   fail = false;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Your endpoints", exact: true })).toBeVisible();
-  await expect(navLinks(page)).toHaveText(["Endpoints"]);
+  await expect(page.getByRole("heading", { name: "Your connections", exact: true })).toBeVisible();
+  await expect(navLinks(page)).toHaveCount(0);
   expect(maintainerOnly(requested)).toEqual([]);
 });
 

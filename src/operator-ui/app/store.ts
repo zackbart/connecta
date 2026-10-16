@@ -1,4 +1,4 @@
-import type { OperatorUiContractV2 } from "../contract.js";
+import type { OperatorMemberManage, OperatorUiContractV2 } from "../contract.js";
 import { queryClient } from "./query.js";
 import { isCancelledError } from "@tanstack/react-query";
 import type { UiConnector, UiData } from "../model.js";
@@ -7,6 +7,7 @@ import {
   collectionFailureCopy,
   credentialTestNotice,
   failure,
+  STALE_COPY,
   info,
   initialState,
   oauthDoneNotice,
@@ -24,8 +25,8 @@ import {
   type RequestFailureKind,
   type RowAction,
   type UiActivityEvent,
-  type UiAccessToken,
 } from "../view.js";
+import { resolveSlot, slotActions, tokenFailureNotice, type AgentSlot, type SlotAction } from "../agents.js";
 import { auth, initialPage, productName, TOKEN_KEY } from "./config.js";
 
 /**
@@ -117,6 +118,8 @@ function gate(notice: Notice | null = null, session: OperatorState["session"] = 
   returnTimer = undefined;
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
+  unresolvedAt.clear();
+  slotsInFlight.clear();
   state = { ...resetIdentity(state, notice), session };
   for (const listener of listeners) listener();
 }
@@ -148,11 +151,12 @@ function refuseSession(status: number): void {
 
 interface OperatorResponse {
   token?: string;
-  agent?: UiAgentSlot;
-  agents?: UiAgentSlot[];
+  agent?: AgentSlot;
+  agents?: AgentSlot[];
   ok?: boolean;
   state?: string;
   problem?: string;
+  code?: string;
   authorizationUrl?: string;
   reused?: boolean;
   events?: UiActivityEvent[];
@@ -170,11 +174,13 @@ class RequestFailure extends Error implements RequestFailureFacts {
   readonly kind: RequestFailureKind;
   readonly status: number | undefined;
   readonly problem: unknown;
-  constructor(kind: RequestFailureKind, status?: number, problem?: unknown) {
+  readonly code: unknown;
+  constructor(kind: RequestFailureKind, status?: number, problem?: unknown, code?: unknown) {
     super(`Operator request failed: ${kind}`);
     this.kind = kind;
     this.status = status;
     this.problem = problem;
+    this.code = code;
   }
 }
 
@@ -249,6 +255,13 @@ async function operatorRequest(
   method: "DELETE" | "GET" | "POST" | "PUT",
   current: () => boolean,
   body?: object,
+  /**
+   * Whether what the action was validated against still holds. Checked here,
+   * after the last await and immediately before `fetch`, the way `send()`
+   * checks the role: a reload or contract refresh during the session-token
+   * read cannot let through an action that is no longer valid.
+   */
+  stillValid?: () => boolean,
 ): Promise<OperatorResponse | null> {
   let token;
   try {
@@ -258,6 +271,7 @@ async function operatorRequest(
   }
   if (!current()) throw new RequestFailure("session");
   if (!token && auth.kind !== "cloudflare-access") throw new RequestFailure("session");
+  if (stillValid && !stillValid()) throw new RequestFailure("stale");
   const sent = send(path, {
     method,
     headers: requestHeaders(token, Boolean(body)),
@@ -283,7 +297,7 @@ async function operatorRequest(
   // that ended: it stays beside the control rather than signing anyone out.
   if (res.status === 401) throw new RequestFailure("session", 401);
   if (res.status === 403) throw new RequestFailure("forbidden", 403);
-  if (!res.ok) throw new RequestFailure("refused", res.status, payload.problem);
+  if (!res.ok) throw new RequestFailure("refused", res.status, payload.problem, payload.code);
   return payload;
 }
 
@@ -387,6 +401,9 @@ function contractUnavailable(outcome: "network" | "refused"): void {
       contract: null,
       contractPhase: "error",
       loadFailure: outcome === "network" ? "network" : null,
+      // The member's rows, and the control that had focus, give way to the
+      // page's own error: focus its heading rather than <body>.
+      ...(state.role === "member" ? { focusIfLost: "memberHeading", confirming: null, credentialEditing: null } : {}),
     });
   }
   scheduleRecovery();
@@ -429,6 +446,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
   if (resetOnRoleChange(contract)) return;
   if (contract.role === "member") {
     set({
+      ...memberRefreshed(contract),
       contract,
       role: "member",
       contractPhase: "ready",
@@ -436,11 +454,12 @@ async function loadData(signal: AbortSignal): Promise<void> {
       gate: null,
       refreshing: false,
       loadFailure: null,
+      ...memberConnected(contract),
     });
     return resetRecovery(false);
   }
   // A maintainer's page waits for `/ui/data` too.
-  set({ contract, role: "maintainer", contractPhase: "loading" });
+  set({ ...contractSlotsRefreshed(contract), contract, role: "maintainer", contractPhase: "loading" });
   // Withheld: the role became unknown or changed; its own state says so.
   const sent = send("/ui/data", { signal, headers: requestHeaders(token), credentials: "same-origin" });
   if (!sent) return;
@@ -474,6 +493,104 @@ async function loadData(signal: AbortSignal): Promise<void> {
   // A passive recovery owns the whole matching catalog/auth cycle. Releasing
   // its in-flight guard at the summary would let focus supersede slow reads.
   await refreshSnapshot(false, undefined, signal, contract);
+}
+
+/* Member actions, validated at dispatch ------------------------------------- */
+
+type MemberAction = "connect" | "restart" | "disconnect" | "save" | "test" | "clear";
+
+const MEMBER_ACTION_KIND: Record<MemberAction, OperatorMemberManage["kind"]> = {
+  connect: "oauth",
+  restart: "oauth",
+  disconnect: "oauth",
+  save: "credential",
+  test: "credential",
+  clear: "credential",
+};
+
+const CONFIRM_ACTION: Record<PendingConfirm["action"], MemberAction> = {
+  oauth_restart: "restart",
+  oauth_disconnect: "disconnect",
+  credential_remove: "clear",
+};
+
+/** Bumped per connector whenever a refreshed member contract changes its `manage`. */
+const manageRevisions = new Map<string, number>();
+
+function listsAction(contract: OperatorUiContractV2 | null, connector: string, action: MemberAction): boolean {
+  if (contract?.role !== "member") return false;
+  const manage = contract.connectors.find((c) => c.id === connector && c.authScope === "personal")?.manage;
+  if (!manage || manage.kind === "none" || manage.kind !== MEMBER_ACTION_KIND[action]) return false;
+  return (manage.actions as string[]).includes(action);
+}
+
+/**
+ * A member action's dispatch check: listed now, and still listed under the
+ * same `manage` revision immediately before `fetch`. `undefined` for a
+ * maintainer, whose actions follow `/ui/data` permissions instead; `null`
+ * when the member may not take it at all right now.
+ */
+function memberDispatch(connector: string, action: MemberAction): (() => boolean) | null | undefined {
+  if (state.role !== "member") return undefined;
+  if (!listsAction(state.contract, connector, action)) return null;
+  const revision = manageRevisions.get(connector) ?? 0;
+  return () =>
+    state.role === "member" &&
+    listsAction(state.contract, connector, action) &&
+    (manageRevisions.get(connector) ?? 0) === revision;
+}
+
+/**
+ * A refreshed member contract, before it lands: bump the revision of every
+ * connector whose `manage` changed, and close any confirmation or form whose
+ * action the new contract no longer lists.
+ */
+function memberRefreshed(contract: OperatorUiContractV2): Partial<OperatorState> {
+  const manageOf = (value: OperatorUiContractV2 | null) =>
+    new Map((value?.role === "member" ? value.connectors : []).map((c) => [c.id, JSON.stringify(c.manage)]));
+  const before = manageOf(state.contract);
+  const after = manageOf(contract);
+  for (const id of new Set([...before.keys(), ...after.keys()])) {
+    if (before.get(id) !== after.get(id)) manageRevisions.set(id, (manageRevisions.get(id) ?? 0) + 1);
+  }
+  const patch: Partial<OperatorState> = {};
+  const confirming = state.confirming;
+  if (confirming && !listsAction(contract, confirming.connectorId, CONFIRM_ACTION[confirming.action])) {
+    patch.confirming = null;
+  }
+  if (state.credentialEditing && !listsAction(contract, state.credentialEditing, "save")) {
+    patch.credentialEditing = null;
+  }
+  return patch;
+}
+
+/** Refused before anything was sent, and said beside the row that asked. */
+function memberRefused(connector: string, kind: "oauth" | "credential"): Promise<void> {
+  set(
+    kind === "oauth"
+      ? oauthNoticePatch(connector, failure(STALE_COPY))
+      : {
+          credentialNotice: failure(STALE_COPY),
+          credentialNoticeFor: connector,
+          focusIfLost: `credentialNotice-${connector}`,
+        },
+  );
+  return Promise.resolve();
+}
+
+/**
+ * A member's authorization finished in another tab: their contract now says
+ * the connection is ok, and the row that started it says so in its own words.
+ */
+function memberConnected(contract: OperatorUiContractV2): Partial<OperatorState> {
+  const patch: Partial<OperatorState> = {};
+  for (const connector of contract.connectors) {
+    if (connector.connection?.state !== "ok" || !awaitingAuthorization.delete(connector.id)) continue;
+    if (state.oauthNoticeFor === connector.id) {
+      Object.assign(patch, { oauthNotice: info("Connected."), oauthBlocked: null, oauthBlockedUrl: null });
+    }
+  }
+  return patch;
 }
 
 /** Catalog and auth controls publish together, guarded by one refresh revision. */
@@ -598,6 +715,8 @@ async function refreshSnapshot(
           } else {
             // A failed read clears the old snapshot; the role it confirmed stays.
             loadedContract = outcome.kind === "contract" ? outcome.contract : null;
+            // A full contract speaks for every agent's slot; a scoped OAuth poll's does not.
+            if (loadedContract && !connectorId) set(contractSlotsRefreshed(loadedContract));
             publish();
           }
         });
@@ -658,12 +777,22 @@ async function mutate(options: {
     const payload = await options.request(current);
     if (!current()) return options.abandoned?.();
     set(options.done(payload));
-    if (options.reload) void refreshConnector(options.reload);
+    if (options.reload) reloadConnection(options.reload);
   } catch (error) {
     if (!current()) return options.abandoned?.();
     set(options.failed(factsOf(error)));
-    if (options.reload) void refreshConnector(options.reload);
+    if (options.reload) reloadConnection(options.reload);
   }
+}
+
+/**
+ * Re-read one connection after an action on it. A maintainer re-reads the
+ * connector; a member has no connector route, and re-reads the contract,
+ * which carries their own connection state.
+ */
+function reloadConnection(connector: string): void {
+  if (maintainerNow()) void refreshConnector(connector);
+  else if (state.role === "member") void loadOperatorContract();
 }
 
 export function focusHandled(): void {
@@ -749,6 +878,7 @@ export function forgetBearer(): void {
  * modal — which named the connector by its id — is gone.
  */
 export function askConfirm(connectorId: string, action: PendingConfirm["action"]): void {
+  if (memberDispatch(connectorId, CONFIRM_ACTION[action]) === null) return;
   set({ confirming: { connectorId, action }, pendingFocus: `confirm-cancel-${connectorId}` });
 }
 
@@ -878,17 +1008,20 @@ function oauthNoticePatch(connector: string, notice: Notice): Partial<OperatorSt
  * the tab, the route is still asked, and the row offers the link it returned.
  */
 export function startOAuth(connector: string, mode: OAuthStartMode): Promise<void> {
+  const valid = memberDispatch(connector, mode === "continue" ? "connect" : "restart");
+  if (valid === null) return memberRefused(connector, "oauth");
   stopOAuthPolling();
   const startedOn = navigationRevision;
   const generation = oauthPollGeneration;
   const tab = openBlankTab();
   return mutate({
-    request: (current) => operatorRequest(oauthStartPath(connector, mode), "POST", current),
+    request: (current) => operatorRequest(oauthStartPath(connector, mode), "POST", current, undefined, valid),
     busy: {
       oauthBusy: connector,
       oauthNotice: null,
       oauthNoticeFor: connector,
       oauthBlocked: null,
+      oauthBlockedUrl: null,
       confirming: null,
     },
     done: (payload) => {
@@ -924,6 +1057,7 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
           : {}),
         ...oauthNoticePatch(connector, oauthDoneNotice("oauth_reconnect", payload, Boolean(tab))),
         oauthBlocked: tab ? null : connector,
+        oauthBlockedUrl: tab ? null : url,
       };
     },
     // Signed out or switched mid-request: the tab it opened goes too, rather
@@ -939,14 +1073,18 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
 }
 
 export function disconnectOAuth(connector: string): Promise<void> {
+  const valid = memberDispatch(connector, "disconnect");
+  if (valid === null) return memberRefused(connector, "oauth");
   stopOAuthPolling(connector);
   return mutate({
-    request: (current) => operatorRequest(`/ui/oauth/${encodeURIComponent(connector)}`, "DELETE", current),
+    request: (current) =>
+      operatorRequest(`/ui/oauth/${encodeURIComponent(connector)}`, "DELETE", current, undefined, valid),
     busy: {
       oauthBusy: connector,
       oauthNotice: null,
       oauthNoticeFor: connector,
       oauthBlocked: null,
+      oauthBlockedUrl: null,
       confirming: null,
     },
     done: (payload) => oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", payload)),
@@ -959,6 +1097,7 @@ export function disconnectOAuth(connector: string): Promise<void> {
 /* Credentials ------------------------------------------------------------- */
 
 export function editCredential(connector: string | null): void {
+  if (connector && memberDispatch(connector, "save") === null) return;
   set({ credentialEditing: connector, credentialNotice: null, credentialNoticeFor: null });
 }
 
@@ -998,28 +1137,36 @@ export function saveCredential(
   connector: string,
   body: { value: string } | { values: Record<string, string> },
 ): Promise<void> {
+  const valid = memberDispatch(connector, "save");
+  if (valid === null) return memberRefused(connector, "credential");
   return credentialMutation(
     connector,
     "credential_save",
-    (current) => operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}`, "PUT", current, body),
+    (current) => operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}`, "PUT", current, body, valid),
     () => ({ credentialEditing: null, credentialNotice: info("Credential saved.") }),
   );
 }
 
 export function removeCredential(connector: string): Promise<void> {
+  const valid = memberDispatch(connector, "clear");
+  if (valid === null) return memberRefused(connector, "credential");
   return credentialMutation(
     connector,
     "credential_remove",
-    (current) => operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}`, "DELETE", current),
+    (current) =>
+      operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}`, "DELETE", current, undefined, valid),
     () => ({ credentialNotice: info("Credential removed.") }),
   );
 }
 
 export function testCredential(connector: string): Promise<void> {
+  const valid = memberDispatch(connector, "test");
+  if (valid === null) return memberRefused(connector, "credential");
   return credentialMutation(
     connector,
     "credential_test",
-    (current) => operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}/test`, "POST", current),
+    (current) =>
+      operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}/test`, "POST", current, undefined, valid),
     (payload) => ({ credentialNotice: credentialTestNotice(connector, payload) }),
     false,
   );
@@ -1079,7 +1226,7 @@ export function retryLoad(): Promise<void> {
   resetRecovery();
   lastReturnPass = now;
   set({
-    pendingFocus: `${state.page}Heading`,
+    pendingFocus: state.role === "member" ? "memberHeading" : `${state.page}Heading`,
   });
   return loadCurrent(true);
 }
@@ -1275,6 +1422,12 @@ function recheckAuthorization(): void {
     state.contractPhase === "error"
   ) {
     recover();
+    return;
+  }
+  // A member's own connection state rides in the contract: read it again
+  // while an authorization this tab started may have finished elsewhere.
+  if (member) {
+    if (awaitingAuthorization.size && !state.oauthBusy) void loadOperatorContract();
     return;
   }
   if (!state.data || !maintainerNow()) return;
@@ -1496,39 +1649,175 @@ export function refreshConnector(id: string, quiet = false): Promise<void> {
 
 /* Access tokens ----------------------------------------------------------- */
 
-/** One declared agent's token slot, as /ui/access-tokens returns it. */
-export type UiAgentSlot = (
-  | { name: string; state: "none" }
-  | { name: string; state: "issued"; issuedAt: string }
-  | { name: string; state: "revoked"; revokedAt: string }
-) & { revision?: string };
-
-/**
- * Operator state still holds token rows (#834 replaces it). Each slot rides in
- * one: `id` and `name` are the agent name, `createdAt` is when its token was
- * issued, empty when none was, and `revokedAt` marks a revoked slot. The
- * prefix is never shown and stays empty.
+/*
+ * One fence decides whether an agent's slot may be acted on. Every event that
+ * touches a slot takes the next value of one monotonic counter as that
+ * agent's generation: a mutation's dispatch, its completion or failure, a
+ * list read's result for it, and a contract refresh whose `agents[].token`
+ * disagrees with the list or drops the agent.
+ *
+ * - A list read applies to an agent only if no event touched it after the
+ *   read started, and it resolves the slot only if, in addition, no mutation
+ *   for that agent is in flight.
+ * - A mutation applies its result only if no other event touched the slot
+ *   after its dispatch. Otherwise the slot stays unresolved with the newer
+ *   evidence, and nothing is restored.
+ * - Any other outcome (unreadable or invalid response, 409, 503, 499, network)
+ *   leaves the slot unresolved, so only a read started after it can resolve it.
+ *
+ * An unresolved slot's controls are off and nothing is dispatched against it.
  */
-function slotRow(slot: UiAgentSlot): UiAccessToken {
+
+let tokenEpoch = 0;
+/** Each agent's generation: the epoch of the latest event that touched its slot. */
+const slotGeneration = new Map<string, number>();
+const unresolvedAt = new Map<string, number>();
+/** Agents with a token mutation sent and not yet settled. */
+const slotsInFlight = new Set<string>();
+
+function touch(name: string): number {
+  const generation = ++tokenEpoch;
+  slotGeneration.set(name, generation);
+  return generation;
+}
+
+const generationOf = (name: string) => slotGeneration.get(name) ?? 0;
+const unresolvedList = (): Pick<OperatorState, "unresolvedSlots"> => ({ unresolvedSlots: [...unresolvedAt.keys()] });
+
+/** Touch these agents' slots and leave them unresolved, as a state patch. */
+function unresolve(names: Iterable<string>): Pick<OperatorState, "unresolvedSlots"> {
+  for (const name of names) unresolvedAt.set(name, touch(name));
+  return unresolvedList();
+}
+
+/** The slots with this one replaced, or appended when a read has not listed it yet. */
+function replaceSlot(slot: AgentSlot): Pick<OperatorState, "tokens"> {
   return {
-    id: slot.name,
-    name: slot.name,
-    tokenPrefix: "",
-    createdAt: slot.state === "issued" ? slot.issuedAt : "",
-    ...(slot.state === "revoked" ? { revokedAt: slot.revokedAt } : {}),
-    ...(slot.revision ? { revision: slot.revision } : {}),
+    tokens: state.tokens.some((current) => current.name === slot.name)
+      ? state.tokens.map((current) => (current.name === slot.name ? slot : current))
+      : [...state.tokens, slot],
   };
 }
 
-/** The body naming the slot revision this agent's row was read at, which every token mutation requires. */
-function expectedSlot(name: string): { expect?: string } {
-  const revision = state.tokens.find((token) => token.id === name)?.revision;
-  return revision ? { expect: revision } : {};
+const isTimestamp = (value: unknown) => typeof value === "string" && value.length > 0;
+
+/** One slot exactly as the route defines it, or nothing: a partial answer resolves nothing. */
+function parseSlot(value: unknown): AgentSlot | null {
+  if (!value || typeof value !== "object") return null;
+  const slot = value as Record<string, unknown>;
+  if (typeof slot.name !== "string" || !slot.name) return null;
+  if (slot.revision !== undefined && typeof slot.revision !== "string") return null;
+  const revision = typeof slot.revision === "string" ? { revision: slot.revision } : {};
+  if (slot.state === "none") return { name: slot.name, state: "none", ...revision };
+  if (slot.state === "issued" && isTimestamp(slot.issuedAt)) {
+    return { name: slot.name, state: "issued", issuedAt: slot.issuedAt as string, ...revision };
+  }
+  if (slot.state === "revoked" && isTimestamp(slot.revokedAt)) {
+    return { name: slot.name, state: "revoked", revokedAt: slot.revokedAt as string, ...revision };
+  }
+  return null;
 }
 
-/** The slot state one token row encodes. */
-export function slotState(row: UiAccessToken): UiAgentSlot["state"] {
-  return row.revokedAt ? "revoked" : row.createdAt ? "issued" : "none";
+/**
+ * A refreshed maintainer contract, before it lands: touch and unresolve every
+ * listed slot whose `agents[].token` now disagrees with the list, and every
+ * agent the refresh dropped. An action pending against either then fails its
+ * dispatch check, and a mutation in flight for it will not apply its result.
+ */
+function contractSlotsRefreshed(contract: OperatorUiContractV2): Partial<OperatorState> {
+  if (contract.role !== "maintainer") return {};
+  const next = new Map(contract.agents.map((agent) => [agent.name, agent.token]));
+  const previous = state.contract?.role === "maintainer" ? state.contract.agents.map((agent) => agent.name) : [];
+  const changed = new Set(previous.filter((name) => !next.has(name)));
+  const stamp = (token: { state: string; issuedAt?: string; revokedAt?: string }) =>
+    `${token.state}:${token.issuedAt ?? ""}:${token.revokedAt ?? ""}`;
+  for (const slot of state.tokens) {
+    const token = next.get(slot.name);
+    if (token && stamp(token) !== stamp(slot)) changed.add(slot.name);
+  }
+  return changed.size ? unresolve(changed) : {};
+}
+
+/** What an action was validated against: the agent's generation, and the route's revision for `expect`. */
+interface SlotChecked {
+  action: SlotAction;
+  generation: number;
+  /** The route's own slot revision, when the list carried one. */
+  expect: string | undefined;
+}
+
+/**
+ * Which of `actions` the agent's slot allows right now: a live, resolved
+ * slot, nothing in flight for it and no other token operation running. The
+ * row renders from the same facts.
+ */
+function slotCheck(name: string, actions: SlotAction[]): SlotChecked | null {
+  if (state.tokenBusy || !maintainerNow() || unresolvedAt.has(name) || slotsInFlight.has(name)) return null;
+  const resolved = resolveSlot(state.contract, state.tokens, name);
+  if (!resolved?.live) return null;
+  const action = slotActions(resolved.slot).find((candidate) => actions.includes(candidate));
+  return action ? { action, generation: generationOf(name), expect: resolved.slot.revision } : null;
+}
+
+/**
+ * The compare-and-swap body for a token mutation: the route's slot revision
+ * the operator confirmed against. The route refuses a mismatch with 409
+ * `slot_changed` before minting or writing anything.
+ *
+ * TODO(P3b): #837 adds `revision` to every slot and requires `expect`. Until it
+ * merges, a list read without revisions sends no body; drop this fallback when
+ * P6b rebases onto it.
+ */
+function expectBody(checked: SlotChecked): { expect: string } | undefined {
+  return checked.expect === undefined ? undefined : { expect: checked.expect };
+}
+
+/** One mutation's claim on its slot, from dispatch to settlement. */
+interface SlotTicket {
+  /** The generation its dispatch took; null until it is sent. */
+  dispatched: number | null;
+}
+
+/**
+ * The dispatch check for an action validated as `checked`, run immediately
+ * before `fetch`. Passing it is the send: the slot is touched, unresolved and
+ * in flight, and the ticket keeps the generation the result will be held to.
+ */
+function slotDispatch(name: string, checked: SlotChecked, ticket: SlotTicket): () => boolean {
+  return () => {
+    if (!maintainerNow() || unresolvedAt.has(name) || slotsInFlight.has(name)) return false;
+    const resolved = resolveSlot(state.contract, state.tokens, name);
+    const valid =
+      Boolean(resolved?.live) &&
+      slotActions(resolved!.slot).includes(checked.action) &&
+      generationOf(name) === checked.generation;
+    if (!valid) return false;
+    set(unresolve([name]));
+    ticket.dispatched = generationOf(name);
+    slotsInFlight.add(name);
+    return true;
+  };
+}
+
+/**
+ * Settle a mutation whose response was parsed and validated. The result is
+ * applied only when nothing touched the slot since dispatch; otherwise the
+ * newer evidence stays, the slot stays unresolved, and the caller says so.
+ */
+function settleSlot(ticket: SlotTicket, slot: AgentSlot): { applied: boolean; patch: Partial<OperatorState> } {
+  slotsInFlight.delete(slot.name);
+  const untouched = ticket.dispatched !== null && generationOf(slot.name) === ticket.dispatched;
+  touch(slot.name);
+  if (!untouched) return { applied: false, patch: unresolve([slot.name]) };
+  unresolvedAt.delete(slot.name);
+  return { applied: true, patch: { ...replaceSlot(slot), ...unresolvedList() } };
+}
+
+/** Settle a mutation that failed or could not be read: unresolved, and touched after any read already running. */
+function abandonSlot(name: string, ticket: SlotTicket): Pick<OperatorState, "unresolvedSlots"> | Record<string, never> {
+  if (ticket.dispatched === null) return {};
+  slotsInFlight.delete(name);
+  return unresolve([name]);
 }
 
 let tokenRevision = 0;
@@ -1537,93 +1826,135 @@ export async function loadAccessTokens(): Promise<void> {
   const identityCurrent = fence();
   const revision = ++tokenRevision;
   const current = () => identityCurrent() && revision === tokenRevision;
-  const existing = new Map(state.tokens.map((token) => [token.id, token]));
+  // A read speaks for an agent only if nothing touched its slot after this.
+  const startedAt = tokenEpoch;
   set({ tokenPhase: "loading", tokenNotice: null });
   try {
     const payload = await operatorRequest("/ui/access-tokens", "GET", current);
     if (!current()) return;
     if (!Array.isArray(payload?.agents)) throw new Error("The agent token slots were not returned.");
-    const tokens = payload.agents.map(slotRow);
-    // Issue and revoke replace row objects. Prefer rows changed locally since
-    // this read began over its possibly older snapshot.
-    const changed = new Map(
-      state.tokens.filter((token) => existing.get(token.id) !== token).map((token) => [token.id, token]),
-    );
-    set({ tokenPhase: "ready", tokens: tokens.map((token) => changed.get(token.id) ?? token) });
+    const listed = payload.agents.map(parseSlot);
+    if (listed.some((slot) => slot === null)) throw new Error("An agent token slot could not be read.");
+    const fresh = (name: string) => generationOf(name) <= startedAt;
+    const read = new Map((listed as AgentSlot[]).map((slot) => [slot.name, slot]));
+    const tokens: AgentSlot[] = [];
+    for (const slot of read.values()) {
+      // Something touched this slot after the read started: keep what is on screen.
+      const kept = state.tokens.find((current) => current.name === slot.name);
+      if (!fresh(slot.name)) {
+        if (kept) tokens.push(kept);
+        continue;
+      }
+      tokens.push(slot);
+      touch(slot.name);
+      if (!slotsInFlight.has(slot.name)) unresolvedAt.delete(slot.name);
+    }
+    // Agents the read no longer lists leave, unless something newer touched them.
+    for (const slot of state.tokens) {
+      if (read.has(slot.name)) continue;
+      if (!fresh(slot.name)) tokens.push(slot);
+      else touch(slot.name);
+    }
+    set({ tokenPhase: "ready", tokens, ...unresolvedList() });
   } catch {
     if (!current()) return;
-    set({
-      tokenPhase: "error",
-      tokenNotice: failure("Access tokens could not be loaded."),
-    });
+    // The page's error block says so, once; the notice line stays for actions.
+    // An unreadable list settles nothing, and unresolves what it was meant to
+    // confirm, unless something newer already touched it.
+    const stale = state.tokens.map((slot) => slot.name).filter((name) => generationOf(name) <= startedAt);
+    set({ tokenPhase: "error", ...unresolve(stale) });
   }
 }
 
-function tokenFailure(tokenNotice: Notice): Partial<OperatorState> {
-  return { tokenBusy: false, tokenNotice, pendingFocus: "tokenNotice" };
+/** A failed token operation, said once. Nothing is retried: the operator decides. */
+function tokenFailure(action: SlotAction, name: string, facts: RequestFailureFacts): Partial<OperatorState> {
+  return {
+    tokenBusy: false,
+    tokenNotice: tokenFailureNotice(action, name, facts, productName),
+    pendingFocus: "tokenNotice",
+  };
 }
 
-/** The rows with this slot's replaced, or appended when a read has not listed it yet. */
-function replaceRow(slot: UiAgentSlot): UiAccessToken[] {
-  const row = slotRow(slot);
-  return state.tokens.some((token) => token.id === slot.name)
-    ? state.tokens.map((token) => (token.id === slot.name ? row : token))
-    : [...state.tokens, row];
-}
+/** Said when a validated result arrived after newer evidence about its slot. */
+const settledLate = (name: string) => `${name}'s token changed while this request was in flight. Refresh to check it.`;
 
 /** Issue the agent's first token or rotate it; the previous secret stops at once. */
 export function rotateAgentToken(name: string): Promise<void> {
-  if (state.tokenBusy || !maintainerNow()) return Promise.resolve();
-  const row = state.tokens.find((token) => token.id === name);
-  if (
-    row &&
-    slotState(row) === "issued" &&
-    !window.confirm(`Rotate ${name}'s token? Its current token stops working immediately.`)
-  ) {
+  // The same resolution the row renders from: only a live, resolved slot is acted on.
+  const checked = slotCheck(name, ["issue", "rotate"]);
+  if (!checked) return Promise.resolve();
+  const { action } = checked;
+  if (action === "rotate" && !window.confirm(`Rotate ${name}'s token? Its current token stops working immediately.`)) {
     return Promise.resolve();
   }
+  const ticket: SlotTicket = { dispatched: null };
   return mutate({
     request: (current) =>
-      operatorRequest(`/ui/access-tokens/${encodeURIComponent(name)}`, "POST", current, expectedSlot(name)),
+      operatorRequest(
+        `/ui/access-tokens/${encodeURIComponent(name)}`,
+        "POST",
+        current,
+        expectBody(checked),
+        slotDispatch(name, checked, ticket),
+      ),
     busy: { tokenBusy: true, tokenNotice: null },
     done: (payload) => {
-      const slot = payload?.agent;
-      if (!payload?.token || slot?.name !== name) throw new Error("The issued token was not returned.");
+      const slot = parseSlot(payload?.agent);
+      const secret = payload?.token;
+      if (typeof secret !== "string" || !secret || slot?.name !== name || slot.state !== "issued") {
+        throw new Error("The issued token was not returned.");
+      }
+      const { applied, patch } = settleSlot(ticket, slot);
+      // The secret was minted either way and is never shown again, so it is
+      // still revealed; only the slot's newer evidence wins.
       const reveal = state.page === "tokens";
       return {
         tokenBusy: false,
         tokenPhase: "ready",
-        tokens: replaceRow(slot),
-        createdToken: reveal ? payload.token : null,
-        tokenNotice: info(`Token issued for ${name}.`),
-        pendingFocus: reveal ? "tokenRevealHeading" : null,
+        ...patch,
+        createdToken: reveal ? secret : null,
+        createdTokenFor: reveal ? name : null,
+        tokenNotice: applied
+          ? info(`Token ${action === "issue" ? "issued" : "rotated"} for ${name}.`)
+          : failure(settledLate(name)),
       };
     },
-    failed: () => tokenFailure(failure(`A token could not be issued for ${name}. Reload and try again.`)),
+    failed: (facts) => ({ ...tokenFailure(action, name, facts), ...abandonSlot(name, ticket) }),
+    abandoned: () => void abandonSlot(name, ticket),
   });
 }
 
 export function dismissCreatedToken(): void {
-  set({ createdToken: null });
+  set({ createdToken: null, createdTokenFor: null });
 }
 
 export function revokeAgentToken(name: string): Promise<void> {
-  if (!maintainerNow()) return Promise.resolve();
+  const checked = slotCheck(name, ["revoke"]);
+  if (!checked) return Promise.resolve();
   if (!window.confirm(`Revoke ${name}'s token? The agent will immediately lose access.`)) return Promise.resolve();
+  const ticket: SlotTicket = { dispatched: null };
   return mutate({
     request: (current) =>
-      operatorRequest(`/ui/access-tokens/${encodeURIComponent(name)}`, "DELETE", current, expectedSlot(name)),
+      operatorRequest(
+        `/ui/access-tokens/${encodeURIComponent(name)}`,
+        "DELETE",
+        current,
+        expectBody(checked),
+        slotDispatch(name, checked, ticket),
+      ),
     busy: { tokenBusy: true, tokenNotice: null },
     done: (payload) => {
-      const slot = payload?.agent;
-      if (slot?.name !== name) throw new Error("The revoked slot was not returned.");
+      const slot = parseSlot(payload?.agent);
+      if (slot?.name !== name || slot.state !== "revoked") throw new Error("The revoked slot was not returned.");
+      const { applied, patch } = settleSlot(ticket, slot);
       return {
         tokenBusy: false,
-        tokens: replaceRow(slot),
-        tokenNotice: info(`${name}'s token revoked.`),
+        ...patch,
+        tokenNotice: applied ? info(`${name}'s token revoked.`) : failure(settledLate(name)),
         pendingFocus: "tokenNotice",
       };
     },
-    failed: () => tokenFailure(failure(`${name}'s token could not be revoked.`)),
+    failed: (facts) => ({ ...tokenFailure("revoke", name, facts), ...abandonSlot(name, ticket) }),
+    abandoned: () => void abandonSlot(name, ticket),
   });
 }

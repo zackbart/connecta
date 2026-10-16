@@ -1,108 +1,190 @@
-import { accessTokenUnavailableCopy, formatDate, type OperatorState, type UiAccessToken } from "../view.js";
-import { CopyButton, Empty, NoticeLine, Unavailable } from "./parts.js";
-import { dismissCreatedToken, loadAccessTokens, revokeAgentToken, rotateAgentToken, slotState } from "./store.js";
+import { useRef } from "react";
+import { agentRows, lastSeenLabel, slotBadge, slotSince, type AgentRow } from "../agents.js";
+import { accessTokenUnavailableCopy, formatDate, type OperatorState } from "../view.js";
+import { Badge, CopyButton, Empty, NoticeLine, StateBlock, Unavailable } from "./parts.js";
+import { Button, Dialog } from "./primitives.js";
+import { dismissCreatedToken, loadAccessTokens, revokeAgentToken, rotateAgentToken } from "./store.js";
 
-function Reveal({ token }: { token: string }) {
+/**
+ * The new secret, once. Closing the dialog by any route drops it from the
+ * page; the row's own primary action takes focus back.
+ */
+function SecretDialog({ state }: { state: OperatorState }) {
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const name = state.createdTokenFor;
   return (
-    <section id="tokenReveal" className="token-reveal" aria-labelledby="tokenRevealHeading">
-      <div className="token-reveal-head">
-        <h2 id="tokenRevealHeading" tabIndex={-1}>
-          Copy this token now
-        </h2>
-        <span className="cap">Shown once</span>
-      </div>
-      <p className="meta">Store it in the MCP client before leaving this page. It cannot be displayed again.</p>
-      <div className="endpoint-row token-secret">
-        <code id="createdToken" className="mono">
-          {token}
-        </code>
-        <CopyButton value={token} label="Copy token" />
-      </div>
-      <button className="btn" type="button" onClick={dismissCreatedToken}>
-        I stored it
-      </button>
-    </section>
-  );
-}
-
-/** One declared agent's token slot. Agents come from code; only the token changes here. */
-function TokenCard({ token, busy }: { token: UiAccessToken; busy: boolean }) {
-  const slot = slotState(token);
-  return (
-    <section
-      className={slot === "revoked" ? "token-card revoked" : "token-card"}
-      aria-labelledby={`access-token-${token.id}`}
+    <Dialog
+      open={Boolean(state.createdToken)}
+      onOpenChange={(open) => {
+        if (open) return;
+        returnFocus.current =
+          (name ? document.getElementById(`token-primary-${name}`) : null) ?? document.getElementById("tokensHeading");
+        dismissCreatedToken();
+      }}
+      returnFocusTo={returnFocus}
+      title={name ? `New token for ${name}` : "New token"}
+      description="Copy it into the agent's MCP client now. You won't see this token again."
     >
-      <div className="token-card-head">
-        <div>
-          <h2 id={`access-token-${token.id}`}>{token.name}</h2>
+      {state.createdToken ? (
+        <div className="token-secret-panel">
+          <code id="createdToken" className="token-secret">
+            {state.createdToken}
+          </code>
+          <div className="actions">
+            <CopyButton value={state.createdToken} label="Copy token" className="btn primary" />
+            <Button
+              onClick={() => {
+                returnFocus.current =
+                  (name ? document.getElementById(`token-primary-${name}`) : null) ??
+                  document.getElementById("tokensHeading");
+                dismissCreatedToken();
+              }}
+            >
+              I stored it
+            </Button>
+          </div>
+          <p className="meta">Rotating replaces it; revoking stops it. Neither shows it again.</p>
         </div>
-        <div className="cap">
-          {slot === "revoked"
-            ? `Revoked ${formatDate(token.revokedAt)}`
-            : slot === "issued"
-              ? `Issued ${formatDate(token.createdAt)}`
-              : "No token issued"}
-        </div>
-      </div>
-      <div className="credential-actions">
-        <button className="btn" type="button" disabled={busy} onClick={() => void rotateAgentToken(token.id)}>
-          {slot === "issued" ? "Rotate" : "Issue"}
-        </button>
-        {slot === "issued" ? (
-          <button className="btn danger" type="button" disabled={busy} onClick={() => void revokeAgentToken(token.id)}>
-            Revoke
-          </button>
-        ) : null}
-      </div>
-    </section>
+      ) : null}
+    </Dialog>
   );
 }
 
-export function TokensPage({ state, embedded = false }: { state: OperatorState; embedded?: boolean }) {
+function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
+  const badge = slotBadge(row.slot);
+  return (
+    <tr data-agent={row.name} className={row.slot.state === "revoked" ? "revoked" : undefined}>
+      <th scope="row">
+        <span className="agent-name">
+          <span className="agent-mark" aria-hidden="true" />
+          <span className="mono">{row.name}</span>
+        </span>
+      </th>
+      <td>
+        {row.pools.length ? (
+          <ul className="agent-pools" aria-label={`${row.name}'s pools`}>
+            {row.pools.map((pool) => (
+              <li key={pool} className="tool-chip">
+                {pool}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <span className="meta">No pools</span>
+        )}
+      </td>
+      <td>
+        <Badge tone={badge.tone}>{badge.label}</Badge>
+      </td>
+      <td className="meta">{slotSince(row.slot, formatDate)}</td>
+      <td className="meta">{lastSeenLabel(row.lastSeenAt, formatDate)}</td>
+      <td>
+        <div className="token-actions">
+          {row.blocked ? (
+            <span className="meta token-unavailable" id={`token-unavailable-${row.name}`}>
+              {row.blocked}
+            </span>
+          ) : null}
+          {row.actions.map((action) =>
+            action === "revoke" ? (
+              <Button
+                key={action}
+                variant="danger"
+                disabled={busy || Boolean(row.blocked)}
+                {...(row.blocked ? { "aria-describedby": `token-unavailable-${row.name}` } : {})}
+                aria-label={`Revoke ${row.name}'s token`}
+                onClick={() => void revokeAgentToken(row.name)}
+              >
+                Revoke
+              </Button>
+            ) : (
+              <Button
+                key={action}
+                id={`token-primary-${row.name}`}
+                variant={action === "issue" ? "primary" : "default"}
+                disabled={busy || Boolean(row.blocked)}
+                {...(row.blocked ? { "aria-describedby": `token-unavailable-${row.name}` } : {})}
+                aria-label={`${action === "issue" ? "Issue" : "Rotate"} ${row.name}'s token`}
+                onClick={() => void rotateAgentToken(row.name)}
+              >
+                {action === "issue" ? "Issue" : "Rotate"}
+              </Button>
+            ),
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+export function TokensPage({ state }: { state: OperatorState }) {
   const available = state.data?.accessTokenManagement === "available";
+  const rows = agentRows(state.contract, state.tokens, state.unresolvedSlots);
   return (
     <section id="tokensView">
-      <div className="lead">
-        {embedded ? null : (
-          <h1 id="tokensHeading" className="" tabIndex={-1}>
+      <div className="page-heading">
+        <div>
+          <h1 id="tokensHeading" tabIndex={-1}>
             Tokens
           </h1>
-        )}
-        <div className="lead-copy">
-          <p className="activity-copy">
-            One Bearer token per agent declared in code. Each secret is shown once; rotating or revoking stops the
-            previous token immediately.
+          <p className="meta">
+            One Bearer token per agent. Agents are declared in code; only their tokens change here.
           </p>
-          <NoticeLine id="tokenNotice" notice={state.tokenNotice} />
-          {!available ? (
-            <Unavailable>{accessTokenUnavailableCopy(state.data?.accessTokenManagement)}</Unavailable>
+        </div>
+        {available ? (
+          <div className="page-actions">
+            <Button
+              id="refreshTokens"
+              disabled={state.tokenBusy || state.tokenPhase === "loading"}
+              onClick={() => void loadAccessTokens()}
+            >
+              Refresh
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      <NoticeLine id="tokenNotice" notice={state.tokenNotice} />
+      {!available ? (
+        <Unavailable>{accessTokenUnavailableCopy(state.data?.accessTokenManagement)}</Unavailable>
+      ) : (
+        <div id="tokenList" aria-busy={state.tokenPhase === "loading" ? "true" : "false"}>
+          {state.tokenPhase === "loading" ? (
+            <Empty>Loading access tokens…</Empty>
+          ) : state.tokenPhase === "error" ? (
+            <StateBlock
+              tone="error"
+              action={{ label: "Try loading access tokens again", onClick: () => void loadAccessTokens() }}
+            >
+              Access tokens could not be loaded.
+            </StateBlock>
+          ) : rows.length === 0 ? (
+            <Empty>No agents are declared. Add them to agents in the deployment code.</Empty>
           ) : (
-            <div id="tokenAvailable">
-              {state.createdToken ? <Reveal token={state.createdToken} /> : null}
-              <div
-                id="tokenList"
-                className="token-ledger"
-                aria-busy={state.tokenPhase === "loading" ? "true" : "false"}
-              >
-                {state.tokenPhase === "loading" ? (
-                  <Empty>Loading access tokens…</Empty>
-                ) : state.tokenPhase === "error" ? (
-                  <p className="empty">
-                    <button className="btn" type="button" onClick={() => void loadAccessTokens()}>
-                      Try loading access tokens again
-                    </button>
-                  </p>
-                ) : state.tokens.length === 0 ? (
-                  <Empty>No agents are declared. Add them to agents in the deployment code.</Empty>
-                ) : (
-                  state.tokens.map((token) => <TokenCard key={token.id} token={token} busy={state.tokenBusy} />)
-                )}
-              </div>
+            <div className="table-scroll">
+              <table className="data-table token-table" aria-label="Agent tokens">
+                <thead>
+                  <tr>
+                    <th scope="col">Agent</th>
+                    <th scope="col">Pools</th>
+                    <th scope="col">Token</th>
+                    <th scope="col">Since</th>
+                    <th scope="col">Last seen</th>
+                    <th scope="col">
+                      <span className="visually-hidden">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <SlotRow key={row.name} row={row} busy={state.tokenBusy} />
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
-      </div>
+      )}
+      <SecretDialog state={state} />
     </section>
   );
 }
