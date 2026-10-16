@@ -761,3 +761,160 @@ describe("adoption claims", () => {
     expect(await manager.auth.authorize(request(fixture.unbound.token), BASE)).toMatchObject({ ok: true, agent: "a" });
   });
 });
+
+describe("pre-commit acknowledgements", () => {
+  /** Apply every write on a matching key, then withhold its answer until released; count every call. */
+  function withholding(base: KVStorage, matches: (operation: Operation, key: string) => boolean) {
+    const release = latch();
+    const calls: string[] = [];
+    const answer = async <T>(operation: Operation, key: string, applied: Promise<T>): Promise<T> => {
+      calls.push(`${operation} ${key}`);
+      const result = await applied;
+      if (matches(operation, key)) await release.opened;
+      return result;
+    };
+    const storage: KVStorage = {
+      ...base,
+      get: (key) => answer("get", key, base.get(key)),
+      set: (key, value, options) => answer("set", key, base.set(key, value, options)),
+      delete: (key) => answer("delete", key, base.delete(key)),
+      compareAndSet: (key, expected, next, options) =>
+        answer("compareAndSet", key, base.compareAndSet(key, expected, next, options)),
+    };
+    return { storage, calls, release };
+  }
+
+  /** Run `operation`, expect `code` within the deadline, then no further storage call. */
+  async function boundedBy(operation: () => Promise<unknown>, calls: string[], code: string) {
+    const started = Date.now();
+    const outcome = await operation().then(
+      () => "success",
+      (error: { code?: string }) => error.code,
+    );
+    expect(outcome).toBe(code);
+    expect(Date.now() - started).toBeLessThan(1_500);
+    const settled = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(calls.length).toBe(settled);
+  }
+
+  const claimKey = `access-token:v1:adopted:${fixture.unbound.accessToken.id}`;
+
+  it("INV-7: a withheld claim acknowledgement ends by the deadline, and the same agent resumes", async () => {
+    const base = await legacyStorage();
+    const { storage, calls, release } = withholding(
+      base,
+      (operation, key) => operation === "compareAndSet" && key === claimKey,
+    );
+    const controller = new AbortController();
+    const agents = { agents: ["a", "b"] };
+    try {
+      await boundedBy(
+        () => {
+          const pending = new AccessTokenManager(storage, agents).adopt(fixture.unbound.accessToken.id, "a", {
+            signal: controller.signal,
+            deadline: Date.now() + 300,
+          });
+          setTimeout(() => controller.abort(), 50);
+          return pending;
+        },
+        calls,
+        // The claim may stand, so the outcome is unknown even though the caller left.
+        "outcome_unknown",
+      );
+    } finally {
+      release.open();
+    }
+    expect(JSON.parse((await base.get(claimKey))!)).toEqual({ version: 1, agent: "a" });
+    const manager = new AccessTokenManager(base, agents);
+    await expect(manager.adopt(fixture.unbound.accessToken.id, "b")).rejects.toMatchObject({ code: "not_adoptable" });
+    await expect(manager.adopt(fixture.unbound.accessToken.id, "a")).resolves.toMatchObject({ state: "issued" });
+    expect(await admits(manager, fixture.unbound.token)).toBe(true);
+  });
+
+  it.each([
+    ["record", RECORDS],
+    ["lookup", LOOKUPS],
+  ])(
+    "INV-7: a withheld %s write before a rotation's commit ends by the deadline and publishes nothing",
+    async (_write, prefix) => {
+      const base = memoryStorage();
+      const seed = new AccessTokenManager(base, { agents: ["simon"] });
+      const previous = await seed.rotate("simon");
+      const slotBefore = await base.get(SLOT);
+      const { storage, calls, release } = withholding(
+        base,
+        (operation, key) => operation === "set" && key.startsWith(prefix),
+      );
+      try {
+        await boundedBy(
+          () =>
+            new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon", "operator", {
+              deadline: Date.now() + 300,
+            }),
+          calls,
+          "outcome_unknown",
+        );
+      } finally {
+        release.open();
+      }
+      expect(await base.get(SLOT)).toBe(slotBefore);
+      expect(await admits(seed, previous.token)).toBe(true);
+    },
+  );
+
+  it("INV-7: a withheld pre-commit write after the caller left reports aborted, since nothing was published", async () => {
+    const base = memoryStorage();
+    const seed = new AccessTokenManager(base, { agents: ["simon"] });
+    const previous = await seed.rotate("simon");
+    const { storage, calls, release } = withholding(
+      base,
+      (operation, key) => operation === "set" && key.startsWith(RECORDS),
+    );
+    const controller = new AbortController();
+    try {
+      await boundedBy(
+        () => {
+          const pending = new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon", "operator", {
+            signal: controller.signal,
+            deadline: Date.now() + 300,
+          });
+          setTimeout(() => controller.abort(), 50);
+          return pending;
+        },
+        calls,
+        "aborted",
+      );
+    } finally {
+      release.open();
+    }
+    expect(await admits(seed, previous.token)).toBe(true);
+  });
+
+  it("INV-7: a withheld record write before an adoption's commit ends by the deadline, and the same agent resumes", async () => {
+    const base = await legacyStorage();
+    const { storage, calls, release } = withholding(
+      base,
+      (operation, key) => operation === "set" && key.startsWith(RECORDS),
+    );
+    const agents = { agents: ["a", "b"] };
+    try {
+      await boundedBy(
+        () =>
+          new AccessTokenManager(storage, agents).adopt(fixture.unbound.accessToken.id, "a", {
+            deadline: Date.now() + 300,
+          }),
+        calls,
+        "outcome_unknown",
+      );
+    } finally {
+      release.open();
+    }
+    expect(await base.get("access-token:v1:agent:a")).toBeNull();
+    const manager = new AccessTokenManager(base, agents);
+    expect(await admits(manager, fixture.unbound.token)).toBe(false);
+    await expect(manager.adopt(fixture.unbound.accessToken.id, "b")).rejects.toMatchObject({ code: "not_adoptable" });
+    await expect(manager.adopt(fixture.unbound.accessToken.id, "a")).resolves.toMatchObject({ state: "issued" });
+    expect(await admits(manager, fixture.unbound.token)).toBe(true);
+  });
+});

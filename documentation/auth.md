@@ -150,8 +150,10 @@ outcome depends on cleanup or on undoing a write.
   on the route). An unanswered commit is read back, never assumed or replayed.
   If the request has ended once the commit is decided, the secret cannot be
   delivered, so the slot moves forward to `revoked` by compare-and-set; if that
-  cannot be settled, the call fails with "rotation outcome unknown; rotate
-  again" (503 on the route), never success. An operator then rotates again.
+  cannot be settled, the call fails with `outcome_unknown` (503 on the
+  route), never success. After an `outcome_unknown` rotation the operator UI
+  may show the slot as `issued` although no secret was returned; that secret
+  cannot be recovered, so rotate again to get a replacement.
 - **Revoke** reads the slot, checks the signal, and compare-and-sets it to
   `revoked`. An abort before that commit changes nothing.
 - **Nothing is deleted on the request path.** Rotate, revoke, and adopt never
@@ -162,22 +164,28 @@ outcome depends on cleanup or on undoing a write.
   grows by one small record (and, for rotation, one lookup) per rotation or
   adoption, bounded by the number of agents times their rotations. An operator
   maintenance sweep for this inert data is follow-up work.
-- **One reconciliation deadline.** One wall-clock deadline is set just before
-  the commit compare-and-set is dispatched: 2 seconds, or the request's own
-  `deadline` option if sooner. It bounds the commit's acknowledgement and
-  everything after it (reading back an unanswered commit, revoking an
-  undeliverable rotation, completing an adoption's lookup step). Each storage
-  call is raced against it and none starts after it; an acknowledgement still
+- **One operation deadline.** One wall-clock deadline is set when rotate,
+  revoke, or adopt starts: 2 seconds, or the request's own `deadline` option if
+  sooner. It bounds every storage await in the operation: the adoption claim
+  and its read-back, record and lookup writes before the commit, the commit's
+  own acknowledgement, and everything after it (reading back an unanswered
+  commit, revoking an undeliverable rotation, completing an adoption's lookup
+  step). Each storage call is raced against it and none starts after it. A
+  timeout before the commit reports `aborted` if the caller has left, since
+  nothing was published, and `outcome_unknown` otherwise; a pending claim
+  acknowledgement is always `outcome_unknown`, and the claim, if it landed,
+  leaves the token resumable by the same agent. An acknowledgement still
   pending at the deadline is an unanswered commit with no time left to read it
   back, and any success decided after the deadline is reported as
   `outcome_unknown` instead. Records written before an uncertain commit stay.
   An operation still in flight at the deadline is abandoned rather than
-  cancelled, which is safe: it can only be a read; the commit itself, whose
-  outcome is then reported as unknown and whose slot alone decides what
-  admits; the revoke compare-and-set from `issued` naming one record to
-  `revoked`, which can only stop a token and fails if the slot changed; or the
-  adoption compare-and-set of a lookup from the legacy record to the new one,
-  which fails if anyone else moved it. If an abandoned revoke never lands, the
+  cancelled, which is safe: it can only be a read; a write of the call's own
+  record or lookup, inert until a slot names it; the claim, inert to admission;
+  the commit itself, whose outcome is then reported as unknown and whose slot
+  alone decides what admits; the revoke compare-and-set from `issued` naming
+  one record to `revoked`, which can only stop a token and fails if the slot
+  changed; or the adoption compare-and-set of a lookup from the legacy record to
+  the new one, which fails if anyone else moved it. If an abandoned revoke never lands, the
   undelivered rotation secret may keep admitting, but it never left the server:
   a liveness problem reported as `outcome_unknown`, never a credential exposure.
 

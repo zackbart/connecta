@@ -56,7 +56,8 @@ export async function routeAccessTokens(context: RouteContext, manager: AccessTo
       return privateJson({ error: "request ended" }, { status: 499 });
     }
     if (error instanceof AccessTokenError && error.code === "outcome_unknown") {
-      return privateJson({ error: "Rotation outcome unknown; rotate again" }, { status: 503 });
+      // A fixed, operation-specific sentence; it never carries storage text.
+      return privateJson({ error: error.message }, { status: 503 });
     }
     if (error instanceof AccessTokenError && error.code === "conflict") {
       return privateJson({ error: "The agent's token changed meanwhile; reload and retry" }, { status: 409 });
