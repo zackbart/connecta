@@ -207,9 +207,7 @@ describe("ConnectaConfig boundary", () => {
       connectors: [],
       auth: fakeClerkAuth(),
       maintainers: ["user_operator"],
-      identity: {
-        activityAccess: () => true,
-      },
+      identity: {},
       storage: memoryStorage(),
       publicUrl: "https://connecta.test",
       executor,
@@ -510,6 +508,26 @@ describe("ConnectaConfig schema", () => {
       "identity",
       { connectorAccess: () => "all" },
       "- ConnectaConfig.identity.connectorAccess\nidentity.connectorAccess was removed (#837): pools are the access model. List who may use plain /mcp in maintainers, and give each pool its tools and members.",
+    ],
+    [
+      "identity",
+      { credentialAdministration: () => "all" },
+      "- ConnectaConfig.identity.credentialAdministration\nidentity.credentialAdministration was removed (#837): maintainers administer shared credentials and OAuth grants.",
+    ],
+    [
+      "identity",
+      { personalConnection: () => "all" },
+      "- ConnectaConfig.identity.personalConnection\nidentity.personalConnection was removed (#837): pool members connect and disconnect their own personal connectors in their pools",
+    ],
+    [
+      "identity",
+      { accessTokenManagement: () => true },
+      "- ConnectaConfig.identity.accessTokenManagement\nidentity.accessTokenManagement was removed (#837): maintainers issue, rotate, and revoke agent tokens",
+    ],
+    [
+      "identity",
+      { activityAccess: () => true },
+      "- ConnectaConfig.identity.activityAccess\nidentity.activityAccess was removed (#837): maintainers read activity",
     ],
     [
       "grant",

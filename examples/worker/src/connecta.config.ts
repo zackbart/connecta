@@ -93,27 +93,19 @@ export default defineConfig((env: Env) => {
     // admits nothing.
     accessTokens: accessTokens(storage),
     // Code-owned roster. Access proves the identity; maintainers alone use
-    // plain /mcp, which serves every connector, and the operator UI. Startup
-    // refuses an empty list.
+    // plain /mcp, which serves every connector, and the operator UI, where they
+    // administer shared credentials, manage agent tokens, and read activity.
+    // Startup refuses an empty list.
     maintainers: env.CONNECTA_MAINTAINERS.split(",")
       .map((id) => id.trim())
       .filter(Boolean),
     // Everyone else, agents included, uses a pool that lists them: exactly
     // its tools at /mcp/<name>. Members are Access user ids or "agent:<name>".
     pools: { ci: { tools: ["echo"], members: ["agent:ci-client"] } },
-    // Management permissions apply to maintainers; here every maintainer may
-    // manage every connector and agent token. Narrow them with
-    // `activityAccess` and friends. Agent tokens never receive interactive
-    // authority.
-    identity: {
-      credentialAdministration: () => "all",
-      personalConnection: () => "all",
-      accessTokenManagement: () => true,
-    },
-    // Connectors that declare a `credential` slot become editable by every
-    // signed-in human who can see that connector, encrypted with this key
-    // before anything reaches D1. A saved replacement takes effect on the
-    // next call; credentials fail at use.
+    // Connectors that declare a `credential` slot become editable by a
+    // maintainer (shared) or by the member it belongs to (personal),
+    // encrypted with this key before anything reaches D1. A saved replacement
+    // takes effect on the next call; credentials fail at use.
     vault: env.CREDENTIAL_ENCRYPTION_KEY ? encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY) : undefined,
     // Payload-free activity at /ui/api/activity in CONNECTA_DB. The shared
     // D1 mapping persists the build version and validated client facts, and

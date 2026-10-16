@@ -37,7 +37,6 @@ import {
   authorize,
   mayManageConnector,
   memberPool,
-  validateAuthPermissions,
   type RouteContext,
   type RuntimeExecutionContext,
   type ServerOptions,
@@ -714,9 +713,7 @@ export function createMcpRoute(opts: ServerOptions): {
         // shares it, to save only the lookups an abandoned authorization
         // finishes on its own.
         const handled = Effect.gen(function* () {
-          const authz = yield* Effect.promise(() =>
-            authorize(localRequest, baseUrl, opts.config.auth, runtimeContext, opts.config.identity),
-          );
+          const authz = yield* Effect.promise(() => authorize(localRequest, baseUrl, opts.config.auth, runtimeContext));
           if (!authz.ok) {
             const response = authz.response;
             // Preserve the auth adapter's challenge and status. The MCP host must
@@ -785,7 +782,6 @@ export function createMcpRoute(opts: ServerOptions): {
           }
           let scopedRegistry: RegistryView;
           try {
-            validateAuthPermissions(authz, opts.registry);
             scopedRegistry = opts.registry.scoped({
               connectorIds: access.connectorIds,
               ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
@@ -795,20 +791,13 @@ export function createMcpRoute(opts: ServerOptions): {
               origin: request.headers.get("Origin"),
               currentResultAccess: async (address, classification, signal, access) => {
                 signal?.throwIfAborted();
-                const current = await authorize(
-                  localRequest,
-                  baseUrl,
-                  opts.config.auth,
-                  runtimeContext,
-                  opts.config.identity,
-                );
+                const current = await authorize(localRequest, baseUrl, opts.config.auth, runtimeContext);
                 if (!current.ok) {
                   await current.response.body?.cancel().catch(() => {});
                   return false;
                 }
                 if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
                   return false;
-                validateAuthPermissions(current, opts.registry);
                 // Paging re-admits the caller at this endpoint, as a new request would.
                 let currentAccess: ConnectorAccess = { connectorIds: "all" };
                 let currentReadOnly = opts.config.readOnly;

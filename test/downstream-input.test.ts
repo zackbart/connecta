@@ -234,7 +234,6 @@ function setup(
     publicUrl: BASE,
     ...(options.vault === false ? {} : { vault }),
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
-    identity: { credentialAdministration: () => (options.authFirst ? "all" : "none") },
     ...(options.authFirst ? { ui: operatorUi() } : {}),
     activity: activityHistory({ store: activity }),
     pools: {

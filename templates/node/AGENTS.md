@@ -19,9 +19,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - Prefer `api()` when the agent must see an exact reviewed capability surface;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
 - Optional modules (Clerk sign-in, credential vault, activity history) are type-checked code in `src/connecta.config.ts`, switched on by
-  their environment variables. Follow README "Select optional modules". Auth management requires explicit
-  `credentialAdministration` or `personalConnection` permissions; visibility
-  alone never grants it. Clerk supplies human identity; machine clients are the
+  their environment variables. Follow README "Select optional modules". Shared auth management
+  requires a signed-in maintainer, and a pool member manages only their own
+  account on a personal connector in their pools; visibility alone never grants it. Clerk supplies human identity; machine clients are the
   `agents` declared by name in `src/connecta.config.ts`, each with one `cta_` token.
   Keep `accessTokens(storage)` installed even before the first token exists.
   Issue or rotate an agent's token with `npm run --silent rotate-token -- <agent>`

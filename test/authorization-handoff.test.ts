@@ -62,7 +62,8 @@ it("INV-4 INV-7: repeated and concurrent program and catalog errors reuse one ha
 });
 
 it("INV-4: refuses OAuth error links when the admitted identity cannot manage auth", async () => {
-  const flow = setup({ manage: false, catalogAuth: true });
+  // A pool member who is not a maintainer cannot manage a shared connector (#837).
+  const flow = setup({ manage: false, catalogAuth: true, authScope: "shared" });
   const result = (await flow.rpc("execute_code", { code: AUTH_PROGRAM })).structuredContent.result;
   for (const error of [
     ...result.calls.map((call: { data: unknown }) => call.data),

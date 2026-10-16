@@ -9,8 +9,8 @@ This repository is deployment configuration, not a copy of Connecta itself.
   always installed over the same `CONNECTA_DB` for machines. Cloudflare Access
   admits the request before the Worker runs; a service identity alone is
   refused inside connecta. Do not add JWT parsing or another identity gate.
-  Grant `identity.accessTokenManagement` explicitly to interactive operators;
-  this example permits every signed-in human to manage connectors and tokens.
+  Signed-in maintainers alone manage shared credentials and agent tokens; pool
+  members connect only their own accounts on personal connectors in their pools.
 - Attach Access to the Worker itself, not only its hostname. Enable Managed
   OAuth on that Access application. CIMD is the spec's preferred client
   registration; enable DCR as the fallback Access currently requires.
@@ -67,7 +67,7 @@ This repository is deployment configuration, not a copy of Connecta itself.
   `AccessTokenManager.rotate` tooling against this same D1 storage, as README
   "Machine tokens" describes. Never configure a static bearer or open startup.
   UI, vault, and activity use explicit optional imports;
-  auth changes require code-derived shared or personal management permissions.
+  auth changes require a maintainer, or a pool member for their own personal account.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
   `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand

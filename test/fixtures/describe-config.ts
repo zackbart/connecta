@@ -133,9 +133,6 @@ export function secretBearingDeployment() {
         },
       }),
       activity: activityHistory({ store: activityStore, deploymentId: "production" }),
-      identity: {
-        credentialAdministration: fn("all") as never,
-      },
       readOnly: false,
       pools: {
         support: {

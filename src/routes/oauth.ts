@@ -12,7 +12,6 @@ import {
   authorizeUiIdentity,
   withSessionCookies,
   mayManageConnector,
-  validateAuthPermissions,
   loggableValue,
   type RouteContext,
 } from "./shared.js";
@@ -195,7 +194,6 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
       opts.config.auth,
       "OAuth callback",
       context.runtimeContext,
-      opts.config.identity,
     );
     if (!browserIdentity.ok) {
       if (browserIdentity.response.status === 401 && authorizationCredential(context.request).kind !== "absent")
@@ -207,11 +205,6 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
       return refused();
     }
     if (!expectedPrincipalKey || browserIdentity.principalKey !== expectedPrincipalKey) return refused();
-    try {
-      validateAuthPermissions(browserIdentity, opts.registry);
-    } catch {
-      return refused();
-    }
     if (!mayManageConnector(opts, browserIdentity, connector)) return refused();
     // CSRF / login-fixation guard: this route is intentionally public, so verify
     // the `state` matches the flow connecta started BEFORE exchanging the code.

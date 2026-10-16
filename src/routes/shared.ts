@@ -14,7 +14,7 @@ import type {
 } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
 import { assertsAgents, isAgentName } from "../agent-identity.js";
-import type { ConnectorPermission, ConnectaIdentityConfig, ResolvedConfig } from "../config.js";
+import type { ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
 
 export interface ServerOptions {
@@ -162,7 +162,6 @@ export async function authorize(
   baseUrl: string,
   auth: readonly InboundAuth[],
   runtimeContext?: RuntimeExecutionContext,
-  identityConfig?: ConnectaIdentityConfig,
   partitionIdentity = true,
   interactiveOnly = false,
 ): Promise<
@@ -173,12 +172,6 @@ export async function authorize(
       sessionCookies?: readonly string[];
       subjectKey?: string;
       principalKey?: string;
-      operator: boolean;
-      accessTokenManagement: boolean;
-      credentialAdministration: ConnectorPermission;
-      personalConnection: ConnectorPermission;
-      /** Backward-compatible name used by operator views. */
-      uiAdminEligible?: boolean;
     }
   | { ok: false; response: Response }
 > {
@@ -212,15 +205,7 @@ export async function authorize(
   if (auth.length === 0 && !interactiveOnly && !explicit) {
     const actor = { kind: "anonymous" } as const;
     const identity: AuthenticatedIdentity = { actor, interactive: false };
-    return {
-      ok: true,
-      actor,
-      identity,
-      operator: false,
-      accessTokenManagement: false,
-      credentialAdministration: "none",
-      personalConnection: "none",
-    };
+    return { ok: true, actor, identity };
   }
   let recognized: InboundAuth | undefined;
   try {
@@ -308,43 +293,6 @@ export async function authorize(
         ...(agent !== undefined ? { agent } : {}),
         interactive,
       };
-      let operator = interactive;
-      let accessTokenManagement = false;
-      let credentialAdministration: ConnectorPermission = "none";
-      let personalConnection: ConnectorPermission = "none";
-      try {
-        if (identityConfig?.activityAccess) {
-          operator = principal ? await identityConfig.activityAccess(principal) : false;
-        }
-        if (interactive) {
-          accessTokenManagement = identityConfig?.accessTokenManagement
-            ? await identityConfig.accessTokenManagement(identity)
-            : false;
-          if (typeof accessTokenManagement !== "boolean") throw new Error("invalid token management permission");
-          credentialAdministration = identityConfig?.credentialAdministration
-            ? await identityConfig.credentialAdministration(identity)
-            : "none";
-          personalConnection =
-            principal && identityConfig?.personalConnection
-              ? await identityConfig.personalConnection(identity)
-              : "none";
-        }
-        if (typeof operator !== "boolean") throw new Error("invalid activity permission");
-        for (const permission of [credentialAdministration, personalConnection]) {
-          if (
-            permission !== "all" &&
-            permission !== "none" &&
-            (!Array.isArray(permission) ||
-              !permission.every((id) => typeof id === "string" && /^[a-z0-9_-]+$/.test(id)))
-          )
-            throw new Error("invalid identity permission");
-        }
-      } catch {
-        return {
-          ok: false,
-          response: privateJson({ error: "identity access resolution failed" }, { status: 403 }),
-        };
-      }
       return {
         ok: true,
         actor,
@@ -352,11 +300,6 @@ export async function authorize(
         ...(result.sessionCookies?.length ? { sessionCookies: result.sessionCookies } : {}),
         ...(subject && partitionIdentity ? { subjectKey: await identityStorageKey(subject) } : {}),
         ...(principal && partitionIdentity ? { principalKey: await identityStorageKey(principal) } : {}),
-        accessTokenManagement,
-        credentialAdministration,
-        personalConnection,
-        operator,
-        ...(interactive && operator ? { uiAdminEligible: true } : {}),
       };
     }
     lastResponse = result.response;
@@ -388,7 +331,6 @@ export async function authorizeUiIdentity(
   auth: readonly InboundAuth[],
   purpose: string,
   runtimeContext?: RuntimeExecutionContext,
-  identityConfig?: ConnectaIdentityConfig,
 ): Promise<Awaited<ReturnType<typeof authorize>>> {
   if (!auth.some((provider) => provider.interactiveOperator)) {
     return {
@@ -396,7 +338,7 @@ export async function authorizeUiIdentity(
       response: privateJson({ error: `${purpose} requires interactive user authentication` }, { status: 403 }),
     };
   }
-  return authorize(request, baseUrl, auth, runtimeContext, identityConfig, true, true);
+  return authorize(request, baseUrl, auth, runtimeContext, true, true);
 }
 
 export function isSameOrigin(request: Request, baseUrl: string): boolean {
@@ -447,15 +389,16 @@ export function memberPool(
 }
 
 /**
- * Connectors whose auth this identity may manage, at most: every connector
- * for a maintainer, else the connectors of the pools it belongs to. The
- * management permissions still decide within this set.
+ * The connectors of every pool this identity is a member of (#837): what a
+ * pool member may ever manage, and only their personal ones among these.
  */
-function manageableConnectors(opts: ServerOptions, authz: AuthorizedIdentity): "all" | ReadonlySet<string> {
-  if (admitsMaintainer(opts, authz)) return "all";
+export function memberConnectors(
+  opts: ServerOptions,
+  identity: Readonly<AuthenticatedIdentity>,
+): "all" | ReadonlySet<string> {
   const ids = new Set<string>();
   for (const name of opts.pools.keys()) {
-    const pool = memberPool(opts, name, authz.identity);
+    const pool = memberPool(opts, name, identity);
     if (!pool) continue;
     if (pool.access.connectorIds === "all") return "all";
     for (const id of pool.access.connectorIds) ids.add(id);
@@ -463,37 +406,42 @@ function manageableConnectors(opts: ServerOptions, authz: AuthorizedIdentity): "
   return ids;
 }
 
-/** Unknown configured ids refuse the complete view, including management rights. */
-export function validateAuthPermissions(authz: AuthorizedIdentity, registry: Registry): void {
-  for (const value of [authz.credentialAdministration, authz.personalConnection]) {
-    if (value === "all" || value === "none") continue;
-    if (!Array.isArray(value) || value.some((id) => !registry.getConnector(id))) {
-      throw new Error("invalid identity permission connector ids");
-    }
-  }
-}
-
 /**
- * Whether this identity may start, finish, or remove a connector's auth.
- * Shared auth is deployment-wide, so only a maintainer may change it (#837);
- * a pool member may manage only a personal connector in one of their pools,
- * always in their own partition, which callers bind by principal. Every path
- * that issues a link, starts, completes, or disconnects auth, or writes a
- * credential, asks this, and the management permissions still apply on top
- * until P2.
+ * Whether this identity may start, finish, or remove a connector's auth
+ * (#837). Only an interactive person ever may; an agent or any other machine
+ * credential manages nothing. Shared auth is deployment-wide, so it takes a
+ * maintainer. A personal connector takes a stable principal that is a
+ * maintainer, whose plain `/mcp` includes it, or a member of a pool that
+ * contains it; either way it is always the caller's own partition, which
+ * callers bind by principal. Every path that issues a link, starts,
+ * completes, or disconnects auth, or writes a credential, asks this.
  */
 export function mayManageConnector(
   opts: ServerOptions,
   authz: AuthorizedIdentity,
   connector: { id: string; authScope?: "shared" | "personal" },
 ): boolean {
-  if (!authz.identity.interactive) return false;
-  const personal = connector.authScope === "personal";
-  if (!personal && !admitsMaintainer(opts, authz)) return false;
-  const visible = manageableConnectors(opts, authz);
-  if (visible !== "all" && !visible.has(connector.id)) return false;
-  const permission = personal ? authz.personalConnection : authz.credentialAdministration;
-  return permission === "all" || (permission !== "none" && permission.includes(connector.id));
+  const identity = authz.identity;
+  if (!identity.interactive || identity.agent !== undefined || !identity.principal) return false;
+  if (isMaintainer(opts.maintainers, identity)) return true;
+  if (connector.authScope !== "personal") return false;
+  const pools = memberConnectors(opts, identity);
+  return pools === "all" || pools.has(connector.id);
+}
+
+/** Agent token list, issue, rotate, and revoke: an interactive maintainer only (#837). */
+export function managesAgentTokens(opts: ServerOptions, authz: AuthorizedIdentity): boolean {
+  return (
+    authz.identity.interactive && authz.identity.agent === undefined && isMaintainer(opts.maintainers, authz.identity)
+  );
+}
+
+/**
+ * Activity reads: a maintainer principal, interactive or not (#837). Members
+ * and agents read none, and an open deployment has no maintainer.
+ */
+export function readsActivity(opts: ServerOptions, authz: AuthorizedIdentity): boolean {
+  return isMaintainer(opts.maintainers, authz.identity);
 }
 
 /** Preserve refreshed browser cookies on the redirect or completion page. */

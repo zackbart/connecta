@@ -240,16 +240,12 @@ Access service headers alone never grant MCP access or interactive authority.
 Keep users, groups, and admission in Access. Connector visibility and management
 permissions belong in `src/connecta.config.ts`.
 
-`maintainers` and each pool's `members` select who reaches which endpoint.
-`credentialAdministration` separately allows shared credential and OAuth
-management, while `personalConnection` allows a human to connect their own
-account. Both management permissions default to none. Grant the intended
-owner's shared permissions explicitly, and grant users personal permissions
-only for connectors configured with `authScope: "personal"`. Static headers
-remain deployment configuration. `activityAccess` governs global history reads.
-`accessTokenManagement` separately allows interactive operators to issue, rotate,
-and revoke agent tokens. This example grants that permission to every signed-in
-human, matching its connector-management permissions; narrow all three for a team.
+`maintainers` and each pool's `members` select who reaches which endpoint and
+who manages what. Signed-in maintainers alone administer shared credentials
+and OAuth grants, issue, rotate, and revoke agent tokens, and read activity.
+A pool member connects their own account only on connectors configured with
+`authScope: "personal"` in their pools. Static headers remain deployment
+configuration.
 See [inbound identity](../../documentation/auth.md#principals-visibility-and-operators).
 
 ### Machine tokens
@@ -337,7 +333,7 @@ does not create credentials or permissions by itself.
 Interactive MCP clients use Access Managed OAuth. Machine clients need both
 Access service credentials and a declared agent's `cta_` bearer, issued as
 described in [Machine tokens](#machine-tokens). `accessTokens(storage)` is always
-enabled, and the example grants token management to every interactive Access operator.
+enabled, and every signed-in maintainer manages agent tokens.
 Keep maintainers, pools, and their members in deployment code. Until agent
 endpoints ship, an agent reaches only `/mcp/<pool>` for a pool that lists it
 (the example's `ci` pool lists `agent:ci-client`); plain `/mcp` refuses it.

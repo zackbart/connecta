@@ -187,18 +187,16 @@ routes. [Inbound auth](https://github.com/zackbart/connecta/blob/main/documentat
 explains configuration, verification, and fixed rejection reason codes.
 Machine clients are the declared `agents`, each using a connecta-issued
 `cta_` token through `accessTokens(storage)`, which `src/connecta.config.ts`
-configures on the database. Grant explicit `identity.accessTokenManagement`
-permissions to let a signed-in human issue, rotate, and revoke them. Trusted
-local rotation above works without Clerk and never requires opening the
-server.
+configures on the database. A signed-in maintainer issues, rotates, and
+revokes them from the operator UI. Trusted local rotation above works without
+Clerk and never requires opening the server.
 
 Set who uses what in code: `maintainers` for plain `/mcp` and the operator UI,
 and each pool's `members` for `/mcp/<pool>`, which serves exactly that pool's
-`tools`. `credentialAdministration` permits shared-auth changes, and
-`personalConnection` permits the signed-in principal's personal-auth changes.
-Both management permissions default to none. Use `authScope: "personal"` for a
-connector where each person should connect their own downstream account.
-`activityAccess` separately selects readers of global activity.
+`tools`. Maintainers alone administer shared credentials and OAuth grants,
+manage agent tokens, and read activity. Use `authScope: "personal"` for a
+connector where each person should connect their own downstream account: a
+member connects their own account on the personal connectors in their pools.
 
 ### Credential vault
 
@@ -243,7 +241,7 @@ Diagnostics are independent. Keep the default logger or provide your own;
 
 The UI displays connections and current permissions. Configuration still owns
 the connector set, tool definitions, and access rules. Access token management
-requires explicit Clerk operator permission. There is no team roster or policy editor.
+requires a signed-in Clerk maintainer. There is no team roster or policy editor.
 
 ## Deployment contract
 
@@ -292,8 +290,7 @@ Upgrading from v0.23 does not require rotating managed `cta_…` tokens. Import
 `accessTokens` from `@zackbart/connecta/auth/access-tokens`, replace the old
 `accessTokens: true` with `accessTokens: accessTokens(storage)`, and keep the
 same persistent storage namespace. From 0.33 `maintainers` and pool `members`
-replace `identity.connectorAccess` and every `grant`. Enable
-`identity.accessTokenManagement` only for the interactive operators who should
-manage tokens. From 0.33 a stored token admits only once it is bound to a
+replace `identity.connectorAccess` and every `grant`, and maintainers replace
+the four `identity` management permissions; delete them. From 0.33 a stored token admits only once it is bound to a
 declared agent: follow "Tokens issued before agents" above. See the package's
 `documentation/auth.md` for the migration and storage requirements.

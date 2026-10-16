@@ -21,7 +21,7 @@ import type { Connector } from "../types.js";
 import { uiProblemFor } from "../ui.js";
 import { authorized, refuse, serveOperator, visibleRegistry, type Answer, type Authorized } from "./operator.js";
 import { isMaintainer } from "../membership.js";
-import { mayManageConnector, privateJson, type RouteContext } from "./shared.js";
+import { managesAgentTokens, mayManageConnector, privateJson, readsActivity, type RouteContext } from "./shared.js";
 
 const attempt = <A>(operation: () => Promise<A>) => Effect.tryPromise({ try: operation, catch: (error) => error });
 const validName = (name: string) => recordedToolName({ name }) === name;
@@ -126,7 +126,7 @@ function lastCalls(
 ): Effect.Effect<OperatorUiContract["live"]["activity"]> {
   const activity = context.opts.config.activity;
   if (!activity?.store.list) return Effect.succeed("unconfigured");
-  if (!authz.operator) return Effect.succeed("forbidden");
+  if (!readsActivity(context.opts, authz)) return Effect.succeed("forbidden");
   return Effect.gen(function* () {
     const permitted = activity.readGate
       ? yield* attempt(async () => (await activity.readGate!(authz.actor)) === true).pipe(
@@ -236,9 +236,7 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
         pools,
         permissions: {
           activity: activity === "available" || activity === "unavailable",
-          accessTokenManagement: Boolean(
-            opts.config.accessTokens && authz.accessTokenManagement && authz.identity.principal,
-          ),
+          accessTokenManagement: Boolean(opts.config.accessTokens) && managesAgentTokens(opts, authz),
           connectors: visible.map((c) => ({
             id: c.id,
             use: true,

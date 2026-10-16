@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { customExecutor, createConnecta, type ConnectaIdentityConfig, type Connector } from "../src/index.js";
+import { customExecutor, createConnecta, type Connector } from "../src/index.js";
 import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import { authorize } from "../src/routes/shared.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 
 const BASE = "https://connecta.test";
@@ -24,7 +23,7 @@ function connector(id = "shared", personal = false): Connector {
     status: vi.fn(async () => ({ state: "ok" as const })),
   };
 }
-function deployment(identity?: ConnectaIdentityConfig) {
+function deployment() {
   const storage = memoryStorage();
   return createConnecta({
     readOnly: false,
@@ -37,7 +36,6 @@ function deployment(identity?: ConnectaIdentityConfig) {
     storage,
     vault: encryptedCredentialVault(storage, btoa("a".repeat(32))),
     ui: operatorUi(),
-    ...(identity ? { identity } : {}),
   });
 }
 
@@ -189,7 +187,6 @@ describe("optional deployment modules", () => {
       ui: operatorUi(),
       vault,
       logger: "silent",
-      identity: { credentialAdministration: () => "all" },
       discovery: { probeTimeoutMs: 10 },
     });
     const response = await app.fetch(new Request(BASE + "/ui/connectors/shared", { headers }));
@@ -201,7 +198,7 @@ describe("optional deployment modules", () => {
     expect(c.closeScope).toHaveBeenCalledOnce();
   });
 
-  it("defaults both auth management permissions to none and hides secret metadata", async () => {
+  it("INV-4: a maintainer manages shared credentials and their own personal ones", async () => {
     const app = deployment();
     for (const id of ["shared", "personal"]) {
       const response = await app.fetch(
@@ -211,47 +208,9 @@ describe("optional deployment modules", () => {
           body: JSON.stringify({ value: "private-key-value" }),
         }),
       );
-      expect(response.status).toBe(403);
-      const detail = await app.fetch(new Request(`${BASE}/ui/connectors/${id}`, { headers }));
-      expect(await detail.json()).not.toHaveProperty("credential");
+      expect(response.status).toBe(200);
+      expect(await response.text()).not.toContain("private-key-value");
     }
-  });
-
-  it("grants shared and personal auth management independently of use", async () => {
-    const app = deployment({ credentialAdministration: () => ["shared"] });
-    const put = (id: string) =>
-      app.fetch(
-        new Request(`${BASE}/ui/credentials/${id}`, {
-          method: "PUT",
-          headers,
-          body: JSON.stringify({ value: "private-key-value" }),
-        }),
-      );
-    expect((await put("shared")).status).toBe(200);
-    expect((await put("personal")).status).toBe(403);
-    const invalid = deployment({ credentialAdministration: () => ["typo"] });
-    expect((await invalid.fetch(new Request(BASE + "/ui/data", { headers }))).status).toBe(403);
-  });
-
-  it.each([
-    { activityAccess: () => "false" },
-    { activityAccess: () => ({}) },
-    { personalConnection: () => undefined },
-    { credentialAdministration: () => ["invalid.id"] },
-    {
-      activityAccess: () => {
-        throw new Error("resolver failed");
-      },
-    },
-  ])("fails closed on invalid resolver results", async (identity) => {
-    const result = await authorize(
-      new Request(BASE, { headers }),
-      BASE,
-      [auth],
-      undefined,
-      identity as unknown as ConnectaIdentityConfig,
-    );
-    expect(result.ok).toBe(false);
   });
 
   it("allows authorized MCP OAuth initiation and completion with no UI", async () => {
@@ -273,7 +232,6 @@ describe("optional deployment modules", () => {
       vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))),
       logger: "silent",
       publicUrl: BASE,
-      identity: { credentialAdministration: () => "all" },
     });
     const response = await mcpRpc(
       app,
@@ -293,40 +251,36 @@ describe("optional deployment modules", () => {
     expect(await callback.text()).not.toContain('href="/"');
   });
 
-  it.each([true, false])(
-    "keeps shared OAuth capability after details load for a namespaced human (admin=%s)",
-    async (admin) => {
-      const oauth: Connector = {
-        ...connector("oauth"),
-        startAuth: vi.fn(async () => ({ state: "ok" as const })),
-        disconnectAuth: vi.fn(async () => {}),
-      };
-      const app = createConnecta({
-        readOnly: false,
-        connectors: [oauth],
-        executor,
-        auth,
-        maintainers,
-        ui: operatorUi(),
-        logger: "silent",
-        identity: { credentialAdministration: () => (admin ? "all" : "none") },
-      });
-      const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
-      const configured = ((await list.json()) as any).connectors[0];
-      const details = await app.fetch(new Request(BASE + "/ui/connectors/oauth", { headers }));
-      const loaded = await details.json();
-      const expected = {
-        oauth: true,
-        permissions: { use: true, manageSharedAuth: admin, connectPersonal: false },
-      };
-      expect(configured).toMatchObject(expected);
-      expect(loaded).toMatchObject(expected);
-      expect(oauth.startAuth).not.toHaveBeenCalled();
-      expect(oauth.disconnectAuth).not.toHaveBeenCalled();
-    },
-  );
+  it("keeps shared OAuth capability after details load for a namespaced maintainer", async () => {
+    const oauth: Connector = {
+      ...connector("oauth"),
+      startAuth: vi.fn(async () => ({ state: "ok" as const })),
+      disconnectAuth: vi.fn(async () => {}),
+    };
+    const app = createConnecta({
+      readOnly: false,
+      connectors: [oauth],
+      executor,
+      auth,
+      maintainers,
+      ui: operatorUi(),
+      logger: "silent",
+    });
+    const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
+    const configured = ((await list.json()) as any).connectors[0];
+    const details = await app.fetch(new Request(BASE + "/ui/connectors/oauth", { headers }));
+    const loaded = await details.json();
+    const expected = {
+      oauth: true,
+      permissions: { use: true, manageSharedAuth: true, connectPersonal: false },
+    };
+    expect(configured).toMatchObject(expected);
+    expect(loaded).toMatchObject(expected);
+    expect(oauth.startAuth).not.toHaveBeenCalled();
+    expect(oauth.disconnectAuth).not.toHaveBeenCalled();
+  });
 
-  it("never starts OAuth for a use-only identity or a revoked browser grant", async () => {
+  it("INV-4: never starts shared OAuth for a pool member who is not a maintainer", async () => {
     const oauth: Connector = {
       ...connector("oauth"),
       startAuth: vi.fn(async () => ({ state: "ok" as const })),
@@ -338,7 +292,8 @@ describe("optional deployment modules", () => {
       connectors: [oauth],
       executor,
       auth,
-      maintainers,
+      maintainers: ["user_maintainer"],
+      pools: { team: { tools: ["oauth"], members: ["user_operator"] } },
       vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))),
       logger: "silent",
       publicUrl: BASE,
@@ -347,7 +302,7 @@ describe("optional deployment modules", () => {
       app,
       "tools/call",
       { name: "authorize_connector", arguments: { connector: "oauth" } },
-      { baseUrl: BASE, token: "human" },
+      { baseUrl: BASE, token: "human", pool: "team" },
     );
     expect(await response.text()).toContain("not permitted");
     expect(oauth.startAuth).not.toHaveBeenCalled();
@@ -374,7 +329,7 @@ describe("optional deployment modules", () => {
     expect(await callback.codeVerifier()).toBe("original");
   });
 
-  it("mounts activity only with a reader and enforces interactive access", async () => {
+  it("INV-4: mounts activity only with a reader and admits maintainers alone", async () => {
     const app = createConnecta({
       readOnly: false,
       connectors: [],
@@ -388,15 +343,17 @@ describe("optional deployment modules", () => {
     expect((await app.fetch(new Request(BASE + "/ui/activity", { headers }))).status).toBe(200);
     const denied = createConnecta({
       readOnly: false,
-      connectors: [],
+      connectors: [connector()],
       executor,
       auth,
-      maintainers,
+      maintainers: ["user_maintainer"],
+      pools: { team: { tools: ["shared"], members: ["user_operator"] } },
       ui: operatorUi(),
       activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
-      identity: { activityAccess: () => false },
       logger: "silent",
     });
-    expect((await denied.fetch(new Request(BASE + "/ui/activity", { headers }))).status).toBe(403);
+    const refused = await denied.fetch(new Request(BASE + "/ui/activity", { headers }));
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toEqual({ error: "not found" });
   });
 });

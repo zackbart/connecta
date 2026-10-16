@@ -28,10 +28,8 @@ export type {
   ConnectaConfig,
   ConnectaDiscoveryConfig,
   ConnectaExecuteConfig,
-  ConnectaIdentityConfig,
   ConnectaPoolConfig,
   ConnectaResultsConfig,
-  ConnectorPermission,
   RequestAdmissionConfig,
 } from "./config.js";
 export type { MemberRef } from "./membership.js";
@@ -49,7 +47,7 @@ export interface Connecta {
   /**
    * A secret-free snapshot of the configuration this deployment runs with,
    * built once at construction: limits and where each came from, auth
-   * providers, identity rules, pools, modules, and every connector's source,
+   * providers, maintainers, agents, pools, modules, and every connector's source,
    * endpoint, auth mode, and static tools. Header values, keys, client
    * secrets, credentials, and functions never appear. The same object is
    * returned on every call.

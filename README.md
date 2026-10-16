@@ -123,10 +123,10 @@ several people within one tenant, each with the access you assign.
 ## A place to see your connections
 
 The optional operator UI shows connected services, available tools, access,
-and configuration. Authorized people can connect accounts, manage credentials,
-and issue or rotate agent tokens. Optional activity history shows who called what,
+and configuration. Maintainers manage shared credentials, issue or rotate agent
+tokens, and read the optional activity history, which shows who called what,
 when, and whether it worked, without recording arguments, results, or program
-code. The UI's controls follow the signed-in person's permissions.
+code. Pool members connect their own accounts on personal connections.
 
 Your agent or developer changes the integrations and access rules in deployment
 code. The UI helps you inspect them and manage authentication.

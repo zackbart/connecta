@@ -19,7 +19,7 @@ import {
   type Answer,
   type Authorized,
 } from "./operator.js";
-import { mayManageConnector, privateJson, type RouteContext } from "./shared.js";
+import { managesAgentTokens, mayManageConnector, privateJson, readsActivity, type RouteContext } from "./shared.js";
 import { routeUiConfig } from "./ui-config.js";
 import { uiData } from "./ui-data.js";
 
@@ -144,7 +144,7 @@ function operatorView({ opts }: RouteContext, authz: Authorized, registry: Regis
     manageSharedAuth: connector.authScope !== "personal" && mayManage(connector.id),
     connectPersonal: connector.authScope === "personal" && mayManage(connector.id),
   });
-  const activityEnabled = Boolean(opts.config.activity?.store.list) && authz.operator;
+  const activityEnabled = Boolean(opts.config.activity?.store.list) && readsActivity(opts, authz);
   const credentialManagement = visible.some((c) => c.credential && mayManage(c.id))
     ? opts.config.vault
       ? ("available" as const)
@@ -206,8 +206,7 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
       activityEnabled,
       ...(opts.config.accessTokens
         ? {
-            accessTokenManagement:
-              authz.accessTokenManagement && authz.identity.principal ? "available" : "requires_operator",
+            accessTokenManagement: managesAgentTokens(opts, authz) ? "available" : "requires_operator",
           }
         : {}),
       credentialManagement,

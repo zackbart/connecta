@@ -234,12 +234,8 @@ describe("deployment shapes", () => {
     const env = (extra: Record<string, unknown>) =>
       ({ ...base, ...extra }) as unknown as Parameters<typeof workerConfig>[0];
     const config = workerConfig(env({}));
-    expect(
-      config.identity?.accessTokenManagement?.({
-        interactive: true,
-        actor: { kind: "cloudflare-access", id: "operator" },
-      }),
-    ).toBe(true);
+    // Maintainers decide management (#837); no resolver remains to configure.
+    expect(config).not.toHaveProperty("identity");
     const off = createConnecta({ ...config, logger: "silent" });
     const quiet = off.describeConfig();
     expect(quiet.maintainers).toEqual([{ namespace: "cloudflare-access", id: "operator@example.com" }]);

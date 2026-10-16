@@ -18,7 +18,6 @@ import {
   authorizeUiIdentity,
   mayManageConnector,
   privateJson,
-  validateAuthPermissions,
   withSessionCookies,
   type RouteContext,
 } from "./shared.js";
@@ -100,14 +99,7 @@ async function connect(context: RouteContext): Promise<Response> {
       headers: { Location: target.href, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
     });
   };
-  const authz = await authorizeUiIdentity(
-    request,
-    baseUrl,
-    opts.config.auth,
-    "OAuth connection",
-    runtimeContext,
-    opts.config.identity,
-  );
+  const authz = await authorizeUiIdentity(request, baseUrl, opts.config.auth, "OAuth connection", runtimeContext);
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.
     // The sign-in page returns to this link, which then sends a maintainer on
@@ -123,11 +115,6 @@ async function connect(context: RouteContext): Promise<Response> {
       if (opts.config.ui) return authPage();
     }
     return authz.response;
-  }
-  try {
-    validateAuthPermissions(authz, opts.registry);
-  } catch {
-    return refuse("forbidden");
   }
   const connector = opts.registry.getConnector(id)!;
   // Visibility is the caller's pools, or everything for a maintainer, so a

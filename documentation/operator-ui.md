@@ -40,12 +40,12 @@ the UI changes only authorized authentication material.
 
 Install the vault for declared credential slots and activity history for
 persisted call records. Neither module grants permission to manage or read
-it. Credential administration, personal connection, access-token management,
-and activity access are separate identity decisions, denied by default where
-specified in [auth](./auth.md#management-permissions). Token management
-issues, rotates, and revokes the tokens of agents declared in code; it never
-creates, renames, or binds an agent. Agent tokens never grant interactive
-credential or token management authority.
+it: [auth](./auth.md#management-permissions) does. Interactive maintainers
+administer shared credentials and agent tokens, maintainers read activity, and
+pool members connect their own accounts on personal connectors in their pools.
+Token management issues, rotates, and revokes the tokens of agents declared in
+code; it never creates, renames, or binds an agent. Agent tokens never grant
+interactive credential or token management authority.
 
 ## Operator data contract
 
@@ -67,13 +67,15 @@ ids and pool names and are filtered after disclosure; hidden values leave no
 provenance keys. It contains no source code or credential material.
 Every response is private, `no-store` JSON. Only GET is allowed, with the
 same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
-These catalog reads, activity reads, connector auth routes, and access-token
-routes require a maintainer. Anyone else gets a private JSON 404
-`{ "error": "not found" }`; until the member view ships in P6b of
+These catalog reads, activity reads, and access-token routes require a
+maintainer. Anyone else gets a private JSON 404 `{ "error": "not found" }`;
+until the member view ships in P6b of
 [#837](https://github.com/zackbart/connecta/issues/837), pool members who are
-not maintainers have no operator UI. Public HTML shells and static assets carry
-no catalog data. Access-token management also retains its interactive
-permission gate.
+not maintainers have no operator UI. The connector auth routes,
+`/ui/oauth/<id>` and `/ui/credentials/<id>`, also admit a pool member for a
+personal connector in one of their pools, in their own partition. Public HTML
+shells and static assets carry no catalog data. Access-token management also
+requires an interactive session.
 
 `live.connectors` carries status and problem codes, complete registry tools
 with their final read/write classification, catalog age in milliseconds, and
@@ -169,9 +171,9 @@ is empty. Endpoints, Connectors, connector
 detail, and Settings consume the typed contract. Activity retains
 its authenticated data routes. Connector detail tabs live
 in the URL hash; Activity filters live in the query string and apply to loaded
-history. Both `/ui/activity` and `/ui/api/activity` require Activity access and
-pass the optional activity `readGate`. Interactive operators and machine callers
-admitted by `identity.activityAccess` share the same history disclosure rules.
+history. Both `/ui/activity` and `/ui/api/activity` require a maintainer
+principal, interactive or not, and pass the optional activity `readGate`.
+Interactive and machine maintainer reads share the same history disclosure rules.
 Connector/tool grants and grants for the recorded pool filter each event. Shared
 connector history can include other principals' events, with recorded request
 IDs, validated client name/version and package version, and actor kind, ID and

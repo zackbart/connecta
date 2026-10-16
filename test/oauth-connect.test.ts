@@ -33,7 +33,6 @@ function setup(
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   let state = "";
-  let permitted = true;
   const startAuth = vi.fn(async (ctx, opts) => {
     state = crypto.randomUUID();
     await ctx.storage.set("state", state);
@@ -65,29 +64,27 @@ function setup(
             }),
             activityActorNamespace: "https://clerk.example.test",
           }));
-  // Alice and Bob are both maintainers, so they reach plain /mcp and, with
-  // the operator UI mounted, a connect link hops through /connectors/service.
-  // `bobMember` makes Bob only a member of a pool holding the connector.
+  // Alice is a maintainer, so she reaches plain /mcp and, with the operator
+  // UI mounted, a connect link hops through /connectors/service. `bobAdmin`
+  // makes Bob a maintainer too; `bobMember` makes him only a member of a pool
+  // holding the connector. Maintainers alone administer shared auth (#837).
   const namespace = provider === "access" ? "cloudflare-access" : "https://clerk.example.test";
-  const app = createTestConnecta({
-    ...(options.ui === false ? { ui: undefined } : {}),
-    connectors: [connector],
-    auth,
-    ...(options.interactive === false
-      ? {}
-      : { maintainers: (options.bobMember ? ["alice"] : ["alice", "bob"]).map((id) => ({ namespace, id })) }),
-    ...(options.bobMember ? { pools: { team: { tools: ["service"], members: [{ namespace, id: "bob" }] } } } : {}),
-    storage,
-    publicUrl: BASE,
-    logger: "silent",
-    ...(options.vault === false ? {} : { vault }),
-    identity: {
-      credentialAdministration: (identity) =>
-        permitted && (identity.principal?.id === "alice" || options.bobAdmin) ? "all" : "none",
-      personalConnection: () => (permitted ? "all" : "none"),
-    },
-  });
-  deployments.push(app);
+  const build = (maintainerIds: string[]) => {
+    const deployment = createTestConnecta({
+      ...(options.ui === false ? { ui: undefined } : {}),
+      connectors: [connector],
+      auth,
+      ...(options.interactive === false ? {} : { maintainers: maintainerIds.map((id) => ({ namespace, id })) }),
+      ...(options.bobMember ? { pools: { team: { tools: ["service"], members: [{ namespace, id: "bob" }] } } } : {}),
+      storage,
+      publicUrl: BASE,
+      logger: "silent",
+      ...(options.vault === false ? {} : { vault }),
+    });
+    deployments.push(deployment);
+    return deployment;
+  };
+  let app = build(options.bobAdmin && !options.bobMember ? ["alice", "bob"] : ["alice"]);
   const runtime = (user?: string) =>
     provider === "access"
       ? {
@@ -131,7 +128,9 @@ function setup(
   const callback = (user?: string, candidate = state) =>
     browser(`${BASE}/oauth/callback/service?code=code&state=${candidate}`, user);
   return {
-    app,
+    get app() {
+      return app;
+    },
     browser,
     authorize,
     callback,
@@ -141,8 +140,9 @@ function setup(
     vault,
     headers,
     runtime,
+    /** Redeploy over the same storage with Alice no longer a maintainer, as removing her from code does. */
     revoke: () => {
-      permitted = false;
+      app = build(["bob"]);
     },
   };
 }
@@ -366,7 +366,7 @@ for (const provider of ["clerk", "access"] as const) {
     });
   }
   it(`INV-4: ${provider} starts a pool member's personal link directly, while a maintainer's hops through the UI`, async () => {
-    const flow = setup(provider, "personal", { bobMember: true, bobAdmin: true });
+    const flow = setup(provider, "personal", { bobMember: true });
     // A member is not a maintainer: plain /mcp answers it with the 404.
     const plain = await flow.app.fetch(
       mcpRpc(
@@ -401,8 +401,8 @@ for (const provider of ["clerk", "access"] as const) {
     expect(new URL(hop.headers.get("Location")!, BASE).pathname).toBe("/connectors/service");
     expect(flow.startAuth).toHaveBeenCalledOnce();
   });
-  it(`INV-4 INV-5: ${provider} refuses a pool member every step of shared auth, even with credentialAdministration`, async () => {
-    const flow = setup(provider, "shared", { bobMember: true, bobAdmin: true });
+  it(`INV-4 INV-5: ${provider} refuses a pool member every step of shared auth`, async () => {
+    const flow = setup(provider, "shared", { bobMember: true });
     // Issuance: no link for the member.
     expect((await flow.authorize("bob")).recovery).toBe("unavailable");
     // Start and completion of a maintainer's link, signed in as the member.
@@ -424,8 +424,8 @@ for (const provider of ["clerk", "access"] as const) {
     expect((await flow.callback("alice")).status).toBe(200);
     expect(flow.finishAuth).toHaveBeenCalledOnce();
   });
-  it(`${provider} requires shared credential administration`, async () => {
-    const flow = setup(provider, "shared");
+  it(`INV-4: ${provider} requires a maintainer for shared credential administration`, async () => {
+    const flow = setup(provider, "shared", { bobMember: true });
     expect((await flow.authorize("bob")).recovery).toBe("unavailable");
     const link = await flow.authorize();
     expect((await flow.browser(link.authorizationUrl, "alice")).status).toBe(302);

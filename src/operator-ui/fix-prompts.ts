@@ -42,8 +42,8 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
   credential_required: {
     problem: "A connector with an operator-managed credential slot has no usable credential stored.",
     steps: [
-      "An operator with credential administration can add the credential on the operator page; that needs no code change.",
-      "If nobody can, grant credential administration through the deployment's identity config (credentialAdministration for shared auth, personalConnection for personal auth), which is denied by default.",
+      "A maintainer can add a shared credential on the operator page, and a pool member their own personal one; that needs no code change.",
+      "If nobody can, list the person in the deployment's maintainers for shared auth, or in the members of a pool containing the connector for personal auth.",
       "Check that the connector's credential declaration (label and fields) matches what the downstream actually needs.",
     ],
   },
@@ -85,7 +85,7 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
     steps: [
       "Check that the connector implements startAuth and disconnectAuth, and that the storage holding its OAuth state is writable.",
       "Check the connector's OAuth client configuration, including the authorization server it discovers or is given.",
-      "Confirm the operator has the config-derived permission for this action (credentialAdministration for shared auth, personalConnection for personal auth).",
+      "Confirm the person is a maintainer for shared auth, or a member of a pool containing the connector for personal auth.",
     ],
   },
   catalog_failed: {

@@ -79,7 +79,8 @@ export function handoffFixture(options: {
   const app = createTestConnecta({
     connectors: [connector], storage, vault, publicUrl: HANDOFF_BASE, logger: "silent", executor,
     auth: ["alice", "bob"].map(user => fakeClerkAuth({ token: user, userId: user })),
-    identity: { credentialAdministration: () => options.manage === false ? "none" : "all", personalConnection: () => options.manage === false ? "none" : "all" },
+    // Without management alice is only a pool member; bob stays the maintainer.
+    ...(options.manage === false ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
     pools: { team: { tools: ["service"], members: [{ namespace: "https://clerk.example.test", id: "alice" }], readOnly: true } },
   });
   const rpc = async (name: string, args: Record<string, unknown>, pool = "team") => {

@@ -30,11 +30,11 @@ function build(env: Env) {
     storage,
     executor: workerExecutor({ loader: env.LOADER }),
     auth: [cloudflareAccessAuth()],
-    // The Access stand-in's user, the one maintainer plain /mcp admits (#837).
+    // The Access stand-in's user, the one maintainer plain /mcp admits and
+    // the one who manages connector auth (#837).
     maintainers: ["eval-operator"],
     vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
     ui: operatorUi(),
-    identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
     connectors: [
       remoteMcp("tracker", { url: env.TRACKER_URL, title: "Issue tracker", description: "Issues" }),
       remoteMcp("chat", { url: env.CHAT_URL, title: "Team chat", description: "Channels and messages" }),

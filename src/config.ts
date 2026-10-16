@@ -17,7 +17,6 @@ import { CONFIG_DEFAULTS as D } from "./config-defaults.js";
 import {
   array,
   ConfigError,
-  fn,
   object,
   opaque,
   record,
@@ -34,20 +33,9 @@ import type { MemberRef } from "./membership.js";
 import { assertExecutor } from "./executor-contract.js";
 import type { AccessTokensModule, ActivityModule, OperatorSurface } from "./module-contracts.js";
 import { memoryStorage } from "./storage/memory.js";
-import type {
-  AuthenticatedIdentity,
-  Connector,
-  Executor,
-  IdentityReference,
-  InboundAuth,
-  KVStorage,
-  Logger,
-} from "./types.js";
+import type { Connector, Executor, InboundAuth, KVStorage, Logger } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
 import { isWorkspaceAddress } from "./workspace-address.js";
-
-/** Config-owned identity rules for one deployment and tenant. */
-export type ConnectorPermission = "all" | "none" | readonly string[];
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -229,18 +217,12 @@ const admission = {
   code: object(codeAdmission),
 };
 
-const identity = {
-  /** Global payload-free activity reads. Defaults to interactive humans. */
-  activityAccess: fn<(principal: Readonly<IdentityReference>) => boolean | Promise<boolean>>(),
-  /** Shared credential and OAuth administration. Defaults to none. */
-  credentialAdministration:
-    fn<(identity: Readonly<AuthenticatedIdentity>) => ConnectorPermission | Promise<ConnectorPermission>>(),
-  /** Client-token lifecycle management by interactive humans. Defaults to false. */
-  accessTokenManagement: fn<(identity: Readonly<AuthenticatedIdentity>) => boolean | Promise<boolean>>(),
-  /** Connecting or changing the caller's personal account. Defaults to none. */
-  personalConnection:
-    fn<(identity: Readonly<AuthenticatedIdentity>) => ConnectorPermission | Promise<ConnectorPermission>>(),
-};
+/**
+ * Every management resolver was removed (#837): maintainers and pool members
+ * decide management. The section stays empty so each removed key fails
+ * construction naming its replacement.
+ */
+const identity = {};
 
 /** The choice every deployment makes explicitly while `trust` migrates (#820). */
 const READ_ONLY_REQUIRED = (path: string) =>
@@ -376,7 +358,7 @@ const connectaConfig = {
     },
     resolve: (value) => normalizeAuth(value === undefined ? [] : Array.isArray(value) ? value : [value]),
   }),
-  /** Management permissions, evaluated for admitted identities. */
+  /** Retired (#837): holds no options; management follows maintainers and pool members. */
   identity: object(identity),
   /**
    * Agents, declared by name: lowercase letters, digits, `_` and `-`, each
@@ -584,7 +566,6 @@ export type AdmissionPoolConfig = ConfigInput<typeof codeAdmission>;
 export type RequestAdmissionConfig = ConfigInput<typeof requestAdmission>;
 /** Runtime-portable server-memory boundaries for `/mcp` and fallback code-mode work. */
 export type ConnectaAdmissionConfig = ConfigInput<typeof admission>;
-export type ConnectaIdentityConfig = ConfigInput<typeof identity>;
 /**
  * A named tool pool served at `/mcp/<name>`: exactly its `tools`, to its
  * `members` only.
@@ -614,6 +595,20 @@ const RETIRED_PAUSE_OPTIONS = ["ConnectaConfig.execute.resumableWrites", "Connec
 /** Access options pools replaced (#837, decisions/0006). */
 const isRetiredPoolGrant = (path: string): boolean => /^ConnectaConfig\.pools\.[^.]+\.grant$/.test(path);
 
+/** Management resolvers maintainers and pool membership replaced (#837, decisions/0006). */
+const RETIRED_IDENTITY: ReadonlyArray<readonly [string, string]> = [
+  ["credentialAdministration", "maintainers administer shared credentials and OAuth grants. List them in maintainers."],
+  [
+    "personalConnection",
+    "pool members connect and disconnect their own personal connectors in their pools, and maintainers their own. Add people to a pool's members.",
+  ],
+  [
+    "accessTokenManagement",
+    "maintainers issue, rotate, and revoke agent tokens from an interactive session. List them in maintainers.",
+  ],
+  ["activityAccess", "maintainers read activity; activity.readGate can still narrow it. List them in maintainers."],
+];
+
 /** `trust`, on the deployment or a pool, was replaced by `readOnly` (#820). */
 const isRetiredTrust = (path: string): boolean =>
   path === "ConnectaConfig.trust" || (path.startsWith("ConnectaConfig.pools.") && path.endsWith(".trust"));
@@ -638,6 +633,9 @@ function rejectUnknownOptions(paths: string[]): void {
       (paths.includes("ConnectaConfig.identity.connectorAccess")
         ? "\nidentity.connectorAccess was removed (#837): pools are the access model. List who may use plain /mcp in maintainers, and give each pool its tools and members. A guarded { tool, requireReadOnly: true } grant becomes a pool with readOnly: true."
         : "") +
+      RETIRED_IDENTITY.filter(([key]) => paths.includes(`ConnectaConfig.identity.${key}`))
+        .map(([key, replacement]) => `\nidentity.${key} was removed (#837): ${replacement}`)
+        .join("") +
       (paths.includes("ConnectaConfig.grant")
         ? "\nThe top-level grant was removed (#837); list the people who may use plain /mcp in maintainers."
         : "") +

@@ -24,13 +24,13 @@
 import { Effect } from "effect";
 import type { RegistryScope, RegistryView } from "../registry.js";
 import { runEdge } from "../runtime/run.js";
+import { isMaintainer } from "../membership.js";
 import {
   admitsMaintainer,
   authorize,
   authorizeUiIdentity,
-  msg,
+  memberConnectors,
   privateJson,
-  validateAuthPermissions,
   type RouteContext,
 } from "./shared.js";
 
@@ -60,7 +60,7 @@ export function authorized(
   partitionIdentity = true,
 ): Effect.Effect<Authorized, Answer> {
   return Effect.suspend(() =>
-    admitted(authorize(request, baseUrl, opts.config.auth, runtimeContext, opts.config.identity, partitionIdentity)),
+    admitted(authorize(request, baseUrl, opts.config.auth, runtimeContext, partitionIdentity)),
   );
 }
 
@@ -70,7 +70,7 @@ export function authorizedPerson(
   purpose: string,
 ): Effect.Effect<Authorized, Answer> {
   return Effect.suspend(() =>
-    admitted(authorizeUiIdentity(request, baseUrl, opts.config.auth, purpose, runtimeContext, opts.config.identity)),
+    admitted(authorizeUiIdentity(request, baseUrl, opts.config.auth, purpose, runtimeContext)),
   );
 }
 
@@ -85,20 +85,24 @@ export function scopeFor(authz: Authorized, connectorIds: RegistryScope["connect
 
 /**
  * The whole registry, for a maintainer only (#837). Everyone else gets the
- * private 404 plain `/mcp` gives them. A configured permission naming a
- * connector that does not exist refuses the whole view, management rights
- * included, rather than quietly granting what remains.
+ * private 404 plain `/mcp` gives them.
  */
 export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
   // Operator catalogs describe the default endpoint's view, never a pool view.
   if (!admitsMaintainer(opts, authz)) return refuse("not found", 404);
-  return Effect.try({
-    try: () => {
-      validateAuthPermissions(authz, opts.registry);
-      return opts.registry.scoped(scopeFor(authz));
-    },
-    catch: (error) => new Answer(privateJson({ error: msg(error) }, { status: 403 })),
-  });
+  return Effect.succeed(opts.registry.scoped(scopeFor(authz)));
+}
+
+/**
+ * The connectors a connector-auth route may resolve (#837): every connector
+ * for a maintainer, the connectors of their pools for a pool member, and the
+ * private 404 for anyone else. mayManageConnector still decides each action.
+ */
+export function managementRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
+  if (isMaintainer(opts.maintainers, authz.identity)) return Effect.succeed(opts.registry.scoped(scopeFor(authz)));
+  const ids = memberConnectors(opts, authz.identity);
+  if (ids !== "all" && ids.size === 0) return refuse("not found", 404);
+  return Effect.succeed(opts.registry.scoped(scopeFor(authz, ids === "all" ? "all" : [...ids])));
 }
 
 /**
