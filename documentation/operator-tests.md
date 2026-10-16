@@ -13,10 +13,15 @@ or browser evidence. Read the [operator UI contract](./operator-ui.md) first.
 `test/fixtures/operator-visual.ts` owns the visual data. It builds the
 maintainer's contract v2, live overlay, and legacy auth details through the
 current server routes, using the types in `src/operator-ui/contract.ts` and
-`model.ts`; its people carry labels from a fake directory. The
-restricted state is the frozen member fixture from
+`model.ts`; its people carry labels from a fake directory. Its Tokens agents
+(`claude-desktop` issued, `triage` none, `nightly` revoked) are real slots
+committed through the deployment's own store, so the contract's `agents` and
+`GET /ui/access-tokens` agree, revisions included; only their timestamps and
+last seen are fixed. The restricted state is the member fixture from
 `test/fixtures/operator-contract-v2.ts`, and the endpoint and matrix variants
-use its maintainer fixture, which covers every runs-as kind and agent pools.
+use its maintainer fixture, which covers every runs-as kind and agent pools,
+with `test/fixtures/operator-console.ts` crowding the team pool so its chips
+collapse to "+3 more".
 Collections use their corresponding browser types.
 `test/operator-visual-fixtures.test.ts` validates contract versions, connector
 IDs, granted tools, matrix cells, classification, provenance, and secret
@@ -35,26 +40,31 @@ its state and fonts before capturing.
 
 Each row runs empty, loading, error, populated, and restricted-viewer fixtures
 in both light and dark themes, for 80 screenshots. The restricted viewer is a
-pool member, who gets the member page on every path.
+pool member, who gets the member page, with no tabs, on every path.
 
 | Page or tab          | Empty state                          | Loading/error request | Restricted viewer (member)          |
 | -------------------- | ------------------------------------ | --------------------- | ----------------------------------- |
-| Endpoints            | Root endpoint without tools          | Config                | Their pools and client setup only   |
-| Connectors           | No connectors                        | Config                | Member page, Endpoints tab only     |
-| Connector Tools      | Empty catalog                        | Config                | Member page, Endpoints tab only     |
-| Connector Connection | Deployment-managed auth              | Config                | Member page, Endpoints tab only     |
+| Endpoints            | Root endpoint without tools          | Config                | Member page: endpoints, accounts    |
+| Connectors           | No connectors                        | Config                | Member page, no connector request   |
+| Connector Tools      | Empty catalog                        | Config                | Member page, no connector request   |
+| Connector Connection | Deployment-managed auth              | Config                | Member page, no connector request   |
 | Connector Activity   | No calls                             | Activity              | Member page, no activity request    |
-| Tokens               | No client tokens                     | Token list            | Member page, no token request       |
+| Tokens               | No declared agents                   | Token list            | Member page, no token request       |
 | Activity             | No calls                             | Activity              | Member page, no activity request    |
 | Settings             | Snapshot without connectors or pools | Config                | Member page, no configuration facts |
 
-Another 48 screenshots cover configured, mismatched, unreadable and multifield
+Populated Endpoints shows who can use each endpoint; populated Tokens has one
+agent per slot state, with pools and last seen.
+
+Another 54 screenshots cover configured, mismatched, unreadable and multifield
 credentials; all three OAuth client mechanisms; clean and unobserved drift;
 historical Activity; client setup; schema dialog; read/write filters; expanded
 config provenance; narrow sign-in and Connection; deployment branding; `/mcp`
 and an agent pool expanded with every runs-as kind; command search; narrow
 endpoints; the connector × endpoint matrix, one cell's open popover, and the
-narrow matrix. The base
+narrow matrix; a new token's one-time secret dialog; and the member page, wide
+and narrow. `endpoints-expanded` and `narrow-endpoints` include the team row
+collapsed to "+3 more". The base
 populated Activity fixture includes grouped calls, an ungrouped legacy row,
 classification/result size/client facts, and a catalog-change event.
 
@@ -68,11 +78,34 @@ the 401 sign-in and 404 no-access gates on `/ui/api/config` with no maintainer
 navigation, the shared recovery banner on Tokens and Activity through a failed
 refresh that stalls past its deadline (one focusable Retry, no maintainer
 request until Retry succeeds), an open client setup drawer closed by a failed
-refresh with focus on Retry, payload sentinels, CSP, and the refusal of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
+refresh with focus on Retry, Tokens under recovery (an open rotate question
+closes with focus on Retry and nothing sent; an unseen secret dialog stays open
+over the banner until dismissed), payload sentinels, CSP, and the refusal of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
+`test/browser/operator-console.spec.ts` covers UI-3: who-can-use chips by
+label, raw id and agent mark and "+N more" from the keyboard; Tokens rows,
+issue with the once-only secret dialog, in-row rotate and revoke questions,
+503, 499 and 409 failures that send exactly one request, slots missing from
+the list or left unresolved shown with disabled controls until Refresh; and the
+member page (its received body checked with `expectMemberViewWithholds`, no
+tabs, Search or maintainer fact, OAuth Connect, Reconnect and Disconnect sent as
+`?mode=continue`, `?mode=restart` and `DELETE`, the credential `actions`
+shapes, a refresh that drops an action closing its confirmation, a failed or
+stalled refresh keeping member chrome with Retry, a consent that outlasts the
+OAuth poll window), plus keyboard, sentinels, CSP and no `style` attributes.
+`test/operator-console.test.ts` covers the chip, slot-row and member-page view
+models. The real-route token test in `test/browser/operator-ui.spec.ts` serves
+the contract, `/ui/data` and the slot routes from one real v2 deployment and
+checks that each mutation sent a distinct 22-character `expect`.
 `test/operator-store.test.ts` serves `/ui/api/config` from its own mock, so
 each test's data and detail answers stay separate, and covers role changes: a
 maintainer demoted after a failed refresh keeps no maintainer state and sends
-no maintainer request, and a promoted member loads maintainer data fresh.
+no maintainer request, and a promoted member loads maintainer data fresh. It
+also drives UI-3's slot fence with a session-token read held open: reloads and
+contract refreshes that move or drop a slot before dispatch, late results that
+cannot overwrite newer evidence, unknown and unreadable outcomes that only a
+later list read settles, revisions sent as `expect` and compared with the
+contract, an identity change that leaves the next identity's fence alone, and
+member actions whose `manage` a refresh changes.
 
 Screenshots cover presentation. Keep unit and server tests for INV-6 sentinels,
 secret disclosure, auth and grant boundaries, CSRF, identity fences, cancellation,

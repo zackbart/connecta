@@ -503,8 +503,8 @@ test.describe("member page", () => {
     await expect(accounts.locator("h3")).toHaveText(["Slack", "Notion", "Calendar"]);
     await expect(accounts.locator(".badge")).toHaveText(["Connected", "Credential needed", "Connected"]);
     await expect(accounts.nth(0).getByRole("button")).toHaveText(["Reconnect", "Disconnect"]);
-    // The frozen fixture lists clear for Notion, so a value is stored: Replace, Test, Clear.
-    await expect(accounts.nth(1).getByRole("button")).toHaveText(["Replace", "Test", "Clear"]);
+    // P6b's fixture lists only save for Lin's Notion: nothing stored yet.
+    await expect(accounts.nth(1).getByRole("button")).toHaveText(["Add credential"]);
     await expect(accounts.nth(2).getByRole("button")).toHaveText(["Disconnect"]);
     // Shared: names and counts only, no status.
     await expect(page.locator(".shared-chip")).toHaveText(["GGitHub · 1 tool", "DDrive · 1 tool"]);
@@ -820,7 +820,7 @@ test.describe("member page", () => {
     await install(page, contract);
     await page.goto(VISUAL_ORIGIN + "/");
     await expect(page.locator(".account-row")).toHaveCount(3);
-    await page.getByRole("button", { name: "Replace Notion", exact: true }).click();
+    await page.getByRole("button", { name: "Add credential Notion", exact: true }).click();
     await page.getByRole("button", { name: "Client setup for team", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Client setup", exact: true })).toBeVisible();
     expect(await page.content()).not.toContain(sentinel);

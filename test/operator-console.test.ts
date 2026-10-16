@@ -182,13 +182,13 @@ describe("member page", () => {
     ]);
     expect(page.accounts.map((a) => [a.id, a.toolCount, a.badge, a.controls.map((c) => c.label)])).toEqual([
       ["slack", 2, { label: "Connected", tone: "ok" }, ["Reconnect", "Disconnect"]],
-      // The frozen fixture lists clear for Notion: a value is stored, whatever the state says.
-      ["notion", 1, { label: "Credential needed", tone: "warn" }, ["Replace", "Test", "Clear"]],
+      // P6b's fixture lists only save for Lin's Notion: nothing is stored yet.
+      ["notion", 1, { label: "Credential needed", tone: "warn" }, ["Add credential"]],
       ["calendar", 1, { label: "Connected", tone: "ok" }, ["Disconnect"]],
     ]);
     expect(page.accounts.map((a) => a.controls.map((c) => c.kind))).toEqual([
       ["restart", "disconnect"],
-      ["save", "test", "clear"],
+      ["save"],
       ["disconnect"],
     ]);
     expect(page.shared).toEqual([

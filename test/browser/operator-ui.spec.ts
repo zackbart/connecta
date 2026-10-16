@@ -305,40 +305,7 @@ test.beforeAll(async () => {
       return;
     }
     if (method === "GET" && url.pathname === "/ui/api/config") {
-      const contract = await fixtureContract(data());
-      // P6b lists every declared agent with its token state. Where a test
-      // routes the slot API to a real deployment, emulate that from the same
-      // slots, so the contract and the list describe one deployment.
-      if (realRoutes?.paths.has("/ui/access-tokens")) {
-        const real = await realRoutes.connecta.fetch(
-          new Request(`${REAL_BASE}/ui/access-tokens`, {
-            headers: {
-              ...(request.headers.authorization === `Bearer ${TOKEN}`
-                ? { Authorization: "Bearer clerk-operator" }
-                : {}),
-              ...(request.headers.cookie ? { Cookie: request.headers.cookie } : {}),
-            },
-          }),
-        );
-        const { agents = [] } = real.ok
-          ? ((await real.json()) as {
-              agents?: Array<{ name: string; state: string; issuedAt?: string; revokedAt?: string; revision: string }>;
-            })
-          : {};
-        // Each agent carries its real slot's revision, as P6b's contract will.
-        contract.agents = agents.map(({ name, state, issuedAt, revokedAt, revision }) => ({
-          name,
-          pools: [],
-          token:
-            state === "issued"
-              ? { state: "issued" as const, issuedAt: issuedAt!, revision }
-              : state === "revoked"
-                ? { state: "revoked" as const, revokedAt: revokedAt!, revision }
-                : { state: "none" as const, revision },
-          lastSeenAt: null,
-        }));
-      }
-      sendJson(response, 200, contract);
+      sendJson(response, 200, await fixtureContract(data()));
       return;
     }
     const detailMatch = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(url.pathname);
@@ -1346,7 +1313,9 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
     agents: ["desktop-client", "ci"],
     accessTokens: accessTokens(storage),
   });
-  const paths = new Set(["/ui/access-tokens", "/ui/access-tokens/desktop-client"]);
+  // Contract, data and slots all come from main's real v2 server, so the
+  // contract's agents and the slot list describe one deployment.
+  const paths = new Set(["/ui/api/config", "/ui/data", "/ui/access-tokens", "/ui/access-tokens/desktop-client"]);
   realRoutes = { connecta, paths, answered: [] };
   tokenManagement = true;
   let releaseList!: () => void;

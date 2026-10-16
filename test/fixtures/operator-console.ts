@@ -1,5 +1,5 @@
-// UI-3 additions to the frozen v2 fixtures in operator-contract-v2.ts, which
-// stay untouched: a team pool long enough to collapse its "who can use it"
+// UI-3 additions to the v2 fixtures in operator-contract-v2.ts, which stay
+// untouched: a team pool long enough to collapse its "who can use it"
 // chips, and the slot list for its two agents. Every value is synthetic.
 import type { OperatorMember, OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import type { AgentSlot } from "../../src/operator-ui/agents.js";
@@ -37,12 +37,12 @@ export const OPERATOR_V2_SLOTS: { agents: AgentSlot[] } = {
 };
 
 /**
- * The frozen member view with Notion's credential `actions` replaced. Per P6b,
- * presence is read from `actions` alone: `save` when the member may manage it
- * and a vault exists, `clear` only when a value is stored in their own
- * partition, `test` only when one is stored and the connector can test it.
- * The frozen fixture lists all three while Notion's state is
- * `credential_required`, so pages that want "nothing stored yet" use `["save"]`.
+ * The member view with Notion's credential `actions` replaced. Presence is
+ * read from `actions` alone (P6b): `save` when the member may manage it and a
+ * vault exists, `clear` only when a value is stored in their own partition,
+ * `test` only when one is stored and the connector can test it. The base
+ * fixture lists `["save"]`, nothing stored yet; listing `clear` also marks the
+ * connection ok, as a stored, working value would.
  */
 export function memberWithNotion(actions: Array<"save" | "test" | "clear">): OperatorUiContractV2 {
   const contract = structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2;
