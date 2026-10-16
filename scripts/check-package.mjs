@@ -757,7 +757,7 @@ try {
     return token;
   };
   const assertClosed = async (origin) => {
-    for (const path of ["/mcp", "/agent/local"]) {
+    for (const path of ["/mcp", "/agent/local-machine"]) {
       for (const token of [undefined, staticToken, `cta_${"A".repeat(43)}`]) {
         const response = await fetch(`${origin}${path}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -826,7 +826,7 @@ try {
     );
     const doctorOutput = run(
       generatedConnecta,
-      ["doctor", "--url", `http://127.0.0.1:${port}`, "--pool", "local"],
+      ["doctor", "--url", `http://127.0.0.1:${port}`, "--pool", "local-machine"],
       generatedRoot,
       {
         CONNECTA_TOKEN: smokeToken,
@@ -877,7 +877,7 @@ try {
   const legacyDoctor = (token) =>
     spawnSync(
       join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`, "--pool", "local"],
+      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`, "--pool", "local-machine"],
       { cwd: generatedRoot, encoding: "utf8", env: { ...process.env, CONNECTA_TOKEN: token } },
     );
   try {
@@ -1017,7 +1017,7 @@ try {
       await assertClosed(`http://127.0.0.1:${containerPort}`);
       const containerDoctor = run(
         join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-        ["doctor", "--url", `http://127.0.0.1:${containerPort}`, "--pool", "local"],
+        ["doctor", "--url", `http://127.0.0.1:${containerPort}`, "--pool", "local-machine"],
         generatedRoot,
         { CONNECTA_TOKEN: containerToken },
       );

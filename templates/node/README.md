@@ -25,7 +25,7 @@ warning, and npm 12 does not block the script. A later esbuild version needs a
 new explicit review and approval; do not replace the pinned entry with a broad
 package-name approval.
 
-Point an agent's MCP client at `http://localhost:8787/agent/local`, the agent
+Point an agent's MCP client at `http://localhost:8787/agent/local-machine`, the agent
 endpoint of the pool that lists `agent:local-machine`, with
 `Authorization: Bearer <returned-cta-token>`. Agents use only `/agent/<pool>`:
 `/mcp` and `/mcp/<pool>` are for people and refuse `cta_` tokens, and plain

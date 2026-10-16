@@ -214,11 +214,11 @@
           "method": "GET"
         },
         {
-          "path": "/agent/simon-zack",
+          "path": "/agent/assistant-alice",
           "credential": "none",
           "status": 200,
           "outcome": "worker",
-          "received": "/agent/simon-zack",
+          "received": "/agent/assistant-alice",
           "access": {
             "state": "present",
             "aud": "nonempty",
@@ -584,11 +584,11 @@
           "method": "GET"
         },
         {
-          "path": "/agent/simon-zack",
+          "path": "/agent/assistant-alice",
           "credential": "none",
           "status": 200,
           "outcome": "worker",
-          "received": "/agent/simon-zack",
+          "received": "/agent/assistant-alice",
           "access": {
             "state": "present",
             "aud": "nonempty",
@@ -954,11 +954,11 @@
           "method": "GET"
         },
         {
-          "path": "/agent/simon-zack",
+          "path": "/agent/assistant-alice",
           "credential": "none",
           "status": 200,
           "outcome": "worker",
-          "received": "/agent/simon-zack",
+          "received": "/agent/assistant-alice",
           "access": {
             "state": "present",
             "aud": "nonempty",

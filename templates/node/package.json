@@ -11,7 +11,7 @@
   },
   "scripts": {
     "adopt-token": "tsx src/adopt-token.ts",
-    "doctor": "connecta doctor --pool local",
+    "doctor": "connecta doctor --pool local-machine",
     "rotate-token": "tsx src/rotate-token.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"

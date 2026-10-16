@@ -466,8 +466,9 @@ variants, and a leading `//`, all with the same 404. It must ignore
 [Agent endpoints](./auth.md#agent-endpoints) implement exactly this in
 `src/routes/agent-path.ts`, and `test/agent-endpoints.test.ts` replays every
 row of the table above. The hyphenated row stands for any two-part pool name
-such as `<agent>-<user>`; the recorded run sent a different name of the same
-shape.
+such as `<agent>-<user>`. The pool names in the recorded paths were replaced
+with placeholders after the run; the edge behavior for that path shape was
+unaffected.
 
 To configure the bypass, keep the Worker-level application described in
 [Cloudflare Access on Workers](./auth.md#cloudflare-access-on-workers). Then,

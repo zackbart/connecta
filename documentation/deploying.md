@@ -33,7 +33,7 @@ npm start
 ```
 
 The agent connects to its pool's agent endpoint,
-`http://localhost:8787/agent/local`, with
+`http://localhost:8787/agent/local-machine`, with
 `Authorization: Bearer <returned-cta-token>`. People use `/mcp` and
 `/mcp/<pool>`, which refuse `cta_` tokens. Machine clients are the agents
 declared in `agents` in `src/connecta.config.ts`; the generated project declares
@@ -182,7 +182,7 @@ With the deployment running, replace the placeholder with its saved agent
 token and run doctor against a pool that lists the agent:
 
 ```sh
-CONNECTA_TOKEN='<stored-cta-token>' npx connecta doctor --url http://localhost:8787 --pool local
+CONNECTA_TOKEN='<stored-cta-token>' npx connecta doctor --url http://localhost:8787 --pool local-machine
 ```
 
 Doctor checks health, the required executor, and the current six-tool set. A
