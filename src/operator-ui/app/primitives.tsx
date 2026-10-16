@@ -2,7 +2,6 @@ import type { ComponentProps, ReactNode, RefObject } from "react";
 import { Slot } from "@radix-ui/react-slot";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { Icon } from "./icons.js";
 
 function classes(...values: (string | undefined)[]) {
@@ -158,7 +157,8 @@ export function SegmentedControl<T extends string>({
 }: {
   label: string;
   value: T;
-  options: readonly { value: T; label: ReactNode }[];
+  /** `count` sits after the label, muted: how many things the choice shows. */
+  options: readonly { value: T; label: ReactNode; count?: number }[];
   onChange: (value: T) => void;
 }) {
   return (
@@ -171,39 +171,9 @@ export function SegmentedControl<T extends string>({
           onClick={() => onChange(option.value)}
         >
           {option.label}
+          {option.count === undefined ? null : <span className="segment-count">{option.count}</span>}
         </button>
       ))}
-    </div>
-  );
-}
-
-/** Dense semantic table; callers own columns and data, never capability. */
-export function DataTable<T>({ data, columns, label }: { data: T[]; columns: ColumnDef<T>[]; label: string }) {
-  const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
-  return (
-    <div className="table-scroll">
-      <table className="data-table" aria-label={label}>
-        <thead>
-          {table.getHeaderGroups().map((group) => (
-            <tr key={group.id}>
-              {group.headers.map((header) => (
-                <th key={header.id} scope="col">
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr key={row.id}>
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

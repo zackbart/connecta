@@ -305,7 +305,10 @@ for (const variant of VISUAL_VARIANTS)
             await page.getByRole("button", { name: "github.read", exact: true }).click();
             await expect(page.getByRole("dialog", { name: "github.read", exact: true })).toBeVisible();
           } else if (variant.startsWith("tools-")) {
-            await page.getByLabel("Tool classification").selectOption(variant === "tools-read" ? "read" : "write");
+            await page
+              .getByRole("group", { name: "Tool classification" })
+              .getByRole("button", { name: variant === "tools-read" ? /^Read/ : /^Write/ })
+              .click();
             await page.getByLabel("Filter tools", { exact: true }).fill("github.");
           } else if (variant === "narrow-settings") {
             await expect(page.locator('[data-config-path="config.limits.calls.maxResultBytes"]')).toBeVisible();

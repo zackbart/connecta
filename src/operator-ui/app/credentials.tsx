@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { UiConnector } from "../model.js";
-import { confirmCopy, credentialProblemCopy, credentialStateLabel, formatDate, type Notice } from "../view.js";
+import { confirmCopy, credentialProblemCopy, formatDate, type Notice } from "../view.js";
 import {
   askConfirm,
   cancelConfirm,
@@ -10,7 +10,8 @@ import {
   saveCredential,
   testCredential,
 } from "./store.js";
-import { Callout, ConfirmBar, FixPrompt, focusableId, NoticeLine } from "./parts.js";
+import { Callout, ConfirmBar, FixPrompt, focusableId, NoticeLine, Pill } from "./parts.js";
+import { Icon } from "./icons.js";
 
 type Credential = NonNullable<UiConnector["credential"]>;
 
@@ -124,6 +125,35 @@ export function CredentialForm({
   );
 }
 
+type CredentialState = "configured" | "missing" | "unavailable";
+
+/** A slot or field's state, as the page reads it: saved, missing, or unreadable. */
+function credentialState(credential: { configured: boolean | null; problem?: string }): CredentialState {
+  if (credential.configured === null || credential.problem === "credential_unreadable") return "unavailable";
+  return credential.configured ? "configured" : "missing";
+}
+
+const STATE_PILL: Record<CredentialState, { label: string; status: "healthy" | "attention" | "neutral" }> = {
+  configured: { label: "Saved", status: "healthy" },
+  missing: { label: "Not set", status: "attention" },
+  unavailable: { label: "Unavailable", status: "neutral" },
+};
+
+function StatePill({ state }: { state: CredentialState }) {
+  return <Pill status={STATE_PILL[state].status}>{STATE_PILL[state].label}</Pill>;
+}
+
+/** The last four characters the vault reports, masked, and when they were saved. */
+function Masked({ lastFour, updatedAt }: { lastFour?: string | undefined; updatedAt?: string | undefined }) {
+  if (!lastFour && !updatedAt) return null;
+  return (
+    <span className="credential-masked">
+      {lastFour ? <code>••••{lastFour}</code> : null}
+      {updatedAt ? <span className="meta">Updated {formatDate(updatedAt)}</span> : null}
+    </span>
+  );
+}
+
 export function CredentialCard({
   connector,
   credential,
@@ -144,41 +174,53 @@ export function CredentialCard({
   const name = connector.title || connector.id;
   const configured = Boolean(credential.configured);
   const removable = configured || Boolean(credential.removable);
+  const state = credentialState(credential);
+  const multi = Boolean(credential.fields?.length);
   return (
-    <section className="subcard" id={`credential-${connector.id}`} aria-labelledby={`credential-title-${connector.id}`}>
+    <section
+      className="subcard credential-card"
+      id={`credential-${connector.id}`}
+      aria-labelledby={`credential-title-${connector.id}`}
+      data-credential-state={state}
+    >
       <div className="subcard-head">
-        <h3 id={`credential-title-${connector.id}`}>{credential.label}</h3>
-        <span className="meta">{credentialStateLabel(credential)}</span>
-      </div>
-      {credential.description ? <p className="meta">{credential.description}</p> : null}
-      {credential.fields?.length ? (
-        <div className="credential-field-summary">
-          {credential.fields.map((field) => (
-            <div key={field.name}>
-              <span>{field.label}</span>
-              <span className="meta">
-                {field.configured === null
-                  ? "unavailable"
-                  : field.configured
-                    ? `configured${field.updatedAt ? ` · updated ${formatDate(field.updatedAt)}` : ""}`
-                    : "not configured"}
-              </span>
-            </div>
-          ))}
+        <span className={`credential-icon ${credential.error ? "danger" : state}`} aria-hidden="true">
+          <Icon name="key" size={16} />
+        </span>
+        <div className="credential-heading">
+          <h3 id={`credential-title-${connector.id}`}>{credential.label}</h3>
+          {credential.description ? <p className="meta">{credential.description}</p> : null}
         </div>
+        <StatePill state={state} />
+      </div>
+      {!multi && configured ? <Masked lastFour={credential.lastFour} updatedAt={credential.updatedAt} /> : null}
+      {multi ? (
+        <ul className="credential-field-summary">
+          {credential.fields!.map((field) => (
+            <li key={field.name} data-field-state={credentialState(field)}>
+              <span className="credential-field-label">{field.label}</span>
+              {field.configured ? <Masked lastFour={field.lastFour} updatedAt={field.updatedAt} /> : null}
+              <StatePill state={credentialState(field)} />
+            </li>
+          ))}
+        </ul>
       ) : null}
       {/* The payload's error text can name a vault failure; the page says a
           fixed sentence keyed by the problem instead. */}
-      {credential.error ? <Callout>{credentialProblemCopy(credential.problem)}</Callout> : null}
-      {credential.error && credential.problem ? (
-        <FixPrompt kind={credential.problem} connectorId={connector.id} name={connector.title || connector.id} />
+      {credential.error ? (
+        <div className="problem-block">
+          <Callout data-problem={credential.problem}>{credentialProblemCopy(credential.problem)}</Callout>
+          {credential.problem ? (
+            <FixPrompt kind={credential.problem} connectorId={connector.id} name={connector.title || connector.id} />
+          ) : null}
+        </div>
       ) : null}
       {/* Leftover stored fields are not an error — the credential still works,
           so this stays muted copy rather than the msg block a failure earns. */}
       {credential.notice ? <p className="meta">{credential.notice}</p> : null}
       <div className="actions">
         <button
-          className={removable ? "btn" : "btn primary"}
+          className={removable ? "btn sm" : "btn sm primary"}
           type="button"
           aria-expanded={editing ? "true" : "false"}
           disabled={busy}
@@ -187,14 +229,14 @@ export function CredentialCard({
           {removable ? "Replace" : "Add credential"}
         </button>
         {configured && credential.testable ? (
-          <button className="btn" type="button" disabled={busy} onClick={() => void testCredential(connector.id)}>
+          <button className="btn sm" type="button" disabled={busy} onClick={() => void testCredential(connector.id)}>
             {busy ? "Working…" : "Test"}
           </button>
         ) : null}
         {removable ? (
           <button
             id={`remove-credential-${connector.id}`}
-            className="btn danger"
+            className="btn sm danger"
             type="button"
             disabled={busy}
             onClick={() => askConfirm(connector.id, "credential_remove")}

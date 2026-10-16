@@ -1,126 +1,119 @@
-import { useMemo, useRef, useState } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
+import { useRef, useState } from "react";
 import type { OperatorTool } from "../contract.js";
+import type { UiToolSafety } from "../model.js";
 import { Badge, StateBlock } from "./parts.js";
-import { Button, DataTable, Dialog, Input } from "./primitives.js";
+import { Dialog, Input, SegmentedControl } from "./primitives.js";
 
-type CatalogRow = OperatorTool & { connectorId: string };
+type CatalogRow = OperatorTool & { connectorId: string; safety?: UiToolSafety };
+type Kind = "all" | "read" | "write";
+
+/** Read or write, as the deployment resolved it. */
+function ClassBadge({ classification }: { classification: OperatorTool["classification"] }) {
+  return <Badge tone={classification === "read" ? "ok" : "warn"}>{classification === "read" ? "Read" : "Write"}</Badge>;
+}
+
+/** What the host does before a call, and what the tool says about itself. */
+function SafetyBadges({ tool }: { tool: CatalogRow }) {
+  return (
+    <>
+      {tool.safety === "needs_approval" ? <Badge>Asks first</Badge> : null}
+      {tool.annotations?.destructiveHint ? <Badge tone="danger">Destructive</Badge> : null}
+      {tool.annotations?.openWorldHint ? <Badge>Open world</Badge> : null}
+    </>
+  );
+}
+
 export function Catalog({ tools }: { tools: CatalogRow[] }) {
   const [query, setQuery] = useState("");
-  const [classification, setClassification] = useState("all");
+  const [kind, setKind] = useState<Kind>("all");
   const [selected, setSelected] = useState<CatalogRow | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const q = query.trim().toLowerCase();
   const visible = tools.filter(
     (t) =>
-      (classification === "all" || t.classification === classification) &&
+      (kind === "all" || t.classification === kind) &&
       [t.address, t.description, t.connectorId].some((value) => value?.toLowerCase().includes(q)),
   );
-  const columns = useMemo<ColumnDef<CatalogRow>[]>(
-    () => [
-      {
-        accessorKey: "address",
-        header: "Tool",
-        cell: ({ row }) => (
-          <div className="table-name">
-            <Button
-              variant="quiet"
-              className="schema-trigger"
-              onClick={(event) => {
-                returnFocus.current = event.currentTarget;
-                setSelected(row.original);
-              }}
-            >
-              <code>{row.original.address}</code>
-            </Button>
-            {row.original.description ? (
-              <span className="td catalog-description">{row.original.description}</span>
-            ) : null}
-          </div>
-        ),
-      },
-      {
-        accessorKey: "connectorId",
-        header: "Connector",
-        cell: ({ row }) => (
-          <a href={`/connectors/${encodeURIComponent(row.original.connectorId)}#tools`}>{row.original.connectorId}</a>
-        ),
-      },
-      {
-        accessorKey: "classification",
-        header: "Classification",
-        cell: ({ row }) => (
-          <Badge tone={row.original.classification === "read" ? "ok" : "warn"}>{row.original.classification}</Badge>
-        ),
-      },
-    ],
-    [],
-  );
+  const writes = tools.filter((t) => t.classification === "write").length;
+  const kinds = [
+    { value: "all", label: "All", count: tools.length },
+    { value: "read", label: "Read", count: tools.length - writes },
+    { value: "write", label: "Write", count: writes },
+  ] as const;
   return (
-    <div className="collection">
-      <div className="row">
-        <Input
-          type="search"
-          aria-label="Filter tools"
-          placeholder="Filter tools…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <label className="select-label">
-          Classification
-          <select
-            aria-label="Tool classification"
-            value={classification}
-            onChange={(e) => setClassification(e.target.value)}
-          >
-            <option value="all">All tools</option>
-            <option value="read">Read</option>
-            <option value="write">Write</option>
-          </select>
-        </label>
-      </div>
-      <p className="meta">
-        {visible.length} of {tools.length} tools. Select a tool to inspect its schema.
-      </p>
+    <div className="collection catalog">
+      {tools.length ? (
+        <div className="catalog-toolbar">
+          <Input
+            type="search"
+            className="filter"
+            aria-label="Filter tools"
+            placeholder="Search tools"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <SegmentedControl label="Tool classification" value={kind} options={kinds} onChange={setKind} />
+        </div>
+      ) : null}
       {visible.length ? (
-        <DataTable data={visible} columns={columns} label="Tool catalog" />
+        <ul className="tool-list card" aria-label="Tool catalog">
+          {visible.map((tool) => (
+            <li key={tool.address} className="tool-row">
+              <div className="tool-row-main">
+                <button
+                  type="button"
+                  className="tool-name"
+                  onClick={(event) => {
+                    returnFocus.current = event.currentTarget;
+                    setSelected(tool);
+                  }}
+                >
+                  <code>{tool.address}</code>
+                </button>
+                {tool.description ? <p className="tool-description">{tool.description}</p> : null}
+              </div>
+              <div className="tool-row-badges">
+                <SafetyBadges tool={tool} />
+                <ClassBadge classification={tool.classification} />
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : (
-        <StateBlock>
-          {tools.length
-            ? "No tools match these filters."
-            : "No live tools are visible. Check the connector's authentication and diagnostics."}
-        </StateBlock>
+        <StateBlock>{tools.length ? "No tools match these filters." : "No live tools."}</StateBlock>
       )}
       <Dialog
+        drawer
         returnFocusTo={returnFocus}
         open={Boolean(selected)}
         onOpenChange={(open) => {
           if (!open) setSelected(null);
         }}
         title={selected?.address ?? "Tool schema"}
-        description="Catalog metadata. Classification is resolved by the deployment."
+        description="Tool schema"
       >
         {selected ? (
-          <div className="collection">
-            <Badge tone={selected.classification === "read" ? "ok" : "warn"}>{selected.classification}</Badge>
-            {selected.description ? <p>{selected.description}</p> : null}
-            <h3>Input schema</h3>
-            <pre className="schema-code">
-              {selected.inputSchema ? JSON.stringify(selected.inputSchema, null, 2) : "No input schema supplied."}
-            </pre>
-            <h3>Output schema</h3>
-            <pre className="schema-code">
-              {selected.outputSchema ? JSON.stringify(selected.outputSchema, null, 2) : "No output schema supplied."}
-            </pre>
-            {selected.annotations ? (
-              <>
-                <h3>Annotations</h3>
-                <pre className="schema-code">{JSON.stringify(selected.annotations, null, 2)}</pre>
-              </>
-            ) : null}
+          <div className="schema-drawer">
+            <div className="schema-badges">
+              <ClassBadge classification={selected.classification} />
+              <SafetyBadges tool={selected} />
+            </div>
+            {selected.description ? <p className="schema-description">{selected.description}</p> : null}
+            <SchemaBlock title="Input schema" value={selected.inputSchema} />
+            <SchemaBlock title="Output schema" value={selected.outputSchema} />
+            {selected.annotations ? <SchemaBlock title="Annotations" value={selected.annotations} /> : null}
           </div>
         ) : null}
       </Dialog>
     </div>
+  );
+}
+
+function SchemaBlock({ title, value }: { title: string; value: unknown }) {
+  return (
+    <section className="schema-block">
+      <h3>{title}</h3>
+      {value ? <pre className="schema-code">{JSON.stringify(value, null, 2)}</pre> : <p className="meta">None</p>}
+    </section>
   );
 }
