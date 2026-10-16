@@ -8,6 +8,7 @@ import { parseConnectorAccess } from "../connector-access.js";
 import type { ConnectorAccess, ResolvedPool } from "../connector-access.js";
 import type { AuthenticatedIdentity, Executor, InboundAuth, InboundAuthRuntimeContext } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
+import { assertsAgents, isAgentName } from "../agent-identity.js";
 import type { ConnectorPermission, ConnectaIdentityConfig, ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
 
@@ -265,6 +266,23 @@ export async function authorize(
   const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
   for (const provider of candidates) {
     const result = await provider.authorize(request, baseUrl, runtimeContext);
+    // Only the built-in access-token adapter asserts an agent, and an agent is
+    // never a person. Any other `agent` claim refuses like an unknown token.
+    const agent = result.ok ? result.agent : undefined;
+    if (
+      result.ok &&
+      agent !== undefined &&
+      (!assertsAgents(provider) || !isAgentName(agent) || result.userId !== undefined || result.principal !== undefined)
+    ) {
+      lastResponse = privateJson(
+        { error: "unauthorized" },
+        {
+          status: 401,
+          headers: { "WWW-Authenticate": "Bearer" },
+        },
+      );
+      break;
+    }
     if (result.ok) {
       if (interactiveOnly && !result.userId) {
         return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
@@ -280,7 +298,7 @@ export async function authorize(
       const interactive = Boolean(result.userId && provider.interactiveOperator);
       // Principal-only API callers still need a stable typed actor for history
       // ownership. Never collapse distinct personal partitions into { kind }.
-      const actorId = subjectId ?? principal?.id;
+      const actorId = agent ?? subjectId ?? principal?.id;
       const recordNamespace = actorNamespace ?? (subjectId === undefined ? principal?.namespace : undefined);
       const actor: ActivityActor = {
         kind: provider.kind,
@@ -291,6 +309,7 @@ export async function authorize(
         actor,
         ...(subject ? { subject } : {}),
         ...(principal ? { principal } : {}),
+        ...(agent !== undefined ? { agent } : {}),
         interactive,
       };
       let operator = interactive;

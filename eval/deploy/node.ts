@@ -59,13 +59,17 @@ export async function startNodeDeployment(
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const storage = sqliteStorage(join(dir, "connecta.sqlite"));
-  const { token } = await new AccessTokenManager(storage).create("eval-machine", "eval-provisioning");
+  const { token } = await new AccessTokenManager(storage, { agents: ["eval-machine"] }).rotate(
+    "eval-machine",
+    "eval-provisioning",
+  );
   const vault = encryptedCredentialVault(storage, randomBytes(32).toString("base64"));
   const quiet = { debug() {}, info() {}, warn() {}, error() {} };
   const observed = observedExecutor(surface);
   const connecta = createConnecta({
     readOnly: false,
     storage,
+    agents: ["eval-machine"],
     accessTokens: accessTokens(storage),
     ...(oauth ? { auth: oauth.inbound() } : {}),
     identity: {

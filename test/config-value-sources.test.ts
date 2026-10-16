@@ -3,16 +3,23 @@ import { accessTokens } from "../src/access-tokens.js";
 import { describeConfigSources } from "../src/config-value-sources.js";
 import { customExecutor, remoteMcp } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import type { KVStorage } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
 
 const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 
 describe("factory configuration provenance", () => {
-  it.each([undefined, {}, { maxActive: 100 }])(
-    "INV-10: distinguishes omitted and explicit accessTokens maxActive: %j",
-    async (options) => {
-      const storage = memoryStorage();
-      const module = accessTokens(storage, options);
+  it.each([undefined, [], ["simon", "ci"]])(
+    "INV-10: distinguishes omitted and declared agents without writing: %j",
+    async (agents) => {
+      const base = memoryStorage();
+      const writes: string[] = [];
+      const storage: KVStorage = {
+        ...base,
+        set: (key, ...rest) => (writes.push(key), base.set(key, ...rest)),
+        delete: (key) => (writes.push(key), base.delete(key)),
+        compareAndSet: (key, ...rest) => (writes.push(key), base.compareAndSet(key, ...rest)),
+      };
       const raw = {
         readOnly: false,
         executor,
@@ -20,17 +27,19 @@ describe("factory configuration provenance", () => {
         logger: "silent" as const,
         connectors: [],
         storage,
-        accessTokens: module,
+        accessTokens: accessTokens(storage),
+        ...(agents === undefined ? {} : { agents }),
       };
       const app = createTestConnecta(raw);
       try {
-        expect(app.describeConfig().modules.accessTokens.maxActive).toBe(100);
-        expect(describeConfigSources(app.describeConfig(), raw)["config.modules.accessTokens.maxActive"]).toBe(
-          options?.maxActive === undefined ? "default" : "config",
-        );
-        expect(module.describe?.().optionSources?.maxActive).toBe(
-          options?.maxActive === undefined ? "default" : "config",
-        );
+        expect(app.describeConfig().agents).toEqual(agents ?? []);
+        const sources = describeConfigSources(app.describeConfig(), raw);
+        const agentSources = Object.entries(sources).filter(([path]) => path.startsWith("config.agents"));
+        expect(agentSources.length).toBeGreaterThan(0);
+        for (const [, source] of agentSources) expect(source).toBe(agents === undefined ? "default" : "config");
+        expect(sources["config.modules.accessTokens.enabled"]).toBe("config");
+        // Describing the agents and their provenance reads configuration only.
+        expect(writes).toEqual([]);
       } finally {
         await app.close();
       }

@@ -76,15 +76,21 @@ export default defineConfig((env: Env) => {
     // Required: model-written programs run in a bounded QuickJS child.
     executor: quickJsExecutor(),
     auth: clerk ? [clerk] : [],
-    // Always installed: an empty database refuses machine requests. Provision
-    // locally with `npm run provision-token -- "machine-name"`, or grant an
-    // interactive human `identity.accessTokenManagement` for later issuance.
-    // v0.23 client tokens survive `connecta migrate-state` on this storage.
+    // Machine clients are agents declared here by name, each with one cta_
+    // token. Issue or rotate one locally with
+    // `npm run --silent rotate-token -- local-machine`, or grant an interactive
+    // human `identity.accessTokenManagement` to do it from the operator UI.
+    // Removing a name stops its token on the next request.
+    agents: ["local-machine"],
+    // Always installed: a slot with no issued token refuses every request.
+    // Tokens from before agents stop admitting until `npm run adopt-token`
+    // binds each machine's token to an agent; human-bound tokens never do.
     accessTokens: accessTokens(storage),
     // Connection management permissions default to none, so the template
     // grants them. Split members from operators with `connectorAccess`,
     // `activityAccess`, and `accessTokenManagement`, each derived from the
-    // authenticated identity and never from an MCP argument.
+    // authenticated identity and never from an MCP argument. An agent is
+    // recognized by `identity.agent`, its declared name.
     identity: {
       credentialAdministration: () => "all",
       personalConnection: () => "all",

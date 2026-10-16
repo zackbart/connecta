@@ -114,14 +114,15 @@ deployment owner. Permission to use a connection is separate from permission
 to manage its credentials.
 
 People sign in through Clerk on Node or Cloudflare Access on Workers. Machine
-clients use tokens issued by your Connecta deployment. A deployment can serve
+clients are agents you name in deployment code, each with one token issued by
+your Connecta deployment. A deployment can serve
 several people within one tenant, each with the access you assign.
 
 ## A place to see your connections
 
 The optional operator UI shows connected services, available tools, access,
 and configuration. Authorized people can connect accounts, manage credentials,
-and issue client tokens. Optional activity history shows who called what,
+and issue or rotate agent tokens. Optional activity history shows who called what,
 when, and whether it worked, without recording arguments, results, or program
 code. The UI's controls follow the signed-in person's permissions.
 

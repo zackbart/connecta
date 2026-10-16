@@ -1258,17 +1258,18 @@ test("ignores a failed background read instead of repainting the row", async ({ 
   await expect(crm.locator('[data-fix-prompt="oauth_required"]')).toHaveCount(1);
 });
 
-test("creates, shows once, renames and revokes client tokens through real routes", async ({ page }) => {
+test("issues, shows once, rotates and revokes agent tokens through real routes", async ({ page }) => {
   const storage = memoryStorage();
-  const manager = new AccessTokenManager(storage);
-  await manager.create("Existing client", "older-owner");
+  const manager = new AccessTokenManager(storage, { agents: ["desktop-client", "ci"] });
+  await manager.rotate("ci", "older-owner");
   const connecta = createTestConnecta({
     connectors: [],
     auth: { ...fakeClerkAuth(), activityActorNamespace: "clerk:test" },
+    agents: ["desktop-client", "ci"],
     accessTokens: accessTokens(storage),
     identity: { accessTokenManagement: () => true },
   });
-  const paths = new Set(["/ui/access-tokens"]);
+  const paths = new Set(["/ui/access-tokens", "/ui/access-tokens/desktop-client"]);
   realRoutes = { connecta, paths, answered: [] };
   tokenManagement = true;
   let releaseList!: () => void;
@@ -1288,43 +1289,43 @@ test("creates, shows once, renames and revokes client tokens through real routes
     await listGate;
     await route.fulfill({ response });
   });
+  const authenticate = async (secret: string) =>
+    (
+      await manager.auth.authorize(
+        new Request(REAL_BASE + "/mcp", { headers: { Authorization: `Bearer ${secret}` } }),
+        REAL_BASE,
+      )
+    ).ok;
   try {
     await openAuthenticated(page);
     await page.getByRole("link", { name: "Tokens", exact: true }).click();
     await listEntered;
-    await page.getByLabel("Client name").fill("Desktop client");
-    await page.getByRole("button", { name: "Create token", exact: true }).click();
-    await expect(page.locator("#createdToken")).toContainText("cta_");
-    const listed = page.waitForResponse(
-      (response) => response.url().endsWith("/ui/access-tokens") && response.request().method() === "GET",
-    );
     releaseList();
-    await listed;
-    await expect(page.getByRole("heading", { name: "Desktop client", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Existing client", exact: true })).toBeVisible();
+    const card = page.locator('.token-card[aria-labelledby="access-token-desktop-client"]');
+    await expect(card).toContainText("No token issued");
+    await expect(page.getByRole("heading", { name: "ci", exact: true })).toBeVisible();
+    await expect(page.locator("#tokenName")).toHaveCount(0);
+    await card.getByRole("button", { name: "Issue", exact: true }).click();
+    await expect(page.locator("#createdToken")).toContainText("cta_");
     const secret = (await page.locator("#createdToken").textContent())!;
-    const record = (await manager.list()).find((token) => token.name === "Desktop client");
-    const card = page.locator(`.token-card[aria-labelledby="access-token-${record!.id}"]`);
-    paths.add(`/ui/access-tokens/${record!.id}`);
-    const authenticate = () =>
-      manager.auth.authorize(
-        new Request(REAL_BASE + "/mcp", { headers: { Authorization: `Bearer ${secret}` } }),
-        REAL_BASE,
-      );
-    expect((await authenticate()).ok).toBe(true);
+    expect(await authenticate(secret)).toBe(true);
     await page.getByRole("button", { name: "I stored it" }).click();
     await expect(page.locator("#createdToken")).toHaveCount(0);
-    await card.getByRole("button", { name: "Rename", exact: true }).click();
-    await page.getByLabel("Token name", { exact: true }).fill("Renamed desktop");
-    await page.getByRole("button", { name: "Save name", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Renamed desktop", exact: true })).toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept());
+    await card.getByRole("button", { name: "Rotate", exact: true }).click();
+    await expect(page.locator("#createdToken")).toContainText("cta_");
+    const rotated = (await page.locator("#createdToken").textContent())!;
+    expect(rotated).not.toBe(secret);
+    expect(await authenticate(secret)).toBe(false);
+    expect(await authenticate(rotated)).toBe(true);
+    await page.getByRole("button", { name: "I stored it" }).click();
     await page.reload();
-    await expect(page.getByRole("heading", { name: "Renamed desktop", exact: true })).toBeVisible();
-    expect(await page.content()).not.toContain(secret);
+    await expect(card).toContainText("Issued");
+    expect(await page.content()).not.toContain(rotated);
     page.once("dialog", (dialog) => dialog.accept());
     await card.getByRole("button", { name: "Revoke", exact: true }).click();
     await expect(card).toHaveClass(/revoked/);
-    expect((await authenticate()).ok).toBe(false);
+    expect(await authenticate(rotated)).toBe(false);
   } finally {
     await connecta.close();
   }

@@ -27,15 +27,17 @@ path and pins the generated project's Connecta dependency to the CLI version:
 npx @zackbart/connecta init my-connecta
 cd my-connecta
 npm install
-npm run --silent provision-token -- "local-machine"
+npm run --silent rotate-token -- local-machine
 # Save the returned cta_ token privately. It is shown only once.
 npm start
 ```
 
 The client connects to `http://localhost:8787/mcp` with
-`Authorization: Bearer <returned-cta-token>`. The generated project always
-installs `accessTokens(storage)`. An empty database admits no MCP caller even
-though `/health` works. `CONNECTA_TOKEN` is only a client/doctor variable;
+`Authorization: Bearer <returned-cta-token>`. Machine clients are the agents
+declared in `agents` in `src/connecta.config.ts`; the generated project declares
+`local-machine` and always installs `accessTokens(storage)`. An agent with no
+issued token admits no MCP caller even though `/health` works. Rotating with the
+same command replaces the token immediately. `CONNECTA_TOKEN` is only a client/doctor variable;
 it never configures server authentication. The local commands read the process
 environment and do not load `.env`; Docker Compose does.
 
@@ -56,8 +58,9 @@ must be installed for the Worker executor.
 
 Attach Cloudflare Access to the Worker destination. Interactive MCP clients
 need Managed OAuth, Dynamic Client Registration, and the documented redirect
-allowlist. Machines need Access service headers at the edge plus a stored
-`cta_` bearer inside Connecta; service identity alone is refused. Keep
+allowlist. Machines are declared agents: they need Access service headers at
+the edge plus the agent's `cta_` bearer inside Connecta; service identity alone
+is refused. Keep
 `enable_request_signal`, construct Connecta once per isolate, and pass `ctx`
 through to `fetch`. The example owns those details and
 [the machine-token procedure](../examples/worker/README.md#machine-tokens).
@@ -133,7 +136,7 @@ Bump the exact package pin, read the [changelog](../CHANGELOG.md) for every
 intervening release, and apply the relevant migration before startup. `init`
 does not merge changes into an existing deployment.
 
-- [Managed tokens from v0.23](./auth.md#managed-client-tokens-and-upgrading-from-v023) keep their secrets when storage, namespaces, and grants are retained. Replace the old boolean config with `accessTokens(storage)`; machine tokens gain no operator authority.
+- [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Grants match `identity.agent` instead of token record ids.
 - [Node storage from 0.28](../templates/node/README.md#storage) uses `connecta migrate-state` to copy the JSON state into SQLite. Activity JSONL is not imported.
 - [Worker storage from 0.28](../examples/worker/README.md#upgrading-from-028) copies KV into D1 with a one-shot migration.
 - [Notion, Vercel, and Cloudflare for 0.29](./provider-migration-0.29.md) change defaults and retained API tool names.

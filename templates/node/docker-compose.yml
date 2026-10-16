@@ -2,7 +2,7 @@
 #
 #   cp .env.example .env
 #   docker compose build
-#   docker compose run --rm --no-deps connecta npm run --silent provision-token -- "machine-name"
+#   docker compose run --rm --no-deps connecta npm run --silent rotate-token -- local-machine
 #   docker compose up -d --build
 #
 # Compose reads `.env` from this directory, so one file configures both the
@@ -16,7 +16,7 @@ services:
     ports:
       - "${PORT:-8787}:${PORT:-8787}"
     environment:
-      # accessTokens(storage) is always installed; an empty database is closed.
+      # accessTokens(storage) is always installed; an agent with no issued token is closed.
       # CONNECTA_TOKEN belongs to clients and is never configured on this server.
       PORT: ${PORT:-8787}
       # Downstream OAuth calls back to this origin. Unset is fine until this

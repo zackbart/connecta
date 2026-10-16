@@ -229,7 +229,8 @@ try {
     "templates/node/package.json",
     "templates/node/src/index.ts",
     "templates/node/src/connecta.config.ts",
-    "templates/node/src/provision-token.ts",
+    "templates/node/src/rotate-token.ts",
+    "templates/node/src/adopt-token.ts",
     "dist/index.js",
     "dist/index.d.ts",
     "dist/types.d.ts",
@@ -567,7 +568,8 @@ try {
     "CLAUDE.md",
     "src/index.ts",
     "src/connecta.config.ts",
-    "src/provision-token.ts",
+    "src/rotate-token.ts",
+    "src/adopt-token.ts",
     "tsconfig.json",
   ]) {
     if (!existsSync(join(work, "generated-deployment", generated))) {
@@ -799,7 +801,14 @@ try {
     );
     await assertClosed(`http://127.0.0.1:${port}`);
     const smokeToken = provisionedToken(
-      run(generatedTsx, ["src/provision-token.ts", "package-smoke-machine"], generatedRoot, serverEnv),
+      run(generatedTsx, ["src/rotate-token.ts", "local-machine"], generatedRoot, serverEnv),
+    );
+    expectFailure(
+      generatedTsx,
+      ["src/rotate-token.ts", "undeclared-machine"],
+      generatedRoot,
+      "not declared",
+      serverEnv,
     );
     const doctorOutput = run(generatedConnecta, ["doctor", "--url", `http://127.0.0.1:${port}`], generatedRoot, {
       CONNECTA_TOKEN: smokeToken,
@@ -845,17 +854,48 @@ try {
   };
   legacyDeployment.stdout.on("data", retainLegacyOutput);
   legacyDeployment.stderr.on("data", retainLegacyOutput);
+  const legacyEnv = { ...serverEnv, CONNECTA_DATABASE: legacyState };
+  const legacyDoctor = (token) =>
+    spawnSync(
+      join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
+      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`],
+      { cwd: generatedRoot, encoding: "utf8", env: { ...process.env, CONNECTA_TOKEN: token } },
+    );
   try {
     await waitForHealth(`http://127.0.0.1:${legacyPort}/health`, legacyDeployment, () => legacyOutput);
     await assertClosed(`http://127.0.0.1:${legacyPort}`);
-    const doctorOutput = run(
-      join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`],
+    // Tokens from before agents refuse until trusted provisioning binds one.
+    for (const entry of [legacyTokens.bound, legacyTokens.unbound]) {
+      if (legacyDoctor(entry.token).status === 0) throw new Error("A token issued before agents admitted unbound");
+    }
+    const adoptable = run(generatedTsx, ["src/adopt-token.ts"], generatedRoot, legacyEnv);
+    if (
+      !adoptable.includes(legacyTokens.unbound.accessToken.id) ||
+      adoptable.includes(legacyTokens.bound.accessToken.id)
+    ) {
+      throw new Error(`adopt-token did not list exactly the adoptable machine token: ${adoptable}`);
+    }
+    run(
+      generatedTsx,
+      ["src/adopt-token.ts", legacyTokens.unbound.accessToken.id, "local-machine"],
       generatedRoot,
-      { CONNECTA_TOKEN: legacyTokens.bound.token },
+      legacyEnv,
     );
-    if (!doctorOutput.includes("QuickJS executed")) throw new Error("Legacy token doctor did not prove execution");
-    console.log("v0.23 token compatibility: doctor passed with the original secret");
+    expectFailure(
+      generatedTsx,
+      ["src/adopt-token.ts", legacyTokens.bound.accessToken.id, "local-machine"],
+      generatedRoot,
+      "Human-bound access tokens cannot be adopted",
+      legacyEnv,
+    );
+    const doctorOutput = legacyDoctor(legacyTokens.unbound.token);
+    if (!doctorOutput.stdout.includes("QuickJS executed")) {
+      throw new Error(
+        `Adopted legacy token doctor did not prove execution: ${doctorOutput.stdout}${doctorOutput.stderr}`,
+      );
+    }
+    if (legacyDoctor(legacyTokens.bound.token).status === 0) throw new Error("A human-bound legacy token admitted");
+    console.log("v0.23 token compatibility: doctor passed with the adopted original secret");
   } finally {
     await stopChild(legacyDeployment);
   }
@@ -945,9 +985,9 @@ try {
             "npm",
             "run",
             "--silent",
-            "provision-token",
+            "rotate-token",
             "--",
-            "container-smoke-machine",
+            "local-machine",
           ],
           generatedRoot,
           composeEnv,

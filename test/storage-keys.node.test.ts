@@ -94,6 +94,7 @@ describe("storage key families", () => {
     within(oauthHandoffKeys.family, oauthHandoffKeys.handoff("svc", "hash"));
     within(accessTokenKeys.family, accessTokenKeys.record("id"));
     within(accessTokenKeys.family, accessTokenKeys.lookup("hash"));
+    within(accessTokenKeys.family, accessTokenKeys.agent("simon"));
     within(accessTokenKeys.family, accessTokenKeys.active);
     within(oauthConnectKeys.family, oauthConnectKeys.used("nonce"));
     within(negotiationKeys.family, negotiationKeys.verdict("digest"));
@@ -134,6 +135,7 @@ describe("storage key families", () => {
       [oauthHandoffKeys.handoff("svc", "hash"), "oauth-handoff"],
       [accessTokenKeys.record("id"), "access-token"],
       [accessTokenKeys.lookup("hash"), "access-token"],
+      [accessTokenKeys.agent("simon"), "access-token"],
       [accessTokenKeys.active, "access-token"],
       [credentialKeys.credential("svc"), "credential"],
       [credentialKeys.credential("svc", "ab12"), "credential"],
@@ -186,6 +188,7 @@ describe("storage key families", () => {
       () => oauthHandoffKeys.handoff("svc", bad),
       () => accessTokenKeys.record(bad),
       () => accessTokenKeys.lookup(bad),
+      () => accessTokenKeys.agent(bad),
       () => credentialKeys.credential(bad),
       () => credentialKeys.credential("svc", bad),
       () => oauthFlowKeys.flow(bad),

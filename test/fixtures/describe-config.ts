@@ -113,6 +113,7 @@ export function secretBearingDeployment() {
         machineAuth(SECRETS.machineToken, { subjectId: "operator" }),
         clerkAuth({ publishableKey, secretKey: SECRETS.clerkSecretKey, publicUrl: BASE }),
       ],
+      agents: ["release-bot"],
       accessTokens: accessTokens(storage),
       vault,
       ui: operatorUi({

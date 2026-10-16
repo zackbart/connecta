@@ -108,10 +108,18 @@ describe("Phase 4 behavior fixes", () => {
     expect((await makeRegistry([c]).statusFor("slot", BASE)).state).toBe("credential_required");
   });
 
-  it("INV-4 INV-6: permits cta_ principals only through activityAccess and filters connectors, tools, owners and pools", async () => {
+  it("INV-4 INV-6: permits API principals only through activityAccess and filters connectors, tools, owners and pools", async () => {
     const storage = memoryStorage();
     const principal = { namespace: "directory", id: "owner" };
-    const token = await new AccessTokenManager(storage).create("machine", principal);
+    const agentToken = (await new AccessTokenManager(storage, { agents: ["machine"] }).rotate("machine")).token;
+    const reader: InboundAuth = {
+      kind: "api",
+      recognizesCredential: (request) => request.headers.get("authorization") === "Bearer reader",
+      authorize: (request) =>
+        request.headers.get("authorization") === "Bearer reader"
+          ? { ok: true, principal }
+          : { ok: false, response: new Response(null, { status: 401 }) },
+    };
     let permitted = true;
     let readGate = true;
     const read = vi.fn(async () => ({
@@ -127,6 +135,8 @@ describe("Phase 4 behavior fixes", () => {
     const deployment = app({
       connectors: [connector("visible"), connector("hidden"), { ...connector("personal"), authScope: "personal" }],
       storage,
+      auth: reader,
+      agents: ["machine"],
       accessTokens: accessTokens(storage),
       logger: "silent",
       identity: {
@@ -139,8 +149,10 @@ describe("Phase 4 behavior fixes", () => {
       },
       activity: activityHistory({ store: { record() {}, list: read }, readGate: () => readGate }),
     });
-    const request = (method = "GET") =>
-      new Request(BASE + "/ui/api/activity", { method, headers: { Authorization: `Bearer ${token.token}` } });
+    const request = (method = "GET", token = "reader") =>
+      new Request(BASE + "/ui/api/activity", { method, headers: { Authorization: `Bearer ${token}` } });
+    // An agent has no principal, so activityAccess can never admit it.
+    expect((await deployment.fetch(request("GET", agentToken))).status).toBe(403);
     const response = await deployment.fetch(request());
     expect(response.status).toBe(200);
     expect(((await response.json()) as { events: ToolCallActivityEvent[] }).events.map((e) => e.id)).toEqual(["yes"]);

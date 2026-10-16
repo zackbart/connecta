@@ -166,8 +166,8 @@ async function ready(page: Page, name: string, state: VisualState) {
   } else if (name === "tokens") {
     await expect(
       state === "empty"
-        ? page.getByText("No access tokens yet. Name the first MCP client above.")
-        : page.getByRole("heading", { name: "Claude desktop", exact: true }),
+        ? page.getByText("No agents are declared. Add them to agents in the deployment code.")
+        : page.getByRole("heading", { name: "claude-desktop", exact: true }),
     ).toBeVisible();
   } else {
     await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);

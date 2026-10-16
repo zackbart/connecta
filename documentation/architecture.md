@@ -568,8 +568,8 @@ storage clock. Supply at most one option. Custom adapters must implement both;
 a delayed absolute-expiry write must not restart a relative TTL at commit time. Each SQL claim
 is one statement, which SQLite executes atomically and D1 serializes on its
 primary. Everything that must claim a key exactly once relies on it with no
-read-then-write fallback: access-token issuance and
-capacity, OAuth handoff ownership, single-use connect links, every downstream
+read-then-write fallback: agent-token slot swaps and
+adoption, OAuth handoff ownership, single-use connect links, every downstream
 OAuth grant write and consent claim, and the result stash.
 
 Every key is built in `src/storage/keys.ts`, which lists each family with its
@@ -1184,7 +1184,7 @@ regardless of wrapping.
 
 `createConnecta` takes closed typed `ui`, `vault`, and `activity`
 slots, with factories at `/ui`, `/credentials`, and `/activity`
-and machine tokens at `/auth/access-tokens`. Root exports the contracts, never the implementations, and there
+and agent tokens at `/auth/access-tokens`. Root exports the contracts, never the implementations, and there
 is no module array, runtime registration, or plugin lifecycle. Core keeps
 discovery, the executor contract, invocation, permissions, and OAuth callback
 verification; an omitted module contributes no runtime work at all.
@@ -1508,7 +1508,8 @@ compiling and configuring the real thing.
   SIGTERM/SIGINT.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
   invalid admission rule or limit, an unknown option at any depth, the old
-  boolean `accessTokens` option, a missing executor, or an executor without a
+  boolean `accessTokens` option, malformed or repeated `agents` or agents
+  without `accessTokens`, a missing executor, or an executor without a
   lifecycle brand:
   all refuse to boot (`test/config.test.ts`, `test/registry.test.ts`). Starting
   in the wrong shape is worse than not starting.

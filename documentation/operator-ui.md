@@ -42,8 +42,10 @@ Install the vault for declared credential slots and activity history for
 persisted call records. Neither module grants permission to manage or read
 it. Credential administration, personal connection, access-token management,
 and activity access are separate identity decisions, denied by default where
-specified in [auth](./auth.md#management-permissions). Machine tokens never
-grant interactive credential or token management authority.
+specified in [auth](./auth.md#management-permissions). Token management
+issues, rotates, and revokes the tokens of agents declared in code; it never
+creates, renames, or binds an agent. Agent tokens never grant interactive
+credential or token management authority.
 
 ## Operator data contract
 
@@ -148,7 +150,7 @@ with history replacement. Connector hashes `#config`, `#auth` and `#diagnostics`
 redirect to `#connection`, preserving query parameters such as signed handoffs.
 Token controls retain their existing permission gate.
 Configuration remains in deployment code. The UI mutates only credentials,
-OAuth connections and client tokens through the existing routes.
+OAuth connections and agent tokens through the existing routes.
 
 ## Source and tests
 

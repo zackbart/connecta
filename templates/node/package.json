@@ -10,8 +10,9 @@
     "esbuild@0.28.2": true
   },
   "scripts": {
+    "adopt-token": "tsx src/adopt-token.ts",
     "doctor": "connecta doctor",
-    "provision-token": "tsx src/provision-token.ts",
+    "rotate-token": "tsx src/rotate-token.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },

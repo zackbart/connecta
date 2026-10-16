@@ -103,6 +103,8 @@ export interface ConnectaConfigDescription {
     "connectorAccess" | "activityAccess" | "credentialAdministration" | "accessTokenManagement" | "personalConnection",
     "default" | "custom"
   >;
+  /** Agents declared in code, by name, in declaration order. Never token state. */
+  agents: string[];
   /** `readOnly` is resolved: the pool's own value, else the deployment's. */
   pools: Array<{ name: string; path: string; tools: string[]; hasGrant: boolean; readOnly: boolean }>;
   modules: {
@@ -114,7 +116,7 @@ export interface ConnectaConfigDescription {
       deploymentId?: string;
       store?: { kind: DescribedStoreKind; retentionDays?: number };
     };
-    accessTokens: { enabled: boolean; maxActive?: number };
+    accessTokens: { enabled: boolean };
   };
   /** Every accepted store implements `list` and `compareAndSet`, so only its kind is told. */
   storage: { configured: boolean; kind: DescribedStoreKind };
@@ -353,7 +355,6 @@ const storeKind = (described: { kind?: unknown } | undefined): DescribedStoreKin
 export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescription {
   const { raw, config } = input;
   const brand = resolveBranding(config.ui?.branding);
-  const accessTokens = config.accessTokens?.describe?.();
   const storage = config.storage;
   const activityStore = config.activity?.store.describe?.();
   const D = CONFIG_DEFAULTS;
@@ -427,6 +428,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
     identity: Object.fromEntries(
       IDENTITY_KEYS.map((key) => [key, typeof config.identity[key] === "function" ? "custom" : "default"]),
     ) as ConnectaConfigDescription["identity"],
+    agents: [...config.agents],
     pools: Object.entries(config.pools ?? {}).map(([name, pool]) => ({
       readOnly: pool.readOnly ?? config.readOnly,
       name,
@@ -455,12 +457,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
             },
           }
         : { enabled: false },
-      accessTokens: config.accessTokens
-        ? {
-            enabled: true,
-            ...(num(accessTokens?.maxActive) !== undefined ? { maxActive: accessTokens!.maxActive } : {}),
-          }
-        : { enabled: false },
+      accessTokens: { enabled: config.accessTokens !== undefined },
     },
     storage: {
       configured: raw.storage !== undefined,

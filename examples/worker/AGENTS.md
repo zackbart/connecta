@@ -60,8 +60,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - Unattended clients and `connecta doctor` need Access service credentials
   plus a stored `cta_` bearer. Set `CF_ACCESS_CLIENT_ID`,
   `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN` together for doctor.
-  Bootstrap tokens through the Access-authenticated operator page or trusted
-  `AccessTokenManager.create` tooling against this same D1 storage, as README
+  Machine clients are the `agents` declared in `src/connecta.config.ts`. Issue
+  or rotate a token through the Access-authenticated operator page or trusted
+  `AccessTokenManager.rotate` tooling against this same D1 storage, as README
   "Machine tokens" describes. Never configure a static bearer or open startup.
   UI, vault, and activity use explicit optional imports;
   auth changes require code-derived shared or personal management permissions.
