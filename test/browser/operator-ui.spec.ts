@@ -956,6 +956,10 @@ test("keeps a downstream's error text out of every action notice, end to end", a
     async startAuth() {
       throw new Error(LEAK);
     },
+    async finishAuth() {},
+    async verifyState() {
+      return true;
+    },
     async disconnectAuth() {
       throw new Error(LEAK);
     },

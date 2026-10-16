@@ -101,6 +101,8 @@ test.beforeEach(async () => {
         status: async () => ({ state: oauthFailed ? "error" : connected ? "ok" : "auth_required" }),
         startAuth: async () => ({ state: "auth_required", authorizationUrl: `${origin}/consent` }),
         disconnectAuth: async () => {},
+        finishAuth: async () => {},
+        verifyState: async () => true,
       },
     ],
   });
