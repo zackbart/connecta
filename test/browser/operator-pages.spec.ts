@@ -291,7 +291,7 @@ test("connector tabs are keyboard friendly and preserve the selected tab on relo
 test("legacy pages and connector tabs replace their URL and preserve handoff queries", async ({ page }) => {
   await session(page);
   for (const [oldPath, path, heading] of [
-    ["/access", "/", "Endpoints"],
+    ["/access", "/endpoints", "Endpoints"],
     ["/tools", "/connectors", "Connectors"],
     ["/config", "/settings", "Settings"],
   ]) {
@@ -312,7 +312,7 @@ test("INV-4 INV-6: endpoint rows expand exact granted tools and copy client setu
   page,
 }) => {
   await session(page);
-  await page.goto(origin);
+  await page.goto(origin + "/endpoints");
   // Connector health and fix prompts belong to Connectors, not every endpoint row.
   await expect(page.locator("#endpointsView .badge.ok, #endpointsView .badge.warn")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Copy fix prompt/ })).toHaveCount(0);
@@ -382,7 +382,7 @@ test("INV-6: Endpoints and command search ignore payload and raw error sentinels
     }));
     await route.fulfill({ json: contract });
   });
-  await page.goto(origin);
+  await page.goto(origin + "/endpoints");
   await expect(page.locator(".endpoint-table")).toBeVisible();
   await page.locator(".endpoint-entry").first().locator(".endpoint-toggle").click();
   await page.getByRole("button", { name: "Search" }).click();

@@ -58,7 +58,8 @@ export interface AccessChip {
 /** How many chips an endpoint row shows before "+N more". */
 const ACCESS_CHIP_LIMIT = 4;
 
-function initialsOf(text: string): string {
+/** Up to two letters for a person's avatar, from their label or raw id. */
+export function initialsOf(text: string): string {
   const words = text
     .replace(/^user_/, "")
     .split(/[\s._@-]+/)
@@ -67,7 +68,8 @@ function initialsOf(text: string): string {
   return letters.toUpperCase();
 }
 
-function hueOf(key: string): number {
+/** A stable tint bucket for a member key, shared by chips and the Overview map. */
+export function hueOf(key: string): number {
   let hash = 0;
   for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return hash % 6;

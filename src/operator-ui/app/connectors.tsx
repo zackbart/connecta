@@ -3,24 +3,17 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { OperatorConnectorOverlay } from "../contract.js";
 import { formatDate, type OperatorState } from "../view.js";
-import { StateBlock } from "./parts.js";
+import { followLink, StateBlock } from "./parts.js";
 import { Button, DataTable, Input, SegmentedControl } from "./primitives.js";
 import { ConnectorStatus } from "./problems.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
 import { ConnectorMatrix } from "./matrix.js";
-import { loadOperatorContract, navigate } from "./store.js";
+import { loadOperatorContract } from "./store.js";
 
 function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
   const href = `/connectors/${encodeURIComponent(id)}${tab ? `#${tab}` : ""}`;
   return (
-    <a
-      href={href}
-      onClick={(event) => {
-        if (event.button || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-        event.preventDefault();
-        navigate("connector", href);
-      }}
-    >
+    <a href={href} onClick={(event) => followLink(event, href, "connector")}>
       {name ?? id}
     </a>
   );

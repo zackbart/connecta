@@ -39,11 +39,12 @@ its state and fonts before capturing.
 ## Page and state matrix
 
 Each row runs empty, loading, error, populated, and restricted-viewer fixtures
-in both light and dark themes, for 80 screenshots. The restricted viewer is a
+in both light and dark themes, for 90 screenshots. The restricted viewer is a
 pool member, who gets the member page, with no tabs, on every path.
 
 | Page or tab          | Empty state                          | Loading/error request | Restricted viewer (member)          |
 | -------------------- | ------------------------------------ | --------------------- | ----------------------------------- |
+| Overview             | No connectors: nothing to map        | Config                | Member page at `/`                  |
 | Endpoints            | Root endpoint without tools          | Config                | Member page: endpoints, accounts    |
 | Connectors           | No connectors                        | Config                | Member page, no connector request   |
 | Connector Tools      | Empty catalog                        | Config                | Member page, no connector request   |
@@ -53,10 +54,12 @@ pool member, who gets the member page, with no tabs, on every path.
 | Activity             | No calls                             | Activity              | Member page, no activity request    |
 | Settings             | Snapshot without connectors or pools | Config                | Member page, no configuration facts |
 
-Populated Endpoints shows who can use each endpoint; populated Tokens has one
+Populated Overview has a failing connector, drift, auth and credential problems
+and a tokenless agent in its attention list. Populated Endpoints shows who can use each endpoint; populated Tokens has one
 agent per slot state, with pools and last seen.
 
-Another 54 screenshots cover configured, mismatched, unreadable and multifield
+Another 60 screenshots cover the Overview map on the frozen v2 maintainer, its
+hover trace for Lin, and the narrow map list; configured, mismatched, unreadable and multifield
 credentials; all three OAuth client mechanisms; clean and unobserved drift;
 historical Activity; client setup; schema dialog; read/write filters; expanded
 config provenance; narrow sign-in and Connection; deployment branding; `/mcp`
@@ -81,6 +84,14 @@ request until Retry succeeds), an open client setup drawer closed by a failed
 refresh with focus on Retry, Tokens under recovery (an open rotate question
 closes with focus on Retry and nothing sent; an unseen secret dialog stays open
 over the banner until dismissed), payload sentinels, CSP, and the refusal of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
+`test/browser/operator-overview.spec.ts` covers the Overview on the frozen v2
+fixtures: the headline numbers, map columns, dashed read-only grants and dotted
+tokenless access; attention rows with their fix links, a copied fix prompt equal
+to the catalogue's text and a failing connector sorted first; the hover
+sentence and dimming; keyboard focus in column order with each node's sentence
+as its accessible name, Enter opening an endpoint's row and a connector; the
+narrow list; an empty deployment; and a member at `/` getting the member page
+with no maintainer read, plus CSP and no `style` attributes.
 `test/browser/operator-console.spec.ts` covers UI-3: who-can-use chips by
 label, raw id and agent mark and "+N more" from the keyboard; Tokens rows,
 issue with the once-only secret dialog, in-row rotate and revoke questions,

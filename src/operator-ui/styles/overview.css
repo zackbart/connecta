@@ -1,4 +1,605 @@
 /*
- * The Overview page and its connection map. Reserved for that page (#867),
- * so its styles land here without touching another area's file.
+ * The Overview page: its headline numbers, the "Needs attention" list, and
+ * the connection map. Every color comes from tokens.css, mixed here, so a
+ * branded accent and both color schemes carry through without new values.
  */
+
+#overviewView {
+  --map-read: color-mix(in srgb, var(--muted) 62%, var(--surface));
+  --map-write: var(--blue);
+  --map-line: color-mix(in srgb, var(--text) 22%, var(--surface));
+  --map-ok: color-mix(in srgb, var(--ok) 62%, var(--map-line));
+  --soft-ok: color-mix(in srgb, var(--ok) 12%, var(--surface));
+  --soft-warn: color-mix(in srgb, var(--warn) 13%, var(--surface));
+  --soft-danger: color-mix(in srgb, var(--danger) 11%, var(--surface));
+  --card-radius: calc(var(--radius) + 6px);
+}
+
+.overview-lede {
+  font-size: var(--text-base) !important;
+}
+
+.overview-section {
+  margin-top: 2.25rem;
+}
+.overview-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.875rem;
+}
+.overview-section-head h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.overview-section-head .meta {
+  font-size: var(--text-sm);
+}
+
+/* Headline numbers */
+
+.overview-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.875rem;
+}
+.overview-stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  padding: 1.125rem 1.25rem 1.125rem;
+  position: relative;
+}
+.overview-number {
+  /* "3 people · 2 agents" stays on one line in a third of an 800px page. */
+  font-size: clamp(1.25rem, 2.2vw, 1.5rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+.overview-label {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.overview-link {
+  align-items: center;
+  color: var(--link);
+  display: inline-flex;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  gap: 0.25rem;
+  position: absolute;
+  right: 1.25rem;
+  text-decoration: none;
+  top: 1.25rem;
+}
+.overview-link:hover {
+  text-decoration: underline;
+}
+.health-bar {
+  display: flex;
+  gap: 3px;
+  margin-top: 0.875rem;
+}
+.health-bar > span {
+  background: var(--border-strong);
+  border-radius: 999px;
+  flex: 1;
+  height: 0.375rem;
+}
+.health-bar > .tone-ok {
+  background: var(--ok);
+}
+.health-bar > .tone-warn {
+  background: var(--warn);
+}
+.health-bar > .tone-danger {
+  background: var(--danger);
+}
+.health-bar > .mode-read-only,
+.health-legend .dot.read-only {
+  background: var(--blue);
+}
+.health-bar > .mode-read-write,
+.health-legend .dot.read-write {
+  background: var(--map-read);
+}
+.health-legend {
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  gap: 0.25rem 0.875rem;
+  list-style: none;
+  margin: 0.625rem 0 0;
+  padding: 0;
+}
+.health-legend li {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.375rem;
+}
+.overview-callers {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  list-style: none;
+  margin: 0.875rem 0 0;
+  padding: 0;
+}
+.overview-callers .avatar {
+  font-size: 0.625rem;
+  height: 1.5rem;
+  width: 1.5rem;
+}
+.overview-callers .agent-mark {
+  border-radius: 6px;
+  height: 1.5rem;
+  width: 1.5rem;
+  background:
+    radial-gradient(circle at 50% 42%, var(--surface) 0 2.5px, transparent 3px),
+    linear-gradient(var(--surface), var(--surface)) 50% 72% / 2px 6px no-repeat,
+    var(--text);
+}
+.overview-callers .agent-mark.muted {
+  opacity: 0.45;
+}
+.overview-more {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  padding-left: 0.25rem;
+}
+
+/* Needs attention */
+
+.attention-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.attention-item,
+.attention-clear {
+  align-items: flex-start;
+  display: flex;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+}
+.attention-item + .attention-item {
+  border-top: 1px solid var(--border);
+}
+.attention-icon {
+  border-radius: 9px;
+  display: grid;
+  flex: none;
+  height: 2rem;
+  place-items: center;
+  width: 2rem;
+}
+.attention-icon.tone-warn {
+  background: var(--soft-warn);
+  color: var(--warn);
+}
+.attention-icon.tone-danger {
+  background: var(--soft-danger);
+  color: var(--danger);
+}
+.attention-icon.tone-ok {
+  background: var(--soft-ok);
+  color: var(--ok);
+}
+.attention-text {
+  flex: 1;
+  min-width: 0;
+}
+.attention-text h3 {
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0;
+}
+.attention-text h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+.attention-text h3 a:hover {
+  text-decoration: underline;
+}
+.attention-text h3 code {
+  font-size: 0.95em;
+}
+.attention-text p {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: 0.1875rem 0 0;
+  max-width: 68ch;
+}
+.attention-actions {
+  align-items: center;
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+.attention-actions .btn {
+  min-height: 2rem;
+  text-decoration: none;
+}
+
+/* The connection map */
+
+.map-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+}
+.map-canvas {
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 9%, transparent) 1px, transparent 1.2px) 0 0 /
+      18px 18px,
+    var(--surface-2);
+  overflow-x: auto;
+  padding: 1rem 0.75rem 0.75rem;
+}
+/* Below this width the text scales under 12px, so the card scrolls instead. */
+.map-svg {
+  display: block;
+  height: auto;
+  min-width: 880px;
+  overflow: visible;
+  user-select: none;
+  width: 100%;
+}
+.map-svg text {
+  fill: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+}
+.map-svg text.mono,
+.map-svg .mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.map-column {
+  fill: var(--muted) !important;
+  font-family: var(--mono) !important;
+  font-size: 10.5px !important;
+  letter-spacing: 0.12em;
+}
+.map-column-count {
+  fill: color-mix(in srgb, var(--muted) 55%, var(--surface));
+}
+.map-title {
+  font-weight: 500;
+}
+.kind-endpoint .map-title {
+  font-weight: 600;
+}
+.map-detail,
+.map-svg text.map-detail {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.map-svg text.map-detail.mono {
+  font-size: 10.5px;
+}
+.map-svg .map-detail.tone-warn {
+  fill: var(--warn);
+}
+.map-svg .map-detail.tone-danger {
+  fill: var(--danger);
+}
+.map-count {
+  font-weight: 650;
+}
+
+.map-edge {
+  fill: none;
+  pointer-events: none;
+  stroke: var(--map-line);
+  stroke-width: 1.6;
+  transition:
+    opacity 0.18s,
+    stroke-width 0.18s;
+}
+.map-edge.tone-ok {
+  stroke: var(--map-ok);
+}
+.map-edge.tone-warn {
+  stroke: var(--warn);
+}
+.map-edge.tone-danger {
+  stroke: var(--danger);
+}
+.map-edge.read-only {
+  stroke-dasharray: 5 4;
+}
+.map-edge.no-token {
+  stroke: color-mix(in srgb, var(--muted) 70%, var(--surface));
+  stroke-dasharray: 1 5;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.map-node {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 0.18s;
+}
+.map-node .map-box {
+  fill: var(--surface);
+  stroke: var(--border);
+  stroke-width: 1;
+  transition: stroke 0.15s;
+}
+.map-node:hover .map-box,
+.map-node.lit .map-box {
+  stroke: var(--border-strong);
+}
+.map-node:focus-visible .map-box {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.map-node.problem-warn .map-box {
+  stroke: color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+.map-node.problem-danger .map-box {
+  stroke: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.map-node .map-box.tools {
+  stroke: var(--border);
+}
+.map-node.no-token .map-box {
+  stroke-dasharray: 4 3;
+}
+.map-svg.tracing .map-node.dim {
+  opacity: 0.25;
+}
+.map-svg.tracing .map-edge:not(.lit) {
+  opacity: 0.1;
+}
+.map-svg.tracing .map-edge.lit {
+  stroke-width: 2.4;
+}
+
+.map-avatar {
+  fill: color-mix(in srgb, var(--avatar) 16%, var(--surface));
+}
+.map-svg text.map-avatar-text {
+  fill: var(--text);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.map-agent-mark {
+  fill: var(--text);
+}
+.map-agent-eye {
+  fill: var(--surface);
+}
+.no-token .map-agent-mark {
+  fill: var(--surface-2);
+  stroke: color-mix(in srgb, var(--muted) 70%, var(--surface));
+  stroke-dasharray: 2 2;
+}
+.no-token .map-agent-eye {
+  fill: color-mix(in srgb, var(--muted) 70%, var(--surface));
+}
+.map-mode.read-only {
+  fill: color-mix(in srgb, var(--blue) 12%, var(--surface));
+  stroke: color-mix(in srgb, var(--blue) 30%, var(--border));
+}
+.map-svg text.map-mode-text {
+  fill: var(--blue);
+  font-size: 10px;
+  font-weight: 600;
+}
+.map-tile {
+  fill: var(--surface-2);
+  stroke: var(--border-strong);
+}
+.map-svg text.map-tile-text {
+  fill: var(--text);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.map-health {
+  fill: var(--muted);
+}
+.map-health.tone-ok {
+  fill: var(--ok);
+}
+.map-health.tone-warn {
+  fill: var(--warn);
+}
+.map-health.tone-danger {
+  fill: var(--danger);
+}
+.map-bar {
+  fill: color-mix(in srgb, var(--text) 7%, var(--surface));
+}
+.map-bar.read {
+  fill: var(--map-read);
+}
+.map-bar.write {
+  fill: var(--map-write);
+}
+
+.map-trace {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  display: flex;
+  font-size: var(--text-sm);
+  gap: 0.75rem;
+  min-height: 3.25rem;
+  padding: 0.75rem 1.25rem;
+}
+.map-trace > svg {
+  color: var(--accent);
+  flex: none;
+}
+.map-trace.idle {
+  color: var(--muted);
+}
+.map-legend {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  gap: 0.375rem 1.125rem;
+  list-style: none;
+  margin: 0;
+  padding: 0.75rem 1.25rem 0.875rem;
+}
+.map-legend li {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.4375rem;
+}
+.map-legend svg {
+  overflow: visible;
+}
+.map-legend .map-edge {
+  stroke-width: 2;
+}
+.map-swatch {
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.375rem;
+  width: 1rem;
+}
+.map-swatch.read {
+  background: var(--map-read);
+}
+.map-swatch.write {
+  background: var(--map-write);
+}
+
+/* Narrow screens read the map as a list, one card per endpoint. */
+
+.map-list {
+  display: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.map-list-entry {
+  display: grid;
+  gap: 0.375rem;
+  padding: 1rem 1.125rem;
+}
+.map-list-entry + .map-list-entry {
+  border-top: 1px solid var(--border);
+}
+.map-list-head {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+.map-list-path {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--text-base);
+  font-weight: 600;
+  text-decoration: none;
+}
+.map-list-mode {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  padding: 0 0.5rem;
+}
+.map-list-mode.read-only {
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--blue) 26%, var(--border));
+  color: var(--blue);
+}
+.map-list-summary {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.map-list-label {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  margin-top: 0.375rem;
+  text-transform: uppercase;
+}
+.map-list-items {
+  display: grid;
+  gap: 0.25rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.map-list-items li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  gap: 0.25rem 0.5rem;
+}
+.map-list-name {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.map-list-note {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin-left: auto;
+}
+.map-list-note.tone-warn {
+  color: var(--warn);
+}
+
+@media (max-width: 960px) {
+  .map-figure {
+    display: none;
+  }
+  .map-list {
+    display: block;
+  }
+}
+
+@media (max-width: 760px) {
+  .overview-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .attention-item {
+    flex-wrap: wrap;
+  }
+  .attention-text {
+    flex-basis: calc(100% - 3rem);
+  }
+  .attention-actions {
+    justify-content: flex-start;
+    padding-left: 3rem;
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-edge,
+  .map-node,
+  .map-node .map-box {
+    transition: none;
+  }
+}

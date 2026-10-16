@@ -118,7 +118,7 @@ async function noStyleAttributes(page: Page, scope: string) {
 test.describe("who can use each endpoint", () => {
   test("INV-4: /mcp lists root maintainers, pools list members, agents carry a token mark", async ({ page }) => {
     await install(page, crowdedMaintainer());
-    await page.goto(VISUAL_ORIGIN + "/");
+    await page.goto(VISUAL_ORIGIN + "/endpoints");
     const who = (path: string) => page.getByRole("group", { name: `Who can use ${path}`, exact: true });
     await expect(who("/mcp").locator(".access-chip-text")).toHaveText(["Ada Lovelace", "user_grace"]);
     await expect(who("/mcp/ada").locator(".access-chip-text")).toHaveText(["Ada Lovelace", "simon-ada"]);
@@ -134,7 +134,7 @@ test.describe("who can use each endpoint", () => {
 
   test("a long list shows four and a +N more button that expands from the keyboard", async ({ page }) => {
     await install(page, crowdedMaintainer());
-    await page.goto(VISUAL_ORIGIN + "/");
+    await page.goto(VISUAL_ORIGIN + "/endpoints");
     const team = page.getByRole("group", { name: "Who can use /mcp/team", exact: true });
     await expect(team.locator(".access-chip")).toHaveCount(4);
     const more = team.getByRole("button", { name: "Show 3 more who can use /mcp/team", exact: true });
@@ -177,7 +177,7 @@ test.describe("who can use each endpoint", () => {
       members: pool.members.map((m) => ({ ...m, ...dirty })),
     }));
     await install(page, contract);
-    await page.goto(VISUAL_ORIGIN + "/");
+    await page.goto(VISUAL_ORIGIN + "/endpoints");
     await expect(page.locator(".access-chip").first()).toBeVisible();
     await page.getByRole("button", { name: "Show 3 more who can use /mcp/team", exact: true }).click();
     expect(await page.content()).not.toContain(sentinel);

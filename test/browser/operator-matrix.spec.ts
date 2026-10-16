@@ -181,7 +181,7 @@ test("a matrix cell opens exactly its tools from the keyboard and returns focus"
 
 test("INV-4: endpoint rows show agent URLs only for agent pools and runs-as from the matrix", async ({ page }) => {
   await install(page, maintainer.contract, maintainer.data);
-  await page.goto(VISUAL_ORIGIN + "/");
+  await page.goto(VISUAL_ORIGIN + "/endpoints");
   const ada = page.getByRole("region", { name: "/mcp/ada", exact: true });
   await expect(ada.locator(".endpoint-count")).toHaveText("Tools: 3");
   await expect(ada.locator(".endpoint-agent")).toContainText(VISUAL_ORIGIN + "/agent/ada");
@@ -264,7 +264,7 @@ test("INV-6: endpoint rows, the matrix and its popover ignore payload and raw er
   contract.matrix = contract.matrix.map((cell) => ({ ...cell, ...dirty }));
   contract.pools = contract.pools.map((pool) => ({ ...pool, ...dirty }));
   await install(page, contract, maintainer.data);
-  await page.goto(VISUAL_ORIGIN + "/");
+  await page.goto(VISUAL_ORIGIN + "/endpoints");
   await expect(page.locator(".endpoint-toggle")).toHaveCount(4);
   for (const toggle of await page.locator(".endpoint-toggle").all()) await toggle.click();
   await expect(page.locator(".tool-chip").first()).toBeVisible();
@@ -579,7 +579,7 @@ test("INV-4: a failed refresh closes an open client setup drawer and hands focus
   await page.route(`${VISUAL_ORIGIN}/ui/api/config`, (route) =>
     failing ? route.fulfill({ status: 503, json: { error: "unavailable" } }) : route.fulfill({ json: contract }),
   );
-  await page.goto(VISUAL_ORIGIN + "/");
+  await page.goto(VISUAL_ORIGIN + "/endpoints");
   await page
     .getByRole("button", { name: /^Client setup for / })
     .first()
