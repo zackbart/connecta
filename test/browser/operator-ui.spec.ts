@@ -1313,7 +1313,9 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
     agents: ["desktop-client", "ci"],
     accessTokens: accessTokens(storage),
   });
-  const paths = new Set(["/ui/access-tokens", "/ui/access-tokens/desktop-client"]);
+  // Contract, data and slots all come from main's real v2 server, so the
+  // contract's agents and the slot list describe one deployment.
+  const paths = new Set(["/ui/api/config", "/ui/data", "/ui/access-tokens", "/ui/access-tokens/desktop-client"]);
   realRoutes = { connecta, paths, answered: [] };
   tokenManagement = true;
   let releaseList!: () => void;
@@ -1345,18 +1347,21 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
     await page.getByRole("link", { name: "Tokens", exact: true }).click();
     await listEntered;
     releaseList();
-    const card = page.locator('.token-card[aria-labelledby="access-token-desktop-client"]');
-    await expect(card).toContainText("No token issued");
-    await expect(page.getByRole("heading", { name: "ci", exact: true })).toBeVisible();
+    const card = page.locator('tr[data-agent="desktop-client"]');
+    await expect(card.locator(".badge")).toHaveText("No token");
+    await expect(page.getByRole("rowheader", { name: "ci", exact: true })).toBeVisible();
     await expect(page.locator("#tokenName")).toHaveCount(0);
-    await card.getByRole("button", { name: "Issue", exact: true }).click();
+    await card.getByRole("button", { name: "Issue desktop-client's token", exact: true }).click();
     await expect(page.locator("#createdToken")).toContainText("cta_");
     const secret = (await page.locator("#createdToken").textContent())!;
     expect(await authenticate(secret)).toBe(true);
     await page.getByRole("button", { name: "I stored it" }).click();
     await expect(page.locator("#createdToken")).toHaveCount(0);
-    page.once("dialog", (dialog) => dialog.accept());
-    await card.getByRole("button", { name: "Rotate", exact: true }).click();
+    await card.getByRole("button", { name: "Rotate desktop-client's token", exact: true }).click();
+    await page
+      .getByRole("group", { name: /^Rotate desktop-client's token\?/ })
+      .getByRole("button", { name: "Rotate", exact: true })
+      .click();
     await expect(page.locator("#createdToken")).toContainText("cta_");
     const rotated = (await page.locator("#createdToken").textContent())!;
     expect(rotated).not.toBe(secret);
@@ -1364,12 +1369,20 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
     expect(await authenticate(rotated)).toBe(true);
     await page.getByRole("button", { name: "I stored it" }).click();
     await page.reload();
-    await expect(card).toContainText("Issued");
+    await expect(card.locator(".badge")).toHaveText("Issued");
     expect(await page.content()).not.toContain(rotated);
-    page.once("dialog", (dialog) => dialog.accept());
-    await card.getByRole("button", { name: "Revoke", exact: true }).click();
+    await card.getByRole("button", { name: "Revoke desktop-client's token", exact: true }).click();
+    await page
+      .getByRole("group", { name: /^Revoke desktop-client's token\?/ })
+      .getByRole("button", { name: "Revoke", exact: true })
+      .click();
     await expect(card).toHaveClass(/revoked/);
     expect(await authenticate(rotated)).toBe(false);
+    // Every mutation named the real slot revision it was confirmed against, in the body (P3b, #837).
+    const mutations = requests.filter((r) => r.path === "/ui/access-tokens/desktop-client");
+    expect(mutations.map((r) => r.method)).toEqual(["POST", "POST", "DELETE"]);
+    for (const r of mutations) expect((r.body as { expect?: unknown }).expect).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(new Set(mutations.map((r) => (r.body as { expect: string }).expect)).size).toBe(3);
   } finally {
     await connecta.close();
   }

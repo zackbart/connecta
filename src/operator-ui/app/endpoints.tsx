@@ -1,5 +1,12 @@
 import { useRef, useState, type RefObject } from "react";
-import { endpointRows, runsAsLabel, type EndpointGroup, type EndpointRow } from "../endpoints.js";
+import {
+  endpointRows,
+  runsAsLabel,
+  visibleChips,
+  type AccessChip,
+  type EndpointGroup,
+  type EndpointRow,
+} from "../endpoints.js";
 import { connectorStatusLabel, connectorStatusTone, driftState, type OperatorState } from "../view.js";
 import { clientServerName, clientSetupCommands } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
@@ -105,6 +112,65 @@ function ConnectorName({ group, state }: { group: EndpointGroup; state: Operator
   );
 }
 
+/** A person by avatar and name, or an agent with its token mark. */
+function Chip({ chip }: { chip: AccessChip }) {
+  return (
+    <li className={`access-chip ${chip.kind}`}>
+      {chip.kind === "agent" ? (
+        <span className="agent-mark" aria-hidden="true" />
+      ) : (
+        <span className={`avatar hue-${chip.hue}`} aria-hidden="true">
+          {chip.initials}
+        </span>
+      )}
+      <span className="access-chip-text">{chip.text}</span>
+    </li>
+  );
+}
+
+/**
+ * Who can use one endpoint. A long list shows its first few and a "+N more"
+ * button; expanding it is one-way for the row, so focus moves to the first
+ * chip it revealed rather than to a button that is gone.
+ */
+function WhoCanUse({ endpoint }: { endpoint: EndpointRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const list = useRef<HTMLUListElement | null>(null);
+  const { shown, hidden } = visibleChips(endpoint.access, expanded);
+  const label = `Who can use ${endpoint.path}`;
+  if (!endpoint.access.length) {
+    return (
+      <div className="endpoint-access" aria-label={label} role="group">
+        <span className="meta">{endpoint.pool === null ? "No maintainers listed" : "No members"}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="endpoint-access" aria-label={label} role="group">
+      <ul className="access-chips" ref={list} tabIndex={-1}>
+        {shown.map((chip) => (
+          <Chip key={chip.key} chip={chip} />
+        ))}
+      </ul>
+      {hidden ? (
+        <button
+          type="button"
+          className="access-more"
+          aria-label={`Show ${hidden} more who can use ${endpoint.path}`}
+          onClick={() => {
+            setExpanded(true);
+            // The revealed chips are plain text; the list takes focus so a
+            // screen reader continues from where the button was.
+            requestAnimationFrame(() => list.current?.focus());
+          }}
+        >
+          +{hidden} more
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: OperatorState }) {
   if (!endpoint.groups.length) return <StateBlock>No connectors are granted on this endpoint.</StateBlock>;
   return (
@@ -180,6 +246,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
         <div className="endpoint-table" aria-label="Endpoints">
           <div className="endpoint-columns endpoint-labels" aria-hidden="true">
             <span>Endpoint</span>
+            <span>Who can use it</span>
             <span>Tools</span>
             <span>Mode</span>
           </div>
@@ -212,6 +279,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                       <EndpointLine url={endpointUrl(endpoint.agentPath)} label={endpoint.label} kind="agents" />
                     ) : null}
                   </div>
+                  <WhoCanUse endpoint={endpoint} />
                   <span className="endpoint-count">
                     <span className="visually-hidden">Tools: </span>
                     {endpoint.toolCount}

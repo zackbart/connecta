@@ -18,7 +18,7 @@ import {
 } from "../fixtures/operator-visual.js";
 
 // Operator contract v2 in the browser: the maintainer's connector × endpoint
-// matrix and endpoint breakdown, and the member placeholder. Every API read is
+// matrix and endpoint breakdown, and the role gate. Every API read is
 // intercepted with the frozen v2 fixtures; HTML and assets come from a real
 // deployment, so its production CSP applies.
 
@@ -201,28 +201,24 @@ test("INV-4: endpoint rows show agent URLs only for agent pools and runs-as from
     "Shared · saved Oct 1, 2026",
     "Everyone acts as support@workspace.example",
   ]);
-  // Who can use an endpoint arrives with UI-3; no member or agent name renders yet.
-  for (const name of ["Ada Lovelace", "Lin Chen", "simon-ada", "triage"]) {
-    await expect(page.locator("body")).not.toContainText(name);
-  }
+  // Who can use each endpoint: operator-console.spec.ts covers the chips.
+  await expect(ada.getByRole("group", { name: "Who can use /mcp/ada", exact: true })).toContainText("agent:simon-ada");
   await noCsp(page);
 });
 
-test("INV-4 INV-6: a member sees only their endpoints and client setup on every path", async ({ page }) => {
+test("INV-4 INV-6: a member gets their own page on every path and never asks for maintainer data", async ({ page }) => {
   const requested = await install(page, OPERATOR_V2_MEMBER, PRIVATE_404);
   const served = page.waitForResponse((response) => new URL(response.url()).pathname === "/ui/api/config");
   await page.goto(VISUAL_ORIGIN + "/");
   // The body the page received withholds every maintainer fact.
   expectMemberViewWithholds(await (await served).json(), OPERATOR_V2_MEMBER_EXPECTED);
-  await expect(page.getByRole("heading", { name: "Your endpoints", exact: true })).toBeVisible();
-  const rows = page.locator("#memberView .endpoint-entry");
-  await expect(rows).toHaveCount(2);
-  await expect(rows.locator(".endpoint-title code")).toHaveText(["/mcp/support", "/mcp/team"]);
+  await expect(page.getByRole("heading", { name: "Your connections", exact: true })).toBeVisible();
+  const rows = page.locator("#memberView .member-endpoint");
   await expect(rows.locator(".endpoint code")).toHaveText([
     VISUAL_ORIGIN + "/mcp/support",
     VISUAL_ORIGIN + "/mcp/team",
   ]);
-  await expect(page.getByRole("navigation", { name: "Operator pages" }).getByRole("link")).toHaveText(["Endpoints"]);
+  await expect(navLinks(page)).toHaveCount(0);
   const trigger = page.getByRole("button", { name: "Client setup for support", exact: true });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Client setup", exact: true });
@@ -233,23 +229,14 @@ test("INV-4 INV-6: a member sees only their endpoints and client setup on every 
   // Maintainer paths render the same page, and fetch nothing maintainer-only.
   for (const path of ["/connectors?view=matrix", "/connectors/github#tools", "/settings", "/activity", "/tokens"]) {
     await page.goto(VISUAL_ORIGIN + path);
-    await expect(page.getByRole("heading", { name: "Your endpoints", exact: true })).toBeVisible();
-    await expect(page.locator(".endpoint-table, #memberView")).not.toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Your connections", exact: true })).toBeVisible();
+    await expect(page.locator(".endpoint-table, .matrix-table")).toHaveCount(0);
   }
-  await page.getByRole("button", { name: "Search" }).click();
-  await page.getByPlaceholder("Search pages, connectors, tools…").fill("github");
-  await expect(page.getByText("No matching pages, connectors, tools or actions.")).toBeVisible();
-  await page.keyboard.press("Escape");
   // The contract alone admits a member: nothing maintainer-only is ever asked for.
   expect(requested.filter((path) => path === "/ui/api/config").length).toBeGreaterThan(0);
   expect(maintainerOnly(requested)).toEqual([]);
   const body = page.locator("body");
   for (const fact of [
-    "GitHub",
-    "Drive",
-    "Slack",
-    "Notion",
-    "Calendar",
     "Workspace",
     "workspace.example",
     "/agent/",
@@ -370,8 +357,8 @@ test("INV-4: an unknown role shows its loading or error state with no maintainer
   // The retry resolves the role: a member, who still never asks for maintainer data.
   fail = false;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Your endpoints", exact: true })).toBeVisible();
-  await expect(navLinks(page)).toHaveText(["Endpoints"]);
+  await expect(page.getByRole("heading", { name: "Your connections", exact: true })).toBeVisible();
+  await expect(navLinks(page)).toHaveCount(0);
   expect(maintainerOnly(requested)).toEqual([]);
 });
 
@@ -515,13 +502,17 @@ for (const [path, heading] of [
         return route.fulfill({ json: contract });
       }
       if (url.pathname === "/ui/access-tokens")
-        return route.fulfill({ json: { agents: [{ name: "simon-ada", state: "issued", issuedAt: VISUAL_NOW }] } });
+        return route.fulfill({
+          json: {
+            agents: [{ name: "simon-ada", state: "issued", issuedAt: VISUAL_NOW, revision: "simonAdaIssuedRevision" }],
+          },
+        });
       return route.fallback();
     });
     await page.goto(VISUAL_ORIGIN + path);
     const content =
       path === "/tokens"
-        ? page.getByRole("heading", { name: "simon-ada", exact: true })
+        ? page.getByRole("rowheader", { name: "simon-ada", exact: true })
         : page.getByText("No connector tool calls recorded yet.", { exact: true });
     await expect(content).toBeVisible();
     const banner = page.locator("#recoveryBanner");
@@ -537,6 +528,22 @@ for (const [path, heading] of [
     await expect(page.locator("#app")).toHaveAttribute("inert", "");
     await expect(content).toBeAttached();
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(1);
+    if (path === "/tokens") {
+      // Tokens' own Refresh and list retry give way to the banner: one Retry, no slot actions.
+      await expect(page.locator("#refreshTokens")).toHaveCount(0);
+      await expect(page.getByText("Try loading access tokens again", { exact: true })).toHaveCount(0);
+      // The rows sit inside the inert page: clicking them confirms nothing and sends nothing.
+      let prompted = 0;
+      page.on("dialog", (dialog) => {
+        prompted += 1;
+        void dialog.dismiss();
+      });
+      for (const action of await page.locator("#app[inert] tr[data-agent] button").all())
+        await action.click({ force: true });
+      await page.clock.runFor(100);
+      expect(prompted).toBe(0);
+      expect(watched.filter((p) => p.startsWith("/ui/access-tokens/"))).toEqual([]);
+    }
 
     // The passive retry stalls, and the deadline passes: Retry is still there.
     config = "stall";
@@ -598,5 +605,89 @@ test("INV-4: a failed refresh closes an open client setup drawer and hands focus
     )].filter((el) => !el.closest("[inert]") && !el.closest("#recoveryBanner") && !el.disabled).length`),
   ).toBe(0);
   expect(await page.evaluate("document.querySelectorAll('[data-state=open], .dialog-overlay').length")).toBe(0);
+  await noCsp(page);
+});
+
+/** Tokens with a catalog row in error, so a focus return refreshes the contract; the slot list matches it. */
+async function tokensUnderRecovery(page: Page) {
+  const contract = structuredClone(maintainer.contract) as OperatorUiContractV2;
+  contract.live.connectors = contract.live.connectors.map((c) => (c.id === "slack" ? { ...c, status: "error" } : c));
+  const data = structuredClone(maintainer.data);
+  data.connectors = data.connectors.map((c) => (c.id === "slack" ? { ...c, status: "error" } : c));
+  const slots = contract.agents.map((agent) => ({ name: agent.name, ...agent.token }));
+  await install(page, contract, data, "controlled");
+  const control = { failing: false, writes: [] as string[] };
+  await page.route(`${VISUAL_ORIGIN}/ui/**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/ui/api/config") {
+      return control.failing
+        ? route.fulfill({ status: 503, json: { error: "unavailable" } })
+        : route.fulfill({ json: contract });
+    }
+    if (url.pathname === "/ui/access-tokens") return route.fulfill({ json: { agents: slots } });
+    if (url.pathname.startsWith("/ui/access-tokens/")) {
+      control.writes.push(`${route.request().method()} ${url.pathname}`);
+      const name = url.pathname.split("/").pop()!;
+      return route.fulfill({
+        json: {
+          token: "cta_ui834-recovery-secret",
+          agent: { name, state: "issued", issuedAt: VISUAL_NOW, revision: `${name}IssuedRevision` },
+        },
+      });
+    }
+    return route.fallback();
+  });
+  await page.goto(VISUAL_ORIGIN + "/tokens");
+  await expect(page.getByRole("rowheader", { name: "simon-ada", exact: true })).toBeVisible();
+  const fail = async () => {
+    control.failing = true;
+    await page.evaluate("window.dispatchEvent(new Event('focus'))");
+    await page.clock.runFor(300);
+    await expect(page.locator("#recoveryBanner")).toContainText("Configuration couldn't be loaded");
+  };
+  return { control, fail };
+}
+
+test("INV-4: a failed refresh closes Tokens' rotate confirmation, hands focus to Retry and sends nothing", async ({
+  page,
+}) => {
+  const { control, fail } = await tokensUnderRecovery(page);
+  await page.getByRole("button", { name: "Rotate simon-ada's token", exact: true }).click();
+  const question = page.getByRole("group", { name: /^Rotate simon-ada's token\?/ });
+  await expect(question).toBeVisible();
+  await fail();
+  await expect(question).toHaveCount(0);
+  const retry = page.locator("#recoveryRetry");
+  await expect(retry).toBeFocused();
+  // The page is back after Retry, and the closed question never sent anything.
+  control.failing = false;
+  await retry.click();
+  await expect(page.locator("#recoveryBanner")).toHaveCount(0);
+  await expect(question).toHaveCount(0);
+  await page.clock.runFor(300);
+  expect(control.writes).toEqual([]);
+  await noCsp(page);
+});
+
+test("INV-4: recovery never closes an unseen minted secret; Retry takes focus once it is dismissed", async ({
+  page,
+}) => {
+  const { control, fail } = await tokensUnderRecovery(page);
+  await page.getByRole("button", { name: "Issue triage's token", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "New token for triage", exact: true });
+  await expect(dialog.locator("#createdToken")).toHaveText("cta_ui834-recovery-secret");
+  await fail();
+  // The secret cannot be shown again, so it stays open, readable and usable over the banner.
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("#createdToken")).toHaveText("cta_ui834-recovery-secret");
+  const copy = dialog.getByRole("button", { name: "Copy token", exact: true });
+  await copy.focus();
+  await expect(copy).toBeFocused();
+  await dialog.getByRole("button", { name: "I stored it", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await page.content()).not.toContain("cta_ui834-recovery-secret");
+  // The row behind is inert; the way on is the banner's Retry.
+  await expect(page.locator("#recoveryRetry")).toBeFocused();
+  expect(control.writes).toEqual(["POST /ui/access-tokens/triage"]);
   await noCsp(page);
 });

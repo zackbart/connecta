@@ -1,69 +1,282 @@
 import { useRef, useState } from "react";
-import type { OperatorState } from "../view.js";
+import {
+  memberConfirmCopy,
+  memberPage,
+  toolCountLabel,
+  type AccountControl,
+  type MemberAccount,
+} from "../member-page.js";
+import { safeHttpHref, type Notice, type OperatorState } from "../view.js";
 import { clientServerName } from "../setup-commands.js";
 import { productName } from "./config.js";
-import { StateBlock } from "./parts.js";
+import { CredentialForm } from "./credentials.js";
+import { Badge, ConfirmBar, focusableId, NoticeLine, StateBlock } from "./parts.js";
 import { Button } from "./primitives.js";
 import { ClientSetupDialog, EndpointLine, endpointUrl, type SetupTarget } from "./endpoints.js";
+import { useCloseOnRecovery } from "./contract-state.js";
+import {
+  askConfirm,
+  cancelConfirm,
+  disconnectOAuth,
+  editCredential,
+  removeCredential,
+  retryLoad,
+  startOAuth,
+  testCredential,
+} from "./store.js";
 
 /**
- * A pool member's page until UI-3 builds the real one: their pools, each
- * with its URL and client setup, and nothing else. The member contract
- * carries no config, agents, matrix or other members, and this page reads
- * none of its other fields either.
+ * A pool member's one page: their endpoints with client setup, the personal
+ * accounts they connect themselves, and what is shared with them by name. The
+ * member contract carries no other people, agents, settings or shared
+ * credential state, and this page reads nothing that would. It sends only the
+ * member's own OAuth and credential requests.
  */
-export function MemberPage({ state }: { state: OperatorState }) {
-  const [setup, setSetup] = useState<SetupTarget | null>(null);
-  const returnFocus = useRef<HTMLElement | null>(null);
-  const pools = state.contract?.role === "member" ? state.contract.pools : [];
+
+/**
+ * Fix prompts are written for a coding agent working on the deployment, which
+ * a member is not; their notices keep the sentence alone.
+ */
+function ownNotice(notice: Notice | null): Notice | null {
+  return notice ? { message: notice.message, tone: notice.tone } : null;
+}
+
+const CONTROL_ID: Record<AccountControl["kind"], string> = {
+  connect: "connect",
+  restart: "reconnect",
+  disconnect: "disconnect",
+  save: "credential-save",
+  test: "credential-test",
+  clear: "clear-credential",
+};
+
+function controlId(control: AccountControl["kind"], connector: string): string {
+  return `${CONTROL_ID[control]}-${connector}`;
+}
+
+function AccountRow({ account, state }: { account: MemberAccount; state: OperatorState }) {
+  const { id, title, manage } = account;
+  const confirming = state.confirming?.connectorId === id ? state.confirming.action : null;
+  const oauthBusy = state.oauthBusy === id;
+  const credentialBusy = state.credentialBusy === id;
+  const editing = state.credentialEditing === id && manage.kind === "credential";
+  // The browser refused the new tab; the route answered anyway, so its link is the action.
+  const blocked = state.oauthBlocked === id ? safeHttpHref(state.oauthBlockedUrl ?? undefined) : null;
+  const run = (control: AccountControl) => {
+    switch (control.kind) {
+      case "connect":
+        return void startOAuth(id, "continue");
+      case "restart":
+        return askConfirm(id, "oauth_restart");
+      case "disconnect":
+        return askConfirm(id, "oauth_disconnect");
+      case "save":
+        return editCredential(editing ? null : id);
+      case "test":
+        return void testCredential(id);
+      case "clear":
+        return askConfirm(id, "credential_remove");
+    }
+  };
+  const busyFor = (control: AccountControl) =>
+    control.kind === "save" || control.kind === "test" || control.kind === "clear" ? credentialBusy : oauthBusy;
   return (
-    <section id="memberView">
-      <div className="page-heading">
-        <div>
-          <h1 id="endpointsHeading" tabIndex={-1}>
-            Your endpoints
-          </h1>
-          <p className="meta">Connect an MCP client to an endpoint you're a member of.</p>
+    <li className="account-row" aria-labelledby={`account-${id}`}>
+      <div className="account-main">
+        <span className="account-mark" aria-hidden="true">
+          {title.slice(0, 1).toUpperCase()}
+        </span>
+        <div className="account-copy">
+          <h3 id={`account-${id}`}>{title}</h3>
+          <p className="meta">
+            {toolCountLabel(account.toolCount)} · {account.summary}
+          </p>
+        </div>
+        {account.badge ? <Badge tone={account.badge.tone}>{account.badge.label}</Badge> : null}
+        <div className="account-actions">
+          {blocked ? (
+            <a className="btn primary" href={blocked} target="_blank" rel="noopener noreferrer">
+              Open authorization page
+            </a>
+          ) : (
+            account.controls.map((control) => (
+              <Button
+                key={control.kind}
+                id={controlId(control.kind, id)}
+                variant={
+                  control.kind === "connect" || (control.kind === "save" && control.label === "Add credential")
+                    ? "primary"
+                    : "default"
+                }
+                disabled={busyFor(control)}
+                aria-label={`${control.label} ${title}`}
+                {...(control.kind === "save" ? { "aria-expanded": editing ? "true" : "false" } : {})}
+                onClick={() => run(control)}
+              >
+                {busyFor(control) && (control.kind === "connect" || control.kind === "test")
+                  ? "Working…"
+                  : control.label}
+              </Button>
+            ))
+          )}
         </div>
       </div>
-      {pools.length ? (
-        <div className="endpoint-table" aria-label="Your endpoints">
-          {pools.map((pool) => {
-            const url = endpointUrl(pool.humanPath);
-            return (
-              <section className="endpoint-entry member-entry" key={pool.name} aria-label={pool.humanPath}>
-                <div className="endpoint-columns">
-                  <div className="endpoint-name">
-                    <span className="endpoint-title">
-                      <code>{pool.humanPath}</code>
-                      <span className="meta">{pool.name}</span>
-                    </span>
-                    <EndpointLine url={url} label={pool.name} />
-                  </div>
+      {confirming ? (
+        <ConfirmBar
+          id={id}
+          {...memberConfirmCopy(confirming, title)}
+          onConfirm={() => {
+            if (confirming === "oauth_restart") void startOAuth(id, "restart");
+            else if (confirming === "oauth_disconnect") void disconnectOAuth(id);
+            else void removeCredential(id);
+          }}
+          onCancel={() =>
+            cancelConfirm(
+              focusableId(
+                controlId(
+                  confirming === "oauth_restart"
+                    ? "restart"
+                    : confirming === "oauth_disconnect"
+                      ? "disconnect"
+                      : "clear",
+                  id,
+                ),
+                "memberHeading",
+              ),
+            )
+          }
+        />
+      ) : null}
+      {editing && manage.kind === "credential" ? (
+        <div className="account-form">
+          {manage.description ? <p className="meta">{manage.description}</p> : null}
+          <CredentialForm
+            connector={id}
+            credential={{ label: manage.label, ...(manage.fields ? { fields: manage.fields } : {}) }}
+            busy={credentialBusy}
+          />
+        </div>
+      ) : null}
+      <NoticeLine id={`oauthNotice-${id}`} notice={state.oauthNoticeFor === id ? ownNotice(state.oauthNotice) : null} />
+      <NoticeLine
+        id={`credentialNotice-${id}`}
+        notice={state.credentialNoticeFor === id ? ownNotice(state.credentialNotice) : null}
+      />
+    </li>
+  );
+}
+
+export function MemberPage({ state }: { state: OperatorState }) {
+  const [setup, setSetup] = useState<SetupTarget | null>(null);
+  // Members never get the maintainer recovery banner, so this is a no-op for
+  // them; their confirmations and credential form close with the
+  // member-unavailable transition instead.
+  useCloseOnRecovery(state, () => setSetup(null));
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const page = memberPage(state.contract);
+  const heading = (
+    <div className="member-heading">
+      <h1 id="memberHeading" tabIndex={-1}>
+        Your connections
+      </h1>
+      <p className="meta">Connect the accounts your AI tools act as. Everything else is set up for you.</p>
+    </div>
+  );
+  // Confirmed a member, but the latest contract read failed or is pending:
+  // this page's own state, never another page's.
+  if (state.contract?.role !== "member") {
+    return (
+      <section id="memberView" className="member-page">
+        {heading}
+        {state.contractPhase === "error" ? (
+          <StateBlock
+            tone="error"
+            title="Your connections couldn't be refreshed"
+            action={{ label: "Retry", onClick: () => void retryLoad() }}
+          >
+            {state.loadFailure === "network"
+              ? `Couldn't reach ${productName}. Check your connection, then retry.`
+              : "Retry to load your endpoints and accounts."}
+          </StateBlock>
+        ) : (
+          <StateBlock>Loading your connections…</StateBlock>
+        )}
+      </section>
+    );
+  }
+  return (
+    <section id="memberView" className="member-page">
+      {heading}
+
+      <section className="member-section" aria-labelledby="memberEndpointsHeading">
+        <h2 id="memberEndpointsHeading" className="member-label">
+          {page.endpoints.length === 1 ? "Your endpoint" : "Your endpoints"}
+        </h2>
+        {page.endpoints.length ? (
+          <ul className="member-card">
+            {page.endpoints.map((endpoint) => {
+              const url = endpointUrl(endpoint.path);
+              return (
+                <li className="member-endpoint" key={endpoint.pool} aria-label={endpoint.path}>
+                  <EndpointLine url={url} label={endpoint.pool} />
                   <Button
-                    variant="quiet"
                     className="endpoint-setup"
                     onClick={(event) => {
                       returnFocus.current = event.currentTarget;
                       setSetup({
-                        label: pool.name,
-                        path: pool.humanPath,
+                        label: endpoint.pool,
+                        path: endpoint.path,
                         url,
-                        name: clientServerName(productName, pool.name),
+                        name: clientServerName(productName, endpoint.pool),
                       });
                     }}
-                    aria-label={`Client setup for ${pool.name}`}
+                    aria-label={`Client setup for ${endpoint.pool}`}
                   >
                     Client setup
                   </Button>
-                </div>
-              </section>
-            );
-          })}
-        </div>
-      ) : (
-        <StateBlock>You aren't a member of any endpoint yet.</StateBlock>
-      )}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <StateBlock>You aren't a member of any endpoint yet.</StateBlock>
+        )}
+      </section>
+
+      <section className="member-section" aria-labelledby="memberAccountsHeading">
+        <h2 id="memberAccountsHeading" className="member-label">
+          Your accounts
+        </h2>
+        {page.accounts.length ? (
+          <ul className="member-card">
+            {page.accounts.map((account) => (
+              <AccountRow key={account.id} account={account} state={state} />
+            ))}
+          </ul>
+        ) : (
+          <p className="meta">Nothing on your endpoints uses an account of your own.</p>
+        )}
+      </section>
+
+      {page.shared.length ? (
+        <section className="member-section" aria-labelledby="memberSharedHeading">
+          <h2 id="memberSharedHeading" className="member-label">
+            Shared with you
+          </h2>
+          <ul className="shared-chips">
+            {page.shared.map((connector) => (
+              <li key={connector.id} className="shared-chip">
+                <span className="account-mark small" aria-hidden="true">
+                  {connector.title.slice(0, 1).toUpperCase()}
+                </span>
+                {connector.title} · {toolCountLabel(connector.toolCount)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <p className="member-footer meta">Something not working? Ask whoever runs {productName} for your team.</p>
       <ClientSetupDialog target={setup} onClose={() => setSetup(null)} returnFocus={returnFocus} />
     </section>
   );

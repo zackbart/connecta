@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./query.js";
-import { ShellControls } from "./shell.js";
+import { applySavedScheme, ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import {
@@ -65,10 +65,9 @@ function useOperatorState(): OperatorState {
  * rest, and for every page while the contract has not said who this is.
  */
 function visiblePages(state: OperatorState): OperatorPage[] {
-  const role = displayRole(state);
-  // A member has one page until UI-3: their own endpoints.
-  if (role === "member") return ["endpoints"];
-  if (role !== "maintainer") return [];
+  // A member has one page and no tabs; a maintainer keeps theirs through a
+  // retried refresh (`displayRole`); anyone else waits for the contract.
+  if (displayRole(state) !== "maintainer") return [];
   // Before `/ui/data` answers, or when it cannot, the tab's last answer keeps
   // the nav's shape; the contract still has to allow Activity.
   const activity = state.data ? activityReadable(state) : navHint().activity && activityAllowed(state);
@@ -89,8 +88,43 @@ function DeploymentName({ state }: { state: OperatorState }) {
   ) : null;
 }
 
+/** The signed-in account, where the sign-in exposes one: Clerk's primary email. */
+function accountLabel(): string | null {
+  const user = window.Clerk?.user as { primaryEmailAddress?: { emailAddress?: unknown } | null } | undefined;
+  const email = user?.primaryEmailAddress?.emailAddress;
+  return typeof email === "string" && email ? email : null;
+}
+
+function SessionAction() {
+  return auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
+    <Button variant="quiet" className="session-action" onClick={signOut}>
+      Sign out
+    </Button>
+  ) : (
+    <Button variant="quiet" className="session-action" onClick={forgetBearer}>
+      Change token
+    </Button>
+  );
+}
+
 function OperatorNav() {
   const state = useOperatorState();
+  // A member's top bar is branding, their account and the way out: no tabs,
+  // no search over pages they cannot open.
+  // The last confirmed role, not the contract on screen: a failed refresh
+  // clears the contract, and a member's chrome must not fall back to the
+  // maintainer's while it does.
+  if (state.session === "ready" && state.role === "member") {
+    const account = accountLabel();
+    return (
+      <div className="mast-actions">
+        <div className="session-actions member-session" aria-label="Session actions">
+          {account ? <span className="account-label">{account}</span> : null}
+          <SessionAction />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mast-actions">
@@ -108,16 +142,10 @@ function OperatorNav() {
         ))}
       </nav>
       <div hidden={state.session !== "ready"} className="session-actions" aria-label="Session actions">
-        <ShellControls state={state} pages={state.session === "ready" ? visiblePages(state) : []} />
-        {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
-          <Button variant="quiet" className="session-action" onClick={signOut}>
-            Sign out
-          </Button>
-        ) : (
-          <Button variant="quiet" className="session-action" onClick={forgetBearer}>
-            Change token
-          </Button>
-        )}
+        {/* Unmounted, not just hidden, outside a ready session: its ⌘K
+            listener must not open a palette over the sign-in gate. */}
+        {state.session === "ready" ? <ShellControls state={state} pages={visiblePages(state)} /> : null}
+        <SessionAction />
       </div>
     </div>
   );
@@ -267,7 +295,7 @@ function RecoveryBanner({ state }: { state: OperatorState }) {
 function CurrentPage({ state }: { state: OperatorState }) {
   const role = displayRole(state);
   // Every other page is built from maintainer facts a member never receives.
-  if (role === "member") return <MemberPage state={state} />;
+  if (role === "member" || state.role === "member") return <MemberPage state={state} />;
   if (role !== "maintainer") return <RolePending state={state} />;
   if (state.page === "settings") return <SettingsPage state={state} />;
   if (state.page === "connector") return <ConnectorDetailPage state={state} />;
@@ -282,9 +310,10 @@ function OperatorApp() {
   const state = useOperatorState();
   const ready = state.session === "ready";
 
+  const member = ready && state.role === "member";
   useEffect(() => {
-    document.title = `${PAGE_META[state.page].label} — ${titleSuffix}`;
-  }, [state.page]);
+    document.title = `${member ? "Your connections" : PAGE_META[state.page].label} — ${titleSuffix}`;
+  }, [state.page, member]);
 
   // Deferred loads: a page fetches its own collection the first time an
   // identity opens it, and again after an identity change resets it to idle.
@@ -360,6 +389,7 @@ function mount(id: string, view: ReactNode): void {
   createRoot(host).render(view);
 }
 
+applySavedScheme();
 mount("operatorNav", <OperatorNav />);
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
 const routes = [

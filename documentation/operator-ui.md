@@ -25,7 +25,11 @@ explicit optional import and stays outside the root package import graph.
 
 Endpoints, Connectors, Activity, Tokens, and Settings are the maintainer's
 pages. Endpoints is the default page at `/`: one row for `/mcp` and each pool,
-with a copyable URL, tool count, endpoint mode, and client setup. A pool with
+with a copyable URL, who can use it, tool count, endpoint mode, and client
+setup. Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
+elsewhere: a person by label, or by raw id when the label is null, beside their
+initials, and an agent as `agent:<name>` with a token mark. A row shows four
+and a "+N more" button that reveals the rest. A pool with
 agent members also shows its agent URL, muted. Expanding a row lists each
 connector on that endpoint with what it runs as and its tools, marking write
 tools. The runs-as label comes from that endpoint's matrix cell. A shared connector
@@ -67,13 +71,33 @@ for a personal connector their contract lists with that action in `manage`;
 otherwise the write is not sent and its row says so. An
 answer with a different role clears everything read under the old one and
 admits the viewer again. A
-pool member sees one page on every path: their pools with each URL and
-client setup, and the Endpoints tab alone. Connector
+pool member sees the [member page](#use-the-member-page) on every path, with
+no tabs. Connector
 detail has Tools, Connection, and Activity tabs. Connection combines
 authentication (including the OAuth client mechanism), catalog diagnostics,
 one fix prompt beside each problem it reports, and the connector snapshot with its source. Settings combines inbound-auth facts with the
 configuration snapshot and labels values as default or configured. Deployment code owns connectors, grants, pools, and classification;
 the UI changes only authorized authentication material.
+
+Tokens has one row per agent declared in code, in `GET /ui/access-tokens`
+order: its pools, a state badge (No token, Issued or Revoked), the issue or
+revoke date, and last seen ("never" when null). One line says agents are
+declared in code; nothing creates or renames one. Issue appears for a slot with
+no token or a revoked one, Rotate and Revoke for an issued one; rotate and
+revoke ask first in a row under the agent's, with focus on Cancel. Every
+mutation sends `{ "expect": "<revision>" }` with the slot revision the
+operator confirmed against. A new secret opens once in a dialog with a copy
+button and a note that it won't be shown again; closing it drops the secret
+from the page, and recovery never closes it. A 409 `slot_changed` reads
+"Changed since you looked, refresh"; a 503 `outcome_unknown` or 499 `aborted`
+is a failure notice and is never retried. Sending a mutation leaves the slot
+unresolved until its successful response is validated, which resolves it. Any
+other outcome, a contract whose `agents[].token` disagrees with the list
+(revision included) or drops the agent, or a failed read leaves it unresolved
+until a slot-list read that started afterwards succeeds. Until then its
+controls are off with "Refresh to continue", and each action is
+checked again immediately before it is sent. Under the recovery banner Tokens
+offers no Refresh of its own, and an open rotate or revoke question closes.
 
 Install the vault for declared credential slots and activity history for
 persisted call records. Neither module grants permission to manage or read
@@ -88,12 +112,31 @@ interactive credential or token management authority.
 
 With `operatorUi()` enabled, sign in at the deployment's public URL using
 Clerk (Node) or Cloudflare Access (Workers). A person listed in a pool's
-`members` can open the page without becoming a maintainer. The current member
-page shows **Your endpoints**, with each admitted `/mcp/<pool>` URL and a
-**Client setup** button. For example, Bob in pool `team` copies
-`https://connecta.example.com/mcp/team` into his MCP client and authenticates
-as himself. Every browser path shows that same member page; it does not
-expose maintainer connector-detail, activity, token, or settings pages.
+`members` can open the page without becoming a maintainer. The page, **Your
+connections**, has no tabs; its top bar shows branding, the signed-in account
+(Clerk's primary email, when there is one) and Sign out or Change token. It
+lists:
+
+- **Your endpoints**: each admitted `/mcp/<pool>` URL with a copy button and
+  **Client setup**. For example, Bob in pool `team` copies
+  `https://connecta.example.com/mcp/team` into an MCP client and authenticates
+  as Bob.
+- **Your accounts**: the personal connectors in their pools, each with one
+  status badge and only the controls its `manage.actions` lists. An OAuth
+  connector offers Connect, Reconnect or Disconnect; Reconnect and Disconnect
+  ask first. A credential connector offers **Add credential** when only `save`
+  is listed, and Replace, Test and Clear once a value is stored.
+- **Shared with you**: shared connectors by name and tool count, without status.
+
+Every browser path shows that same member page; it does not expose maintainer
+connector-detail, activity, token, or settings pages, and it never sends a
+maintainer request. After an action, and when the tab regains focus while an
+authorization it started is still outstanding (up to ten minutes), it re-reads
+`GET /ui/api/config`. Each action is checked against the current `manage`
+again immediately before it is sent, and a refresh that drops an action closes
+its open confirmation or form. If a refresh fails or misses its deadline, the
+page shows its own error with Retry and moves focus to its heading; members
+never see the maintainer recovery banner.
 
 The page reads `GET /ui/api/config`: 200 with `role: "member"` confirms
 membership; 401 means sign in; a private 404 means the signed-in person has
@@ -101,11 +144,8 @@ no maintainer role or human pool membership. A `cta_` agent token gets 401
 and cannot sign in to this page. Use the agent's `/agent/<pool>` endpoint
 for machine access instead.
 
-The member contract also describes the tools in the person's pools and
-supported actions on their own personal connections. The current member page
-renders endpoint setup only. For personal OAuth, use `authorize_connector`
-from the person's `/mcp/<pool>` connection and finish its signed browser link.
-Trusted clients that manage personal credentials use only the actions listed
+Personal OAuth can also start from the person's `/mcp/<pool>` connection with
+`authorize_connector`, finishing its signed browser link. Trusted clients that manage personal credentials use only the actions listed
 in the connector's `manage` field; the API contract below describes their
 routes and preconditions. Shared credentials always require a maintainer.
 
@@ -315,7 +355,8 @@ a matching principal owner even when the connector uses shared auth. Empty crede
 report `credential_required` before running a connector status or catalog probe.
 The top bar shows deployment branding and a name breadcrumb, then Search (the
 command palette), Appearance, and the session action (Change token or Sign out)
-at one quiet size. The tab row lists Endpoints, Connectors, Activity,
+at one quiet size; a member's top bar has only branding, the account and the
+session action. The tab row lists Endpoints, Connectors, Activity,
 Tokens, and Settings. Activity and Tokens keep their permission gates; a gated
 viewer sees no operator navigation. The command palette searches visible pages,
 connectors and tools, opening connector results on Tools. `/access` redirects

@@ -14,7 +14,32 @@ import { ConfirmBar, FixPrompt, focusableId, NoticeLine } from "./parts.js";
 
 type Credential = NonNullable<UiConnector["credential"]>;
 
-function CredentialForm({ connector, credential, busy }: { connector: string; credential: Credential; busy: boolean }) {
+/**
+ * What the form needs from a slot: its label, and each field's name and label
+ * for a multi-field slot. Never a value. A maintainer's `/ui/data` slot and a
+ * member's `manage` both fit.
+ */
+interface CredentialFormSlot {
+  label: string;
+  placeholder?: string;
+  fields?: Array<{
+    name: string;
+    label: string;
+    description?: string;
+    placeholder?: string;
+    inputType?: "email" | "password" | "text";
+  }>;
+}
+
+export function CredentialForm({
+  connector,
+  credential,
+  busy,
+}: {
+  connector: string;
+  credential: CredentialFormSlot;
+  busy: boolean;
+}) {
   const fields = credential.fields ?? [];
   const [values, setValues] = useState<Record<string, string>>({});
   const single = fields.length === 0;
@@ -61,8 +86,14 @@ function CredentialForm({ connector, credential, busy }: { connector: string; cr
             return (
               <div className="credential-field" key={field.name}>
                 <label htmlFor={id}>{field.label}</label>
+                {field.description ? (
+                  <p className="meta" id={`${id}-description`}>
+                    {field.description}
+                  </p>
+                ) : null}
                 <input
                   id={id}
+                  {...(field.description ? { "aria-describedby": `${id}-description` } : {})}
                   type={field.inputType || "password"}
                   placeholder={field.placeholder || field.label}
                   autoComplete={(field.inputType ?? "password") === "password" ? "new-password" : "off"}

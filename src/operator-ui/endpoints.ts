@@ -2,6 +2,7 @@ import type {
   OperatorConnectorOverlay,
   OperatorConnectorPoolCell,
   OperatorGrant,
+  OperatorMember,
   OperatorRootEndpoint,
   OperatorRunsAs,
   OperatorSharedSource,
@@ -37,6 +38,64 @@ export interface EndpointRow {
   readOnly: boolean;
   toolCount: number;
   groups: EndpointGroup[];
+  /** Who can use it: root.maintainers for /mcp, the pool's members otherwise. */
+  access: AccessChip[];
+}
+
+/** One "who can use it" chip: a person by label or raw id, or an agent. */
+export interface AccessChip {
+  /** Unique within one endpoint. */
+  key: string;
+  kind: "human" | "agent";
+  /** A person's label or raw id; an agent's `agent:<name>`. */
+  text: string;
+  /** Up to two letters for a person's avatar; empty for an agent. */
+  initials: string;
+  /** A stable tint bucket, 0–5, so one person keeps one color everywhere. */
+  hue: number;
+}
+
+/** How many chips an endpoint row shows before "+N more". */
+const ACCESS_CHIP_LIMIT = 4;
+
+function initialsOf(text: string): string {
+  const words = text
+    .replace(/^user_/, "")
+    .split(/[\s._@-]+/)
+    .filter(Boolean);
+  const letters = words.length > 1 ? words[0]![0]! + words[1]![0]! : (words[0] ?? text).slice(0, 2);
+  return letters.toUpperCase();
+}
+
+function hueOf(key: string): number {
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash % 6;
+}
+
+/** A member as a chip. Labels are null on Access deployments, where the raw id shows instead. */
+function accessChip(member: OperatorMember): AccessChip {
+  if (member.kind === "agent") {
+    const key = `agent:${member.name}`;
+    return { key, kind: "agent", text: key, initials: "", hue: hueOf(key) };
+  }
+  const key = `${member.namespace}:${member.id}`;
+  const text = member.label ?? member.id;
+  return { key, kind: "human", text, initials: initialsOf(text), hue: hueOf(key) };
+}
+
+/** Chips for one endpoint in contract order, people first, without repeats. */
+export function accessChips(members: OperatorMember[]): AccessChip[] {
+  const unique = new Map<string, AccessChip>();
+  for (const chip of members.map(accessChip)) if (!unique.has(chip.key)) unique.set(chip.key, chip);
+  const chips = [...unique.values()];
+  return [...chips.filter((chip) => chip.kind === "human"), ...chips.filter((chip) => chip.kind === "agent")];
+}
+
+/** The chips a collapsed row shows, and how many the "+N more" button holds back. */
+export function visibleChips(chips: AccessChip[], expanded: boolean): { shown: AccessChip[]; hidden: number } {
+  if (expanded || chips.length <= ACCESS_CHIP_LIMIT) return { shown: chips, hidden: 0 };
+  return { shown: chips.slice(0, ACCESS_CHIP_LIMIT), hidden: chips.length - ACCESS_CHIP_LIMIT };
 }
 
 /** Matrix cells for one endpoint, keyed by connector id. */
@@ -94,6 +153,7 @@ export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
       readOnly: contract.root.readOnly,
       toolCount: toolCount(groups),
       groups,
+      access: accessChips(contract.root.maintainers),
     });
   }
   for (const pool of contract.pools) {
@@ -106,6 +166,7 @@ export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
       readOnly: pool.readOnly,
       toolCount: toolCount(groups),
       groups,
+      access: accessChips(pool.members),
     });
   }
   return rows;

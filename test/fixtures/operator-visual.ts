@@ -3,12 +3,14 @@ import type { UiData } from "../../src/operator-ui/model.js";
 import type { UiActivityEvent } from "../../src/operator-ui/view.js";
 import type { Connector, InboundAuth } from "../../src/types.js";
 import { activityHistory, type ToolCallActivityEvent } from "../../src/activity.js";
-import { accessTokens } from "../../src/access-tokens.js";
+import { AccessTokenManager, accessTokens } from "../../src/access-tokens.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { createTestConnecta } from "../helpers.js";
 import { fakeClerkAuth } from "./http.js";
-import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./operator-contract-v2.js";
+import { OPERATOR_V2_MEMBER } from "./operator-contract-v2.js";
+import { crowdedMaintainer, memberWithNotion } from "./operator-console.js";
+import type { AgentSlot } from "../../src/operator-ui/agents.js";
 
 export const VISUAL_NOW = "2026-10-08T12:00:00.000Z";
 export const VISUAL_ORIGIN = "https://connecta.example";
@@ -26,7 +28,7 @@ export interface OperatorVisualFixture {
   contract: OperatorUiContractV2;
   data: UiData;
   activity: { events: UiActivityEvent[]; nextCursor?: string };
-  tokens: { agents: Array<{ name: string; state: "issued"; issuedAt: string }> };
+  tokens: { agents: AgentSlot[] };
 }
 
 const catalog = [
@@ -69,6 +71,26 @@ function bearerMaintainer(): InboundAuth {
   };
 }
 
+/** Tokens' agents, one per slot state: claude-desktop issued, triage none, nightly revoked. */
+const AGENTS = ["claude-desktop", "triage", "nightly"];
+/**
+ * Fixed times for the real slots' issue and revoke dates and last seen, so
+ * screenshots do not move with the clock. Revisions stay as the server minted
+ * them, the same in the contract and the slot list.
+ */
+const SLOT_TIMES: Record<string, { at?: string; lastSeenAt: string | null }> = {
+  "claude-desktop": { at: VISUAL_NOW, lastSeenAt: VISUAL_NOW },
+  triage: { lastSeenAt: null },
+  nightly: { at: "2026-10-05T08:00:00.000Z", lastSeenAt: "2026-10-04T23:10:00.000Z" },
+};
+
+/** One slot, or one contract token, with its timestamp fixed and its revision kept. */
+function fixedTime<T extends { state: string; issuedAt?: string; revokedAt?: string }>(name: string, slot: T): T {
+  const at = SLOT_TIMES[name]?.at;
+  if (!at) return slot;
+  return slot.state === "issued" ? { ...slot, issuedAt: at } : slot.state === "revoked" ? { ...slot, revokedAt: at } : slot;
+}
+
 export async function createOperatorVisualFixture(state: VisualState, keepEmptyConnector = false): Promise<OperatorVisualFixture> {
   const empty = state === "empty";
   const restricted = state === "restricted";
@@ -94,14 +116,21 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
     // Alice, the fake Clerk operator, is the maintainer. Lin and the triage
     // agent use support; alice uses automation.
-    pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, members: ["user_lin", "agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["alice"] } },
-    ...(empty || restricted ? {} : { agents: ["triage"] }),
+    pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, members: ["user_lin", "agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["alice", "agent:claude-desktop"] } },
+    ...(empty || restricted ? {} : { agents: AGENTS }),
     activity: activityHistory({ readGate: () => !restricted, store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),
     accessTokens: accessTokens(storage),
     calls: { maxResultBytes: 1_000_000 },
   });
   try {
     const headers = { Authorization: `Bearer ${VISUAL_TOKEN}` };
+    // Real slots in each state, committed through the deployment's own store.
+    if (!empty && !restricted) {
+      const manager = new AccessTokenManager(storage, { agents: AGENTS });
+      await manager.rotate("claude-desktop", "visual-fixture");
+      await manager.rotate("nightly", "visual-fixture");
+      await manager.revoke("nightly");
+    }
     const contractResponse = await app.fetch(new Request(`${VISUAL_ORIGIN}/ui/api/config`, { headers }));
     const dataResponse = await app.fetch(new Request(`${VISUAL_ORIGIN}/ui/data`, { headers }));
     if (!contractResponse.ok || !dataResponse.ok) throw new Error("Visual fixture deployment refused its operator");
@@ -115,6 +144,19 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
       if (!response.ok) throw new Error(`Visual fixture connector ${connector.id} failed`);
       Object.assign(connector, await response.json());
     }
+    // The real contract lists every declared agent with its slot, and the slot
+    // list agrees, revision included. Only the timestamps are fixed.
+    let slots: AgentSlot[] = [];
+    if (!restricted && !empty) {
+      const listed = await app.fetch(new Request(`${VISUAL_ORIGIN}/ui/access-tokens`, { headers }));
+      if (!listed.ok) throw new Error("Visual fixture deployment refused its slot list");
+      slots = ((await listed.json()) as { agents: AgentSlot[] }).agents.map((slot) => fixedTime(slot.name, slot));
+      contract.agents = contract.agents.map((agent) => ({
+        ...agent,
+        token: fixedTime(agent.name, agent.token),
+        lastSeenAt: SLOT_TIMES[agent.name]?.lastSeenAt ?? null,
+      }));
+    }
     if (contract.config) contract.config.connectaVersion = data.connectaVersion = "0.29.0";
     else data.connectaVersion = "0.29.0";
     for (const connector of data.connectors) {
@@ -123,7 +165,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     return {
       contract, data,
       activity: { events: empty ? [] : events, ...(empty ? {} : { nextCursor: "older" }) },
-      tokens: { agents: empty ? [] : [{ name: "claude-desktop", state: "issued", issuedAt: VISUAL_NOW }] },
+      tokens: { agents: slots },
     } satisfies OperatorVisualFixture;
   } finally { await app.close(); }
 }
@@ -132,16 +174,17 @@ export const VISUAL_VARIANTS = [
   "credential-configured", "credential-mismatch", "credential-unreadable", "credential-fields",
   "oauth-static", "oauth-cimd", "oauth-dcr", "drift-clean", "drift-unobserved", "legacy-activity",
   "endpoints-expanded", "command-search", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix",
+  "token-secret", "member-page", "narrow-member",
   "client-setup", "schema", "tools-read", "tools-write", "config-provenance", "narrow-gate", "narrow-auth", "branded",
 ] as const;
 export type VisualVariant = typeof VISUAL_VARIANTS[number];
 
-/** Variants that need every runs-as kind, agents and three pools: the frozen v2 maintainer fixture. */
+/** Variants that need every runs-as kind, agents and three pools: the frozen v2 maintainer fixture, team crowded. */
 const RICH_VARIANTS: readonly VisualVariant[] = ["endpoints-expanded", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix"];
 
 /** `/ui/data` for the frozen maintainer fixture: the same connectors, statuses and tools. */
 function richFixture(base: OperatorVisualFixture): OperatorVisualFixture {
-  const contract = structuredClone(OPERATOR_V2_MAINTAINER) as OperatorUiContractV2;
+  const contract = crowdedMaintainer();
   const config = contract.config!;
   const data: UiData = {
     ...structuredClone(base.data),
@@ -164,6 +207,12 @@ function richFixture(base: OperatorVisualFixture): OperatorVisualFixture {
 
 export function operatorVisualVariant(base: OperatorVisualFixture, variant: VisualVariant): OperatorVisualFixture {
   if (RICH_VARIANTS.includes(variant)) return richFixture(base);
+  // A pool member's page: two OAuth accounts, a credential account with nothing saved, two shared connectors.
+  if (variant === "member-page" || variant === "narrow-member") {
+    // A member never reads `/ui/data` (P6b answers them 404), so it carries no connector.
+    const fixture = structuredClone(base);
+    return { ...fixture, contract: memberWithNotion(["save"]), data: { ...fixture.data, connectors: [] } };
+  }
   const fixture = structuredClone(base);
   const slot = fixture.data.connectors.find(c => c.id === "slot")!;
   const slotLive = fixture.contract.live.connectors.find(c => c.id === "slot")!;
