@@ -192,7 +192,7 @@ interface OperatorAgent {
 }
 
 type OperatorRunsAs =
-  | { kind: "shared"; savedAt: string | null }
+  | { kind: "shared"; source: "vault" | "oauth" | "config" | "none"; savedAt: string | null } // savedAt for vault and oauth only
   | { kind: "personal"; connectedMembers: number; members: number }
   | { kind: "workspace"; humans: "self"; agents: string | null } // mapping subject; agents: pool owner
   | { kind: "workspaceFixed"; subject: string }; // fixed subject: every caller acts as it

@@ -142,7 +142,12 @@ export interface OperatorAgent {
 }
 
 export type OperatorRunsAs =
-  | { kind: "shared"; savedAt: string | null }
+  /**
+   * Where the shared credential lives: saved in the vault, an OAuth grant, deployment
+   * config (env or code, never shown), or not configured yet. `savedAt` is set only
+   * for "vault" and "oauth".
+   */
+  | { kind: "shared"; source: "vault" | "oauth" | "config" | "none"; savedAt: string | null }
   | { kind: "personal"; connectedMembers: number; members: number }
   // Mapping subject: humans act as themselves; agents act as the pool owner.
   // `agents` is null on plain /mcp (`pool: null`), which admits no agents.
