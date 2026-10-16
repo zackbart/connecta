@@ -8,6 +8,7 @@ import attachmentChanges from "./fixtures/providers-gmail-attachment-contract-ch
 import readOnlyChanges from "./fixtures/providers-readonly-820-contract-changes.json";
 import charsetChanges from "./fixtures/providers-gmail-charset-811-contract-changes.json";
 import guestChanges from "./fixtures/providers-p2-item2-contract-changes.json";
+import poolOwnerChanges from "./fixtures/providers-pool-owner-837-contract-changes.json";
 import { providerContract, type ContractFixture } from "./fixtures/provider-contract.js";
 import { providerFixtures } from "./providers.generated.js";
 
@@ -23,6 +24,7 @@ import { providerFixtures } from "./providers.generated.js";
 // Issue #809 adds Gmail attachment reads and immutable part identifiers.
 // Issue #820 replaces pool trust wording in the Breeze and Gmail guides with readOnly.
 // Issue #811 adds Gmail bodyNote to read schemas and documents separate decoding notices.
+// Issue #837 says in each Workspace guide that an agent acts as its pool's owner.
 // Providers added after the migration are covered by their own contract tests.
 describe.each(
   providerFixtures.filter(
@@ -52,6 +54,7 @@ describe.each(
     const attachments = attachmentChanges as Record<string, Record<string, Record<string, string>>>;
     const readOnly = readOnlyChanges as Record<string, Record<string, Record<string, string>>>;
     const charsets = charsetChanges as Record<string, Record<string, Record<string, string>>>;
+    const poolOwners = poolOwnerChanges as Record<string, Record<string, Record<string, string>>>;
     const expected = before[fixture.name as keyof typeof before].map((row) => ({
       ...row,
       ...changes[fixture.name]?.[row.label],
@@ -61,6 +64,7 @@ describe.each(
       ...attachments[fixture.name]?.[row.label],
       ...readOnly[fixture.name]?.[row.label],
       ...charsets[fixture.name]?.[row.label],
+      ...poolOwners[fixture.name]?.[row.label],
     }));
     expect(snapshot).toEqual(expected);
   });

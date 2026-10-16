@@ -10,9 +10,14 @@
  * channel (PRINCIPLES.md INV-3, #678): deployment config supplies
  * `subject`, a function from the admitted `AuthenticatedIdentity` to a
  * Workspace address, and the provider reads the identity core attached beside
- * the context. No tool argument, header, or program can name the subject —
- * every product's base URL is confined beneath `users/me`, or its product's
- * equivalent, so the token's subject is the only account a request reaches.
+ * the context. An agent, which has no Workspace account, acts instead as the
+ * `owner` of the pool it came through, which core copies from that pool's
+ * config beside the identity; the mapping never sees an agent, and an agent
+ * in a pool without an owner fails `auth_required` (decisions/0006). A fixed
+ * `subject` address is every caller's, owners aside. No tool argument,
+ * header, or program can name the subject — every product's base URL is
+ * confined beneath `users/me`, or its product's equivalent, so the token's
+ * subject is the only account a request reaches.
  * A call with no admitted caller, one an open deployment admitted without
  * authentication (the mapping is never asked about it), or one the mapping
  * answers `undefined` for, fails `auth_required` before anything leaves the
@@ -41,7 +46,8 @@
  *    that client ID and *exactly* the scopes each product provider lists, comma
  *    separated. A grant can take up to 24 hours to apply.
  * 6. Pass the key to the provider from the deployment's secrets, and map the
- *    admitted identity to a Workspace address in `subject`.
+ *    admitted identity to a Workspace address in `subject`. Give each pool
+ *    agents use an `owner`, the address they act as there.
  */
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
 import { keys, optionsOf } from "../../../config-schema.js";
@@ -49,6 +55,7 @@ import { callerOf } from "../../../connector-caller.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../../errors.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
+import { isWorkspaceAddress } from "../../../workspace-address.js";
 import {
   delegatedToken,
   forgetDelegatedToken,
@@ -66,13 +73,15 @@ export type { GoogleServiceAccount } from "./service-account.js";
  * A function receives the identity an inbound auth provider authenticated for
  * this request and returns that person's Workspace address, or `undefined`
  * for a caller who has none — that call then fails closed. It is never called
- * for an open deployment's anonymous requests, nor for a call no request
- * admitted. It may be async, for a directory lookup (a Clerk user id to an
- * email, say), and receives the call's cancellation signal for that; it runs
- * once per tool call and should cache what it fetches. A string is one fixed
- * account for every caller who can reach the connector, for a shared mailbox
- * or scheduled work with no caller; limit who reaches it with `maintainers`
- * and the `members` of the pools that list it.
+ * for an open deployment's anonymous requests, for a call no request
+ * admitted, or for an agent: an agent acts as the `owner` of the pool it
+ * came through, and fails closed in a pool without one. It may be async, for
+ * a directory lookup (a Clerk user id to an email, say), and receives the
+ * call's cancellation signal for that; it runs once per tool call and should
+ * cache what it fetches. A string is one fixed account for every caller who
+ * can reach the connector, agents included and pool owners aside, for a
+ * shared mailbox or scheduled work with no caller; limit who reaches it with
+ * `maintainers` and the `members` of the pools that list it.
  */
 export type GoogleWorkspaceSubject =
   | string
@@ -129,9 +138,6 @@ export interface WorkspaceConnection {
   subject: GoogleWorkspaceSubject;
 }
 
-/** A plausible mailbox: one `@`, no whitespace or control characters. */
-const ADDRESS = /^[^\s@<>()",;:\\[\]]+@[^\s@<>()",;:\\[\]]+\.[^\s@<>()",;:\\[\]]+$/;
-
 /** Validate the shared options at construction; throws on a structural mistake. */
 export function workspaceConnection(factory: string, options: GoogleWorkspaceOptions): WorkspaceConnection {
   const purpose = options?.purpose?.trim();
@@ -139,7 +145,7 @@ export function workspaceConnection(factory: string, options: GoogleWorkspaceOpt
   const account = parseServiceAccount(`${factory}()`, options.serviceAccount);
   const subject = options.subject;
   if (typeof subject === "string") {
-    if (!ADDRESS.test(subject.trim())) {
+    if (!isWorkspaceAddress(subject.trim())) {
       throw new Error(`${factory}() subject must be a Workspace email address or a function of the caller.`);
     }
     return { purpose, account, subject: subject.trim() };
@@ -173,6 +179,16 @@ async function subjectFor(provider: string, subject: GoogleWorkspaceSubject, ctx
       `${provider} acts as the signed-in Workspace user, and this deployment admitted the call without authentication. Configure inbound auth, or a fixed subject for shared use.`,
     );
   }
+  // An agent has no Workspace account of its own. It acts as the owner of the
+  // pool it came through, which core copied from that pool's config, and the
+  // mapping, which answers for people, is never asked about it (decisions/0006).
+  if (caller.identity.agent !== undefined) {
+    if (caller.pool !== undefined && isWorkspaceAddress(caller.poolOwner)) return caller.poolOwner;
+    throw new ConnectorCallError(
+      "auth_required",
+      `${provider} acts as a pool's owner for agents, and the pool this agent reached it through has no owner. An operator sets owner on the pool in the deployment's config; nothing a call sends can choose one.`,
+    );
+  }
   let mapped: string | undefined;
   try {
     mapped = await subject(caller.identity, ctx.signal ? { signal: ctx.signal } : {});
@@ -190,7 +206,7 @@ async function subjectFor(provider: string, subject: GoogleWorkspaceSubject, ctx
       `This caller has no Google Workspace account mapped for ${provider}. An operator maps signed-in identities to Workspace addresses in the deployment's subject config; nothing a call sends can choose one.`,
     );
   }
-  if (typeof mapped !== "string" || !ADDRESS.test(mapped.trim())) {
+  if (typeof mapped !== "string" || !isWorkspaceAddress(mapped.trim())) {
     throw new ConnectorCallError(
       "connector_call_failed",
       `The deployment's ${provider} subject mapping returned something that is not an email address.`,

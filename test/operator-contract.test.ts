@@ -118,6 +118,45 @@ describe("operator config contract", () => {
     ]);
   });
 
+  it("INV-5: serves pool owner addresses only to an authenticated maintainer, never to an open deployment's anonymous caller", async () => {
+    const pools = {
+      mine: { tools: ["shared"], owner: "alice@example.com", members: [{ namespace: "directory", id: "alice" }] },
+      group: { tools: ["shared"], members: [{ namespace: "directory", id: "bob" }] },
+    };
+    const open = deployment({
+      connectors: [connector("shared")],
+      executor,
+      ui: operatorUi(),
+      logger: "silent",
+      readOnly: true,
+      pools,
+    });
+    const anonymous = await read(open);
+    expect(anonymous.config.pools.map((pool) => [pool.name, pool.owner])).toEqual([
+      ["mine", null],
+      ["group", null],
+    ]);
+    expect(JSON.stringify(anonymous)).not.toContain("alice@example.com");
+    // The local snapshot is the deployment's own and stays whole.
+    expect(open.describeConfig().pools[0]?.owner).toBe("alice@example.com");
+
+    const authenticated = deployment({
+      connectors: [connector("shared")],
+      executor,
+      auth: human,
+      maintainers,
+      ui: operatorUi(),
+      logger: "silent",
+      readOnly: true,
+      pools,
+    });
+    const maintainer = await read(authenticated);
+    expect(maintainer.config.pools.map((pool) => [pool.name, pool.owner])).toEqual([
+      ["mine", "alice@example.com"],
+      ["group", null],
+    ]);
+  });
+
   it("INV-4: shows a maintainer every connector, tool, and pool, and refuses everyone else", async () => {
     const app = deployment({
       connectors: [connector("shared"), connector("personal", { authScope: "personal" }), connector("hidden")],
@@ -150,6 +189,7 @@ describe("operator config contract", () => {
         tools: ["shared", "hidden"],
         members: [{ kind: "human", namespace: "directory", id: "bob" }],
         readOnly: false,
+        owner: null,
       },
       {
         name: "reader",
@@ -157,6 +197,7 @@ describe("operator config contract", () => {
         tools: ["shared.read"],
         members: [{ kind: "human", namespace: "directory", id: "alice" }],
         readOnly: true,
+        owner: null,
       },
     ]);
     expect(alice.live.connectors[0]?.tools.map((t) => [t.address, t.classification])).toEqual([

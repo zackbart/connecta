@@ -266,7 +266,9 @@ Its `subject` option, a deployment-config function from the admitted identity
 to a downstream account (a Clerk principal id to a Workspace address, say) or
 one fixed address, is applied once per call and only to a request an inbound
 provider authenticated: any `ok`, a subject-less custom credential included, never an open
-deployment's anonymous admission. Otherwise, or on `undefined`, the call fails
+deployment's anonymous admission. An agent never reaches the function; it acts
+as its pool's `owner` ([Pool owners](#pool-owners-for-google-workspace)).
+Otherwise, or on `undefined`, the call fails
 `auth_required` before any request leaves. Arguments, headers, and programs
 never reach it; a deployment's own connectors still cannot read the caller.
 
@@ -429,7 +431,7 @@ warning says, and every pool path answers the 404: nobody can be a member.
 | Scope        | `/mcp/<pool>` serves exactly the pool's `tools` (connector ids or exact `connector.tool` addresses) to its members. Plain `/mcp` serves the whole catalog to maintainers. Neither intersects with or widens anything.                                                                                                                         |
 | Refusal      | A non-maintainer at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer`, `agent_not_maintainer`, `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
 | Agents       | An agent member reaches `/mcp/<pool>` with its `cta_` token. This is interim: agent endpoints (`/agent/<pool>`, #837 P4) replace it, and human endpoints will then refuse `cta_`.                                                                                                                                                             |
-| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.                                                         |
+| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.       |
 | Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                          |
 | Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                             |
 
@@ -464,6 +466,61 @@ skill `resources/read`, are the same on every endpoint and may name tools a
 read-only endpoint refuses. Resource reads and pool tools are the same on
 both. The removed `trust` option fails construction with a message naming
 `readOnly`.
+
+### Pool owners for Google Workspace
+
+An agent has no Workspace account. On a Workspace connector (`gmail()`,
+`drive()`, `sheets()`, `slides()`, `forms()`, `docs()`) whose `subject` is a
+mapping function, the caller decides whose account a call opens:
+
+| Caller                        | Acts as                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------- |
+| A person, in any pool         | Their own account, through the `subject` mapping. A pool `owner` never applies. |
+| An agent in a pool            | The pool's `owner`, resolved before the mapping, which never sees the agent.    |
+| An agent, pool has no `owner` | Nothing: the call fails `auth_required` before any request leaves.              |
+
+`owner` is a Workspace email address, checked at construction and listed in
+`describeConfig()` (`null` when unset). Over HTTP, `/ui/api/config` serves it
+only to an authenticated maintainer; anyone else, an open deployment's
+anonymous caller included, reads `null`, the same as an unset owner. Core copies it from the pool the
+request was admitted through; no argument, header, or program can choose or
+change it, and the `auth_required` message never names an address. One
+`gmail()` then serves a pool per person:
+
+```ts
+const team = [
+  { id: "alice", email: "alice@example.com" },
+  { id: "bob", email: "bob@example.com" },
+];
+createConnecta({
+  auth: clerkAuth({ publishableKey, secretKey }),
+  storage,
+  accessTokens: accessTokens(storage),
+  readOnly: false,
+  maintainers: ["alice"],
+  agents: ["assistant"],
+  pools: Object.fromEntries(
+    team.map((person) => [
+      `assistant-${person.id}`,
+      { tools: ["gmail", "drive"], owner: person.email, members: [person.id, "agent:assistant"] },
+    ]),
+  ),
+  connectors: [
+    gmail("gmail", { purpose, serviceAccount, subject: (who) => emailOf(who.principal?.id) }),
+    drive("drive", { purpose, serviceAccount, subject: (who) => emailOf(who.principal?.id) }),
+  ],
+  executor,
+});
+```
+
+The agent harness, not the model, picks the pool for each turn, which is what
+keeps one person's mailbox from another's. Adding a person to someone else's
+pool opens nothing of the owner's to them: people always act as themselves.
+
+A fixed `subject` address is the explicit shared-account exception: every
+caller, person or agent, acts as it in every pool that lists the connector,
+and pool owners do not apply. Keep fixed-subject connectors out of pools whose
+members must not share that account.
 
 ## Shared and personal auth
 

@@ -978,6 +978,7 @@ describe("member references at construction", () => {
         path: "/mcp/team",
         tools: ["wiki"],
         readOnly: false,
+        owner: null,
         members: [
           { kind: "human", namespace: NAMESPACE, id: "bob" },
           { kind: "agent", name: "bot" },
