@@ -61,6 +61,8 @@ describe("operator visual fixture contract", () => {
     expect(contract.pools.map((p) => p.name)).toEqual(config.pools.map((p) => p.name));
     for (const pool of contract.pools) {
       expect(config.pools.find((p) => p.name === pool.name)?.readOnly).toBe(pool.readOnly);
+      // The maintainer view carries each pool's described owner (#855).
+      expect(pool.owner).toBe(config.pools.find((p) => p.name === pool.name)?.owner ?? null);
       expect(config.pools.find((p) => p.name === pool.name)?.members).toEqual([
         { kind: "human", namespace: "https://clerk.example.test", id: "alice" },
       ]);

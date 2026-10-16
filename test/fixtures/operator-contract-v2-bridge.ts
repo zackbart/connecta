@@ -6,8 +6,9 @@
 //
 // Who may use an endpoint comes from the described config, as P6b will serve
 // it: `config.maintainers` become `root.maintainers` and each pool's
-// `members` its members, with no directory label (`label: null`). Explicit
-// `facts` override both, for fixtures that show labelled people.
+// `members` its members, with no directory label (`label: null`), and each
+// pool's `owner` its owner. Explicit `facts` override the people, for
+// fixtures that show labelled ones.
 import type { DescribedMember } from "../../src/describe-config.js";
 import type {
   OperatorConnectorPoolCell,
@@ -82,7 +83,8 @@ export function contractV2(
     humanPath: pool.path,
     agentPath: `/agent/${pool.name}`,
     readOnly: pool.readOnly,
-    owner: null,
+    // The described owner, a maintainer's fact; the member view always has null.
+    owner: pool.owner ?? null,
     tools: poolGrants(pool.tools),
     members: facts.members?.[pool.name] ?? (pool.members ?? []).map(member),
   }));
