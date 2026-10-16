@@ -2645,3 +2645,80 @@ describe("round 5 independent review probes", () => {
     expect(writes(fetchMock)).toHaveLength(0);
   });
 });
+
+describe("round 6: member refresh deadline and authorization return", () => {
+  /** A member contract with Notion's credential actions and Slack's state set. */
+  function member(notion: Array<"save" | "test" | "clear">, slack: "ok" | "auth_required" = "ok"): Response {
+    const body = structuredClone(OPERATOR_V2_MEMBER) as typeof OPERATOR_V2_MEMBER & Record<string, unknown>;
+    (body.connectors.find((c) => c.id === "notion")!.manage as { actions: string[] }).actions = notion;
+    body.connectors.find((c) => c.id === "slack")!.connection =
+      slack === "ok" ? { state: "ok" } : { state: "auth_required", problem: "oauth_required" };
+    return Response.json(body);
+  }
+  const sent = (fetchMock: ReturnType<typeof vi.fn>, method: string) =>
+    fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === method).map(([p]) => p);
+
+  it("a stalled member refresh past its deadline closes Clear and the form, and sends no DELETE", async () => {
+    const loaded = await loadStore({ id: "m", getToken: async () => "m" });
+    const { store, fetchMock, configMock } = loaded;
+    configMock.mockResolvedValueOnce(member(["save", "test", "clear"]));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "ready", role: "member" });
+    store.editCredential("notion");
+    store.askConfirm("notion", "credential_remove");
+    expect(store.getState()).toMatchObject({ credentialEditing: "notion", confirming: { connectorId: "notion" } });
+    vi.useFakeTimers();
+    const stalled = deferred<Response>();
+    configMock.mockReturnValueOnce(stalled.promise);
+    void store.loadOperatorContract();
+    await vi.advanceTimersByTimeAsync(15_001);
+    // The member's own unavailable state: nothing actionable left on screen.
+    expect(store.getState()).toMatchObject({
+      session: "ready",
+      contract: null,
+      contractPhase: "error",
+      confirming: null,
+      credentialEditing: null,
+      focusIfLost: "memberHeading",
+    });
+    await store.removeCredential("notion");
+    expect(sent(fetchMock, "DELETE")).toEqual([]);
+    // The read that missed its deadline cannot bring the old actions back.
+    configMock.mockImplementation(() => new Promise<Response>(() => {}));
+    stalled.resolve(member(["save", "test", "clear"]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().contract).toBeNull();
+    // A fresh read started afterwards does.
+    configMock.mockImplementation(async () => member(["save", "test", "clear"]));
+    await store.retryLoad();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().contract?.role).toBe("member");
+  });
+
+  it("re-reads the contract on return after consent outlasts the 30 s poll window, and says Connected", async () => {
+    const loaded = await loadStore({ id: "m", getToken: async () => "m" });
+    const { store, fetchMock, configMock, windowListeners } = loaded;
+    configMock.mockImplementation(async () => member(["save"], "auth_required"));
+    await store.boot();
+    // The poll and its 30 s window run on these timers.
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(Response.json({ authorizationUrl: "https://auth.example.test/authorize" }));
+    await store.startOAuth("slack", "continue");
+    expect(sent(fetchMock, "POST")).toEqual(["/ui/oauth/slack?mode=continue"]);
+    // Consent takes 35 s; the poll window has long closed.
+    await vi.advanceTimersByTimeAsync(35_000);
+    configMock.mockClear();
+    configMock.mockImplementation(async () => member(["save"], "ok"));
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(configMock).toHaveBeenCalled();
+    expect(store.getState().contract?.connectors.find((c) => c.id === "slack")?.connection?.state).toBe("ok");
+    expect(store.getState()).toMatchObject({ oauthNoticeFor: "slack", oauthNotice: { message: "Connected." } });
+    // Settled: a later return does not keep re-reading.
+    configMock.mockClear();
+    await vi.advanceTimersByTimeAsync(5_000);
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(configMock).not.toHaveBeenCalled();
+  });
+});

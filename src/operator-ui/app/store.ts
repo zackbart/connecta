@@ -400,12 +400,26 @@ function contractUnavailable(outcome: "network" | "refused"): void {
       contract: null,
       contractPhase: "error",
       loadFailure: outcome === "network" ? "network" : null,
-      // The member's rows, and the control that had focus, give way to the
-      // page's own error: focus its heading rather than <body>.
-      ...(state.role === "member" ? { focusIfLost: "memberHeading", confirming: null, credentialEditing: null } : {}),
+      ...(state.role === "member" ? memberUnavailable() : {}),
     });
   }
   scheduleRecovery();
+}
+
+/**
+ * A member whose contract could not be confirmed, by failure or by deadline:
+ * nothing actionable stays on screen. Open confirmations and forms close, and
+ * the member page's own refresh error takes focus at its heading, since the
+ * control that had it is gone.
+ */
+function memberUnavailable(): Partial<OperatorState> {
+  return {
+    contract: null,
+    contractPhase: "error",
+    confirming: null,
+    credentialEditing: null,
+    focusIfLost: "memberHeading",
+  };
 }
 
 /**
@@ -584,12 +598,33 @@ function memberRefused(connector: string, kind: "oauth" | "credential"): Promise
 function memberConnected(contract: OperatorUiContractV2): Partial<OperatorState> {
   const patch: Partial<OperatorState> = {};
   for (const connector of contract.connectors) {
-    if (connector.connection?.state !== "ok" || !awaitingAuthorization.delete(connector.id)) continue;
+    if (connector.connection?.state !== "ok") continue;
+    // Both records go: the poll's, and the one that outlives it.
+    const started = memberAuthorizations.delete(connector.id);
+    if (!awaitingAuthorization.delete(connector.id) && !started) continue;
     if (state.oauthNoticeFor === connector.id) {
       Object.assign(patch, { oauthNotice: info("Connected."), oauthBlocked: null, oauthBlockedUrl: null });
     }
   }
   return patch;
+}
+
+/**
+ * Member authorizations this tab started, by start time. The OAuth poll gives
+ * up after its window, but consent can take longer, so returning to the tab
+ * still re-reads the member's contract until it shows the connection, the
+ * member disconnects it, or `MEMBER_AUTHORIZATION_WINDOW_MS` passes.
+ */
+const memberAuthorizations = new Map<string, number>();
+const MEMBER_AUTHORIZATION_WINDOW_MS = 10 * 60_000;
+
+/** Whether any member authorization is still worth checking on return. */
+function memberAuthorizationPending(): boolean {
+  const now = Date.now();
+  for (const [id, startedAt] of memberAuthorizations) {
+    if (now - startedAt > MEMBER_AUTHORIZATION_WINDOW_MS) memberAuthorizations.delete(id);
+  }
+  return memberAuthorizations.size > 0;
 }
 
 /** Catalog and auth controls publish together, guarded by one refresh revision. */
@@ -1038,6 +1073,8 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
         tab.opener = null;
         tab.location.replace(url);
       }
+      // A member's "check on return" outlives the poll window; see `memberAuthorizations`.
+      if (state.role === "member") memberAuthorizations.set(connector, Date.now());
       if (startedOn === navigationRevision && generation === oauthPollGeneration) {
         awaitingAuthorization.set(connector, Date.now() + OAUTH_POLL_WINDOW_MS);
         oauthDeadlineTimer = setTimeout(() => stopOAuthPolling(connector), OAUTH_POLL_WINDOW_MS);
@@ -1086,7 +1123,10 @@ export function disconnectOAuth(connector: string): Promise<void> {
       oauthBlockedUrl: null,
       confirming: null,
     },
-    done: (payload) => oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", payload)),
+    done: (payload) => {
+      memberAuthorizations.delete(connector);
+      return oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", payload));
+    },
     failed: (facts) =>
       oauthNoticePatch(connector, actionFailedNotice("oauth_disconnect", connector, facts, productName)),
     reload: connector,
@@ -1343,6 +1383,11 @@ function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, expos
     timer: setTimeout(() => {
       if (recoveryRead !== cycle || !current() || signedOut) return;
       finish();
+      // A member has no `/ui/data`, so the deadline alone takes their contract
+      // down, as a failed read would. Their late read is fenced: only a read
+      // started after the deadline may put actions back on screen.
+      const member = state.role === "member";
+      if (member) ++dataRevision;
       set({
         recoveryPending: false,
         refreshing: false,
@@ -1352,8 +1397,9 @@ function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, expos
             ? {
                 session: "gated",
                 gate: failure("Cloudflare Access identity is unavailable. Retry to check your session."),
+                ...(member ? memberUnavailable() : {}),
               }
-            : { session: "ready", gate: null, loadFailure: "network" }),
+            : { session: "ready", gate: null, loadFailure: "network", ...(member ? memberUnavailable() : {}) }),
       });
       scheduleRecovery();
     }, RECOVERY_READ_TIMEOUT_MS),
@@ -1426,7 +1472,11 @@ function recheckAuthorization(): void {
   // A member's own connection state rides in the contract: read it again
   // while an authorization this tab started may have finished elsewhere.
   if (member) {
-    if (awaitingAuthorization.size && !state.oauthBusy) void loadOperatorContract();
+    if (state.oauthBusy || (!awaitingAuthorization.size && !memberAuthorizationPending())) return;
+    const now = Date.now();
+    if (now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
+    lastReturnPass = now;
+    void loadOperatorContract();
     return;
   }
   if (!state.data || !maintainerNow()) return;
@@ -1692,6 +1742,7 @@ let confirmedAgents = new Set<string>();
  * from the old one never touches it again (see `SlotTicket.identity`).
  */
 function forgetSlotFence(): void {
+  memberAuthorizations.clear();
   slotGeneration.clear();
   unresolvedAt.clear();
   slotsInFlight.clear();

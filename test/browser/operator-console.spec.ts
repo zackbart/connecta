@@ -59,9 +59,16 @@ type Handler = (request: Sent) => { status?: number; json?: unknown; body?: stri
  * Serve one contract and record every operator request. `handle` answers
  * mutations; anything it leaves alone falls through to the fixtures.
  */
-async function install(page: Page, contract: unknown, handle: Handler = () => undefined) {
+async function install(
+  page: Page,
+  contract: unknown,
+  handle: Handler = () => undefined,
+  /** "installed" lets a test move time forward with `page.clock.fastForward`. */
+  clock: "fixed" | "installed" = "fixed",
+) {
   const sent: Sent[] = [];
-  await page.clock.setFixedTime(new Date(VISUAL_NOW));
+  if (clock === "fixed") await page.clock.setFixedTime(new Date(VISUAL_NOW));
+  else await page.clock.install({ time: new Date(VISUAL_NOW) });
   await page.addInitScript(`localStorage.setItem("connecta:token", ${JSON.stringify(VISUAL_TOKEN)});
     window.__csp = []; document.addEventListener("securitypolicyviolation", event => window.__csp.push(event.effectiveDirective));`);
   await page.route(`${VISUAL_ORIGIN}/**`, async (route) => {
@@ -726,6 +733,43 @@ test.describe("member page", () => {
     await expect(page.getByRole("button", { name: "Clear Notion", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Add credential Notion", exact: true })).toBeVisible();
     expect(mutations(sent)).toEqual(["POST /ui/oauth/calendar?mode=continue"]);
+    await noCsp(page);
+  });
+
+  test("consent that outlasts the 30 s poll window still shows Connected when the member returns", async ({ page }) => {
+    let current = structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2;
+    const slack = current.connectors.find((c) => c.id === "slack")!;
+    slack.connection = { state: "auth_required", problem: "oauth_required" };
+    const authorize = "https://auth.example.test/authorize";
+    await page.context().route(`${authorize}**`, (route) => route.fulfill({ body: "Authorize" }));
+    const sent = await install(
+      page,
+      current,
+      ({ method, path }) => {
+        if (path === "/ui/api/config") return { json: current };
+        if (method === "POST" && path.startsWith("/ui/oauth/slack")) return { json: { authorizationUrl: authorize } };
+        return undefined;
+      },
+      "installed",
+    );
+    await page.goto(VISUAL_ORIGIN + "/");
+    const popup = page.waitForEvent("popup");
+    await page.getByRole("button", { name: "Connect Slack", exact: true }).click();
+    const tab = await popup;
+    await tab.waitForURL(`${authorize}**`);
+    await tab.close();
+    await expect(page.locator("#oauthNotice-slack")).toContainText("Finish authorizing");
+    // Consent takes 35 s: the poll window closes first. Then it completes.
+    await page.clock.fastForward(35_000);
+    current = structuredClone(current);
+    current.connectors.find((c) => c.id === "slack")!.connection = { state: "ok" };
+    const reads = () => sent.filter((r) => r.path === "/ui/api/config").length;
+    const before = reads();
+    await page.evaluate("window.dispatchEvent(new Event('focus'))");
+    await page.clock.fastForward(500);
+    await expect.poll(reads).toBeGreaterThan(before);
+    await expect(page.locator("#oauthNotice-slack")).toHaveText("Connected.");
+    await expect(page.locator("#memberView .account-row").first().locator(".badge")).toHaveText("Connected");
     await noCsp(page);
   });
 
