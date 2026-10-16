@@ -110,17 +110,7 @@ async function toolList(c: Fetcher, path: string, token: string): Promise<unknow
 
 describe("pool description", () => {
   it("INV-11: refuses a description that is not 1 to 500 characters of one-line text at construction", () => {
-    for (const description of [
-      "",
-      "   ",
-      3,
-      null,
-      ["Team"],
-      "x".repeat(501),
-      "Team\ntier",
-      "Team\ttier",
-      "Team\u0085",
-    ]) {
+    for (const description of ["", "   ", 3, null, ["Team"], "x".repeat(501), "Team\ntier", "Team\ttier"]) {
       expect(
         () => deployment({ bad: { tools: ["crm"], members: ["bob"], description } as never }),
         String(description),
@@ -129,6 +119,18 @@ describe("pool description", () => {
     expect(() =>
       deployment({ edge: { tools: ["crm"], members: ["bob"], description: "é".repeat(500) } as never }),
     ).not.toThrow();
+  });
+
+  it.each([
+    ["LINE SEPARATOR (U+2028)", "\u2028"],
+    ["PARAGRAPH SEPARATOR (U+2029)", "\u2029"],
+    ["NEXT LINE (U+0085)", "\u0085"],
+  ])("INV-11: refuses a pool description containing %s at construction", (_name, separator) => {
+    expect(() =>
+      deployment({
+        bad: { tools: ["crm"], members: ["bob"], description: `Team${separator}Private mail` } as never,
+      }),
+    ).toThrow("ConnectaConfig.pools.bad.description must be text of 1 to 500 characters");
   });
 
   it("adds the trimmed description to the instructions at /mcp/<pool> and /agent/<pool>", async () => {

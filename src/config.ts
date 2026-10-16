@@ -230,14 +230,15 @@ function assertFlag(value: unknown, path: string): void {
 const MAX_POOL_DESCRIPTION_LENGTH = 500;
 
 /**
- * A pool description is one line of prose for the model. C0 and C1 controls,
- * line breaks and tabs included, are refused. A scan, as in remote-mcp.ts,
+ * A pool description is one line of prose for the model. C0 and C1 controls
+ * (including NEL), plus Unicode line and paragraph separators, are refused.
+ * A scan, as in remote-mcp.ts,
  * because a character class over the control range trips `no-control-regex`.
  */
-function hasControlCharacter(value: string): boolean {
+function hasLineBreakOrControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const code = value.charCodeAt(index);
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) return true;
   }
   return false;
 }
@@ -248,7 +249,7 @@ function assertPoolDescription(value: unknown, path: string): void {
     trimmed === undefined ||
     trimmed.length === 0 ||
     [...trimmed].length > MAX_POOL_DESCRIPTION_LENGTH ||
-    hasControlCharacter(trimmed)
+    hasLineBreakOrControlCharacter(trimmed)
   ) {
     throw new ConfigError(
       `${path} must be text of 1 to ${MAX_POOL_DESCRIPTION_LENGTH} characters after trimming, with no line breaks or control characters.`,
@@ -310,7 +311,7 @@ const pool = {
    * What this pool is for, in plain words for the model: appended to the MCP
    * `initialize` instructions at `/mcp/<name>` and `/agent/<name>`, so a
    * caller learns its scope ("Team tier: shared tools only."). Trimmed, 1 to
-   * 500 characters, no control characters. It grants and hides nothing; plain
+   * 500 characters, no line breaks or control characters. It grants and hides nothing; plain
    * `/mcp` never shows it.
    */
   description: opaque<string>({ check: assertPoolDescription }),

@@ -640,6 +640,11 @@ admitted.
 | Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                     |
 | Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                        |
 
+Pool descriptions are trimmed before validation. The remaining text must be
+1 to 500 characters and contain no C0 or C1 control characters (including tabs,
+newlines, and NEL U+0085), LINE SEPARATOR (U+2028), or PARAGRAPH SEPARATOR
+(U+2029).
+
 ### Agent endpoints
 
 `/agent/<pool>` is where agents use a pool. It exists for deployments behind
