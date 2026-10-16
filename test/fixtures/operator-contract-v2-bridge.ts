@@ -3,6 +3,12 @@
 // from it, pass that answer through here to get the maintainer view the
 // browser now requires. A v2 body passes through unchanged, so once P6b lands
 // every caller already sees the server's own answer and this module is deleted.
+//
+// Who may use an endpoint comes from the described config, as P6b will serve
+// it: `config.maintainers` become `root.maintainers` and each pool's
+// `members` its members, with no directory label (`label: null`). Explicit
+// `facts` override both, for fixtures that show labelled people.
+import type { DescribedMember } from "../../src/describe-config.js";
 import type {
   OperatorConnectorPoolCell,
   OperatorGrant,
@@ -16,9 +22,9 @@ import type {
 export interface BridgeFacts {
   /** The subject per connector and endpoint; defaults to shared-missing or personal 0 of 0. */
   runsAs?: (connectorId: string, pool: string | null) => OperatorRunsAs | undefined;
-  /** Pool members, by pool name. */
+  /** Pool members, by pool name; defaults to the described pool's members. */
   members?: Record<string, OperatorMember[]>;
-  /** Humans who may use plain /mcp. */
+  /** Humans who may use plain /mcp; defaults to the described maintainers. */
   maintainers?: OperatorMember[];
 }
 
@@ -39,12 +45,23 @@ function poolGrants(entries: string[]): OperatorGrant[] {
   return [...grants.values()];
 }
 
+/** A described reference as the contract's member, unlabelled. */
+function member(reference: DescribedMember): OperatorMember {
+  return reference.kind === "agent"
+    ? { kind: "agent", name: reference.name }
+    : { kind: "human", namespace: reference.namespace, id: reference.id, label: null };
+}
+
 export function contractV2(
   body: OperatorUiContract | OperatorUiContractV2,
   facts: BridgeFacts = {},
 ): OperatorUiContractV2 {
   if (body.schemaVersion === 2) return body;
-  const config = body.config;
+  // v1 alone adds `hasGrant`; the v2 config is describeConfig()'s own shape.
+  const { hasGrant: _v1Only, ...config } = body.config;
+  const configSources = body.configSources
+    ? Object.fromEntries(Object.entries(body.configSources).filter(([path]) => path !== "config.hasGrant"))
+    : null;
   const scope = new Map(config.connectors.map((c) => [c.id, c.authScope]));
   const subject = (connectorId: string, pool: string | null): OperatorRunsAs =>
     facts.runsAs?.(connectorId, pool) ??
@@ -67,15 +84,21 @@ export function contractV2(
     readOnly: pool.readOnly,
     owner: null,
     tools: poolGrants(pool.tools),
-    members: facts.members?.[pool.name] ?? [],
+    members: facts.members?.[pool.name] ?? (pool.members ?? []).map(member),
   }));
   return {
     schemaVersion: 2,
     role: "maintainer",
     config,
-    configSources: body.configSources ?? null,
+    configSources,
     live: body.live,
-    root: { path: config.urls.mcpPath, readOnly: body.you.readOnly, maintainers: facts.maintainers ?? [] },
+    root: {
+      path: config.urls.mcpPath,
+      readOnly: body.you.readOnly,
+      maintainers:
+        facts.maintainers ??
+        (config.maintainers ?? []).map((reference) => member({ kind: "human", ...reference })),
+    },
     pools,
     agents: [],
     matrix: [...cells(body.you.grants, null), ...pools.flatMap((pool) => cells(pool.tools, pool.name))],

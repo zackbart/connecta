@@ -9,11 +9,15 @@ import { contractV2 } from "../fixtures/operator-contract-v2-bridge.js";
  * P6b of #837 serves v2 itself; see operator-contract-v2-bridge.ts.
  */
 export async function serveContractV2(page: Page): Promise<void> {
-  await page.route("**/ui/api/config", async (route) => {
-    const response = await route.fetch();
-    if (!response.ok()) return route.fulfill({ response });
-    return route.fulfill({ response, json: contractV2(await response.json()) });
-  });
+  // Match on the path: OAuth polling reads the scoped `?connector=<id>` form too.
+  await page.route(
+    (url) => url.pathname === "/ui/api/config",
+    async (route) => {
+      const response = await route.fetch();
+      if (!response.ok()) return route.fulfill({ response });
+      return route.fulfill({ response, json: contractV2(await response.json()) });
+    },
+  );
 }
 
 /** A real allowlisted snapshot with deterministic, route-intercepted live facts, as a maintainer's v2 view. */

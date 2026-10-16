@@ -34,8 +34,13 @@ describe("operator visual fixture contract", () => {
     expect(contract.role).toBe("maintainer");
     const config = contract.config!;
     expect(config.schemaVersion).toBe(1);
-    expect(config.hasGrant).toBe(state !== "empty");
-    expect(contract.configSources?.["config.hasGrant"]).toBe(state === "empty" ? "default" : "config");
+    // v2 carries describeConfig()'s own shape: maintainers and pool members,
+    // never v1's hasGrant (#837).
+    expect(config).not.toHaveProperty("hasGrant");
+    expect(contract.configSources).not.toHaveProperty(["config.hasGrant"]);
+    expect(config.maintainers).toEqual([{ namespace: "https://clerk.example.test", id: "alice" }]);
+    expect(config).not.toHaveProperty("pools.0.hasGrant");
+    expect(contract.root?.maintainers.map((m) => (m.kind === "human" ? m.id : m.name))).toEqual(["alice"]);
     expect(contract.configSources?.["config.limits.calls.maxResultBytes"]).toBe("config");
     const ids = config.connectors.map((c) => c.id);
     expect(contract.live.connectors.map((c) => c.id)).toEqual(ids);
@@ -56,6 +61,9 @@ describe("operator visual fixture contract", () => {
     expect(contract.pools.map((p) => p.name)).toEqual(config.pools.map((p) => p.name));
     for (const pool of contract.pools) {
       expect(config.pools.find((p) => p.name === pool.name)?.readOnly).toBe(pool.readOnly);
+      expect(config.pools.find((p) => p.name === pool.name)?.members).toEqual([
+        { kind: "human", namespace: "https://clerk.example.test", id: "alice" },
+      ]);
       for (const grant of pool.tools) expect(ids).toContain(grant.connectorId);
     }
     // Every matrix cell names a configured connector and a served endpoint.

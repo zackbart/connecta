@@ -466,6 +466,19 @@ export function operatorRole(state: Pick<OperatorState, "contract">): OperatorRo
 }
 
 /**
+ * The role pages and navigation render for. The contract's, or, while a
+ * refresh that failed has left no contract on screen, maintainer when the
+ * last good contract confirmed one and that maintainer's data is still here:
+ * their page stays mounted on its own retry state instead of being torn down
+ * mid-recovery. Never a request's permission; the store sends maintainer
+ * reads only while the contract itself says maintainer.
+ */
+export function displayRole(state: Pick<OperatorState, "contract" | "role" | "data">): OperatorRole | null {
+  if (state.contract) return state.contract.role;
+  return state.role === "maintainer" && state.data ? "maintainer" : null;
+}
+
+/**
  * Whether Activity is open to this viewer: maintainers only, on a deployment
  * that records history. Members always read "forbidden".
  */

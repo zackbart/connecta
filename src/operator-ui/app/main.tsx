@@ -11,6 +11,7 @@ import {
   activityReadable,
   canonicalOperatorPath,
   checkingCopy,
+  displayRole,
   gateCopy,
   noAccessCopy,
   pageDescription,
@@ -62,7 +63,7 @@ function useOperatorState(): OperatorState {
  * rest, and for every page while the contract has not said who this is.
  */
 function visiblePages(state: OperatorState): OperatorPage[] {
-  const role = operatorRole(state);
+  const role = displayRole(state);
   // A member has one page until UI-3: their own endpoints.
   if (role === "member") return ["endpoints"];
   if (role !== "maintainer") return [];
@@ -239,7 +240,7 @@ function RolePending({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
-  const role = operatorRole(state);
+  const role = displayRole(state);
   // Every other page is built from maintainer facts a member never receives.
   if (role === "member") return <MemberPage state={state} />;
   if (role !== "maintainer") return <RolePending state={state} />;
@@ -264,7 +265,6 @@ function OperatorApp() {
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
-    if (state.data && state.contractPhase === "idle") void loadOperatorContract();
     if (
       state.page === "tokens" &&
       operatorRole(state) === "maintainer" &&

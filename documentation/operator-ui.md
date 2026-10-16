@@ -54,10 +54,12 @@ shows sign-in, the private 404 shows a "No access" page naming who to ask, with
 Sign out or Change token, and a 200 renders by `role`. `/ui/data`, connector
 details, activity and tokens are requested only after the contract says
 `maintainer`, and every such read checks the role again when it is sent, focus
-returns included. Until a role is known, the page shows its loading or error
-state and no navigation. The store keeps the last confirmed role through a
-failed refresh, and an answer with a different role clears everything read
-under the old one before it is accepted. A
+returns included. Until a role is confirmed, the page shows its loading or
+error state and no navigation. The store keeps the last confirmed role through
+a failed refresh: a maintainer's page stays mounted on its own retry state,
+sending nothing maintainer-only until a contract confirms the role again, and
+an answer with a different role clears everything read under the old one and
+admits the viewer again. A
 pool member sees one page on every path, until UI-3 of
 [#834](https://github.com/zackbart/connecta/issues/834): their pools with each
 URL and client setup, and the Endpoints tab alone. Connector
@@ -81,12 +83,14 @@ interactive credential or token management authority.
 `GET /ui/api/config`, owned by `operatorUi()`, returns `OperatorUiContract`
 from `connecta/ui`. `src/operator-ui/contract.ts` is also the browser's type
 source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, and `you`.
-`config` is the construction-time `describeConfig()` snapshot, filtered to
-visible connectors, granted tools, classification overrides, and admitted
-pools. `config.hasGrant` reports whether deployment code configures a grant for
-plain `/mcp`. Settings does not read it: under contract v2 it lists who may use
-plain `/mcp` from `root.maintainers`, by label or raw id.
-Pool tools are the intersection with the caller's identity grants.
+`config` is the construction-time `describeConfig()` snapshot, including
+`maintainers` and each pool's `members`; only maintainers receive it. v1 alone
+adds `config.hasGrant`, true whenever inbound auth is configured, because
+`maintainers` then gate plain `/mcp`. Settings reads contract v2 instead and
+never `hasGrant`: it lists who may use plain `/mcp` from `root.maintainers`, by
+label or raw id.
+`describeConfig()` itself no longer has `hasGrant`. Pool tools are the pool's
+declared tools, never intersected.
 `configSources` labels each serialized leaf as `default` or `config`, based on
 option presence rather than equality with the default. Factory descriptions carry
 relative `optionSources` paths so resolved module and transport defaults retain
@@ -156,7 +160,51 @@ and Workers. HTML contains only mount points and escaped inert configuration;
 it remains uncached. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
-owns authenticated reads and existing mutations. Endpoints, Connectors, connector
+owns authenticated reads and existing mutations. An Access-only shell selects
+Access even when the HTML request has no trusted context; only authenticated
+API responses establish the session. A gated Access session offers Retry.
+Focus, visibility, and timer-driven recovery share one admission-read schedule
+with at least two seconds between passive attempts. An admission read takes
+the contract first and, for a maintainer, then `/ui/data` and the connector
+details, which reuse that contract rather than read it again. An in-flight
+passive attempt coalesces returns until its admission read finishes, so slow
+successful reads can publish. Each admission read shares one 15-second
+deadline, including token acquisition, fetches and response bodies. This is an admission deadline, not a request
+lifetime limit: it releases the recovery guard and exposes Retry without aborting
+the pending read or invalidating its identity/revision fence. A late healthy
+response still publishes if that cycle is current. Passive timers and returns
+coalesce onto the pending cycle, including after its deadline; they never start
+duplicate summary, token, config, detail or body reads. The passive retry schedule
+stays bounded and does not reset its budget on a deadline. Retry remains available
+during recovery configuration loading and supersedes and aborts the old cycle;
+identity changes, navigation and connector-page unmount also cancel it. Navigation
+that cancels pending data schedules a bounded reread for the destination. Failed reads retry after
+2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
+those four automatic retries, a focus return can request one more read after
+the eight-second backoff, without replenishing the automatic budget. Retry
+resets the budget with a 150 ms click debounce. Successful reads and explicit
+identity transitions also reset recovery. Identity changes
+cancel pending retries and fence out responses from the previous identity.
+Queued focus callbacks carry the same identity fence. Explicit sign-out
+suppresses passive reads until an intentional sign-in or a new Clerk session.
+
+Catalog and connector auth details share one revisioned refresh cycle. Each
+completed connector publishes its catalog facts and auth controls together,
+while a slow provider leaves other rows usable.
+Catalog refresh, connector refresh, and mutation follow-up reads update both
+consumers together. A later refresh or mutation invalidates an older cycle's publication fence
+without aborting its read, and a failed contract read clears its old snapshot;
+the next refresh then reads the contract before any connector detail. After an explicit OAuth
+start, visible tabs poll only that connector's read-only catalog and auth facts
+every two seconds for up to 30 seconds. The scoped result replaces only that
+connector's matching live row and auth controls. Success, a failed read or status,
+disconnect, navigation away from the connector, unmount, or identity reset ends
+polling and aborts its in-flight reads. The deadline also aborts a stalled read.
+A later focus return can request another status read. Recovery never starts OAuth
+or replays a mutation.
+Unreadable credential metadata uses `configured: null`, including named fields,
+and renders as unavailable with a retry prompt. It does not claim that the slot
+is empty. Endpoints, Connectors, connector
 detail, Settings, and the member page consume the typed contract; Activity opens
 only to a maintainer whose contract reports readable history. Connector detail
 reads auth permissions from its `/ui/data` connector. Activity retains

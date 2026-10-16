@@ -16,11 +16,9 @@ export function ContractState({ state }: { state: OperatorState }) {
   if (state.loadFailure) return <LoadFailure state={state} />;
   return (
     <StateBlock
-      {...(state.contractPhase === "error"
-        ? {
-            title: "Configuration couldn't be loaded",
-            action: { label: "Retry", onClick: () => void retryLoad() },
-          }
+      {...(state.contractPhase === "error" ? { title: "Configuration couldn't be loaded" } : {})}
+      {...(state.contractPhase === "error" || state.recoveryPending
+        ? { action: { label: "Retry", onClick: () => void retryLoad() } }
         : {})}
     >
       {state.contractPhase === "error"

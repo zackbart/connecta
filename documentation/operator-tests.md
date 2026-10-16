@@ -118,7 +118,9 @@ CSP violations across every document and popup, and fail on unexpected network
 traffic. No credentials enter visual fixtures or screenshot baselines.
 
 `test/browser/operator-auth-recovery.spec.ts` serves the production UI and real
-operator routes with a trusted Worker Access context. It covers transient and
+operator routes with a trusted Worker Access context, bridging the server's v1
+contract to v2 until P6b (test-only). Each admission reads the contract first,
+so its read counts include one contract read per admission. It covers transient and
 rejected identity reads, missing shell context, delayed OAuth grant commits,
 catalog/auth reconciliation, and unreadable credential metadata, all without
 reloading the document. The repeated-refusal browser case drives ten focus and visibility returns
