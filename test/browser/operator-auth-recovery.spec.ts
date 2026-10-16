@@ -75,6 +75,8 @@ test.beforeEach(async () => {
   app = createTestConnecta({
     logger: "silent",
     auth: cloudflareAccessAuth(),
+    // The Access identity below; operator routes serve maintainers only (#837).
+    maintainers: ["operator"],
     storage,
     vault,
     connectors: [

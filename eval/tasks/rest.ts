@@ -568,7 +568,7 @@ export const REST_TASKS: ActiveTask[] = REST_SCENARIOS.map((spec) => {
               ? {
                   readOnly: true,
                   pool: "reads",
-                  pools: { reads: { tools: ["cloudflare_prod"], grant: () => true, readOnly: true } },
+                  pools: { reads: { tools: ["cloudflare_prod"], members: ["agent:eval-machine"], readOnly: true } },
                 }
               : { readOnly: true },
         }

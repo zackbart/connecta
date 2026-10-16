@@ -2,6 +2,7 @@ import { oauthStateDigest } from "../../src/auth/downstream-oauth.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import { identityStorageKey } from "../../src/identity.js";
 import { fakeClerkAuth } from "./http.js";
+import { registerTestMaintainer } from "../helpers/machine-auth.js";
 import { BASE, CLERK_OPTIONS, CREDENTIAL_KEY } from "./ui.js";
 import { oauthFlowKeys, oauthGrantKeys } from "../../src/storage/keys.js";
 import type { KVStorage } from "../../src/types.js";
@@ -10,10 +11,13 @@ import type { Connecta } from "../../src/index.js";
 export const oauthVault = (storage: KVStorage) => encryptedCredentialVault(storage, CREDENTIAL_KEY);
 
 /** A verified browser session for tests of the callback's downstream behavior. */
-export const callbackAuth = {
-  ...fakeClerkAuth(CLERK_OPTIONS),
-  authorize: async () => ({ ok: true as const, userId: CLERK_OPTIONS.userId }),
-};
+export const callbackAuth = registerTestMaintainer(
+  {
+    ...fakeClerkAuth(CLERK_OPTIONS),
+    authorize: async () => ({ ok: true as const, userId: CLERK_OPTIONS.userId }),
+  },
+  { namespace: CLERK_OPTIONS.frontendApiUrl, id: CLERK_OPTIONS.userId },
+);
 
 export async function bindCallback(app: Connecta, id: string, state: string): Promise<void> {
   await app.registry.storeOAuthHandoff(id, state, await identityStorageKey({ namespace: CLERK_OPTIONS.frontendApiUrl, id: CLERK_OPTIONS.userId }));

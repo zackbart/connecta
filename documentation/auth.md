@@ -271,7 +271,7 @@ deployment's anonymous admission. Otherwise, or on `undefined`, the call fails
 never reach it; a deployment's own connectors still cannot read the caller.
 
 Access is read from one place, deployment code
-([decision 0006](../decisions/0006-pools-are-the-access-model.md)). Top-level
+([decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)). Top-level
 `maintainers` lists the people who reach plain `/mcp`, which serves the whole
 catalog with the deployment's `readOnly`, and the operator routes. Each pool's
 `members` lists who reaches `/mcp/<pool>`, which serves exactly that pool's

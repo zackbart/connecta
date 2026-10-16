@@ -30,6 +30,8 @@ function build(env: Env) {
     storage,
     executor: workerExecutor({ loader: env.LOADER }),
     auth: [cloudflareAccessAuth()],
+    // The Access stand-in's user, the one maintainer plain /mcp admits (#837).
+    maintainers: ["eval-operator"],
     vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
     ui: operatorUi(),
     identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
