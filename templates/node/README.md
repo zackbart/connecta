@@ -294,6 +294,7 @@ Upgrading from v0.23 does not require rotating managed `cta_…` tokens. Import
 `accessTokens: true` with `accessTokens: accessTokens(storage)`, and keep the
 same persistent storage namespace. From 0.33 `maintainers` and pool `members`
 replace `identity.connectorAccess` and every `grant`, and maintainers replace
-the four `identity` management permissions; delete them. From 0.33 a stored token admits only once it is bound to a
+the four `identity` management permissions; delete them and the `identity`
+section, and follow the package's `documentation/migration-0.33.md`. From 0.33 a stored token admits only once it is bound to a
 declared agent: follow "Tokens issued before agents" above. See the package's
 `documentation/auth.md` for the migration and storage requirements.

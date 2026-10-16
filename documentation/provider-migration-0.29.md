@@ -7,8 +7,8 @@ version changes; [integrating services](./integrating.md) covers new connectors.
 
 This is the Phase 1 item 5d migration input for [Phase 5 release #709](https://github.com/zackbart/connecta/issues/709).
 Deploy it with the consolidated 0.29 release, not while the rework is in progress.
-BePresent and One&Many use Notion and Cloudflare; their actual grants and
-connector ids must be checked in deployment configuration before that release.
+Deployments that use Notion or Cloudflare must check their actual grants and
+connector ids in deployment configuration before that release.
 The provider audit establishes available auth modes, not production OAuth grants.
 
 Cloudflare's part of this guide is superseded: `cloudflare()` now selects its

@@ -501,7 +501,7 @@ then `wrangler login` and check the prepared deployment with a dry run.
 1. Back up KV with a bulk export including values and expiration metadata.
    Export D1 with `wrangler d1 export <db> --remote --output before-cutover.sql`.
    Store backups securely and preserve the exact credential encryption key,
-   including One&Many's `CONNECTA_CREDENTIALS_KEY`.
+   whatever secret name the deployment stores it under.
 2. Block traffic using maintenance mode or turn the route off. Stop cron,
    queue consumers, scheduled jobs, and every other KV/D1 writer. Drain all
    in-flight requests, including OAuth callbacks and token refreshes.

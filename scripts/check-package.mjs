@@ -220,7 +220,9 @@ try {
     "LICENSE",
     "bin/connecta.mjs",
     "bin/version.mjs",
+    "documentation/auth.md",
     "documentation/code-mode.md",
+    "documentation/migration-0.33.md",
     "templates/node/.dockerignore",
     "templates/node/.env.example",
     "templates/node/AGENTS.md",
@@ -590,6 +592,16 @@ try {
   const generatedRoot = join(work, "generated-deployment");
   run(npm, ["install", "--ignore-scripts"], generatedRoot);
   await assertInstallScriptsApproved(generatedRoot, generatedPackage);
+  // Deployments point their own agent guidance at this installed path for the
+  // agent pool layout, and the generated AGENTS.md names it (#837 P7).
+  const layoutReference = "node_modules/@zackbart/connecta/documentation/auth.md#organizing-an-agents-pools";
+  const installedAuthGuide = await readFile(join(generatedRoot, layoutReference.split("#")[0]), "utf8");
+  if (!/^### Organizing an agent's pools$/m.test(installedAuthGuide)) {
+    throw new Error("Installed documentation/auth.md lacks the agent pool layout section its anchor names");
+  }
+  if (!(await readFile(join(generatedRoot, "AGENTS.md"), "utf8")).includes(layoutReference)) {
+    throw new Error("Generated AGENTS.md does not point at the installed agent pool layout");
+  }
   run(npm, ["run", "typecheck"], generatedRoot);
   // The published configuration contract, compiled the way a consumer
   // compiles it: ConnectaConfig is derived from one schema, so its shape is

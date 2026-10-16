@@ -17,7 +17,7 @@ Agents add a second confusion: behind Cloudflare Access a machine sends an
 Access service token for the edge and a `cta_` token for connecta, and a
 UI-issued token inherits its issuer's personal connectors. Google Workspace
 providers map the caller to a mailbox, so an agent, which has no mailbox,
-needs a separate connector per person (`gmail_zack`, `gmail_elijah`).
+needs a separate connector per person (`gmail_alice`, `gmail_bob`).
 
 This record supersedes 0003's machine-identity section (service credentials
 plus `cta_` behind Access). 0003's human verification is unchanged.
@@ -30,13 +30,13 @@ place: a pool's member list.
 ```ts
 createConnecta({
   auth: clerkAuth({ ... }),
-  maintainers: ["user_zack"],
-  agents: ["simon"],
+  maintainers: ["user_alice"],
+  agents: ["assistant"],
   pools: {
-    "simon-zack": {
+    "assistant-alice": {
       tools: ["linear", "gmail", "drive"],
-      owner: "zack@onemany.co",
-      members: ["user_zack", "agent:simon"],
+      owner: "alice@example.com",
+      members: ["user_alice", "agent:assistant"],
     },
     reporting: { tools: ["linear", "notion"], readOnly: true, members: ["user_analyst"] },
   },
@@ -250,10 +250,11 @@ material, digests, credential suffixes, or downstream account labels.
 ## Consequences
 
 Every deployment changes its configuration; this is a breaking release.
-One&Many's deployment moves `gmail_<person>` connectors to one `gmail()` with
-pool owners, and its agent-fleet switches Simon from plain `/mcp` to
-per-turn `/agent/simon-<person>` (fleet code already picks the pool from the
-verified sender) with one credential. Stored `cta_` records are kept; trusted
+A deployment with one Workspace connector per person (`gmail_<person>`) moves
+to one `gmail()` with pool owners, and an agent that used plain `/mcp` moves
+to a per-turn `/agent/<agent>-<person>`, chosen by its harness from the
+verified sender, with one credential.
+[0007](./0007-agent-pool-layout.md) sets that per-agent pool layout. Stored `cta_` records are kept; trusted
 provisioning maps each existing machine token to an agent name once, and
 human-bound tokens stop admitting.
 

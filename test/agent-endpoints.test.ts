@@ -94,7 +94,7 @@ function deployment(options: Partial<Parameters<typeof createTestConnecta>[0]> =
     pools: {
       team: { tools: ["wiki"], members: ["bob", "agent:bot"] },
       x: { tools: ["wiki"], members: ["agent:bot"] },
-      "simon-zack": { tools: ["wiki"], members: ["agent:bot"] },
+      "assistant-alice": { tools: ["wiki"], members: ["agent:bot"] },
       humans: { tools: ["wiki"], members: ["bob"] },
     },
     publicUrl: BASE,
@@ -148,7 +148,7 @@ const BYPASSED_REFUSED = [
   "/agent/%2f/mcp",
   "/agent/x%2f..%2f..%2fmcp",
 ];
-const BYPASSED_ADMITTED = ["/agent/x", "/agent/simon-zack", "/agent/x?y", "/mcp/../agent/x"];
+const BYPASSED_ADMITTED = ["/agent/x", "/agent/assistant-alice", "/agent/x?y", "/mcp/../agent/x"];
 const PROTECTED = [
   "/mcp",
   "/agent",
@@ -163,7 +163,7 @@ const PROTECTED = [
 
 describe("agent endpoint paths", () => {
   it("INV-4: matches only the exact raw /agent/<pool> spelling and claims the whole agent namespace", () => {
-    expect(agentEndpointPool("/agent/simon-zack")).toBe("simon-zack");
+    expect(agentEndpointPool("/agent/assistant-alice")).toBe("assistant-alice");
     for (const path of [
       "/agent/",
       "/agent",

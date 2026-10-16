@@ -10,6 +10,7 @@ credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Connect a machine or migrate an old client                          | [Agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens), [agent endpoints](#agent-endpoints), [static bearer migration](#migrating-static-bearer-clients)             |
 | Configure caller visibility, read-only endpoints, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                      |
+| Lay out an agent's pools                                            | [Organizing an agent's pools](#organizing-an-agents-pools)                                                                                                                    |
 | Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [management](#human-authentication-management)    |
 | Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                         |
 | Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)  |
@@ -93,7 +94,7 @@ exactly one token slot.
 import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 createConnecta({
   storage,
-  agents: ["simon", "ci"],
+  agents: ["assistant", "ci"],
   accessTokens: accessTokens(storage),
   auth: clerkAuth({ publishableKey, secretKey }),
   ui: operatorUi(),
@@ -605,6 +606,97 @@ caller, person or agent, acts as it in every pool that lists the connector,
 and pool owners do not apply. Keep fixed-subject connectors out of pools whose
 members must not share that account.
 
+### Organizing an agent's pools
+
+Use this layout for every agent's pools. It gives each person's own accounts
+to the agent only when that person is the one talking, without a second
+connection. This section holds the complete rules;
+[decision 0007](https://github.com/zackbart/connecta/blob/main/decisions/0007-agent-pool-layout.md)
+records why, and the alternatives it rejected.
+
+1. **One connection per agent.** Each agent has exactly one Connecta
+   connection, and its client (the harness, never the model) chooses the
+   pool's URL for each turn. Never mount a second Connecta connection beside
+   it: the model would get two sets of meta-tools, and `execute_code` cannot
+   join results across connections. The agent's one `cta_` token works on
+   every pool that lists it.
+2. **Base pool `<agent>`.** `/agent/<agent>` serves pool `<agent>`: shared and
+   organization connectors only, with no `owner`. Use it in group chats,
+   scheduled runs, and any turn without exactly one identified person.
+3. **Personal pool `<agent>-<user>`.** `/agent/<agent>-<user>` serves pool
+   `<agent>-<user>`: the base plus that user's own connectors. Use it only in
+   a one-on-one with that user. `<user>` is a short, stable handle you choose
+   (`alice`), never a provider id, principal id, or address; pool names match
+   `[a-z0-9_-]+`.
+4. **Define the base once.** Every personal pool spreads one base constant, so
+   a change to the base reaches every pool.
+5. **`owner` is the user's Workspace address.** Set `owner` on
+   `<agent>-<user>` to that user's Google Workspace email address; it is
+   checked as an address at construction, and it makes Workspace connectors
+   act as that user for the agent ([pool owners](#pool-owners-for-google-workspace)).
+   The base pool has no owner, so an agent's Workspace calls there fail with
+   `auth_required`; keep Workspace connectors out of it.
+6. **A user's own account is its own connector id.** Agents have no
+   principal, so `authScope: "personal"` connectors never appear for them.
+   Give each user's account its own connector id with shared auth, which a
+   maintainer connects once (`notes_alice`, `notes_bob`), and list it only in
+   that user's pool. Google Workspace is the exception: one connector whose
+   `subject` is a mapping function, with each personal pool's `owner`
+   choosing the account.
+7. **Changes stay in config.** Adding an account for a user adds its
+   connector and lists it in that user's pool `tools`; the client does not
+   change. Adding a user adds one `<agent>-<user>` pool.
+
+```ts
+const assistant = { tools: ["crm", "tickets"], members: ["agent:assistant"] };
+const emailOf = (id?: string) => (id === "user_alice" ? "alice@example.com" : undefined);
+const workspace = { purpose, serviceAccount, subject: (who) => emailOf(who.principal?.id) };
+
+createConnecta({
+  auth: clerkAuth({ publishableKey, secretKey }),
+  storage,
+  accessTokens: accessTokens(storage),
+  readOnly: false,
+  maintainers: ["user_alice"],
+  agents: ["assistant"],
+  pools: {
+    assistant,
+    "assistant-alice": {
+      ...assistant,
+      tools: [...assistant.tools, "notes_alice", "gmail", "drive"],
+      owner: "alice@example.com",
+    },
+    "assistant-bob": {
+      ...assistant,
+      tools: [...assistant.tools, "notes_bob", "gmail"],
+      owner: "bob@example.com",
+    },
+  },
+  connectors: [
+    crm,
+    tickets,
+    // Shared auth: a maintainer connects each user's own account once.
+    remoteMcp("notes_alice", { url: "https://notes.example.com/mcp", auth: { type: "oauth" } }),
+    remoteMcp("notes_bob", { url: "https://notes.example.com/mcp", auth: { type: "oauth" } }),
+    gmail("gmail", workspace),
+    drive("drive", workspace),
+  ],
+  executor,
+});
+```
+
+The agent's client picks the pool from who it is talking to, for example:
+
+```ts
+const handles = { "<alice's sender id>": "alice", "<bob's sender id>": "bob" };
+const user = turn.isDirect ? handles[turn.verifiedSender] : undefined;
+const url = `https://connecta.example.com/agent/${user ? `assistant-${user}` : "assistant"}`;
+```
+
+A person who should also open a pool at `/mcp/<pool>` can be added to its
+`members`; people always act as themselves there, so it opens nothing of the
+owner's to them.
+
 ## Shared and personal auth
 
 Connector auth defaults to `authScope: "shared"` — its credential, OAuth state,
@@ -1059,7 +1151,8 @@ Management follows `maintainers` and pool `members` (#837,
 [decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)); no
 resolver configures it. The former `identity.credentialAdministration`,
 `identity.personalConnection`, `identity.accessTokenManagement`, and
-`identity.activityAccess` each fail construction naming their replacement.
+`identity.activityAccess` each fail construction naming their replacement,
+and so does the `identity` section itself, even empty.
 
 | Action                                    | Who may                                                                                                                                        |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
