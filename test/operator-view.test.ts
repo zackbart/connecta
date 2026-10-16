@@ -242,8 +242,18 @@ describe("operator app state", () => {
   it("summarizes activity as counts and never as payloads", () => {
     expect(activitySummary([])).toBe("");
     expect(activitySummary([event("calc.add"), event("calc.add"), event("notes.list")])).toBe(
-      "3 loaded calls · 2 tools",
+      "3 loaded calls · 0 failed · 2 tools",
     );
+  });
+
+  it("includes failed calls in the accessible summary, excluding catalog changes", () => {
+    const calls = ["success", "approved", "error", "timeout", "unknown", "cancelled", "paused"].map((outcome) => ({
+      ...event("calc.add"),
+      outcome,
+    }));
+    expect(
+      activitySummary([...calls, { ...event("notes.list"), kind: "catalog_drift", outcome: "catalog_changed" }]),
+    ).toBe("7 loaded calls · 3 failed · 1 tool · 1 catalog change");
   });
 
   it("lets only http(s) values become an href", () => {

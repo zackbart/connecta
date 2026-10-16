@@ -894,9 +894,10 @@ export function filterActivity(events: UiActivityEvent[], query: string): UiActi
 export function activitySummary(events: UiActivityEvent[]): string {
   if (events.length === 0) return "";
   const calls = events.filter((event) => event.kind !== "catalog_drift");
+  const failed = calls.filter((event) => ["error", "timeout"].includes(activityOutcomeClass(event.outcome))).length;
   const changes = events.length - calls.length;
   const tools = new Set(calls.map((event) => event.address)).size;
-  return `${calls.length} loaded call${calls.length === 1 ? "" : "s"} · ${tools} tool${
+  return `${calls.length} loaded call${calls.length === 1 ? "" : "s"} · ${failed} failed · ${tools} tool${
     tools === 1 ? "" : "s"
   }${changes ? ` · ${changes} catalog change${changes === 1 ? "" : "s"}` : ""}`;
 }

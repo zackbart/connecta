@@ -219,12 +219,15 @@ checked again immediately before it is sent. Under the recovery banner Tokens
 offers no Refresh of its own, and an open rotate or revoke question closes.
 
 Activity opens with counts for the loaded history (calls, failed, tools, and
-catalog changes) and, when the loaded calls span more than a minute, a strip
+catalog changes), also announced in its accessible summary, and, when the loaded calls span more than a minute, a strip
 of calls over time with failures in red. Filters sit in one bar: a search box,
 an All / Failed / Succeeded control (`?outcome=failed` keeps errors and
 timeouts, `?outcome=succeeded` keeps successes and approvals), and chips for
 each connector and source that the loaded history holds (`?connector=`,
-`?source=`); pressing a pressed chip clears it. There are no select menus.
+`?source=`); pressing a pressed chip clears it. A selected connector or source
+keeps its chip even when it is the only loaded value. Other `?outcome=` values
+match the recorded outcome exactly and appear as a clearable Exact outcome chip;
+All is unpressed while one is selected. There are no select menus.
 Rows group by recorded request id, and calls of one request share a rail.
 Each call row shows one status dot, the time, the caller (a person by label or
 id beside their initials, an agent token by agent name beside an agent mark,

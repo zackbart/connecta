@@ -45,7 +45,7 @@ function failedCall(event: UiActivityEvent): boolean {
 function outcomeMatches(event: UiActivityEvent, outcome: string): boolean {
   if (!outcome) return true;
   if (event.kind === "catalog_drift") return false;
-  const classes = OUTCOME_CLASSES[outcome];
+  const classes = Object.hasOwn(OUTCOME_CLASSES, outcome) ? OUTCOME_CLASSES[outcome] : undefined;
   return classes ? classes.includes(activityOutcomeClass(event.outcome)) : event.outcome === outcome;
 }
 
@@ -168,6 +168,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
   const connector = connectorId ?? params.get("connector") ?? "";
   const outcome = params.get("outcome") ?? "";
   const source = params.get("source") ?? "";
+  const exactOutcome = outcome && !OUTCOME_OPTIONS.some((option) => option.value === outcome);
   const updateFilters = (changes: Record<string, string>) => {
     const search: Record<string, unknown> = { ...location.search };
     for (const [key, value] of Object.entries(changes)) search[key] = value || undefined;
@@ -281,14 +282,26 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
                   </label>
                   <SegmentedControl
                     label="Outcome"
-                    value={(OUTCOME_OPTIONS.some((o) => o.value === outcome) ? outcome : "") as OutcomeFilter}
+                    value={outcome}
                     options={OUTCOME_OPTIONS}
                     onChange={(value) => updateFilters({ outcome: value })}
                   />
                   {refresh}
                 </div>
-                {connectorChips.length > 1 || connector !== "" || sourceChips.length > 1 ? (
+                {connectorChips.length > 1 ||
+                (connector && !connectorId) ||
+                sourceChips.length > 1 ||
+                source ||
+                exactOutcome ? (
                   <div className="activity-toolbar-row chips">
+                    {exactOutcome ? (
+                      <ChipGroup
+                        label="Exact outcome"
+                        value={outcome}
+                        options={[{ value: outcome, label: `Exact outcome: ${outcome}` }]}
+                        onChange={(value) => updateFilters({ outcome: value })}
+                      />
+                    ) : null}
                     {connectorChips.length > 1 || (connector && !connectorId) ? (
                       <ChipGroup
                         label="Connector"

@@ -281,6 +281,50 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await clean(page);
 });
 
+for (const outcome of ["constructor", "toString", "error"]) {
+  test(`Activity shows and clears the exact outcome ${outcome}`, async ({ page }) => {
+    await session(page);
+    await page.route("**/ui/api/activity*", (route) =>
+      route.fulfill({
+        json: {
+          events: [
+            { ...event("exact", "request-exact", "read"), outcome },
+            event("success", "request-success", "write"),
+          ],
+        },
+      }),
+    );
+    await page.goto(origin + `/activity?outcome=${outcome}`);
+    const outcomes = page.getByRole("group", { name: "Outcome", exact: true });
+    await expect(outcomes.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "false");
+    const exact = page.getByRole("button", { name: `Exact outcome: ${outcome}`, exact: true });
+    await expect(exact).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".activity-item")).toHaveCount(1);
+    await expect(page.locator(".activity-item")).toContainText("github.read");
+    await expect(page.locator("#activitySummary")).toHaveText("2 loaded calls · 1 failed · 2 tools");
+    await exact.click();
+    await expect(page).not.toHaveURL(/outcome=/);
+    await expect(outcomes.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".activity-item")).toHaveCount(2);
+    await clean(page);
+  });
+}
+
+for (const path of ["/activity", "/connectors/github"]) {
+  test(`Activity keeps a single selected source clearable at ${path}`, async ({ page }) => {
+    await session(page);
+    await page.goto(origin + path + "?source=call_tool" + (path === "/activity" ? "" : "#activity"));
+    const source = page
+      .getByRole("group", { name: "Source", exact: true })
+      .getByRole("button", { name: "Direct", exact: true });
+    await expect(source).toHaveAttribute("aria-pressed", "true");
+    await source.click();
+    await expect(page).not.toHaveURL(/source=/);
+    await expect(page.locator(".activity-item")).toHaveCount(4);
+    await clean(page);
+  });
+}
+
 test("Config provenance recognizes explicit defaults and the access model", async ({ page }) => {
   await session(page);
   await page.goto(origin + "/settings");
