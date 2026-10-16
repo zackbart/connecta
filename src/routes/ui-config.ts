@@ -94,6 +94,27 @@ function probe<A>(
   );
 }
 
+/**
+ * One read the config build makes outside a connector probe — the vault, the
+ * token slots, activity — under the same deadline and request signal. A
+ * stalled store must never hang the page, so a read that fails, stalls or
+ * loses its caller becomes `fallback`, which callers keep fail-closed.
+ */
+function bounded<A, B, E = never>(
+  context: RouteContext,
+  read: () => Effect.Effect<A, unknown>,
+  fallback: (error: unknown) => Effect.Effect<B, E>,
+): Effect.Effect<A | B, E> {
+  return withDeadlineEffect(() => read(), {
+    timeoutMs: context.opts.config.discovery.probeTimeoutMs,
+    signal: context.request.signal,
+    timeoutError: new Error("Operator config read timed out."),
+  }).pipe(
+    Effect.catchDefect((defect) => Effect.fail(defect)),
+    Effect.catch(fallback),
+  );
+}
+
 function requestScope(activity: ActivityRequestContext | undefined): object {
   const scope = {};
   if (activity) bindActivityRequest(scope, activity);
@@ -203,12 +224,14 @@ function scanActivity(
   if (!readsActivity(context.opts, authz)) return Effect.succeed("forbidden");
   return Effect.gen(function* () {
     const permitted = activity.readGate
-      ? yield* attempt(async () => (await activity.readGate!(authz.actor)) === true).pipe(
-          Effect.orElseSucceed(() => false),
+      ? yield* bounded(
+          context,
+          () => attempt(async () => (await activity.readGate!(authz.actor)) === true),
+          () => Effect.succeed(false),
         )
       : true;
     if (!permitted) return "forbidden" as const;
-    return yield* Effect.gen(function* () {
+    const scan = Effect.gen(function* () {
       const byId = new Map(rows.map((row) => [row.id, row]));
       const byAgent = new Map(agents.map((agent) => [agent.name, agent]));
       let cursor: string | undefined;
@@ -219,9 +242,11 @@ function scanActivity(
       for (let pageIndex = 0; pageIndex < 10; pageIndex++) {
         const page = yield* attempt(() => activity.store.list!({ limit: 100, ...(cursor ? { cursor } : {}) }));
         for (const event of page.events.slice(0, 100)) {
-          if (event.kind === "catalog_drift") continue;
-          if (!isTimestamp(event.occurredAt) || !OUTCOMES.has(event.outcome)) continue;
-          const row = byId.get(event.connectorId);
+          if (!isTimestamp(event.occurredAt)) continue;
+          // A last call is a call; any row recorded for an agent, a catalog
+          // refresh included, is a sign it was seen.
+          const row =
+            event.kind !== "catalog_drift" && OUTCOMES.has(event.outcome) ? byId.get(event.connectorId) : undefined;
           const agent =
             event.actor.kind === "access_token" && event.actor.namespace === AGENT_NAMESPACE && event.actor.id
               ? byAgent.get(event.actor.id)
@@ -236,13 +261,16 @@ function scanActivity(
         seen.add(cursor);
       }
       return "available" as const;
-    }).pipe(
-      Effect.catchDefect((defect) => Effect.fail(defect)),
-      Effect.orElseSucceed(() => {
-        for (const row of rows) row.lastCall = null;
-        for (const agent of agents) agent.lastSeenAt = null;
-        return "unavailable" as const;
-      }),
+    });
+    return yield* bounded(
+      context,
+      () => scan,
+      () =>
+        Effect.sync(() => {
+          for (const row of rows) row.lastCall = null;
+          for (const agent of agents) agent.lastSeenAt = null;
+          return "unavailable" as const;
+        }),
     );
   });
 }
@@ -283,19 +311,26 @@ function sharedSource(
   if (connector.credential) {
     const vault = opts.config.vault;
     if (!vault) return Effect.succeed(MISSING);
-    return attempt(() => vault.metadata(connector.id)).pipe(
-      Effect.map((metadata): SharedRunsAs =>
-        metadata ? { kind: "shared", source: "vault", savedAt: metadata.updatedAt } : MISSING,
-      ),
-      // An unreadable vault claims nothing was saved; the overlay says why.
-      Effect.orElseSucceed(() => MISSING),
+    return bounded(
+      context,
+      () =>
+        attempt(() => vault.metadata(connector.id)).pipe(
+          Effect.map((metadata): SharedRunsAs =>
+            metadata ? { kind: "shared", source: "vault", savedAt: metadata.updatedAt } : MISSING,
+          ),
+        ),
+      // An unreadable or stalled vault claims nothing was saved; the overlay says why.
+      () => Effect.succeed(MISSING),
     );
   }
   const described = opts.configDescription.connectors.find((c) => c.id === connector.id);
   if (connector.startAuth || described?.auth?.mode === "oauth") {
-    const unauthorized = row?.status === "auth_required" || row?.status === "credential_required";
-    // A grant carries no saved-at time of its own.
-    return Effect.succeed(unauthorized ? MISSING : { kind: "shared", source: "oauth", savedAt: null });
+    // Only a connector asking to be authorized has no grant; any other
+    // state, a credential prompt or an error included, has one. A grant
+    // carries no saved-at time of its own.
+    return Effect.succeed(
+      row?.status === "auth_required" ? MISSING : { kind: "shared", source: "oauth", savedAt: null },
+    );
   }
   if (described?.auth?.mode === "none" && described.source.kind === "remote-mcp") {
     return Effect.succeed({ kind: "shared", source: "unauthenticated", savedAt: null });
@@ -324,10 +359,17 @@ function connectedPeople(
         let ok: boolean;
         if (credential) {
           const vault = opts.config.vault;
+          // An unreadable or stalled partition is not counted as connected.
           ok = vault
-            ? yield* attempt(() => vault.metadata(connector.id, principalKey)).pipe(
-                Effect.map((metadata) => storedCredentialShape(credential, metadata?.fields ?? null).state === "valid"),
-                Effect.orElseSucceed(() => false),
+            ? yield* bounded(
+                context,
+                () =>
+                  attempt(() => vault.metadata(connector.id, principalKey)).pipe(
+                    Effect.map(
+                      (metadata) => storedCredentialShape(credential, metadata?.fields ?? null).state === "valid",
+                    ),
+                  ),
+                () => Effect.succeed(false),
               )
             : false;
         } else {
@@ -465,11 +507,13 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
         // it. Without them the agents list cannot be whole, so a failed read
         // fails the view rather than dropping agents from it.
         opts.config.accessTokens
-          ? attempt(() => opts.config.accessTokens!.slots()).pipe(
-              Effect.catch((error) => {
+          ? bounded(
+              context,
+              () => attempt(() => opts.config.accessTokens!.slots()),
+              (error) => {
                 logFailure(opts.config.logger, "operator agent slots read failed", failureRecord({}, error));
                 return refuse("agent token slots could not be read", 503);
-              }),
+              },
             )
           : Effect.succeed([]),
       ],
@@ -556,15 +600,20 @@ function memberManage(
           }
         : {}),
     };
-    return attempt(() => vault.metadata(connector.id, principalKey)).pipe(
-      Effect.map((metadata): OperatorMemberManage => {
-        if (!metadata) return { ...card, actions: ["save"] };
-        const shape = storedCredentialShape(credential, metadata.fields ?? null);
-        const testable = credentialTestRule(connector).mode !== null && shape.state === "valid";
-        return { ...card, actions: testable ? ["save", "test", "clear"] : ["save", "clear"] };
-      }),
-      // Whether a value is stored is unknown, so nothing that needs one is offered.
-      Effect.orElseSucceed((): OperatorMemberManage => ({ ...card, actions: ["save"] })),
+    return bounded(
+      context,
+      () =>
+        attempt(() => vault.metadata(connector.id, principalKey)).pipe(
+          Effect.map((metadata): OperatorMemberManage => {
+            if (!metadata) return { ...card, actions: ["save"] };
+            const shape = storedCredentialShape(credential, metadata.fields ?? null);
+            const testable = credentialTestRule(connector).mode !== null && shape.state === "valid";
+            return { ...card, actions: testable ? ["save", "test", "clear"] : ["save", "clear"] };
+          }),
+        ),
+      // Unreadable or stalled: whether a value is stored is unknown, so
+      // nothing that needs one is offered.
+      () => Effect.succeed<OperatorMemberManage>({ ...card, actions: ["save"] }),
     );
   }
   const connect = Boolean(

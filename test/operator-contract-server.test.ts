@@ -21,6 +21,7 @@ import type {
 } from "../src/operator-ui/contract.js";
 import { drive } from "../src/providers/drive/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
+import { accessTokenKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectaConfig } from "../src/index.js";
 import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
@@ -147,11 +148,37 @@ function sender(app: ReturnType<typeof createTestConnecta>) {
 
 const principalKey = (id: string) => identityStorageKey({ namespace: NAMESPACE, id });
 
+type Vault = ReturnType<typeof encryptedCredentialVault>;
+
+/** The same vault with its metadata read replaced, as a stalled or failing store would answer. */
+function withMetadata(vault: Vault, metadata: Vault["metadata"]): Vault {
+  return new Proxy(vault, {
+    get(target, key) {
+      if (key === "metadata") return metadata;
+      const value = Reflect.get(target, key, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/** A read that never settles. */
+const stalled = () => new Promise<never>(() => {});
+
 /** The team deployment: one pool of each kind of connector a member can see. */
-async function team(options: { vault?: boolean; activity?: ToolCallActivityEvent[] } = {}) {
-  const storage: KVStorage = memoryStorage();
+async function team(
+  options: {
+    vault?: boolean;
+    activity?: ToolCallActivityEvent[];
+    /** What the deployment sees in place of the real vault; values are saved through the real one. */
+    wrapVault?: (vault: Vault) => Vault;
+    storage?: KVStorage;
+    probeTimeoutMs?: number;
+  } = {},
+) {
+  const storage: KVStorage = options.storage ?? memoryStorage();
   const vault = options.vault === false ? undefined : encryptedCredentialVault(storage, KEY);
   const app = deploy({
+    ...(options.probeTimeoutMs ? { discovery: { probeTimeoutMs: options.probeTimeoutMs } } : {}),
     connectors: [wiki(), oauthConnector("mail", "personal"), notes(), calendar, api("hidden", { tools: [] })],
     auth: [people(), machineAuth("machine")],
     maintainers: ["alice", { namespace: TEST_MACHINE_NAMESPACE, id: "machine" }],
@@ -174,7 +201,7 @@ async function team(options: { vault?: boolean; activity?: ToolCallActivityEvent
         }
       : {}),
     storage,
-    ...(vault ? { vault } : {}),
+    ...(vault ? { vault: options.wrapVault ? options.wrapVault(vault) : vault } : {}),
   });
   // Bob has saved his Notes credential in his own partition; Lin has not.
   if (vault)
@@ -595,5 +622,195 @@ describe("operator contract v2 server", () => {
     const body = JSON.stringify(view);
     for (const secret of ["secret-api-key", "secret-notes-token", "acme", SERVICE_ACCOUNT.privateKey])
       expect(body).not.toContain(secret);
+  });
+
+  it("INV-7: a stalled vault never hangs a member's view; it offers save alone", async () => {
+    const { send } = await team({ wrapVault: (vault) => withMetadata(vault, stalled), probeTimeoutMs: 100 });
+    const started = Date.now();
+    const bob = await read(send, "bob");
+    expect(Date.now() - started).toBeLessThan(3_000);
+    // Bob's value is stored, but the stalled read cannot say so: save only.
+    expect(bob.connectors.find((c) => c.id === "notes")?.manage).toEqual(notesManage(["save"]));
+  });
+
+  it("INV-5: an unreadable member partition offers save alone", async () => {
+    const { send } = await team({
+      wrapVault: (vault) =>
+        withMetadata(vault, async (id, owner) => {
+          if (id === "notes") throw new Error("SENTINEL-decrypt");
+          return vault.metadata(id, owner);
+        }),
+    });
+    const bob = await read(send, "bob");
+    expect(bob.connectors.find((c) => c.id === "notes")?.manage).toEqual(notesManage(["save"]));
+    expect(JSON.stringify(bob)).not.toContain("SENTINEL");
+  });
+
+  it("INV-7: a stalled vault never hangs the maintainer matrix; its cells read conservatively", async () => {
+    const storage = memoryStorage();
+    const vault = encryptedCredentialVault(storage, KEY);
+    const app = deploy({
+      connectors: [api("vaulted", { credential: { label: "API key" }, tools: [] }), notes()],
+      auth: people(),
+      maintainers: ["alice"],
+      pools: { owned: { tools: ["notes"], members: ["bob"] } },
+      discovery: { probeTimeoutMs: 100 },
+      storage,
+      vault: withMetadata(vault, stalled),
+    });
+    await vault.set("vaulted", "secret-api-key", "alice");
+    await vault.setAll("notes", { workspace: "acme", token: "secret-notes-token" }, "bob", await principalKey("bob"));
+    const started = Date.now();
+    const view = await read(sender(app), "alice");
+    expect(Date.now() - started).toBeLessThan(3_000);
+    const cell = (id: string, pool: string | null = null) =>
+      view.matrix.find((c) => c.connectorId === id && c.pool === pool)?.runsAs;
+    // Saved values the stalled vault cannot confirm are claimed by nobody.
+    expect(cell("vaulted")).toEqual({ kind: "shared", source: "missing", savedAt: null });
+    expect(cell("notes", "owned")).toEqual({ kind: "personal", connectedMembers: 0, members: 1 });
+  });
+
+  it("INV-4 INV-7: a failed or stalled token slot read answers the maintainer 503, never a partial agents list", async () => {
+    for (const mode of ["fails", "stalls"] as const) {
+      const memory = memoryStorage();
+      let broken = false;
+      const slot = accessTokenKeys.agent("bot");
+      const storage: KVStorage = {
+        ...memory,
+        capabilities: memory.capabilities,
+        get: (key) =>
+          broken && key === slot
+            ? mode === "fails"
+              ? Promise.reject(new Error("SENTINEL-storage"))
+              : stalled()
+            : memory.get(key),
+        set: (key, value, options) => memory.set(key, value, options),
+        delete: (key) => memory.delete(key),
+        list: (prefix) => memory.list(prefix),
+        compareAndSet: (key, expected, next, options) => memory.compareAndSet(key, expected, next, options),
+      };
+      const { send } = await team({ storage, probeTimeoutMs: 100 });
+      broken = true;
+      const response = await send("alice", "/ui/api/config");
+      expect(response.status, mode).toBe(503);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(await response.json()).toEqual({ error: "agent token slots could not be read" });
+      // A member's view reads no slot.
+      expect((await send("bob", "/ui/api/config")).status).toBe(200);
+    }
+  });
+
+  it("INV-4: an agent's lastSeenAt counts any visible row recorded for it, a catalog refresh included", async () => {
+    const drift = "2026-10-09T08:00:00.000Z";
+    const { send } = await team({
+      activity: [
+        {
+          schemaVersion: 1,
+          id: "bot-drift",
+          requestId: "r3",
+          occurredAt: drift,
+          kind: "catalog_drift",
+          actor: { kind: "access_token", id: "bot", namespace: AGENT_NAMESPACE },
+          connectorId: "wiki",
+          toolName: "<catalog>",
+          address: "wiki.<catalog>",
+          source: "catalog_refresh",
+          outcome: "success",
+          durationMs: 1,
+          attempts: 1,
+          serverName: "test",
+          serverVersion: "1",
+          drift: { kind: "catalog_changed", addedTools: 1, removedTools: 0, changedTools: 0 },
+        },
+      ],
+    });
+    const alice = await read(send, "alice");
+    expect(alice.agents.find((agent) => agent.name === "bot")?.lastSeenAt).toBe(drift);
+    // A refresh is not a call.
+    expect(alice.live.connectors.find((c) => c.id === "wiki")?.lastCall).toBeNull();
+  });
+
+  it("INV-4 INV-5: the routes accept exactly the actions manage lists, for every kind", async () => {
+    const { send, vault } = await team();
+    const bob = await read(send, "bob");
+    const manage = (id: string) => bob.connectors.find((c) => c.id === id)!.manage;
+    const json = (body: unknown) => ({ method: "PUT", body: JSON.stringify(body) });
+    const notesValues = { values: { workspace: "acme", token: "secret-notes-token-2" } };
+    // Lin's partition is empty: save is listed, test and clear are not.
+    const lin = await read(send, "lin");
+    expect(lin.connectors.find((c) => c.id === "notes")!.manage).toMatchObject({ actions: ["save"] });
+    const clearEmpty = await send("lin", "/ui/credentials/notes", { method: "DELETE" });
+    expect(clearEmpty.status).toBe(409);
+    expect(await clearEmpty.json()).toEqual({
+      error: "no credential is stored to clear",
+      problem: "credential_required",
+    });
+    const testEmpty = await send("lin", "/ui/credentials/notes/test", { method: "POST" });
+    expect(testEmpty.status).toBe(409);
+    expect(await testEmpty.json()).toMatchObject({ problem: "credential_required" });
+    expect((await send("lin", "/ui/credentials/notes", json(notesValues))).status).toBe(200);
+    // Bob's partition holds a value: save, test and clear are all listed and all succeed.
+    expect(manage("notes")).toMatchObject({ actions: ["save", "test", "clear"] });
+    expect((await send("bob", "/ui/credentials/notes", json(notesValues))).status).toBe(200);
+    const tested = await send("bob", "/ui/credentials/notes/test", { method: "POST" });
+    expect(tested.status).toBe(200);
+    expect(await tested.json()).toEqual({ ok: true });
+    expect((await send("bob", "/ui/credentials/notes", { method: "DELETE" })).status).toBe(204);
+    expect(await vault!.metadata("notes", await principalKey("bob"))).toBeNull();
+    // Full OAuth: connect, restart and disconnect all succeed.
+    expect(manage("mail")).toEqual({ kind: "oauth", actions: ["connect", "restart", "disconnect"] });
+    expect((await send("bob", "/ui/oauth/mail?mode=continue", { method: "POST" })).status).toBe(200);
+    expect((await send("bob", "/ui/oauth/mail?mode=restart", { method: "POST" })).status).toBe(200);
+    expect((await send("bob", "/ui/oauth/mail", { method: "DELETE" })).status).toBe(204);
+    // Disconnect-only: disconnect succeeds, connect and restart are refused.
+    expect(manage("calendar")).toEqual({ kind: "oauth", actions: ["disconnect"] });
+    expect((await send("bob", "/ui/oauth/calendar?mode=continue", { method: "POST" })).status).toBe(404);
+    expect((await send("bob", "/ui/oauth/calendar?mode=restart", { method: "POST" })).status).toBe(404);
+    expect((await send("bob", "/ui/oauth/calendar", { method: "DELETE" })).status).toBe(204);
+    // None (shared): every write is refused.
+    expect(manage("wiki")).toEqual({ kind: "none" });
+    expect((await send("bob", "/ui/credentials/wiki", json({ value: "x" }))).status).toBe(404);
+    expect((await send("bob", "/ui/oauth/wiki?mode=continue", { method: "POST" })).status).toBe(404);
+    expect((await send("bob", "/ui/oauth/wiki", { method: "DELETE" })).status).toBe(404);
+  });
+
+  it("INV-4 INV-5: clearing an empty shared slot is refused for a maintainer too", async () => {
+    const storage = memoryStorage();
+    const vault = encryptedCredentialVault(storage, KEY);
+    const app = deploy({
+      connectors: [api("vaulted", { credential: { label: "API key" }, tools: [] })],
+      auth: people(),
+      maintainers: ["alice"],
+      storage,
+      vault,
+    });
+    const send = sender(app);
+    const refused = await send("alice", "/ui/credentials/vaulted", { method: "DELETE" });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: "no credential is stored to clear", problem: "credential_required" });
+    await vault.set("vaulted", "secret-api-key", "alice");
+    expect((await send("alice", "/ui/credentials/vaulted", { method: "DELETE" })).status).toBe(204);
+  });
+
+  it("INV-5: shared OAuth is missing only when it asks to be authorized", async () => {
+    const prompted: Connector = {
+      ...oauthConnector("prompted", "shared"),
+      status: async () => ({ state: "credential_required" }),
+    };
+    const failing: Connector = { ...oauthConnector("failing", "shared"), status: async () => ({ state: "error" }) };
+    const app = deploy({
+      connectors: [oauthConnector("needs_grant", "shared"), prompted, failing],
+      auth: people(),
+      maintainers: ["alice"],
+      storage: memoryStorage(),
+    });
+    const view = await read(sender(app), "alice");
+    const source = (id: string) => {
+      const runsAs = view.matrix.find((c) => c.connectorId === id && c.pool === null)?.runsAs;
+      return runsAs?.kind === "shared" ? runsAs.source : undefined;
+    };
+    expect(source("needs_grant")).toBe("missing");
+    expect(source("prompted")).toBe("oauth");
+    expect(source("failing")).toBe("oauth");
   });
 });

@@ -1051,7 +1051,9 @@ the deployment and the connector's hooks support: credential `save` with a
 vault, `test` and `clear` once their own partition holds a value; OAuth
 `connect` and `restart` with `startAuth`, `finishAuth` and `verifyState`, and
 `disconnect` with `disconnectAuth`. `/ui/oauth/<id>` gates each verb on those
-same hooks, so a connector provisioned out of band can still be disconnected.
+same hooks, so a connector provisioned out of band can still be disconnected,
+and `/ui/credentials/<id>` refuses to clear a partition that holds nothing
+with 409 `credential_required`, for members and maintainers alike.
 
 Activity is read by maintainers alone. An authenticated maintainer principal
 reads it without an interactive session, including a non-interactive API

@@ -172,7 +172,12 @@ deployment can sign the connect hand-off, and `disconnect` when it has
 credential status, catalog ages, last calls, other members, agents, owners or
 activity. Status prose, error text, credential values or suffixes, arguments,
 results, and code are excluded from both views. Probes run with bounded
-concurrency and the configured probe deadline, and release their scopes.
+concurrency and the configured probe deadline, and release their scopes. Every
+vault, token-slot and activity read the view makes runs under that same
+deadline and the request's signal, so a stalled store never hangs the page: it
+degrades fail-closed, to `save` alone for a member's credential, `missing` or
+an unconnected person in a matrix cell, unavailable activity, and a 503 for
+the token slots.
 
 `/ui/data`, `/ui/connectors/:id`, activity reads and access-token routes
 require a maintainer and give anyone else the same private 404. The connector
@@ -180,7 +185,11 @@ auth routes, `/ui/oauth/<id>` and `/ui/credentials/<id>`, also admit a pool
 member for a personal connector in one of their pools, in their own
 partition. `/ui/oauth/<id>` gates each verb on its own hooks: a connect needs
 `startAuth`, `finishAuth` and `verifyState`, a disconnect only
-`disconnectAuth`. Public HTML shells and static assets carry no catalog data.
+`disconnectAuth`. `/ui/credentials/<id>` refuses to clear an empty partition,
+the caller's own for a personal connector or the shared slot, with 409
+`{ "error": "no credential is stored to clear", "problem": "credential_required" }`,
+as its test route refuses to test one; a value that cannot be read can still be
+cleared. The routes thus accept exactly what `manage` lists. Public HTML shells and static assets carry no catalog data.
 Access-token management also requires an interactive session.
 
 The browser store reads only v2 and checks `role` before reading a
