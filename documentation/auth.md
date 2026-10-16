@@ -599,7 +599,11 @@ createConnecta({
 
 The agent harness, not the model, picks the pool for each turn, which is what
 keeps one person's mailbox from another's. Adding a person to someone else's
-pool opens nothing of the owner's to them: people always act as themselves.
+pool opens nothing of the owner's Workspace account to them, since people act
+as themselves through the mapping. That holds only for Workspace mappings:
+every other connector in the pool, including a shared-auth connector holding
+the owner's own account, runs the same for every member
+([members of a personal pool](#organizing-an-agents-pools)).
 
 A fixed `subject` address is the explicit shared-account exception: every
 caller, person or agent, acts as it in every pool that lists the connector,
@@ -634,8 +638,10 @@ records why, and the alternatives it rejected.
    `<agent>-<user>` to that user's Google Workspace email address; it is
    checked as an address at construction, and it makes Workspace connectors
    act as that user for the agent ([pool owners](#pool-owners-for-google-workspace)).
-   The base pool has no owner, so an agent's Workspace calls there fail with
-   `auth_required`; keep Workspace connectors out of it.
+   The base pool has no owner, so keep Workspace connectors out of it: there
+   they are absent, as in any pool that does not list them. (A Workspace
+   connector listed in a pool without an owner fails `auth_required` for an
+   agent.)
 6. **A user's own account is its own connector id.** Agents have no
    principal, so `authScope: "personal"` connectors never appear for them.
    Give each user's account its own connector id with shared auth, which a
@@ -646,11 +652,23 @@ records why, and the alternatives it rejected.
 7. **Changes stay in config.** Adding an account for a user adds its
    connector and lists it in that user's pool `tools`; the client does not
    change. Adding a user adds one `<agent>-<user>` pool.
+8. **No other person in a personal pool.** The only human member an
+   `<agent>-<user>` pool may have is that same user, and usually it has none.
+   Never add another person: its per-user connectors (`notes_alice`) use that
+   user's account for everyone the pool admits, so another member would read
+   and write the user's account as their own. A person's own use normally
+   goes through their own pools or plain `/mcp`, not the agent's.
 
 ```ts
+import type { GoogleWorkspaceOptions } from "@zackbart/connecta/providers/gmail";
+
 const assistant = { tools: ["crm", "tickets"], members: ["agent:assistant"] };
 const emailOf = (id?: string) => (id === "user_alice" ? "alice@example.com" : undefined);
-const workspace = { purpose, serviceAccount, subject: (who) => emailOf(who.principal?.id) };
+const workspace: GoogleWorkspaceOptions = {
+  purpose: "Mail and files of the person in a one-on-one",
+  serviceAccount,
+  subject: (who) => emailOf(who.principal?.id),
+};
 
 createConnecta({
   auth: clerkAuth({ publishableKey, secretKey }),
@@ -688,14 +706,14 @@ createConnecta({
 The agent's client picks the pool from who it is talking to, for example:
 
 ```ts
-const handles = { "<alice's sender id>": "alice", "<bob's sender id>": "bob" };
+const handles: Record<string, string | undefined> = { "<alice's sender id>": "alice", "<bob's sender id>": "bob" };
 const user = turn.isDirect ? handles[turn.verifiedSender] : undefined;
 const url = `https://connecta.example.com/agent/${user ? `assistant-${user}` : "assistant"}`;
 ```
 
-A person who should also open a pool at `/mcp/<pool>` can be added to its
-`members`; people always act as themselves there, so it opens nothing of the
-owner's to them.
+Rule 8 is why the example lists only the agent in each pool. People act as
+themselves only through a Workspace mapping; a shared-auth connector such as
+`notes_alice` acts as Alice for whoever the pool admits.
 
 ## Shared and personal auth
 

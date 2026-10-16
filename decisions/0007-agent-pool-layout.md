@@ -42,6 +42,12 @@ because decision records do not ship in the package. In short:
   account is a separate connector with shared auth that a maintainer connects
   once (`notes_alice`). Google Workspace is the exception: one connector, with
   each personal pool's `owner` choosing the account.
+- **No other person in a personal pool.** Its only possible human member is
+  that same user, and usually it has none. People act as themselves only
+  through a Workspace mapping; a per-user connector such as `notes_alice` runs
+  on that user's account for everyone the pool admits, so another member
+  would act as that user. A person's own use goes through their own pools or
+  `/mcp`.
 
 Adding an account for a user is a config change to that user's pool; the
 agent's client does not change. Adding a user adds one pool.

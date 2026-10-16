@@ -112,6 +112,35 @@ or rebinds one, and removing a name stops its token on the next request.
    changed answers 409 `slot_changed`. A missing `expect` is 400.
    `AccessTokenManager` takes the same optional `expect`.
 
+### Programmatic token management
+
+Trusted provisioning code that constructs its own `AccessTokenManager` must
+pass the declared agents. The deployment's top-level `agents` does not bind a
+separately constructed manager, so `new AccessTokenManager(storage)` knows no
+agent and every `rotate` and `adopt` fails with `unknown_agent`.
+
+| 0.32                                             | 0.33                                                                                                           |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `new AccessTokenManager(storage, { maxActive })` | `new AccessTokenManager(storage, { agents })`, with the same names as the deployment's `agents`                |
+| `create(name, createdBy)`                        | `rotate(agent, issuedBy?, options?)`, returning `{ token, agent }`; the first rotation issues the slot's token |
+| `rename(id, name)`                               | Removed; agents are named only in code                                                                         |
+| `revoke(tokenId, revokedBy)`                     | `revoke(agent, options?)`, returning the slot                                                                  |
+| `list()` of token records                        | `list()` of one slot per declared agent: `{ name, state, issuedAt?, revokedAt?, revision }`                    |
+| (none)                                           | `adopt(tokenId, agent, options?)` and `unboundTokens()` for tokens issued before agents                        |
+
+`options` is `{ expect?, signal?, deadline? }`. `expect` is the slot
+`revision` read from `list()`; when given, a slot that changed since refuses
+with an `AccessTokenError` whose `code` is `slot_changed`, and nothing is
+minted or written. Without it the calls behave as before.
+
+```ts
+import { AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
+
+const manager = new AccessTokenManager(storage, { agents: ["assistant"] });
+const slot = (await manager.list()).find((agent) => agent.name === "assistant")!;
+const { token } = await manager.rotate("assistant", "provisioning", { expect: slot.revision });
+```
+
 Rotation is an immediate cutover: the old secret refuses on its next request.
 An agent has no principal, so personal connectors are absent for it.
 [Agent tokens](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) owns
@@ -249,4 +278,8 @@ pools: {
    the same token at `/mcp` is refused.
 4. Confirm a pool member sees exactly that pool's tools at `/mcp/<pool>`.
 5. For Workspace, call a read in an agent's personal pool and confirm it acts
-   as the pool's owner; in the base pool, confirm `auth_required`.
+   as the pool's owner. In the base pool, confirm Workspace connectors are
+   absent: search finds none of their tools and a call fails
+   `unknown_address`. `auth_required` is what an agent gets only in a pool
+   without an owner that does list a Workspace connector.
+6. Confirm each `<agent>-<user>` pool lists no other person in `members`.
