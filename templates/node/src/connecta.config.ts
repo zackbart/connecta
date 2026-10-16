@@ -92,8 +92,8 @@ export default defineConfig((env: Env) => {
     // /mcp/<name>, and "agent:<name>" for a declared agent at /agent/<name>.
     // A member connects their own account on the pool's personal connectors.
     // `npm run doctor` checks /agent/local-machine with its token. The starter
-    // pool is the agent's base pool (shared connectors, no owner), named after
-    // the agent as the agent pool layout requires.
+    // pool is the agent's base pool, its lowest tier (shared connectors, no
+    // owner), named after the agent as the agent pool layout requires.
     pools: { "local-machine": { tools: ["time"], members: ["agent:local-machine"] } },
     // Machine clients are agents declared here by name, each with one cta_
     // token. Issue or rotate one locally with

@@ -308,24 +308,26 @@ pools: {
 // 0.33
 agents: ["assistant"],
 pools: {
-  assistant,
-  "assistant-alice": { ...assistant, tools: [...assistant.tools, "notes_alice", "gmail"], owner: "alice@example.com" },
-  "assistant-bob": { ...assistant, tools: [...assistant.tools, "notes_bob", "gmail"], owner: "bob@example.com" },
+  assistant: { tools: base, members },
+  "assistant-alice": { tools: [...base, "notes_alice", "gmail"], owner: "alice@example.com", members },
+  "assistant-bob": { tools: [...base, "notes_bob", "gmail"], owner: "bob@example.com", members },
 },
-// with const assistant = { tools: ["crm", "tickets"], members: ["agent:assistant"] };
+// with const base = ["crm", "tickets"], members = ["agent:assistant"];
 ```
 
 1. Declare the agent in `agents` and adopt its token (see
    [Agents and their tokens](#agents-and-their-tokens)).
-2. Define the base pool `<agent>` once with the shared connectors and
-   `members: ["agent:<agent>"]`, and spread it into one `<agent>-<user>` pool
-   per person, adding that person's connectors and `owner`.
+2. Define the base pool's tool list once with the shared connectors, and
+   spread it into the base pool `<agent>` and one `<agent>-<user>` pool per
+   person, adding that person's connectors and `owner`. Each pool lists
+   `members: ["agent:<agent>"]`. If group chats should get different tools
+   depending on who is present, add tiers as the layout describes.
 3. Collapse per-person Workspace connectors into one connector with a mapping
    `subject`. Keep other per-person accounts as their own shared-auth
    connector ids (`notes_alice`) and list each only in its person's pool.
 4. Change the agent's client to one connection whose URL it sets per turn:
-   `/agent/<agent>-<user>` in a one-on-one with that user, `/agent/<agent>`
-   otherwise. Remove any second Connecta connection.
+   `/agent/<agent>-<user>` in a one-on-one with that user, otherwise the
+   layout's tier for who is present (`/agent/<agent>` with a single tier). Remove any second Connecta connection.
 5. Add this line to your deployment's own AGENTS.md (or its CLAUDE.md
    equivalent), so agents find all operator procedures after the upgrade:
 
