@@ -276,7 +276,7 @@ export function ConnectorMatrix({
                                   });
                                 }}
                               >
-                                <SharePie share={matrixCellShare(contract, row.id, cell)} />
+                                <SharePie share={matrixCellShare(cell)} />
                                 <span className="matrix-chip-text">{matrixCellText(cell)}</span>
                               </button>
                               {open?.key === key && !inline ? (

@@ -44,12 +44,12 @@ export function SplitBar({ read, write }: { read: number; write: number }) {
 }
 
 /** A pie: full is everything, a slice is part, an empty ring is nothing. */
-export function SharePie({ share }: { share: number }) {
+export function SharePie({ share }: { share: number | null }) {
   const r = 7;
   const c = 8;
   let slice = null;
-  if (share >= 0.999) slice = <circle className="share-fill" cx={c} cy={c} r={r} />;
-  else if (share > 0) {
+  if (share !== null && share >= 0.999) slice = <circle className="share-fill" cx={c} cy={c} r={r} />;
+  else if (share !== null && share > 0) {
     const angle = share * 2 * Math.PI;
     const x = c + r * Math.sin(angle);
     const y = c - r * Math.cos(angle);
@@ -61,7 +61,14 @@ export function SharePie({ share }: { share: number }) {
     );
   }
   return (
-    <svg className="share-pie" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+    <svg
+      className={share === null ? "share-pie unknown" : "share-pie"}
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
+      aria-hidden="true"
+      focusable="false"
+    >
       <circle className="share-track" cx={c} cy={c} r={r} />
       {slice}
     </svg>

@@ -111,8 +111,11 @@ switches to a table of connectors by endpoint, `/mcp` first. A connector's row
 header is its monogram and name, plus a status dot only when it needs fixing,
 linking to Connection and named for its fix (like "Connect Notion"). Each cell
 is a pie of how much of the connector's live catalog it grants, with "all" or a
-tool count, or a dash for none; read-only columns are hatched. A cell with
-tools is a button named like "GitHub on /mcp/support: 1 tool, read-only";
+live tool count, or a dash for none; read-only columns are hatched. Only granted
+names still present in the live catalog count toward the share. An unavailable
+catalog shows a dashed empty ring and "?", named "unknown live tool coverage".
+A cell with grants is a button named like
+"GitHub on /mcp/support: 1 of 2 live tools, read-only" (or "all 2 tools");
 Enter, Space or a click opens a popover listing exactly that cell's tool names,
 each with a read or write pill (a write tool struck through on a read-only
 endpoint), and the cell's runs-as. Escape or Tab returns focus to the cell. The

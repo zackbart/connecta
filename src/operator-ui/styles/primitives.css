@@ -715,6 +715,11 @@ details[open] > .disclosure::before {
   stroke: var(--accent-line);
   stroke-width: 1;
 }
+.share-pie.unknown .share-track {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-dasharray: 2 2;
+}
 .share-fill {
   fill: var(--accent);
 }

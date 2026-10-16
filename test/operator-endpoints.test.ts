@@ -167,14 +167,14 @@ describe("matrix cells", () => {
         { name: "send", classification: "write" },
       ],
     });
-    expect(matrixCellLabel("Gmail", ada, all)).toBe("Gmail on /mcp/ada: all tools");
+    expect(matrixCellLabel("Gmail", ada, all)).toBe("Gmail on /mcp/ada: all 2 tools");
     const some = matrixCell(contract, "github", support);
     expect(some).toMatchObject({
       kind: "some",
       tools: [{ name: "read", classification: "read" }],
     });
     expect(matrixCellText(some)).toBe("1");
-    expect(matrixCellLabel("GitHub", support, some)).toBe("GitHub on /mcp/support: 1 tool, read-only");
+    expect(matrixCellLabel("GitHub", support, some)).toBe("GitHub on /mcp/support: 1 of 2 live tools, read-only");
     const none = matrixCell(contract, "slack", support);
     expect(none).toEqual({ kind: "none" });
     expect(matrixCellText(none)).toBe("—");
@@ -194,11 +194,48 @@ describe("matrix cells", () => {
         { name: "gone", classification: null },
       ],
     });
-    expect(matrixCellLabel("Drive", ada, stale)).toBe("Drive on /mcp/ada: 2 tools");
+    expect(matrixCellLabel("Drive", ada, stale)).toBe("Drive on /mcp/ada: 1 of 1 live tools");
     expect(matrixCell(contract, "github", root)).toMatchObject({
       kind: "all",
       runsAs: { kind: "shared" },
     });
+  });
+  it("names the same granted count against differing live catalog sizes", () => {
+    const contract = maintainer();
+    const column = matrixColumns(contract).find((c) => c.pool === "support")!;
+    expect(matrixCellLabel("GitHub", column, matrixCell(contract, "github", column))).toBe(
+      "GitHub on /mcp/support: 1 of 2 live tools, read-only",
+    );
+    expect(matrixCellLabel("Drive", column, matrixCell(contract, "drive", column))).toBe(
+      "Drive on /mcp/support: 1 of 1 live tools, read-only",
+    );
+  });
+
+  it("distinguishes unavailable catalogs from a known empty catalog for all and named grants", () => {
+    const contract = maintainer();
+    const overlay = contract.live.connectors.find((c) => c.id === "github")!;
+    const column = matrixColumns(contract).find((c) => c.pool === "team")!;
+    const checkUnknown = () => {
+      for (const pool of [null, "team"]) {
+        const cell = matrixCell(contract, "github", { pool });
+        expect(matrixCellShare(cell)).toBeNull();
+        expect(matrixCellText(cell)).toBe("?");
+        expect(matrixCellLabel("GitHub", column, cell)).toBe("GitHub on /mcp/team: unknown live tool coverage");
+      }
+    };
+    overlay.tools = [];
+    overlay.problem = "catalog_failed";
+    checkUnknown();
+    delete overlay.problem;
+    overlay.status = "auth_required";
+    checkUnknown();
+    contract.live.connectors = contract.live.connectors.filter((c) => c.id !== "github");
+    checkUnknown();
+    contract.live.connectors.push({ ...overlay, status: "ok" });
+    expect(matrixCellShare(matrixCell(contract, "github", column))).toBe(0);
+    expect(matrixCellLabel("GitHub", column, matrixCell(contract, "github", column))).toBe(
+      "GitHub on /mcp/team: 0 of 0 live tools",
+    );
   });
 });
 
@@ -211,13 +248,17 @@ describe("glance marks", () => {
 
   it("gives a matrix cell's pie its share of the live catalog", () => {
     const contract = maintainer();
-    const share = (id: string, pool: string | null) =>
-      matrixCellShare(contract, id, matrixCell(contract, id, { pool }));
+    const share = (id: string, pool: string | null) => matrixCellShare(matrixCell(contract, id, { pool }));
     expect(share("gmail", "ada")).toBe(1);
     expect(share("github", "team")).toBe(0.5);
     expect(share("slack", "support")).toBe(0);
-    // A named list against a catalog not seen yet reads as half, never as all.
-    contract.live.connectors = contract.live.connectors.map((c) => (c.id === "github" ? { ...c, tools: [] } : c));
+    // Retired names remain inspectable but never count toward live coverage.
+    const grant = contract.matrix.find((c) => c.connectorId === "github" && c.pool === "team")!;
+    grant.tools = ["retired"];
+    expect(share("github", "team")).toBe(0);
+    grant.tools = ["read", "retired"];
     expect(share("github", "team")).toBe(0.5);
+    grant.tools = ["read", "write", "retired"];
+    expect(share("github", "team")).toBe(1);
   });
 });
