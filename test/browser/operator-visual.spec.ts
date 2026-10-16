@@ -170,7 +170,7 @@ async function ready(page: Page, name: string, state: VisualState) {
   } else if (name === "tokens") {
     await expect(
       state === "empty"
-        ? page.getByText("No agents are declared. Add them to agents in the deployment code.")
+        ? page.getByText("No agents declared in code.")
         : page.getByRole("rowheader", { name: "claude-desktop", exact: true }),
     ).toBeVisible();
   } else {
@@ -292,7 +292,7 @@ for (const variant of VISUAL_VARIANTS)
           } else if (variant === "connectors-matrix" || variant === "narrow-matrix") {
             await expect(page.getByRole("table", { name: "Connectors by endpoint", exact: true })).toBeVisible();
           } else if (variant === "matrix-popover") {
-            await page.getByRole("button", { name: "Gmail on /mcp/ada: all tools", exact: true }).click();
+            await page.getByRole("button", { name: "Gmail on /mcp/ada: all 2 tools", exact: true }).click();
             await expect(page.getByRole("dialog", { name: "Gmail on /mcp/ada", exact: true })).toBeVisible();
           } else if (variant === "command-search") {
             await page.getByRole("button", { name: "Search" }).click();

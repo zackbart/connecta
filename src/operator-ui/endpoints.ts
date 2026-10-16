@@ -140,6 +140,20 @@ function endpointGroups(
 
 const toolCount = (groups: EndpointGroup[]) => groups.reduce((n, group) => n + group.tools.length, 0);
 
+/** How many of these tools read and how many write; an unclassified tool counts as neither. */
+export function toolSplit(tools: ReadonlyArray<{ classification: "read" | "write" | null }>): {
+  read: number;
+  write: number;
+} {
+  let read = 0;
+  let write = 0;
+  for (const tool of tools) {
+    if (tool.classification === "read") read++;
+    else if (tool.classification === "write") write++;
+  }
+  return { read, write };
+}
+
 /** One row for plain /mcp, then one per pool, in contract order. Maintainer view only. */
 export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
   if (contract.role !== "maintainer") return [];
@@ -231,6 +245,8 @@ export type MatrixCell =
       /** Exactly the cell's tool names; "all" expands to the live catalog. */
       tools: Array<{ name: string; classification: "read" | "write" | null }>;
       runsAs: OperatorRunsAs;
+      /** Live catalog intersection; null when no complete catalog is available. */
+      coverage: { granted: number; total: number } | null;
     };
 
 /** What one connector × endpoint cell holds, straight from the contract's matrix. */
@@ -241,25 +257,45 @@ export function matrixCell(
 ): MatrixCell {
   const cell = contract.matrix.find((c) => c.connectorId === connectorId && c.pool === column.pool);
   if (!cell) return { kind: "none" };
-  const live = contract.live.connectors.find((c) => c.id === connectorId)?.tools ?? [];
+  const overlay = contract.live.connectors.find((c) => c.id === connectorId);
+  const live = overlay?.tools ?? [];
   const tools =
     cell.tools === "all"
       ? live.map(({ name, classification }) => ({ name, classification }))
       : cell.tools.map((name) => ({ name, classification: live.find((t) => t.name === name)?.classification ?? null }));
-  return { kind: cell.tools === "all" ? "all" : "some", tools, runsAs: cell.runsAs };
+  const known = overlay && (live.length > 0 || (overlay.status === "ok" && !overlay.problem));
+  const granted = cell.tools === "all" ? live : live.filter((tool) => cell.tools.includes(tool.name));
+  return {
+    kind: cell.tools === "all" ? "all" : "some",
+    tools,
+    runsAs: cell.runsAs,
+    coverage: known ? { granted: granted.length, total: live.length } : null,
+  };
+}
+
+/** The live grant fraction, or null when no complete catalog is available. */
+export function matrixCellShare(cell: MatrixCell): number | null {
+  if (cell.kind === "none") return 0;
+  if (!cell.coverage) return null;
+  return cell.coverage.total ? cell.coverage.granted / cell.coverage.total : 0;
 }
 
 /** The cell's visible text: "all", a count, or a dash. */
 export function matrixCellText(cell: MatrixCell): string {
   if (cell.kind === "none") return "—";
-  return cell.kind === "all" ? "all" : String(cell.tools.length);
+  if (!cell.coverage) return "?";
+  return cell.kind === "all" ? "all" : String(cell.coverage.granted);
 }
 
-/** The cell's accessible name, e.g. "GitHub on /support: 3 tools". */
+/** The cell's accessible name, e.g. "GitHub on /mcp/support: 1 of 2 live tools". */
 export function matrixCellLabel(connector: string, column: Pick<MatrixColumn, "path" | "readOnly">, cell: MatrixCell) {
   const where = `${connector} on ${column.path}`;
   if (cell.kind === "none") return `${where}: no tools`;
-  const what = cell.kind === "all" ? "all tools" : `${cell.tools.length} ${cell.tools.length === 1 ? "tool" : "tools"}`;
+  const what = !cell.coverage
+    ? "unknown live tool coverage"
+    : cell.kind === "all"
+      ? `all ${cell.coverage.total} tools`
+      : `${cell.coverage.granted} of ${cell.coverage.total} live tools`;
   return `${where}: ${what}${column.readOnly ? ", read-only" : ""}`;
 }
 

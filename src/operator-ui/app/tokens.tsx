@@ -14,7 +14,7 @@ import {
 } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
 import { useCloseOnRecovery } from "./contract-state.js";
-import { Icon } from "./icons.js";
+import { AgentMark } from "./marks.js";
 import {
   cancelTokenAction,
   confirmTokenAction,
@@ -44,7 +44,7 @@ function SecretDialog({ state }: { state: OperatorState }) {
       }}
       returnFocusTo={returnFocus}
       title={name ? `New token for ${name}` : "New token"}
-      description="Copy it into the agent's MCP client now. You won't see this token again."
+      description="You won't see this token again."
     >
       {state.createdToken ? (
         <div className="token-secret-panel">
@@ -64,7 +64,6 @@ function SecretDialog({ state }: { state: OperatorState }) {
               I stored it
             </Button>
           </div>
-          <p className="meta">Rotating replaces it; revoking stops it. Neither shows it again.</p>
         </div>
       ) : null}
     </Dialog>
@@ -101,9 +100,7 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
     <tr data-agent={row.name} className={row.slot.state === "revoked" ? "revoked" : undefined}>
       <th scope="row">
         <span className="agent-name">
-          <span className="agent-mark" aria-hidden="true">
-            <Icon name="agent" size={12} />
-          </span>
+          <AgentMark />
           <span>{row.name}</span>
         </span>
       </th>
@@ -111,20 +108,20 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
         {row.pools.length ? (
           <ul className="agent-pools" aria-label={`${row.name}'s pools`}>
             {row.pools.map((pool) => (
-              <li key={pool} className="tool-chip">
+              <li key={pool} className="pool-chip">
                 {pool}
               </li>
             ))}
           </ul>
         ) : (
-          <span className="meta">No pools</span>
+          <span className="meta">None</span>
         )}
       </td>
       <td>
         <Pill status={pillStatus(badge.tone)}>{badge.label}</Pill>
       </td>
-      <td className="meta">{slotSince(row.slot, formatDate)}</td>
-      <td className="meta">{lastSeenLabel(row.lastSeenAt, formatDate)}</td>
+      <td className="token-date">{slotSince(row.slot, formatDate)}</td>
+      <td className="token-date">{lastSeenLabel(row.lastSeenAt, formatDate)}</td>
       <td>
         <div className="token-actions">
           {row.blocked ? (
@@ -137,7 +134,9 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
               <Button
                 key={action}
                 id={`token-revoke-${row.name}`}
-                variant="danger"
+                variant="quiet"
+                size="sm"
+                className="token-revoke"
                 disabled={busy || Boolean(row.blocked)}
                 {...(row.blocked ? { "aria-describedby": `token-unavailable-${row.name}` } : {})}
                 aria-label={`Revoke ${row.name}'s token`}
@@ -150,6 +149,7 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
                 key={action}
                 id={`token-primary-${row.name}`}
                 variant={action === "issue" ? "primary" : "default"}
+                size="sm"
                 disabled={busy || Boolean(row.blocked)}
                 {...(row.blocked ? { "aria-describedby": `token-unavailable-${row.name}` } : {})}
                 aria-label={`${action === "issue" ? "Issue" : "Rotate"} ${row.name}'s token`}
@@ -179,9 +179,7 @@ export function TokensPage({ state }: { state: OperatorState }) {
           <h1 id="tokensHeading" tabIndex={-1}>
             Tokens
           </h1>
-          <p className="meta">
-            One Bearer token per agent. Agents are declared in code; only their tokens change here.
-          </p>
+          <p className="meta">Declared in code · one token each</p>
         </div>
         {available && !recovering ? (
           <div className="page-actions">
@@ -212,7 +210,7 @@ export function TokensPage({ state }: { state: OperatorState }) {
               Access tokens could not be loaded.
             </StateBlock>
           ) : rows.length === 0 ? (
-            <Empty>No agents are declared. Add them to agents in the deployment code.</Empty>
+            <Empty>No agents declared in code.</Empty>
           ) : (
             <div className="table-scroll">
               <table className="data-table token-table" aria-label="Agent tokens">

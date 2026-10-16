@@ -65,6 +65,8 @@ const PATHS = {
   check: <path d="M20 6 9 17l-5-5" />,
   back: <path d="m15 18-6-6 6-6" />,
   chevron: <path d="m9 18 6-6-6-6" />,
+  pencil: <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" />,
+  terminal: <path d="m5 8 4 4-4 4M12 17h7" />,
   page: (
     <>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />

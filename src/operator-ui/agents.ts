@@ -107,10 +107,10 @@ export function slotBadge(slot: Pick<AgentSlot, "state">): { label: string; tone
   return { label: "No token", tone: "neutral" };
 }
 
-/** When the slot last changed, as "Issued <date>" or "Revoked <date>"; a dash when it never has. */
+/** When the slot last changed, issued or revoked (its badge says which); a dash when it never has. */
 export function slotSince(slot: AgentSlot, format: (value: string) => string): string {
-  if (slot.state === "issued") return `Issued ${format(slot.issuedAt)}`;
-  if (slot.state === "revoked") return `Revoked ${format(slot.revokedAt)}`;
+  if (slot.state === "issued") return format(slot.issuedAt);
+  if (slot.state === "revoked") return format(slot.revokedAt);
   return "—";
 }
 

@@ -398,8 +398,15 @@ test("INV-4 INV-6: endpoint rows expand exact granted tools and copy client setu
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Client setup", exact: true });
   await expect(dialog).toContainText(origin + "/mcp/support");
+  // One client at a time: Claude Code first, the others a press away.
   await expect(dialog).toContainText("claude mcp add");
+  await expect(dialog).not.toContainText("codex mcp add");
+  await dialog.getByRole("button", { name: "Codex", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Codex", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(dialog).toContainText("codex mcp add");
+  await dialog.getByRole("button", { name: "JSON", exact: true }).click();
+  await expect(dialog).toContainText('"mcpServers"');
+  await expect(dialog.getByRole("button", { name: "Copy JSON config setup for support", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
   await clean(page);

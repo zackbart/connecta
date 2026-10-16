@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { OperatorConnectorOverlay, OperatorUiContractV2 } from "../contract.js";
 import {
-  connectorRunsAs,
   matrixCell,
   matrixCellLabel,
+  matrixCellShare,
   matrixCellText,
   matrixColumns,
   runsAsLabel,
@@ -13,6 +13,8 @@ import {
 import type { OperatorState } from "../view.js";
 import { ConnectorStatus } from "./problems.js";
 import { useCloseOnRecovery } from "./contract-state.js";
+import { RunsAs } from "./endpoints.js";
+import { Monogram, SharePie } from "./marks.js";
 
 export type MatrixRow = OperatorConnectorOverlay & { title: string };
 
@@ -139,23 +141,36 @@ function CellPopover({
         if (next && !ref.current?.contains(next) && next !== open.anchor) onClose(false);
       }}
     >
-      <p className="matrix-popover-title">{label}</p>
+      <div className="matrix-popover-head">
+        <Monogram id={open.rowId} title={open.title} />
+        <p className="matrix-popover-title">
+          {open.title}
+          <span className="visually-hidden"> on </span>
+          <code>{open.column.path}</code>
+        </p>
+        {open.column.readOnly ? <span className="badge tag accent">read-only</span> : null}
+      </div>
       {open.cell.tools.length ? (
         <ul className="matrix-popover-tools">
-          {open.cell.tools.map((tool) => (
-            <li key={tool.name}>
-              <code>{tool.name}</code>
-              {tool.classification === "write" ? <span className="write-mark">write</span> : null}
-            </li>
-          ))}
+          {open.cell.tools.map((tool) => {
+            const refused = open.column.readOnly && tool.classification === "write";
+            return (
+              <li key={tool.name} className={refused ? "refused" : undefined}>
+                <code>{tool.name}</code>
+                {tool.classification ? (
+                  <span className={`tool-kind ${tool.classification}`}>{tool.classification}</span>
+                ) : null}
+                {refused ? <span className="visually-hidden"> (refused on a read-only endpoint)</span> : null}
+              </li>
+            );
+          })}
         </ul>
       ) : (
-        <p className="meta">No tools in the live catalog yet.</p>
+        <p className="meta">No tools yet</p>
       )}
-      {open.column.readOnly && open.cell.tools.some((tool) => tool.classification === "write") ? (
-        <p className="meta">Read-only endpoint: write tools are refused here.</p>
-      ) : null}
-      <p className="meta">Runs as {runsAsLabel(open.cell.runsAs)}</p>
+      <p className="matrix-popover-runs">
+        <span className="matrix-popover-label">Runs as</span> <RunsAs label={runsAsLabel(open.cell.runsAs)} />
+      </p>
     </div>
   );
 }
@@ -164,13 +179,13 @@ function Legend() {
   return (
     <div className="matrix-legend" aria-hidden="true">
       <span>
-        <span className="matrix-swatch all" /> all
+        <SharePie share={1} /> All
       </span>
       <span>
-        <span className="matrix-swatch some" /> some
+        <SharePie share={0.4} /> Some
       </span>
       <span>
-        <span className="matrix-swatch read-only" /> read-only
+        <span className="matrix-swatch read-only" /> Read-only
       </span>
     </div>
   );
@@ -209,8 +224,6 @@ export function ConnectorMatrix({
           <thead>
             <tr>
               <th scope="col">Connector</th>
-              <th scope="col">Status</th>
-              <th scope="col">Runs as</th>
               {columns.map((column) => (
                 <th scope="col" key={column.path} className={column.readOnly ? "matrix-head read-only" : "matrix-head"}>
                   <code>{column.path}</code>
@@ -221,15 +234,16 @@ export function ConnectorMatrix({
           </thead>
           <tbody>
             {rows.map((row) => {
-              const runsAs = connectorRunsAs(contract, row.id);
               return (
                 <Fragment key={row.id}>
                   <tr>
-                    <th scope="row">{link(row)}</th>
-                    <td>
-                      <ConnectorStatus id={row.id} name={row.title} live={row} state={state} />
-                    </td>
-                    <td className="matrix-runs-as">{runsAs ? runsAsLabel(runsAs) : "—"}</td>
+                    <th scope="row">
+                      <span className="matrix-connector">
+                        <Monogram id={row.id} title={row.title} size="sm" />
+                        {link(row)}
+                        <ConnectorStatus id={row.id} name={row.title} live={row} state={state} compact />
+                      </span>
+                    </th>
                     {columns.map((column) => {
                       const cell = matrixCell(contract, row.id, column);
                       const name = matrixCellLabel(row.title, column, cell);
@@ -262,7 +276,8 @@ export function ConnectorMatrix({
                                   });
                                 }}
                               >
-                                {matrixCellText(cell)}
+                                <SharePie share={matrixCellShare(cell)} />
+                                <span className="matrix-chip-text">{matrixCellText(cell)}</span>
                               </button>
                               {open?.key === key && !inline ? (
                                 <CellPopover open={open} inline={false} onClose={close} />
@@ -275,7 +290,7 @@ export function ConnectorMatrix({
                   </tr>
                   {inline && open?.rowId === row.id ? (
                     <tr className="matrix-expansion">
-                      <td colSpan={3 + columns.length}>
+                      <td colSpan={1 + columns.length}>
                         <CellPopover key={open.key} open={open} inline onClose={close} />
                       </td>
                     </tr>
