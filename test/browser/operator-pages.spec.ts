@@ -10,6 +10,8 @@ import { accessTokens } from "../../src/access-tokens.js";
 import type { Connector } from "../../src/types.js";
 import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
 import { CONFIG_DEFAULTS } from "../../src/config-defaults.js";
+import { contractV2 } from "../fixtures/operator-contract-v2-bridge.js";
+import { serveContractV2 } from "./operator-fixture.js";
 
 const TOKEN = "pages-operator";
 const CLERK = "https://clerk.example.test";
@@ -137,6 +139,7 @@ test.afterAll(async () => {
 
 async function session(page: Page) {
   await page.context().addCookies([{ name: "__session", value: TOKEN, url: origin }]);
+  await serveContractV2(page);
   await page.route(`${CLERK}/**`, (route) =>
     route.fulfill({
       contentType: "text/javascript",
@@ -371,8 +374,8 @@ test("INV-6: Endpoints and command search ignore payload and raw error sentinels
   const sentinel = "ui834-argument-result-code-credential-sentinel";
   await page.route("**/ui/api/config", async (route) => {
     const response = await route.fetch();
-    const contract = await response.json();
-    contract.live.connectors = contract.live.connectors.map((connector: object) => ({
+    const contract = contractV2(await response.json());
+    contract.live.connectors = contract.live.connectors.map((connector) => ({
       ...connector,
       message: sentinel,
       arguments: sentinel,

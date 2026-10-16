@@ -14,7 +14,7 @@ export function SettingsPage({ state }: { state: OperatorState }) {
           <p className="meta">Read-only snapshot, defined in code.</p>
         </div>
       </div>
-      {!state.contract ? (
+      {!state.contract?.config ? (
         <ContractState state={state} />
       ) : (
         <>
@@ -42,7 +42,7 @@ export function SettingsPage({ state }: { state: OperatorState }) {
               <Badge>default</Badge>
               <span className="meta">Resolved default or built-in value</span>
             </div>
-            <SnapshotTree value={state.contract.config} sources={state.contract.configSources} />
+            <SnapshotTree value={state.contract.config} sources={state.contract.configSources ?? undefined} />
           </section>
         </>
       )}

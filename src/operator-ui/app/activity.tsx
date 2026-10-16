@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   activityDetail,
+  activityReadable,
   activityOutcomeBadge,
   activityOutcomeClass,
   activitySummary,
@@ -87,7 +88,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
     void go({ to: location.pathname, search, hash: location.hash });
   };
   const data = state.data;
-  const enabled = Boolean(data?.activityEnabled) && state.contract?.you.permissions.activity === true;
+  const enabled = activityReadable(state);
   const loading = state.activityPhase === "loading";
   const visible = filterActivity(
     state.activityEvents.filter(
@@ -151,7 +152,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
                     onChange={(e) => updateFilter("connector", e.target.value)}
                   >
                     <option value="">All connectors</option>
-                    {(state.contract?.config.connectors ?? data.connectors).map((c) => (
+                    {(state.contract?.config?.connectors ?? data.connectors).map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.title ?? c.id}
                       </option>

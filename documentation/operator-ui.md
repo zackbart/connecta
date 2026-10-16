@@ -22,16 +22,30 @@ and [Worker example](../examples/worker/README.md#select-optional-modules)
 own the runnable configuration, variables, and branding shape. The UI is an
 explicit optional import and stays outside the root package import graph.
 
-Endpoints, Connectors, Activity, Tokens, and Settings show only what the
-caller may inspect. Endpoints is the default page at `/`: one row for `/mcp`
-and each admitted pool, with a copyable URL, tool count, endpoint mode, and
-client setup. Expanding a row lists each connector on that endpoint with who it
-runs as (shared or personal) and its tools, marking write tools. Connector
-health is not repeated per endpoint: a connector that needs attention gets a
-status dot linking to its Connection tab. Counts intersect live tools with
-grants, pool declarations, and read-only mode. Connectors lists each connector
-with one status badge, auth scope, tool count, and last call; a problem adds one
-action (Connect, Replace key, or Inspect) that opens Connection. Connector
+Endpoints, Connectors, Activity, Tokens, and Settings are the maintainer's
+pages. Endpoints is the default page at `/`: one row for `/mcp` and each pool,
+with a copyable URL, tool count, endpoint mode, and client setup. A pool with
+agent members also shows its agent URL, muted. Expanding a row lists each
+connector on that endpoint with what it runs as and its tools, marking write
+tools. The runs-as label comes from that endpoint's matrix cell: "Shared · saved
+<date>" (or "not saved"), "Personal · N of M connected", "Workspace · people:
+self · agents: <owner>" (or "none"), or "Everyone acts as <subject>" for a
+fixed-subject Workspace connector. Connector health is not repeated per
+endpoint: a connector that needs attention gets a status dot linking to its
+Connection tab. Counts intersect live tools with the pool's declared tools
+(the `/mcp` matrix cells for the root), guarded grants' live verdicts, and
+read-only mode. Connectors lists each connector with one status badge, auth
+scope, tool count, and last call; a problem adds one action (Connect, Replace
+key, or Inspect) that opens Connection. A List / Matrix toggle (`?view=matrix`)
+switches to a table of connectors by endpoint, `/mcp` first: each cell reads
+"all", a tool count, or a dash, read-only columns are tinted, and a Runs as
+column summarizes the `/mcp` cell, else the first pool's. A cell with tools is
+a button named like "GitHub on /mcp/support: 1 tool, read-only"; Enter, Space or
+a click opens a popover listing exactly that cell's tool names, write tools
+marked, with the cell's runs-as. Escape or Tab returns focus to the cell. A
+pool member sees one page on every path, until UI-3 of
+[#834](https://github.com/zackbart/connecta/issues/834): their pools with each
+URL and client setup, and the Endpoints tab alone. Connector
 detail has Tools, Connection, and Activity tabs. Connection combines
 authentication (including the OAuth client mechanism), catalog diagnostics,
 one fix prompt beside each problem it reports, and the connector snapshot with its source. Settings combines inbound-auth facts with the
@@ -101,7 +115,9 @@ the effective activity, token, and per-connector auth permissions.
 `contract.ts` also declares `OperatorUiContractV2` and its member, pool, agent,
 connector and matrix types, frozen by
 [decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract)
-ahead of the server cutover in P6b of [#837](https://github.com/zackbart/connecta/issues/837). No route serves v2 yet;
+for the server cutover in P6b of [#837](https://github.com/zackbart/connecta/issues/837). The browser store reads only
+v2: it accepts `schemaVersion: 2` with a `role`, requires `config` and `root` for a maintainer, and treats a v1 body
+as a failed load. Every page checks `role` before reading a maintainer-only field.
 `test/fixtures/operator-contract-v2.ts` holds maintainer and member fixtures,
 and `test/helpers/operator-member-view.ts` checks a member response's exact
 shape and compares its values with a projection built from config, membership,
@@ -125,50 +141,10 @@ and Workers. HTML contains only mount points and escaped inert configuration;
 it remains uncached. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
-owns authenticated reads and existing mutations. An Access-only shell selects
-Access even when the HTML request has no trusted context; only authenticated
-API responses establish the session. A gated Access session offers Retry.
-Focus, visibility, and timer-driven recovery share one admission-read schedule
-with at least two seconds between passive attempts. An in-flight passive attempt
-coalesces returns until its summary and matching catalog/auth cycle finish,
-so slow successful reads can publish. Each admission summary and its matching
-config/auth cycle share a 15-second deadline, including token acquisition,
-fetches and response bodies. This is an admission deadline, not a request
-lifetime limit: it releases the recovery guard and exposes Retry without aborting
-the pending read or invalidating its identity/revision fence. A late healthy
-response still publishes if that cycle is current. Passive timers and returns
-coalesce onto the pending cycle, including after its deadline; they never start
-duplicate summary, token, config, detail or body reads. The passive retry schedule
-stays bounded and does not reset its budget on a deadline. Retry remains available
-during recovery configuration loading and supersedes and aborts the old cycle;
-identity changes, navigation and connector-page unmount also cancel it. Navigation
-that cancels pending data schedules a bounded reread for the destination. Failed reads retry after
-2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
-those four automatic retries, a focus return can request one more read after
-the eight-second backoff, without replenishing the automatic budget. Retry
-resets the budget with a 150 ms click debounce. Successful reads and explicit
-identity transitions also reset recovery. Identity changes
-cancel pending retries and fence out responses from the previous identity.
-Queued focus callbacks carry the same identity fence. Explicit sign-out
-suppresses passive reads until an intentional sign-in or a new Clerk session.
-
-Catalog and connector auth details share one revisioned refresh cycle. Each
-completed connector publishes its catalog facts and auth controls together,
-while a slow provider leaves other rows usable.
-Catalog refresh, connector refresh, and mutation follow-up reads update both
-consumers together. A later refresh or mutation invalidates an older cycle's publication fence
-without aborting its read, and a failed contract read clears its old snapshot. After an explicit OAuth
-start, visible tabs poll only that connector's read-only catalog and auth facts
-every two seconds for up to 30 seconds. The scoped result replaces only that
-connector's matching live row and auth controls. Success, a failed read or status,
-disconnect, navigation away from the connector, unmount, or identity reset ends
-polling and aborts its in-flight reads. The deadline also aborts a stalled read.
-A later focus return can request another status read. Recovery never starts OAuth
-or replays a mutation.
-Unreadable credential metadata uses `configured: null`, including named fields,
-and renders as unavailable with a retry prompt. It does not claim that the slot
-is empty. Endpoints, Connectors, connector
-detail, and Settings consume the typed contract. Activity retains
+owns authenticated reads and existing mutations. Endpoints, Connectors, connector
+detail, Settings, and the member page consume the typed contract; Activity opens
+only to a maintainer whose contract reports readable history. Connector detail
+reads auth permissions from its `/ui/data` connector. Activity retains
 its authenticated data routes. Connector detail tabs live
 in the URL hash; Activity filters live in the query string and apply to loaded
 history. Both `/ui/activity` and `/ui/api/activity` require a maintainer

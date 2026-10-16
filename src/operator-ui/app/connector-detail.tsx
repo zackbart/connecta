@@ -1,7 +1,13 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { OperatorState } from "../view.js";
-import { connectorSourceLabel, connectorStatusLabel, connectorStatusTone, formatDate } from "../view.js";
+import {
+  activityReadable,
+  connectorSourceLabel,
+  connectorStatusLabel,
+  connectorStatusTone,
+  formatDate,
+} from "../view.js";
 import { Badge, StateBlock } from "./parts.js";
 import { Button, Tabs } from "./primitives.js";
 import { ContractState } from "./contract-state.js";
@@ -19,12 +25,12 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
   useEffect(() => () => stopConnectorReads(id), [id]);
   const tab = TABS.includes(location.hash) ? location.hash : "tools";
   const contract = state.contract;
-  const config = contract?.config.connectors.find((c) => c.id === id);
+  const config = contract?.config?.connectors.find((c) => c.id === id);
   const live = contract?.live.connectors.find((c) => c.id === id);
+  // Auth permissions come from the connector's own /ui/data detail.
   const rawAuth = state.data?.connectors.find((c) => c.id === id);
-  const permission = contract?.you.permissions.connectors.find((c) => c.id === id);
-  const auth = rawAuth && permission ? { ...rawAuth, permissions: permission } : undefined;
-  if (auth && !permission?.manageSharedAuth && !permission?.connectPersonal) delete auth.credential;
+  const auth = rawAuth ? { ...rawAuth } : undefined;
+  if (auth && !auth.permissions?.manageSharedAuth && !auth.permissions?.connectPersonal) delete auth.credential;
   return (
     <section id="connectorView">
       <a href="/connectors" className="meta">
@@ -103,7 +109,11 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
                     <section aria-label="Connector configuration">
                       <h2>Configuration</h2>
                       <p className="meta">Source: {connectorSourceLabel(config.source)}. Defined in deployment code.</p>
-                      <SnapshotTree value={config} path={`config.connectors.${id}`} sources={contract.configSources} />
+                      <SnapshotTree
+                        value={config}
+                        path={`config.connectors.${id}`}
+                        sources={contract.configSources ?? undefined}
+                      />
                     </section>
                   </div>
                 ),
@@ -111,7 +121,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
               {
                 value: "activity",
                 label: "Activity",
-                content: contract.you.permissions.activity ? (
+                content: activityReadable(state) ? (
                   <ActivityPage state={state} connectorId={id} />
                 ) : (
                   <StateBlock>Activity is not available to this session.</StateBlock>

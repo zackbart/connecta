@@ -1,4 +1,4 @@
-import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
+import type { OperatorMember, OperatorUiContract, OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
 import type { UiActivityEvent } from "../../src/operator-ui/view.js";
 import type { Connector, InboundAuth } from "../../src/types.js";
@@ -8,6 +8,8 @@ import { encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { createTestConnecta } from "../helpers.js";
 import { fakeClerkAuth } from "./http.js";
+import { contractV2 } from "./operator-contract-v2-bridge.js";
+import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./operator-contract-v2.js";
 
 export const VISUAL_NOW = "2026-10-08T12:00:00.000Z";
 export const VISUAL_ORIGIN = "https://connecta.example";
@@ -18,8 +20,11 @@ export type VisualState = typeof VISUAL_STATES[number];
 // The contract and legacy auth details come from the current server serializers,
 // not a separately maintained copy of their JSON. Collections use their browser
 // contract types. All volatile values are fixed in this one fixture module.
+// Until P6b of #837 serves contract v2, the maintainer view passes the server's
+// v1 answer through the bridge with the pool facts below; the restricted state
+// is the frozen member fixture, since v2 has no other restricted viewer.
 export interface OperatorVisualFixture {
-  contract: OperatorUiContract;
+  contract: OperatorUiContractV2;
   data: UiData;
   activity: { events: UiActivityEvent[]; nextCursor?: string };
   tokens: { agents: Array<{ name: string; state: "issued"; issuedAt: string }> };
@@ -92,8 +97,15 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     const contractResponse = await app.fetch(new Request(`${VISUAL_ORIGIN}/ui/api/config`, { headers }));
     const dataResponse = await app.fetch(new Request(`${VISUAL_ORIGIN}/ui/data`, { headers }));
     if (!contractResponse.ok || !dataResponse.ok) throw new Error("Visual fixture deployment refused its operator");
-    const contract: OperatorUiContract = await contractResponse.json();
+    const served: OperatorUiContract = await contractResponse.json();
     const data: UiData = await dataResponse.json();
+    const human = (id: string, label: string | null): OperatorMember => ({ kind: "human", namespace: "https://clerk.example.test", id, label });
+    const contract = restricted ? structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2 : contractV2(served, {
+      maintainers: [human("alice", "Alice Moreau")],
+      members: { support: [human("user_lin", "Lin Chen"), { kind: "agent", name: "triage" }], automation: [human("alice", "Alice Moreau")] },
+      runsAs: (connectorId) => connectorId === "github" ? { kind: "shared", savedAt: "2026-10-01T09:30:00.000Z" }
+        : connectorId === "slack" ? { kind: "personal", connectedMembers: 1, members: 2 } : undefined,
+    });
     // /ui/data begins with deferred details. Use the same serializer as the UI
     // uses when its background connector reads finish.
     for (const connector of data.connectors) {
@@ -101,7 +113,8 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
       if (!response.ok) throw new Error(`Visual fixture connector ${connector.id} failed`);
       Object.assign(connector, await response.json());
     }
-    contract.config.connectaVersion = data.connectaVersion = "0.29.0";
+    if (contract.config) contract.config.connectaVersion = data.connectaVersion = "0.29.0";
+    else data.connectaVersion = "0.29.0";
     for (const connector of data.connectors) {
       if (connector.id === "github" && !empty) connector.catalogDrift = { observedAt: VISUAL_NOW, unclassifiedTools: 2, unservedTools: 0, annotationConflicts: 1, schemaChanges: 1 };
     }
@@ -116,12 +129,39 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
 export const VISUAL_VARIANTS = [
   "credential-configured", "credential-mismatch", "credential-unreadable", "credential-fields",
   "oauth-static", "oauth-cimd", "oauth-dcr", "drift-clean", "drift-unobserved", "legacy-activity",
-  "endpoints-expanded", "command-search", "narrow-endpoints",
+  "endpoints-expanded", "command-search", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix",
   "client-setup", "schema", "tools-read", "tools-write", "config-provenance", "narrow-gate", "narrow-auth", "branded",
 ] as const;
 export type VisualVariant = typeof VISUAL_VARIANTS[number];
 
+/** Variants that need every runs-as kind, agents and three pools: the frozen v2 maintainer fixture. */
+const RICH_VARIANTS: readonly VisualVariant[] = ["endpoints-expanded", "narrow-endpoints", "connectors-matrix", "matrix-popover", "narrow-matrix"];
+
+/** `/ui/data` for the frozen maintainer fixture: the same connectors, statuses and tools. */
+function richFixture(base: OperatorVisualFixture): OperatorVisualFixture {
+  const contract = structuredClone(OPERATOR_V2_MAINTAINER) as OperatorUiContractV2;
+  const config = contract.config!;
+  const data: UiData = {
+    ...structuredClone(base.data),
+    serverInfo: { name: config.server.name, version: config.server.version },
+    pools: contract.pools.map((pool) => pool.name),
+    connectors: contract.live.connectors.map((live) => {
+      const described = config.connectors.find((c) => c.id === live.id)!;
+      const shared = described.authScope === "shared";
+      return {
+        id: live.id, title: described.title ?? live.id, authScope: described.authScope, status: live.status,
+        ...(live.problem ? { problem: live.problem } : {}),
+        toolCount: live.tools.length,
+        tools: live.tools.map(({ name, address, classification }) => ({ name, address, safety: classification === "read" ? "runs_in_programs" : "needs_approval" })),
+        permissions: { use: true, manageSharedAuth: shared, connectPersonal: !shared },
+      };
+    }),
+  };
+  return { ...structuredClone(base), contract, data };
+}
+
 export function operatorVisualVariant(base: OperatorVisualFixture, variant: VisualVariant): OperatorVisualFixture {
+  if (RICH_VARIANTS.includes(variant)) return richFixture(base);
   const fixture = structuredClone(base);
   const slot = fixture.data.connectors.find(c => c.id === "slot")!;
   const slotLive = fixture.contract.live.connectors.find(c => c.id === "slot")!;
@@ -141,7 +181,7 @@ export function operatorVisualVariant(base: OperatorVisualFixture, variant: Visu
       { name: "username", label: "Username", inputType: "text", configured: true, lastFour: "lice", updatedAt: VISUAL_NOW },
       { name: "password", label: "Password", inputType: "password", configured: true, lastFour: "1234", updatedAt: VISUAL_NOW },
       ];
-      fixture.contract.config.connectors.find(c => c.id === "slot")!.credential = { label: slot.credential.label, fields: slot.credential.fields.map(({ name, label }) => ({ name, label })) };
+      fixture.contract.config!.connectors.find(c => c.id === "slot")!.credential = { label: slot.credential.label, fields: slot.credential.fields.map(({ name, label }) => ({ name, label })) };
     }
   }
   if (variant.startsWith("oauth-")) {

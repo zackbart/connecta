@@ -7,12 +7,14 @@ import { ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import {
+  activityReadable,
   canonicalOperatorPath,
   checkingCopy,
   gateCopy,
   pageDescription,
   PAGE_META,
   OPERATOR_PAGES,
+  operatorRole,
   type OperatorPage,
   type OperatorState,
 } from "../view.js";
@@ -23,6 +25,7 @@ import { EndpointsPage } from "./endpoints.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
+import { MemberPage } from "./member.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import {
   boot,
@@ -54,8 +57,10 @@ function useOperatorState(): OperatorState {
 /** Pages an identity may actually open. Hidden is the honest state for the rest. */
 function visiblePages(state: OperatorState): OperatorPage[] {
   const hint = state.data ? null : navHint();
+  // A member has one page until UI-3: their own endpoints.
+  if (operatorRole(state) === "member") return ["endpoints"];
   return OPERATOR_PAGES.filter((page) => {
-    if (page === "activity" && state.contract) return state.contract.you.permissions.activity;
+    if (page === "activity" && state.contract) return activityReadable(state);
     if (page === "tokens") return state.data?.accessTokenManagement === "available";
     if (page === "activity") return hint ? hint.activity : Boolean(state.data?.activityEnabled);
     return true;
@@ -63,10 +68,11 @@ function visiblePages(state: OperatorState): OperatorPage[] {
 }
 
 function DeploymentName({ state }: { state: OperatorState }) {
-  return state.contract ? (
+  const name = state.contract?.role === "maintainer" ? state.contract.config?.server.name : undefined;
+  return name ? (
     <span className="deployment-name">
       <span aria-hidden="true">/</span>
-      {state.contract.config.server.name}
+      {name}
     </span>
   ) : null;
 }
@@ -185,6 +191,8 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
+  // Every other page is built from maintainer facts a member never receives.
+  if (operatorRole(state) === "member") return <MemberPage state={state} />;
   if (state.page === "settings") return <SettingsPage state={state} />;
   if (state.page === "connector") return <ConnectorDetailPage state={state} />;
   if (state.page === "connections") return <ConnectorsPage state={state} />;
@@ -206,13 +214,18 @@ function OperatorApp() {
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
-    if (state.page === "tokens" && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
+    if (state.data && state.contractPhase === "idle") void loadOperatorContract();
+    if (
+      state.page === "tokens" &&
+      operatorRole(state) === "maintainer" &&
+      state.data?.accessTokenManagement === "available" &&
+      state.tokenPhase === "idle"
+    ) {
       void loadAccessTokens();
     }
     if (
       (state.page === "activity" || state.page === "connector") &&
-      state.data?.activityEnabled &&
-      state.contract?.you.permissions.activity &&
+      activityReadable(state) &&
       state.activityPhase === "idle"
     ) {
       void loadActivity(true);

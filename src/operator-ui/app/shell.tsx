@@ -137,7 +137,7 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
                 </Command.Item>
               ))}
             </Command.Group>
-            {state.session === "ready" && state.contract ? (
+            {state.session === "ready" && state.contract?.role === "maintainer" && state.contract.config ? (
               <>
                 <Command.Group heading="Connectors">
                   {state.contract.config.connectors.map((connector) => (

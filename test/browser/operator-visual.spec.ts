@@ -150,15 +150,9 @@ async function ready(page: Page, name: string, state: VisualState) {
       ),
     ).toBeVisible();
   } else if (state === "restricted") {
-    if (name === "tokens")
-      await expect(
-        page.getByText("Token management requires an interactive sign-in and explicit permission."),
-      ).toBeVisible();
-    else if (name.includes("activity"))
-      await expect(page.getByText(/Activity.*not available to this session/)).toBeVisible();
-    else if (name === "connector-connection")
-      await expect(page.getByText("Authentication for this connection is managed by your deployment.")).toBeVisible();
-    else await expect(page.locator("#app")).toBeVisible();
+    // A pool member gets their own endpoints on every path, and one tab.
+    await expect(page.locator("#memberView .endpoint-entry").first()).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Operator pages" }).getByRole("link")).toHaveText(["Endpoints"]);
   } else if (name.includes("activity")) {
     await expect(
       state === "empty" ? page.getByText("No connector tool calls recorded yet.") : page.locator("#activityList"),
@@ -173,7 +167,10 @@ async function ready(page: Page, name: string, state: VisualState) {
     await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
     await expect(page.locator("#app")).toBeVisible();
   }
-  if (!["loading", "error"].includes(state) && !["tokens", "activity", "connector-activity"].includes(name)) {
+  if (
+    !["loading", "error", "restricted"].includes(state) &&
+    !["tokens", "activity", "connector-activity"].includes(name)
+  ) {
     await expect(
       page
         .locator(
@@ -241,6 +238,8 @@ function variantPath(variant: VisualVariant): string {
   if (variant === "legacy-activity") return "/activity";
   if (variant === "schema" || variant.startsWith("tools-")) return "/connectors/github#tools";
   if (variant === "config-provenance") return "/settings";
+  if (variant === "connectors-matrix" || variant === "matrix-popover" || variant === "narrow-matrix")
+    return "/connectors?view=matrix";
   return "/";
 }
 for (const variant of VISUAL_VARIANTS)
@@ -259,8 +258,17 @@ for (const variant of VISUAL_VARIANTS)
           await expect(page.locator("#app")).toBeVisible();
           await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
           if (variant === "endpoints-expanded" || variant === "narrow-endpoints") {
-            await page.locator(".endpoint-entry").nth(1).locator(".endpoint-toggle").click();
-            await expect(page.locator(".endpoint-entry").nth(1).locator(".tool-chip")).toBeVisible();
+            // /mcp shows every runs-as kind; /mcp/ada adds an agent URL and a pool owner.
+            const rows = variant === "endpoints-expanded" ? [0, 1] : [1];
+            for (const row of rows) {
+              await page.locator(".endpoint-entry").nth(row).locator(".endpoint-toggle").click();
+              await expect(page.locator(".endpoint-entry").nth(row).locator(".tool-chip").first()).toBeVisible();
+            }
+          } else if (variant === "connectors-matrix" || variant === "narrow-matrix") {
+            await expect(page.getByRole("table", { name: "Connectors by endpoint", exact: true })).toBeVisible();
+          } else if (variant === "matrix-popover") {
+            await page.getByRole("button", { name: "Gmail on /mcp/ada: all tools", exact: true }).click();
+            await expect(page.getByRole("dialog", { name: "Gmail on /mcp/ada", exact: true })).toBeVisible();
           } else if (variant === "command-search") {
             await page.getByRole("button", { name: "Search" }).click();
             await page.getByPlaceholder("Search pages, connectors, tools…").fill("github");

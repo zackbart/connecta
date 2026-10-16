@@ -1,4 +1,4 @@
-import type { OperatorUiContract } from "./contract.js";
+import type { OperatorRole, OperatorUiContractV2 } from "./contract.js";
 import type { CatalogDriftReport } from "../types.js";
 import type { CredentialManagementCapability, UiConnector, UiData, UiProblem } from "./model.js";
 import type { FixPromptKind } from "./fix-prompts.js";
@@ -403,7 +403,8 @@ export interface OperatorState {
    */
   focusIfLost: string | null;
   data: UiData | null;
-  contract: OperatorUiContract | null;
+  /** Operator contract v2, for either role; null until `/ui/api/config` answers. */
+  contract: OperatorUiContractV2 | null;
   contractPhase: LoadPhase;
   health: "loading" | "ok" | "unavailable";
   connectorFilter: string;
@@ -433,6 +434,25 @@ export interface OperatorState {
   activityEvents: UiActivityEvent[];
   activityCursor: string | null;
   activitySearch: string;
+}
+
+/** Who the contract says this viewer is, or null before it loads. */
+export function operatorRole(state: Pick<OperatorState, "contract">): OperatorRole | null {
+  return state.contract?.role ?? null;
+}
+
+/**
+ * Whether Activity is open to this viewer: maintainers only, on a deployment
+ * that records history. Members always read "forbidden".
+ */
+export function activityReadable(state: Pick<OperatorState, "contract" | "data">): boolean {
+  const contract = state.contract;
+  return (
+    Boolean(state.data?.activityEnabled) &&
+    contract?.role === "maintainer" &&
+    contract.live.activity !== "forbidden" &&
+    contract.live.activity !== "unconfigured"
+  );
 }
 
 export function initialState(page: OperatorPage): OperatorState {

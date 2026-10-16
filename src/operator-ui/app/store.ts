@@ -1,4 +1,4 @@
-import type { OperatorUiContract } from "../contract.js";
+import type { OperatorUiContractV2 } from "../contract.js";
 import { queryClient } from "./query.js";
 import { isCancelledError } from "@tanstack/react-query";
 import type { UiConnector, UiData } from "../model.js";
@@ -284,19 +284,22 @@ async function loadData(signal: AbortSignal): Promise<void> {
   await refreshSnapshot(false, undefined, signal);
 }
 
-/** Catalog and auth controls publish together, guarded by one refresh revision. */
-let snapshotRevision = 0;
-export function loadOperatorContract(): Promise<void> {
-  return guardedRecoveryRead((signal) => refreshSnapshot(false, undefined, signal), true);
+/**
+ * Contract v2 only: one cutover, no v1 fallback. A maintainer view carries
+ * `config` and `root`; a member view carries neither, and nothing on screen
+ * reads a maintainer field without checking `role` first.
+ */
+function isContractV2(value: OperatorUiContractV2 | null): value is OperatorUiContractV2 {
+  if (!value || value.schemaVersion !== 2) return false;
+  if (value.role !== "maintainer" && value.role !== "member") return false;
+  if (!value.you || !Array.isArray(value.live?.connectors) || !Array.isArray(value.pools)) return false;
+  if (!Array.isArray(value.matrix) || !Array.isArray(value.agents) || !Array.isArray(value.connectors)) return false;
+  return value.role === "member" || (Boolean(value.config) && Boolean(value.root));
 }
 
-async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?: AbortSignal): Promise<void> {
-  if (signedOut) return;
-  // A scoped OAuth cycle supersedes general publication without cancelling
-  // the older transport or letting its deadline overwrite the newer state.
-  if (recoveryRead && recoveryRead.controller.signal !== pollSignal) releaseRecoveryRead();
-  // A new catalog cycle also supersedes any summary that has not landed yet.
-  ++dataRevision;
+/** The typed read model uses the same token and identity fence as mutations. */
+let contractRevision = 0;
+export async function loadOperatorContract(): Promise<void> {
   const identityCurrent = fence();
   const revision = ++snapshotRevision;
   const current = () => identityCurrent() && revision === snapshotRevision && !pollSignal?.aborted;
@@ -377,9 +380,8 @@ async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?:
         );
         if (response.status === 401 || response.status === 403) throw new RequestFailure("session");
         if (!response.ok) throw new RequestFailure("refused");
-        const value = (await response.json()) as OperatorUiContract;
-        if (value.schemaVersion !== 1 || !value.config || !value.you || !Array.isArray(value.live?.connectors))
-          throw new RequestFailure("refused");
+        const value = (await response.json()) as OperatorUiContractV2;
+        if (!isContractV2(value)) throw new RequestFailure("refused");
         return value;
       },
     })

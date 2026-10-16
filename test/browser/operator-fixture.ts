@@ -1,9 +1,23 @@
+import type { Page } from "@playwright/test";
 import type { UiData } from "../../src/ui.js";
-import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
+import type { OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import { createTestConnecta } from "../helpers.js";
+import { contractV2 } from "../fixtures/operator-contract-v2-bridge.js";
 
-/** A real allowlisted snapshot with deterministic, route-intercepted live facts. */
-export async function fixtureContract(data: UiData): Promise<OperatorUiContract> {
+/**
+ * Serve the real server's `/ui/api/config` as contract v2. A pass-through once
+ * P6b of #837 serves v2 itself; see operator-contract-v2-bridge.ts.
+ */
+export async function serveContractV2(page: Page): Promise<void> {
+  await page.route("**/ui/api/config", async (route) => {
+    const response = await route.fetch();
+    if (!response.ok()) return route.fulfill({ response });
+    return route.fulfill({ response, json: contractV2(await response.json()) });
+  });
+}
+
+/** A real allowlisted snapshot with deterministic, route-intercepted live facts, as a maintainer's v2 view. */
+export async function fixtureContract(data: UiData): Promise<OperatorUiContractV2> {
   const app = createTestConnecta({
     logger: "silent",
     connectors: data.connectors.map((c) => ({
@@ -19,7 +33,7 @@ export async function fixtureContract(data: UiData): Promise<OperatorUiContract>
   // do only with inbound auth, and this snapshot has none (#837).
   const config = { ...structuredClone(app.describeConfig()), hasGrant: false };
   await app.close();
-  return {
+  return contractV2({
     schemaVersion: 1,
     config,
     live: {
@@ -55,5 +69,5 @@ export async function fixtureContract(data: UiData): Promise<OperatorUiContract>
         })),
       },
     },
-  };
+  });
 }
