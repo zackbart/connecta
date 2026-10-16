@@ -619,7 +619,7 @@ describe("OAuth identity and signature boundaries", () => {
           }
         : undefined;
     // Agents are never maintainers (#837), so the agent reaches the
-    // connector through a pool it is a member of.
+    // connector at the agent endpoint of a pool it is a member of.
     const app = createTestConnecta({
       connectors: [connector],
       auth: [humanAuth],
@@ -638,7 +638,7 @@ describe("OAuth identity and signature boundaries", () => {
         app,
         "tools/call",
         { name: "authorize_connector", arguments: { connector: "service" } },
-        { token, pool: "agents" },
+        { token, agentPool: "agents" },
       ),
     );
     // An agent has no principal: a personal connector is absent for it, and

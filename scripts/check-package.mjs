@@ -220,7 +220,9 @@ try {
     "LICENSE",
     "bin/connecta.mjs",
     "bin/version.mjs",
+    "documentation/auth.md",
     "documentation/code-mode.md",
+    "documentation/migration-0.33.md",
     "templates/node/.dockerignore",
     "templates/node/.env.example",
     "templates/node/AGENTS.md",
@@ -590,6 +592,16 @@ try {
   const generatedRoot = join(work, "generated-deployment");
   run(npm, ["install", "--ignore-scripts"], generatedRoot);
   await assertInstallScriptsApproved(generatedRoot, generatedPackage);
+  // Deployments point their own agent guidance at this installed path for the
+  // agent pool layout, and the generated AGENTS.md names it (#837 P7).
+  const layoutReference = "node_modules/@zackbart/connecta/documentation/auth.md#organizing-an-agents-pools";
+  const installedAuthGuide = await readFile(join(generatedRoot, layoutReference.split("#")[0]), "utf8");
+  if (!/^### Organizing an agent's pools$/m.test(installedAuthGuide)) {
+    throw new Error("Installed documentation/auth.md lacks the agent pool layout section its anchor names");
+  }
+  if (!(await readFile(join(generatedRoot, "AGENTS.md"), "utf8")).includes(layoutReference)) {
+    throw new Error("Generated AGENTS.md does not point at the installed agent pool layout");
+  }
   run(npm, ["run", "typecheck"], generatedRoot);
   // The published configuration contract, compiled the way a consumer
   // compiles it: ConnectaConfig is derived from one schema, so its shape is
@@ -745,14 +757,16 @@ try {
     return token;
   };
   const assertClosed = async (origin) => {
-    for (const token of [undefined, staticToken, `cta_${"A".repeat(43)}`]) {
-      const response = await fetch(`${origin}/mcp`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        signal: AbortSignal.timeout(5_000),
-      });
-      await response.body?.cancel();
-      if (response.status !== 401) {
-        throw new Error(`Generated deployment admitted an unprovisioned client: ${response.status}`);
+    for (const path of ["/mcp", "/agent/local-machine"]) {
+      for (const token of [undefined, staticToken, `cta_${"A".repeat(43)}`]) {
+        const response = await fetch(`${origin}${path}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: AbortSignal.timeout(5_000),
+        });
+        await response.body?.cancel();
+        if (response.status !== 401) {
+          throw new Error(`Generated deployment admitted an unprovisioned client at ${path}: ${response.status}`);
+        }
       }
     }
   };
@@ -812,7 +826,7 @@ try {
     );
     const doctorOutput = run(
       generatedConnecta,
-      ["doctor", "--url", `http://127.0.0.1:${port}`, "--pool", "local"],
+      ["doctor", "--url", `http://127.0.0.1:${port}`, "--pool", "local-machine"],
       generatedRoot,
       {
         CONNECTA_TOKEN: smokeToken,
@@ -863,7 +877,7 @@ try {
   const legacyDoctor = (token) =>
     spawnSync(
       join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`, "--pool", "local"],
+      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`, "--pool", "local-machine"],
       { cwd: generatedRoot, encoding: "utf8", env: { ...process.env, CONNECTA_TOKEN: token } },
     );
   try {
@@ -1003,7 +1017,7 @@ try {
       await assertClosed(`http://127.0.0.1:${containerPort}`);
       const containerDoctor = run(
         join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-        ["doctor", "--url", `http://127.0.0.1:${containerPort}`, "--pool", "local"],
+        ["doctor", "--url", `http://127.0.0.1:${containerPort}`, "--pool", "local-machine"],
         generatedRoot,
         { CONNECTA_TOKEN: containerToken },
       );

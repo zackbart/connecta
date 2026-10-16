@@ -598,8 +598,8 @@ same when no visible connector ID or title names that service. This service-name
 vocabulary is query interpretation, not an inventory of configured providers.
 For other service names, use the explicit `connector` scope. An unavailable
 catalog is a catalog failure, never an absence. Absence records and catalog
-errors use only the endpoint/pool and grant intersection; a connector hidden by
-that intersection is indistinguishable from an unconfigured one.
+errors use only the endpoint's tools; a connector the endpoint does not serve
+is indistinguishable from an unconfigured one.
 
 If no tool covers every search term, wider any-term fallback remains available
 for ordinary action/object searches and the page carries `matchMode: "partial"`.

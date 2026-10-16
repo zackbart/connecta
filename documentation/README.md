@@ -7,7 +7,8 @@ service, or change Connecta itself.
 | Your task                                                             | Start here                                                            | Read next when needed                                                                                                                            |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Use an existing endpoint to answer a question or perform a task       | [Operating an endpoint](./operating.md)                               | [Meta-tools](./meta-tools.md), [guest API](./code-mode.md)                                                                                       |
-| Set up, configure, upgrade, or diagnose a deployment                  | [Deploying Connecta](./deploying.md)                                  | [Auth](./auth.md), [operator UI](./operator-ui.md)                                                                                               |
+| Set up, configure, upgrade, or diagnose a deployment                  | [Deploying Connecta](./deploying.md)                                  | [Auth](./auth.md), [operator UI](./operator-ui.md), [migration to 0.33](./migration-0.33.md)                                                     |
+| Lay out an agent's pools on a deployment                              | [Organizing an agent's pools](./auth.md#organizing-an-agents-pools)   | [Pool owners](./auth.md#pool-owners-for-google-workspace), [agent endpoints](./auth.md#agent-endpoints)                                          |
 | Add a maintained integration, remote MCP, or HTTP API to a deployment | [Integrating services](./integrating.md)                              | Provider skill, [classification](./architecture.md#providers-and-reviewed-classification), [downstream auth](./auth.md#shared-and-personal-auth) |
 | Change Connecta's source, tests, or published contracts               | [AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md) | [Principles](https://github.com/zackbart/connecta/blob/main/PRINCIPLES.md), [architecture](./architecture.md), then the affected contract        |
 
@@ -17,10 +18,11 @@ service, or change Connecta itself.
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | [Meta-tools](./meta-tools.md)                               | Six top-level tools, discovery, direct-call results, paging, skills, and recovery                             |
 | [Code mode](./code-mode.md)                                 | JavaScript guest API, executor requirements, output, retries, cancellation, limits, and writes                |
-| [Auth](./auth.md)                                           | Inbound identity, grants, pools, machine tokens, credential ownership, and downstream OAuth                   |
+| [Auth](./auth.md)                                           | Inbound identity, maintainers, pools and members, agents, credential ownership, and downstream OAuth          |
 | [Architecture](./architecture.md)                           | Request lifetimes, routes, storage, configuration, import boundaries, and Effect implementation               |
 | [Operator UI](./operator-ui.md)                             | Optional UI setup, scoped configuration and live-data contract, activity disclosure, and UI implementation    |
 | [Operator UI tests](./operator-tests.md)                    | Browser state matrix, real-server flows, and snapshot maintenance                                             |
+| [Migration to 0.33](./migration-0.33.md)                    | Upgrade actions from 0.32 options to maintainers, members, agents, agent endpoints, and pool owners           |
 | [Provider migration for 0.29](./provider-migration-0.29.md) | Upgrade actions for Notion, Vercel, and Cloudflare; provider reconciliation tables supply exact name mappings |
 | [Provider auth migration](./provider-auth-migration.md)     | Upgrade actions when `auth` selects hosted MCP or Connecta's REST connector, Stripe and Vercel                |
 

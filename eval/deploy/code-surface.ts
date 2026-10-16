@@ -98,7 +98,8 @@ function withCodeSurface(connecta: Connecta): Connecta {
   return {
     ...connecta,
     async fetch(request, env, ctx) {
-      if (request.method !== "POST" || !new URL(request.url).pathname.startsWith("/mcp"))
+      const path = new URL(request.url).pathname;
+      if (request.method !== "POST" || !(path.startsWith("/mcp") || path.startsWith("/agent/")))
         return connecta.fetch(request, env, ctx);
       const body = (await request
         .clone()

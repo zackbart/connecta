@@ -85,20 +85,21 @@ table, security headers. Route _order_ is the contract — several routes would
 behave differently if they were reachable in another order — so read the table
 top to bottom.
 
-| Order | Route                                                     | Notes                                                                                                                                                                                                                                                                                |
-| ----- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0     | MCP Origin check                                          | A disallowed `Origin` on `/mcp*` is a fixed 403 before redirects, admission, auth, or preflight — costing no permit and no auth lookup. Originless requests are admitted.                                                                                                            |
-| 0     | HTTPS upgrade                                             | 308 to an HTTPS `publicUrl`, with path and query _assigned_ onto it rather than resolved against it, so a `//host` pathname cannot replace the origin. `/health` is exempt: a loopback probe must not need public DNS.                                                               |
-| 0     | Cloudflare Access (Worker, when enabled)                  | Edge admission ahead of this table; an admitted invocation carries trusted identity in `ctx.access`.                                                                                                                                                                                 |
-| 1     | `/oauth/client-metadata/<connectorId>`                    | Public GET-only CIMD for configured self-hosted OAuth connectors; fixed `publicUrl`, no auth or storage.                                                                                                                                                                             |
-| 1     | Mounted UI routes                                         | Before wildcard OPTIONS, so mutation routes refuse preflight rather than inheriting MCP CORS. No UI module, no routes.                                                                                                                                                               |
-| 1     | `/connect/<connectorId>`, `/oauth/callback/<connectorId>` | GET-only browser OAuth routes, before wildcard OPTIONS. Both verify the initiating user and management permission, independent of the UI.                                                                                                                                            |
-| 2     | MCP preflight                                             | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth.                                                                                                                                                                                                                         |
-| 2     | Other `OPTIONS`                                           | Auth metadata first, otherwise compatibility CORS preflight.                                                                                                                                                                                                                         |
-| 3     | `/.well-known/*`                                          | Public auth metadata, or 404. Protected-resource discovery does not authenticate callers or evaluate endpoint grants.                                                                                                                                                                |
-| 4     | `/health`                                                 | Open and payload-free: health, executor, admission, and deployment metadata.                                                                                                                                                                                                         |
-| 6     | `/mcp`, `/mcp/<pool>`                                     | Admission, then auth, then a request-local MCP server. Body-confirmed modern listens skip admission and are refused after auth and SDK validation. An undeclared pool, a refusing endpoint grant, and a throwing endpoint grant are one identical 404; see [pools](./auth.md#pools). |
-| 7     | Other paths                                               | 404. Custom HTTP routes belong to the deployment.                                                                                                                                                                                                                                    |
+| Order | Route                                                     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0     | MCP Origin check                                          | A disallowed `Origin` on `/mcp*` is a fixed 403 before redirects, admission, auth, or preflight — costing no permit and no auth lookup. Originless requests are admitted.                                                                                                                                                                                                                                                            |
+| 0     | HTTPS upgrade                                             | 308 to an HTTPS `publicUrl`, with path and query _assigned_ onto it rather than resolved against it, so a `//host` pathname cannot replace the origin. `/health` is exempt: a loopback probe must not need public DNS.                                                                                                                                                                                                               |
+| 0     | Cloudflare Access (Worker, when enabled)                  | Edge admission ahead of this table; an admitted invocation carries trusted identity in `ctx.access`.                                                                                                                                                                                                                                                                                                                                 |
+| 1     | Agent namespace, any path starting `/agent` once decoded  | First, so no path Access bypasses reaches a human route. Exactly `/agent/<pool>`: admission, then the `cta_` adapter alone, then pool membership; every other spelling is the pool 404 before admission or auth. See [agent endpoints](./auth.md#agent-endpoints).                                                                                                                                                                   |
+| 1     | `/oauth/client-metadata/<connectorId>`                    | Public GET-only CIMD for configured self-hosted OAuth connectors; fixed `publicUrl`, no auth or storage.                                                                                                                                                                                                                                                                                                                             |
+| 1     | Mounted UI routes                                         | Before wildcard OPTIONS, so mutation routes refuse preflight rather than inheriting MCP CORS. No UI module, no routes.                                                                                                                                                                                                                                                                                                               |
+| 1     | `/connect/<connectorId>`, `/oauth/callback/<connectorId>` | GET-only browser OAuth routes, before wildcard OPTIONS. Both verify the initiating user and management permission, independent of the UI.                                                                                                                                                                                                                                                                                            |
+| 2     | MCP preflight                                             | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth.                                                                                                                                                                                                                                                                                                                                                                         |
+| 2     | Other `OPTIONS`                                           | Auth metadata first, otherwise compatibility CORS preflight.                                                                                                                                                                                                                                                                                                                                                                         |
+| 3     | `/.well-known/*`                                          | Public auth metadata, or 404. Protected-resource discovery does not authenticate callers or evaluate endpoint grants.                                                                                                                                                                                                                                                                                                                |
+| 4     | `/health`                                                 | Open and payload-free: health, executor, admission, and deployment metadata.                                                                                                                                                                                                                                                                                                                                                         |
+| 6     | `/mcp`, `/mcp/<pool>`                                     | Admission, then auth, then a request-local MCP server. No body is read before auth and endpoint admission. A request naming `subscriptions/listen` takes its permit only after a bounded classification read (413 past 64 KiB); a body-confirmed modern listen takes none and is refused after SDK validation. A non-maintainer at `/mcp`, a non-member, and an undeclared pool get one identical 404; see [pools](./auth.md#pools). |
+| 7     | Other paths                                               | 404. Custom HTTP routes belong to the deployment.                                                                                                                                                                                                                                                                                                                                                                                    |
 
 Every response leaves through `withSecurityHeaders`. HTML uses one common
 security-header helper, including status and error pages. Operator shells
@@ -112,27 +113,33 @@ reordering reads like a harmless refactor.
 An admitted non-preflight `/mcp` request then takes five steps in
 `src/routes/mcp.ts`:
 
-1. **Admit.** Modern `subscriptions/listen` requests take no permit: their
-   mirrored method and parsed body must both name the unsupported method.
-   They still pass auth, endpoint admission, and SDK validation, then receive HTTP
-   404 with JSON-RPC `-32601`. Their body classification and auth share the
-   configured request lifetime, starting before classification. Other requests
-   take one permit from the deployment-wide pool, taken before auth so an
-   unauthenticated flood costs a permit rather than a Clerk lookup, and held
-   until the response _body_ completes, the caller leaves, or its configured
-   lifetime ends, not until the handler returns.
-2. **Authorize.** Machine tokens precede interactive providers. A provider's
+1. **Admit.** No request body is read before auth on any endpoint. A request
+   whose `Mcp-Method` header names `subscriptions/listen` takes no permit
+   before auth. After auth and endpoint admission connecta reads at most
+   64 KiB (`MAX_LISTEN_CLASSIFICATION_BYTES`) of it: past that it answers
+   413 `-33006` and stops reading. A body that confirms a modern listen stays
+   permit-free, passes SDK validation, and receives HTTP 404 with JSON-RPC
+   `-32601`; anything else takes a permit then, so the header alone bypasses
+   nothing. Auth and classification share the configured request lifetime.
+   Other requests take one permit from the deployment-wide pool, taken before
+   auth so an unauthenticated flood costs a permit rather than a Clerk lookup,
+   and held until the response _body_ completes, the caller leaves, or its
+   configured lifetime ends, not until the handler returns.
+2. **Authorize.** `/agent/<pool>` consults only the built-in `cta_` adapter
+   (`authorizeAgent`), never with the runtime context that carries
+   `ctx.access`. Human endpoints refuse a `cta_` token before recognition or
+   storage, and never ask the `cta_` adapter. A provider's
    synchronous credential recognition selects the sole verifier for an explicit
-   credential; a refusal never falls back to another identity. Human routes
-   reject machine credentials without verification. With no recognized
+   credential; a refusal never falls back to another identity. With no recognized
    credential, configured providers are tried in order. A 401 takes its
    challenge from the actual protected-resource metadata owner. No providers
    means open development and warns at construction.
 3. **Admit to the endpoint.** Plain `/mcp` admits a principal listed in
    `maintainers` (or, with no inbound auth, the anonymous caller) and serves the
-   whole catalog. `/mcp/<pool>` admits the pool's static `members`, matched by
-   principal or by `identity.agent`, and serves exactly the pool's tools
-   (`src/membership.ts`, `admitsMaintainer` and `memberPool` in
+   whole catalog. `/mcp/<pool>` admits the pool's human `members`, matched by
+   principal, and `/agent/<pool>` its agent members, matched by
+   `identity.agent`; both serve exactly the pool's tools
+   (`src/membership.ts`, `admitsMaintainer`, `memberPool`, and `agentPool` in
    `src/routes/shared.ts`). Nothing intersects or widens either view; every
    refusal is one 404 naming no pool.
    The endpoint's `readOnly` is the pool's own value, else the deployment's;
@@ -195,13 +202,14 @@ request-scoped sent-credential set and pass through `redactAgentOutput` before
 serialization. The SDK's `server/discover` response and registered meta-tool
 results use that same set; connector contexts retain only an opaque scope.
 
-| Refusal                             | HTTP status | Application code | Previous code |
-| ----------------------------------- | ----------- | ---------------- | ------------- |
-| Request capacity exhausted          | 503         | `-33001`         | `-31001`      |
-| Server shutting down                | 503         | `-33002`         | `-31002`      |
-| Request lifetime exceeded           | 504         | `-33003`         | none          |
-| Pool missing or refused             | 404         | `-33004`         | none          |
-| Origin or admitted access forbidden | 403         | `-33005`         | none          |
+| Refusal                              | HTTP status | Application code | Previous code |
+| ------------------------------------ | ----------- | ---------------- | ------------- |
+| Request capacity exhausted           | 503         | `-33001`         | `-31001`      |
+| Server shutting down                 | 503         | `-33002`         | `-31002`      |
+| Request lifetime exceeded            | 504         | `-33003`         | none          |
+| Pool missing or refused              | 404         | `-33004`         | none          |
+| Origin or admitted access forbidden  | 403         | `-33005`         | none          |
+| Listen classification body too large | 413         | `-33006`         | none          |
 
 These allocations are outside JSON-RPC's reserved `-32768..-32000` range and
 MCP's `-32020..-32099` range. The prior admission codes were also outside those
@@ -419,7 +427,7 @@ three consecutive matching responses.
 | Raw request path           | Access outcome | Worker pathname (+ search) |
 | -------------------------- | -------------- | -------------------------- |
 | `/agent/x`                 | bypassed       | `/agent/x`                 |
-| `/agent/simon-zack`        | bypassed       | `/agent/simon-zack`        |
+| `/agent/assistant-alice`   | bypassed       | `/agent/assistant-alice`   |
 | `/agent/`                  | bypassed       | `/agent/`                  |
 | `/agent/x/`                | bypassed       | `/agent/x/`                |
 | `/agent/x?y`               | bypassed       | `/agent/x?y`               |
@@ -455,6 +463,12 @@ route must keep that property. It should accept exactly
 refuse an empty segment, a trailing slash, any extra segment, `%`, uppercase
 variants, and a leading `//`, all with the same 404. It must ignore
 `ctx.access` entirely, since a bypassed request still carries an AUD.
+[Agent endpoints](./auth.md#agent-endpoints) implement exactly this in
+`src/routes/agent-path.ts`, and `test/agent-endpoints.test.ts` replays every
+row of the table above. The hyphenated row stands for any two-part pool name
+such as `<agent>-<user>`. The pool names in the recorded paths were replaced
+with placeholders after the run; the edge behavior for that path shape was
+unaffected.
 
 To configure the bypass, keep the Worker-level application described in
 [Cloudflare Access on Workers](./auth.md#cloudflare-access-on-workers). Then,
@@ -487,9 +501,10 @@ control, then waited a fixed 90 seconds, and its negative controls were checked
 in the recorded rounds rather than before them.
 
 To repeat from a repository checkout, run
-`node scripts/probes/access-agent-bypass.mjs [--profile <name>] [output.json]`.
-Every `cf` call passes `--profile` explicitly, defaulting to `onemany`. Name
-the profile for the account that should host the probe; the profile needs
+`node scripts/probes/access-agent-bypass.mjs --profile <name> [output.json]`.
+`--profile` is required and has no default; every `cf` call passes it
+explicitly. Name the profile for the account that should host the probe; it
+needs
 Access application, policy, and service-token writes, plus Workers script
 writes. The script deploys and deletes the Worker with `cf`. `cf deploy` builds
 through Wrangler 4.136.0 or newer, so the probe installs Wrangler 4.145.0 into

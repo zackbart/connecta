@@ -57,17 +57,30 @@ This repository is deployment configuration, not a copy of Connecta itself.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability set;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
-- Unattended clients and `connecta doctor` need Access service credentials
-  plus a stored `cta_` bearer. Set `CF_ACCESS_CLIENT_ID`,
-  `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN` together for doctor, and
-  pass `--pool ci`: an agent reaches only the pools that list it, never plain
-  `/mcp`, which serves `maintainers` alone.
+- Agents (unattended clients) use `<PUBLIC_URL>/agent/<pool>` with a stored
+  `cta_` bearer as their only credential. That needs one self-hosted Access
+  application per hostname for `<host>/agent/*` with a single Bypass policy,
+  beside the Worker-level application (README.md § "Let agents through
+  Access"). Never bypass any other path. `/mcp` and `/mcp/<pool>` refuse `cta_`.
+  `connecta doctor` also reads `/health` behind Access: set
+  `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN`
+  together, and pass `--pool ci`, a pool that lists the agent.
   Machine clients are the `agents` declared in `src/connecta.config.ts`. Issue
   or rotate a token through the Access-authenticated operator page or trusted
   `AccessTokenManager.rotate` tooling against this same D1 storage, as README
   "Machine tokens" describes. Never configure a static bearer or open startup.
   UI, vault, and activity use explicit optional imports;
   auth changes require a maintainer, or a pool member for their own personal account.
+- Organize agent pools by connecta's agent pool layout:
+  `node_modules/@zackbart/connecta/documentation/auth.md#organizing-an-agents-pools`
+  ([online](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#organizing-an-agents-pools)).
+  Each agent keeps one Connecta connection whose client picks the pool per
+  turn: base pool `<agent>` (shared connectors, no `owner`) outside a
+  one-on-one, and `<agent>-<user>` (the base plus that user's own connector
+  ids, `owner` set to their Workspace address) only with that user. Never list
+  another person in a `<agent>-<user>` pool: its per-user connectors act as
+  that user for every member. Never add a second Connecta connection or mount
+  downstream tools directly.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
   `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand

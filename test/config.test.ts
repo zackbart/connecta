@@ -207,7 +207,6 @@ describe("ConnectaConfig boundary", () => {
       connectors: [],
       auth: fakeClerkAuth(),
       maintainers: ["user_operator"],
-      identity: {},
       storage: memoryStorage(),
       publicUrl: "https://connecta.test",
       executor,
@@ -504,6 +503,8 @@ describe("ConnectaConfig schema", () => {
     ["pools", { support: { members: ["alice"] } }, "ConnectaConfig.pools.support.tools is required"],
     ["pools", { support: { tools: ["x"] } }, "ConnectaConfig.pools.support.members is required"],
     // Options #837 removed fail as unknown, naming their replacement.
+    ["identity", {}, "- ConnectaConfig.identity\nThe identity section was removed (#837)"],
+    ["identity", { typo: true }, "- ConnectaConfig.identity.typo\nThe identity section was removed (#837)"],
     [
       "identity",
       { connectorAccess: () => "all" },

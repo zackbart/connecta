@@ -748,17 +748,29 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       args: Record<string, unknown> = {},
       headers: Record<string, string> = {},
     ) => {
+      // Agents use /agent/<pool>; people use /mcp/<pool> (#837).
       const request = mcpRpc(
         "tools/call",
         { name: "call_tool", arguments: { address: "mail.list_labels", args } },
-        { token, pool },
+        { token, ...(token.startsWith("cta_") ? { agentPool: pool } : { pool }) },
       );
       for (const [name, value] of Object.entries(headers)) request.headers.set(name, value);
       return (await readJsonRpc(await connecta.fetch(request))).result;
     };
 
-    it("INV-3: one connector serves per-person pools, and each agent call reaches only its pool owner's mailbox", async () => {
+    it("INV-3: one connector serves per-person pools, and each agent call at /agent/<pool> reaches only its pool owner's mailbox", async () => {
       const { connecta, mapping, assistant } = await deployment();
+      // The same agent at a human pool endpoint is refused before any delegation.
+      const human = await connecta.fetch(
+        mcpRpc(
+          "tools/call",
+          { name: "call_tool", arguments: { address: "mail.list_labels", args: {} } },
+          { token: assistant, pool: "assistant-alice" },
+        ),
+      );
+      expect(human.status).toBe(401);
+      expect(await human.text()).toContain("host_auth_required");
+      expect(tokenCalls).toEqual([]);
       expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
       expect((await callOver(connecta, assistant, "assistant-bob")).isError).toBeFalsy();
       expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
@@ -824,7 +836,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
             mcpRpc(
               "tools/call",
               { name: "execute_code", arguments: { code: "async () => null" } },
-              { token: assistant, pool: "assistant-alice" },
+              { token: assistant, agentPool: "assistant-alice" },
             ),
           ),
         )

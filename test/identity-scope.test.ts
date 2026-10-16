@@ -179,7 +179,7 @@ describe("maintainers and plain /mcp", () => {
     },
   );
 
-  it("INV-4: admits a maintainer at /mcp with the whole catalog and refuses a non-maintainer and an agent with the pool 404", async () => {
+  it("INV-4: admits a maintainer at /mcp with the whole catalog, refuses a non-maintainer with the pool 404, and an agent token outright", async () => {
     const storage = memoryStorage();
     const warn = vi.fn();
     const c = deployment({
@@ -195,15 +195,14 @@ describe("maintainers and plain /mcp", () => {
     const undeclared = await wire(await listTools(c, "/mcp/missing", "bob"));
     expect(undeclared.status).toBe(404);
     expect(await wire(await listTools(c, "/mcp", "bob"))).toEqual(undeclared);
-    expect(await wire(await listTools(c, "/mcp", bot))).toEqual(undeclared);
+    expect((await listTools(c, "/mcp", bot)).status).toBe(401);
     expect(await wire(await listTools(c, "/mcp/team", "alice"))).toEqual(undeclared);
     const reasons = warn.mock.calls
       .flat()
       .flatMap((entry) => (entry && typeof entry === "object" ? [entry.reason] : []));
-    expect(reasons).toEqual(
-      expect.arrayContaining(["pool_not_declared", "not_maintainer", "agent_not_maintainer", "not_pool_member"]),
-    );
-    expect((await listTools(c, "/mcp/team", bot)).status).toBe(200);
+    expect(reasons).toEqual(expect.arrayContaining(["pool_not_declared", "not_maintainer", "not_pool_member"]));
+    expect((await listTools(c, "/mcp/team", bot)).status).toBe(401);
+    expect((await listTools(c, "/agent/team", bot)).status).toBe(200);
     expect((await listTools(c, "/mcp/team", "bob")).status).toBe(200);
     const unauthenticated = await c.fetch(
       new Request(`${BASE}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
@@ -224,10 +223,11 @@ describe("maintainers and plain /mcp", () => {
     });
     const bot = await issueAgentToken(storage, "bot");
     expect(c.describeConfig().maintainers).toEqual([]);
-    expect((await listTools(c, "/mcp", bot)).status).toBe(404);
-    expect((await listTools(c, "/mcp/bots", bot)).status).toBe(200);
+    expect((await listTools(c, "/mcp", bot)).status).toBe(401);
+    expect((await listTools(c, "/mcp/bots", bot)).status).toBe(401);
+    expect((await listTools(c, "/agent/bots", bot)).status).toBe(200);
     const config = await c.fetch(request("/ui/api/config", bot));
-    expect(config.status).toBe(404);
+    expect(config.status).toBe(401);
     await c.close();
   });
 
@@ -904,7 +904,7 @@ describe("pools serve exactly their tools", () => {
     await c.close();
   });
 
-  it("INV-4: an agent member is admitted at /mcp/<pool> with its token (interim until /agent) but never at /mcp", async () => {
+  it("INV-4: an agent member is admitted only at /agent/<pool>, never at /mcp or /mcp/<pool>", async () => {
     const storage = memoryStorage();
     const c = deployment({
       storage,
@@ -914,12 +914,13 @@ describe("pools serve exactly their tools", () => {
     });
     const bot = await issueAgentToken(storage, "bot");
     const other = await issueAgentToken(storage, "other");
-    const admitted = await searchTextAs(c, "/mcp/bots", bot);
+    const admitted = await searchTextAs(c, "/agent/bots", bot);
     expect(admitted).toContain("wiki.read");
     expect(admitted).not.toContain("notes.search");
-    const refused = await wire(await listTools(c, "/mcp/missing", bot));
-    expect(await wire(await listTools(c, "/mcp", bot))).toEqual(refused);
-    expect(await wire(await listTools(c, "/mcp/bots", other))).toEqual(refused);
+    const refused = await wire(await listTools(c, "/agent/missing", bot));
+    expect(refused.status).toBe(404);
+    expect(await wire(await listTools(c, "/agent/bots", other))).toEqual(refused);
+    for (const path of ["/mcp", "/mcp/bots"]) expect((await listTools(c, path, bot)).status).toBe(401);
     await c.close();
   });
 

@@ -140,7 +140,6 @@ export type AuthDenialReason =
   | "gate_denied"
   | "gate_failed"
   | "not_maintainer"
-  | "agent_not_maintainer"
   | "pool_not_declared"
   | "not_pool_member";
 
@@ -159,7 +158,6 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "gate_denied",
   "gate_failed",
   "not_maintainer",
-  "agent_not_maintainer",
   "pool_not_declared",
   "not_pool_member",
 ]);
@@ -495,6 +493,7 @@ export type FailureEvent =
   | "OAuth callback handoff could not be consumed; no authorization code was exchanged"
   | "MCP default endpoint request denied"
   | "MCP pool request denied"
+  | "MCP agent endpoint request denied"
   | "OAuth error callback consent could not be consumed; no authorization code was exchanged"
   | "MCP handler error"
   | "operator status"

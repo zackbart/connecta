@@ -217,13 +217,6 @@ const admission = {
   code: object(codeAdmission),
 };
 
-/**
- * Every management resolver was removed (#837): maintainers and pool members
- * decide management. The section stays empty so each removed key fails
- * construction naming its replacement.
- */
-const identity = {};
-
 /** The choice every deployment makes explicitly while `trust` migrates (#820). */
 const READ_ONLY_REQUIRED = (path: string) =>
   `${path} is required. Choose readOnly: true to refuse every write on /mcp, or readOnly: false to let ` +
@@ -358,8 +351,6 @@ const connectaConfig = {
     },
     resolve: (value) => normalizeAuth(value === undefined ? [] : Array.isArray(value) ? value : [value]),
   }),
-  /** Retired (#837): holds no options; management follows maintainers and pool members. */
-  identity: object(identity),
   /**
    * Agents, declared by name: lowercase letters, digits, `_` and `-`, each
    * unique. Each has one `cta_` token slot that operators issue, rotate, and
@@ -613,6 +604,29 @@ const RETIRED_IDENTITY: ReadonlyArray<readonly [string, string]> = [
 const isRetiredTrust = (path: string): boolean =>
   path === "ConnectaConfig.trust" || (path.startsWith("ConnectaConfig.pools.") && path.endsWith(".trust"));
 
+/**
+ * `identity` was removed whole (#837), so the walk reports only the section.
+ * Name each key it still holds, read by descriptor without running a getter
+ * or echoing a value, so a retired resolver's message names its replacement.
+ */
+function expandRetiredIdentity(config: unknown, paths: string[]): string[] {
+  if (!paths.includes("ConnectaConfig.identity")) return paths;
+  let keys: string[] = [];
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(config as object, "identity");
+    const value: unknown = descriptor && "value" in descriptor ? descriptor.value : undefined;
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      keys = Reflect.ownKeys(value).filter((key): key is string => typeof key === "string");
+    }
+  } catch {
+    keys = [];
+  }
+  if (keys.length === 0) return paths;
+  return paths.flatMap((path) =>
+    path === "ConnectaConfig.identity" ? keys.map((key) => `ConnectaConfig.identity.${key}`) : [path],
+  );
+}
+
 function rejectUnknownOptions(paths: string[]): void {
   if (paths.length === 0) return;
   throw new ConfigError(
@@ -636,6 +650,9 @@ function rejectUnknownOptions(paths: string[]): void {
       RETIRED_IDENTITY.filter(([key]) => paths.includes(`ConnectaConfig.identity.${key}`))
         .map(([key, replacement]) => `\nidentity.${key} was removed (#837): ${replacement}`)
         .join("") +
+      (paths.some((path) => path === "ConnectaConfig.identity" || path.startsWith("ConnectaConfig.identity."))
+        ? "\nThe identity section was removed (#837): maintainers and pool members decide access and management. Delete it."
+        : "") +
       (paths.includes("ConnectaConfig.grant")
         ? "\nThe top-level grant was removed (#837); list the people who may use plain /mcp in maintainers."
         : "") +
@@ -682,7 +699,7 @@ export function resolveConfig(config: ConnectaConfig): ResolvedConfig {
  */
 export function readConfig(config: ConnectaConfig): { input: ConnectaConfig; resolved: ResolvedConfig } {
   const read = readPlain(config, "ConnectaConfig", CONFIG);
-  rejectUnknownOptions(read.unknown);
+  rejectUnknownOptions(expandRetiredIdentity(config, read.unknown));
   const input = read.value as ConnectaConfig;
   const parsed = CONFIG.parse(input, "ConnectaConfig");
   assertCoherent(parsed);

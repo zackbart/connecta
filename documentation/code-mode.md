@@ -481,9 +481,9 @@ argument to the configured endpoint. It never fetches that
 URI or creates a connector from it.
 
 Resources are protocol reads on read-only and writable endpoints alike. A read
-requires a grant to the whole connector through the endpoint/pool and identity
-intersection. Exact-tool grants, including guarded grants, authorize no
-resources. An absent, hidden, tool-restricted or resource-incapable connector
+requires the whole connector on the endpoint: plain `/mcp`, or a pool whose
+`tools` list the connector id. A pool listing only exact `connector.tool`
+addresses authorizes no resources. An absent, hidden, tool-restricted or resource-incapable connector
 fails with `unknown_address`. The URI and extra arguments cannot select a
 different credential owner or downstream subject. Personal credentials come
 from the admitted principal, just as they do for tool calls.
@@ -1018,7 +1018,7 @@ createConnecta({
   connectors, executor,
   readOnly: false, // required: false writes, true refuses every write call
   pools: {
-    reporting: { tools: ["posthog"], readOnly: true, grant },
+    reporting: { tools: ["posthog"], readOnly: true, members: analysts },
   },
   classification: {
     posthog: { exec: "read" }, // only for a deployment with a read-only exec contract

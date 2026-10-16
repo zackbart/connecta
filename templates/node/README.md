@@ -25,10 +25,11 @@ warning, and npm 12 does not block the script. A later esbuild version needs a
 new explicit review and approval; do not replace the pinned entry with a broad
 package-name approval.
 
-Point an agent's MCP client at `http://localhost:8787/mcp/local`, the pool
-that lists `agent:local-machine`, with
-`Authorization: Bearer <returned-cta-token>`. Plain `/mcp` serves only the
-`maintainers`, and an agent is never one. `CONNECTA_TOKEN` is a client and
+Point an agent's MCP client at `http://localhost:8787/agent/local-machine`, the agent
+endpoint of the pool that lists `agent:local-machine`, with
+`Authorization: Bearer <returned-cta-token>`. Agents use only `/agent/<pool>`:
+`/mcp` and `/mcp/<pool>` are for people and refuse `cta_` tokens, and plain
+`/mcp` serves only the `maintainers`. `CONNECTA_TOKEN` is a client and
 doctor variable only. Setting it never configures server authentication.
 
 `accessTokens(storage)` is always installed. With no issued agent token and
@@ -192,11 +193,13 @@ revokes them from the operator UI. Trusted local rotation above works without
 Clerk and never requires opening the server.
 
 Set who uses what in code: `maintainers` for plain `/mcp` and the operator UI,
-and each pool's `members` for `/mcp/<pool>`, which serves exactly that pool's
-`tools`. Maintainers alone administer shared credentials and OAuth grants,
-manage agent tokens, and read activity. Use `authScope: "personal"` for a
-connector where each person should connect their own downstream account: a
-member connects their own account on the personal connectors in their pools.
+and each pool's `members` for `/mcp/<pool>` (people) and `/agent/<pool>`
+(agents), which serve exactly that pool's `tools`. Agent endpoints publish no
+protected-resource metadata and accept only `cta_` tokens. Maintainers alone
+administer shared credentials and OAuth grants, manage agent tokens, and read
+activity. Use `authScope: "personal"` for a connector where each person should
+connect their own downstream account: a member connects their own account on
+the personal connectors in their pools.
 
 ### Credential vault
 
@@ -291,6 +294,7 @@ Upgrading from v0.23 does not require rotating managed `cta_…` tokens. Import
 `accessTokens: true` with `accessTokens: accessTokens(storage)`, and keep the
 same persistent storage namespace. From 0.33 `maintainers` and pool `members`
 replace `identity.connectorAccess` and every `grant`, and maintainers replace
-the four `identity` management permissions; delete them. From 0.33 a stored token admits only once it is bound to a
+the four `identity` management permissions; delete them and the `identity`
+section, and follow the package's `documentation/migration-0.33.md`. From 0.33 a stored token admits only once it is bound to a
 declared agent: follow "Tokens issued before agents" above. See the package's
 `documentation/auth.md` for the migration and storage requirements.

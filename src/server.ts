@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { notFoundResponse } from "./branding.js";
 import { aggregateCallAdmissionSnapshots } from "./call-admission.js";
 import { isAdmittingExecutor } from "./executor-admission.js";
+import { isAgentPath } from "./routes/agent-path.js";
 import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
 import { routeOAuthCallback } from "./routes/oauth.js";
 import { routeOAuthClientMetadata } from "./routes/oauth-client-metadata.js";
@@ -75,6 +76,10 @@ export function createFetchHandler(
   const route = (context: RouteContext): Effect.Effect<Response, unknown> =>
     Effect.gen(function* () {
       const { request, path, baseUrl } = context;
+      // The agent namespace is routed before anything else, so no path
+      // Cloudflare Access bypasses as `/agent/*` can reach a human route.
+      if (isAgentPath(path)) return (yield* routeMcp.handle(context)) ?? notFoundResponse(request, opts.config);
+
       const clientMetadata = routeOAuthClientMetadata(context);
       if (clientMetadata) return clientMetadata;
 

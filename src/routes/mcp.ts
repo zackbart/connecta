@@ -32,9 +32,12 @@ import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
 import { detach } from "../runtime/run.js";
 import type { Logger } from "../types.js";
+import { agentEndpointPool, isAgentPath } from "./agent-path.js";
 import {
   admitsMaintainer,
+  agentPool,
   authorize,
+  authorizeAgent,
   mayManageConnector,
   memberPool,
   type RouteContext,
@@ -55,9 +58,25 @@ const SDK_BODY_BOUND = { maxRequestBodySize: Number.MAX_SAFE_INTEGER };
 // Identity, not a status/header a custom auth response could imitate.
 const deadlineResponses = new WeakSet<Response>();
 
-async function isModernListen(request: Request, signal: AbortSignal): Promise<boolean> {
+/**
+ * The most a `subscriptions/listen` classification reads. A listen is a small
+ * JSON-RPC request; this read happens before request admission, so it is
+ * bounded by this fixed cap rather than by the host's body limit (#857).
+ */
+export const MAX_LISTEN_CLASSIFICATION_BYTES = 64 * 1024;
+
+/**
+ * Whether an admitted, authenticated request is a modern `subscriptions/listen`.
+ * Reads at most `MAX_LISTEN_CLASSIFICATION_BYTES` of a clone, then stops and
+ * cancels the body: `"too_large"` past the cap, `"aborted"` when the request
+ * ended or its lifetime ran out while reading.
+ */
+async function classifyListen(
+  request: Request,
+  signal: AbortSignal,
+): Promise<"listen" | "other" | "too_large" | "aborted"> {
   const reader = request.clone().body?.getReader();
-  if (!reader) return false;
+  if (!reader) return "other";
   const onAbort = () => {
     void reader.cancel(signal.reason).catch(() => {});
     void request.body?.cancel(signal.reason).catch(() => {});
@@ -72,10 +91,14 @@ async function isModernListen(request: Request, signal: AbortSignal): Promise<bo
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > SDK_BODY_BOUND.maxRequestBodySize) return false;
+      if (bytes > MAX_LISTEN_CLASSIFICATION_BYTES) {
+        void reader.cancel().catch(() => {});
+        void request.body?.cancel().catch(() => {});
+        return "too_large";
+      }
       text += decoder.decode(value, { stream: true });
     }
-    if (signal.aborted) return false;
+    if (signal.aborted) return "aborted";
     const protocolVersion = request.headers.get("MCP-Protocol-Version");
     const method = request.headers.get("Mcp-Method");
     const route = classifyInboundRequest({
@@ -84,12 +107,13 @@ async function isModernListen(request: Request, signal: AbortSignal): Promise<bo
       ...(method !== null ? { mcpMethodHeader: method } : {}),
       body: JSON.parse(text + decoder.decode()),
     });
-    return (
-      route.kind === "modern" && route.messageKind === "request" && route.message.method === "subscriptions/listen"
-    );
+    return route.kind === "modern" && route.messageKind === "request" && route.message.method === "subscriptions/listen"
+      ? "listen"
+      : "other";
   } catch {
+    if (signal.aborted) return "aborted";
     // Leave unreadable, malformed, and legacy bodies to the normal SDK path.
-    return false;
+    return "other";
   } finally {
     signal.removeEventListener("abort", onAbort);
     reader.releaseLock();
@@ -552,6 +576,32 @@ function serveMcp(
   );
 }
 
+/**
+ * What an MCP path names. Plain `/mcp` and `/mcp/<pool>` are human
+ * endpoints; `/agent/<pool>` is an agent endpoint, and every other path in
+ * the agent namespace is refused before auth (#837).
+ */
+type McpEndpoint =
+  | { kind: "default" }
+  | { kind: "pool"; pool: string }
+  | { kind: "agent"; pool: string }
+  | { kind: "refused" };
+
+function mcpEndpoint(path: string): McpEndpoint | null {
+  if (isAgentPath(path)) {
+    const pool = agentEndpointPool(path);
+    return pool === undefined ? { kind: "refused" } : { kind: "agent", pool };
+  }
+  if (path === "/mcp") return { kind: "default" };
+  if (path.startsWith("/mcp/")) return { kind: "pool", pool: path.slice("/mcp/".length) };
+  return null;
+}
+
+/** Whether `path` is an MCP or agent endpoint path, valid or not. */
+function isMcpPath(path: string): boolean {
+  return mcpEndpoint(path) !== null;
+}
+
 export function createMcpRoute(opts: ServerOptions): {
   handle(context: RouteContext): Effect.Effect<Response | null, unknown>;
   rejectOrigin(request: Request): Response | null;
@@ -585,8 +635,7 @@ export function createMcpRoute(opts: ServerOptions): {
     return hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
   };
   const rejectOrigin = (request: Request): Response | null => {
-    const path = new URL(request.url).pathname;
-    if (path !== "/mcp" && !path.startsWith("/mcp/")) return null;
+    if (!isMcpPath(new URL(request.url).pathname)) return null;
     const origin = request.headers.get("Origin");
     if (origin === null || allowsOrigin(origin)) return null;
     return withMcpCors(
@@ -614,24 +663,36 @@ export function createMcpRoute(opts: ServerOptions): {
   };
 
   function routeMcp(context: RouteContext): Effect.Effect<Response | null, unknown> {
-    const { path, request, baseUrl, runtimeContext } = context;
+    const { path, request, baseUrl } = context;
     // Protected-resource metadata stays public, including when a grant is
     // configured, so a fresh OAuth client can discover how to authenticate.
-    if (path !== "/mcp" && !path.startsWith("/mcp/")) return Effect.succeed(null);
+    const endpoint = mcpEndpoint(path);
+    if (!endpoint) return Effect.succeed(null);
     // Admission, refusal bodies, SDK serialization and connector work share
     // one set. Connector contexts still receive an opaque scope, never the
     // inbound Request or its headers.
     const requestScope = {};
     const sentSecrets = sentSecretsForRequest(requestScope, sentSecretsForRequest(request));
-    const poolName = path === "/mcp" ? undefined : path.slice("/mcp/".length);
+    const poolName = endpoint.kind === "pool" || endpoint.kind === "agent" ? endpoint.pool : undefined;
+    const agentEndpoint = endpoint.kind === "agent";
+    // Access attaches `ctx.access` even to a path it bypasses; an agent
+    // endpoint never reads it, so nothing past this point receives it.
+    const runtimeContext =
+      agentEndpoint && context.runtimeContext
+        ? { waitUntil: context.runtimeContext.waitUntil.bind(context.runtimeContext) }
+        : context.runtimeContext;
     const origin = request.headers.get("Origin");
     const allowed = origin === null || allowsOrigin(origin);
     const cors = (response: Response): Response =>
       withMcpCors(response, request, configuredOrigins === "*" ? "*" : allowed ? origin : null);
+    const notFound = (): Response => cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
     // DNS-rebinding refusals cost neither a permit nor an auth lookup. This
     // local header check also guards OPTIONS before any provider metadata.
     const refusal = rejectOrigin(request);
     if (refusal) return Effect.succeed(refusal);
+    // Every other spelling in the agent namespace is the pool 404, before any
+    // admission or auth: no decoding, case folding, or slash collapsing.
+    if (endpoint.kind === "refused") return Effect.succeed(notFound());
     if (request.method === "OPTIONS") {
       return Effect.succeed(cors(new Response(null, { status: 204 })));
     }
@@ -653,39 +714,26 @@ export function createMcpRoute(opts: ServerOptions): {
             if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
           }),
         );
-        // Only a body-confirmed modern listen may skip admission. Trusting the
-        // method header alone would let a legacy tools/call bypass the pool.
+        // A request naming `subscriptions/listen` defers its permit: nothing of
+        // its body is read until auth and endpoint admission pass, and then at
+        // most MAX_LISTEN_CLASSIFICATION_BYTES (#857). Only a body-confirmed
+        // modern listen goes without a permit; trusting the header alone would
+        // let a legacy tools/call bypass the pool, so anything else takes one
+        // after classification. Every other request takes its permit here,
+        // before auth, and no body is read before auth on any path.
         const startedAt = Date.now();
         const maxDurationMs = opts.requestAdmission.maxDurationMs;
-        let listen = false;
-        if (request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen") {
-          const classify = Effect.promise(() => isModernListen(request, localAbort.signal));
-          const prepared =
-            maxDurationMs === undefined
-              ? Option.some(yield* classify)
-              : yield* classify.pipe(Effect.timeoutOption(Duration.millis(maxDurationMs)));
-          if (Option.isNone(prepared)) {
-            localAbort.abort(new Error("MCP request lifetime exceeded."));
-            return cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
-          }
-          listen = prepared.value;
-        }
-        const admission = listen
+        const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";
+        const refuseAdmission = (error: unknown): Effect.Effect<Response, unknown> => {
+          if (!(error instanceof ExecutorAdmissionError)) return Effect.fail(error);
+          if (error.code === "executor_cancelled") return Effect.fail(request.signal.reason ?? error);
+          if (error.code === "executor_overloaded") warnAdmissionRejected(error);
+          return Effect.succeed(cors(requestAdmissionFailure(sentSecrets, error)));
+        };
+        const admission = listenHeader
           ? Result.succeed(undefined)
           : yield* Effect.result(admitted(opts.requestAdmission, request.signal));
-        if (Result.isFailure(admission)) {
-          const error = admission.failure;
-          if (!(error instanceof ExecutorAdmissionError)) {
-            return yield* Effect.fail(error);
-          }
-          if (error.code === "executor_cancelled") {
-            return yield* Effect.fail(request.signal.reason ?? error);
-          }
-          if (error.code === "executor_overloaded") {
-            warnAdmissionRejected(error);
-          }
-          return cors(requestAdmissionFailure(sentSecrets, error));
-        }
+        if (Result.isFailure(admission)) return yield* refuseAdmission(admission.failure);
         const remainingMs = admission.success
           ? admission.success.remainingMs()
           : maxDurationMs === undefined
@@ -712,8 +760,37 @@ export function createMcpRoute(opts: ServerOptions): {
         // Effect `authorize` would put Effect in the /activity bundle, which
         // shares it, to save only the lookups an abandoned authorization
         // finishes on its own.
+        // Agent endpoints consult only the `cta_` adapter; human endpoints refuse `cta_`.
+        const admit = (): ReturnType<typeof authorize> =>
+          agentEndpoint
+            ? authorizeAgent(localRequest, baseUrl, opts.config.auth)
+            : authorize(localRequest, baseUrl, opts.config.auth, runtimeContext);
+        // Plain /mcp admits maintainers and serves the whole catalog; a pool
+        // admits its members, people at /mcp/<pool> and agents at
+        // /agent/<pool>, and serves exactly its tools (INV-4).
+        const scopeFor = (
+          admitted: Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>,
+        ): { access: ConnectorAccess; readOnly: boolean; poolOwner?: string } | undefined => {
+          if (poolName === undefined) {
+            return admitsMaintainer(opts, admitted)
+              ? { access: { connectorIds: "all" }, readOnly: opts.config.readOnly }
+              : undefined;
+          }
+          const pool = agentEndpoint
+            ? agentPool(opts, poolName, admitted.identity)
+            : memberPool(opts, poolName, admitted.identity);
+          // The owner travels with the scope, so both pool endpoints set the
+          // same caller facts (#837 P5: agents act as the pool owner).
+          return pool
+            ? {
+                access: pool.access,
+                readOnly: pool.readOnly,
+                ...(pool.owner !== undefined ? { poolOwner: pool.owner } : {}),
+              }
+            : undefined;
+        };
         const handled = Effect.gen(function* () {
-          const authz = yield* Effect.promise(() => authorize(localRequest, baseUrl, opts.config.auth, runtimeContext));
+          const authz = yield* Effect.promise(admit);
           if (!authz.ok) {
             const response = authz.response;
             // Preserve the auth adapter's challenge and status. The MCP host must
@@ -747,38 +824,43 @@ export function createMcpRoute(opts: ServerOptions): {
               ),
             );
           }
-          // Plain /mcp admits maintainers and serves the whole catalog; a pool
-          // admits its members and serves exactly its tools (INV-4). A
-          // non-maintainer, a non-member, and an undeclared pool are one
+          // A non-maintainer, a non-member, and an undeclared pool are one
           // identical 404 so a credential never enumerates the other pools;
           // the operator log is where the reason lives.
-          let access: ConnectorAccess = { connectorIds: "all" };
-          let readOnly = opts.config.readOnly;
-          let poolOwner: string | undefined;
-          if (poolName === undefined) {
-            if (!admitsMaintainer(opts, authz)) {
-              logFailure(
-                opts.config.logger,
-                "MCP default endpoint request denied",
-                failureRecord({
-                  reason: authz.identity.agent !== undefined ? "agent_not_maintainer" : "not_maintainer",
-                }),
-              );
-              return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
+          const scope = scopeFor(authz);
+          if (!scope) {
+            logFailure(
+              opts.config.logger,
+              poolName === undefined
+                ? "MCP default endpoint request denied"
+                : agentEndpoint
+                  ? "MCP agent endpoint request denied"
+                  : "MCP pool request denied",
+              failureRecord({
+                reason:
+                  poolName === undefined
+                    ? "not_maintainer"
+                    : opts.pools.has(poolName)
+                      ? "not_pool_member"
+                      : "pool_not_declared",
+              }),
+            );
+            return notFound();
+          }
+          const { access, readOnly, poolOwner } = scope;
+          if (listenHeader) {
+            const verdict = yield* Effect.promise(() => classifyListen(localRequest, localAbort.signal));
+            // The deadline timer aborts a stalled read; its body is already cancelled.
+            if (verdict === "aborted") {
+              return cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
             }
-          } else {
-            const pool = memberPool(opts, poolName, authz.identity);
-            if (!pool) {
-              logFailure(
-                opts.config.logger,
-                "MCP pool request denied",
-                failureRecord({ reason: opts.pools.has(poolName) ? "not_pool_member" : "pool_not_declared" }),
-              );
-              return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
+            if (verdict === "too_large") {
+              return cors(mcpRefusal(sentSecrets, 413, -33006, "MCP request body too large."));
             }
-            access = pool.access;
-            readOnly = pool.readOnly;
-            poolOwner = pool.owner;
+            if (verdict === "other") {
+              const late = yield* Effect.result(admitted(opts.requestAdmission, request.signal));
+              if (Result.isFailure(late)) return yield* refuseAdmission(late.failure);
+            }
           }
           let scopedRegistry: RegistryView;
           try {
@@ -791,7 +873,7 @@ export function createMcpRoute(opts: ServerOptions): {
               origin: request.headers.get("Origin"),
               currentResultAccess: async (address, classification, signal, access) => {
                 signal?.throwIfAborted();
-                const current = await authorize(localRequest, baseUrl, opts.config.auth, runtimeContext);
+                const current = await admit();
                 if (!current.ok) {
                   await current.response.body?.cancel().catch(() => {});
                   return false;
@@ -799,16 +881,9 @@ export function createMcpRoute(opts: ServerOptions): {
                 if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
                   return false;
                 // Paging re-admits the caller at this endpoint, as a new request would.
-                let currentAccess: ConnectorAccess = { connectorIds: "all" };
-                let currentReadOnly = opts.config.readOnly;
-                if (poolName === undefined) {
-                  if (!admitsMaintainer(opts, current)) return false;
-                } else {
-                  const pool = memberPool(opts, poolName, current.identity);
-                  if (!pool) return false;
-                  currentAccess = pool.access;
-                  currentReadOnly = pool.readOnly;
-                }
+                const currentScope = scopeFor(current);
+                if (!currentScope) return false;
+                const { access: currentAccess, readOnly: currentReadOnly } = currentScope;
                 const view = opts.registry.scoped({
                   ...currentAccess,
                   ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
@@ -848,6 +923,8 @@ export function createMcpRoute(opts: ServerOptions): {
                 // `authorize` admits an open deployment's every request as the
                 // anonymous actor; only a provider's `ok` is an authentication.
                 authenticated: opts.config.auth.length > 0,
+                // Both pool endpoints build the caller here from the same
+                // admitted scope, so an agent at /agent/<pool> carries the owner.
                 ...(poolName !== undefined ? { pool: poolName } : {}),
                 ...(poolOwner !== undefined ? { poolOwner } : {}),
               },

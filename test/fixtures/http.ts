@@ -15,6 +15,8 @@ type RpcOptions = {
   id?: number;
   /** A named pool: the request goes to `/mcp/<pool>`. */
   pool?: string;
+  /** A named pool's agent endpoint: the request goes to `/agent/<pool>`. */
+  agentPool?: string;
   query?: string;
   runtimeContext?: { waitUntil(promise: Promise<unknown>): void };
   signal?: AbortSignal;
@@ -64,7 +66,7 @@ export function mcpRpc(
   };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
   const request = new Request(
-    `${options.baseUrl ?? TEST_BASE}/mcp${options.pool ? `/${options.pool}` : ""}${options.query ?? ""}`,
+    `${options.baseUrl ?? TEST_BASE}${options.agentPool ? `/agent/${options.agentPool}` : `/mcp${options.pool ? `/${options.pool}` : ""}`}${options.query ?? ""}`,
     {
       method: "POST",
       headers,
