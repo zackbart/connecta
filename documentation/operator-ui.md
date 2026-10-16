@@ -90,11 +90,12 @@ operator confirmed against. A new secret opens once in a dialog with a copy
 button and a note that it won't be shown again; closing it drops the secret
 from the page, and recovery never closes it. A 409 `slot_changed` reads
 "Changed since you looked, refresh"; a 503 `outcome_unknown` or 499 `aborted`
-is a failure notice and is never retried. A slot may be acted on only after a
-successful slot-list read that started after the last event that could have
-changed it: a mutation sent for it, a contract whose `agents[].token` disagrees
-with the list (revision included) or drops the agent, or a read that failed.
-Until then its controls are off with "Refresh to continue", and each action is
+is a failure notice and is never retried. Sending a mutation leaves the slot
+unresolved until its successful response is validated, which resolves it. Any
+other outcome, a contract whose `agents[].token` disagrees with the list
+(revision included) or drops the agent, or a failed read leaves it unresolved
+until a slot-list read that started afterwards succeeds. Until then its
+controls are off with "Refresh to continue", and each action is
 checked again immediately before it is sent. Under the recovery banner Tokens
 offers no Refresh of its own, and an open rotate or revoke question closes.
 
