@@ -479,8 +479,8 @@ describe("tokens issued before agents", () => {
     );
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const manager = new AccessTokenManager(base, { agents: ["legacy", "other"] });
-    // The loser's slot can never admit, so it moved forward to revoked.
-    expect((await manager.list()).map((slot) => slot.state).sort()).toEqual(["issued", "revoked"]);
+    // The adoption claim admits one agent; the other never reaches its commit.
+    expect((await manager.list()).map((slot) => slot.state).sort()).toEqual(["issued", "none"]);
     expect(await admits(manager, fixture.unbound.token)).toBe(true);
   });
 

@@ -162,17 +162,22 @@ outcome depends on cleanup or on undoing a write.
   grows by one small record (and, for rotation, one lookup) per rotation or
   adoption, bounded by the number of agents times their rotations. An operator
   maintenance sweep for this inert data is follow-up work.
-- **One reconciliation deadline.** Everything after a commit (reading back an
-  unanswered commit, revoking an undeliverable rotation, completing an
-  adoption's lookup step) runs against one wall-clock deadline set at the
-  commit: 2 seconds, or the request's own `deadline` option if sooner. Each
-  storage call is raced against it and none starts after it; at the deadline
-  the call reports `outcome_unknown`. An operation still in flight then is
-  abandoned rather than cancelled, which is safe: it can only be a read; the
-  revoke compare-and-set from `issued` naming one record to `revoked`, which
-  can only stop a token and fails if the slot changed; or the adoption
-  compare-and-set of a lookup from the legacy record to the new one, which
-  fails if anyone else moved it. If an abandoned revoke never lands, the
+- **One reconciliation deadline.** One wall-clock deadline is set just before
+  the commit compare-and-set is dispatched: 2 seconds, or the request's own
+  `deadline` option if sooner. It bounds the commit's acknowledgement and
+  everything after it (reading back an unanswered commit, revoking an
+  undeliverable rotation, completing an adoption's lookup step). Each storage
+  call is raced against it and none starts after it; an acknowledgement still
+  pending at the deadline is an unanswered commit with no time left to read it
+  back, and any success decided after the deadline is reported as
+  `outcome_unknown` instead. Records written before an uncertain commit stay.
+  An operation still in flight at the deadline is abandoned rather than
+  cancelled, which is safe: it can only be a read; the commit itself, whose
+  outcome is then reported as unknown and whose slot alone decides what
+  admits; the revoke compare-and-set from `issued` naming one record to
+  `revoked`, which can only stop a token and fails if the slot changed; or the
+  adoption compare-and-set of a lookup from the legacy record to the new one,
+  which fails if anyone else moved it. If an abandoned revoke never lands, the
   undelivered rotation secret may keep admitting, but it never left the server:
   a liveness problem reported as `outcome_unknown`, never a credential exposure.
 
@@ -186,7 +191,13 @@ namespace**. The `access-token:v1:record:*` and `access-token:v1:lookup:*`
 records stay readable, and slots are added beside them as
 `access-token:v1:agent:<name>`. A stored token stops admitting until an agent
 adopts it. Trusted provisioning runs `AccessTokenManager.adopt(tokenId,
-agentName)`, which never changes the legacy record: it writes a new record
+agentName)`, which never changes the legacy record. It first sets a write-once
+claim, `access-token:v1:adopted:<legacy id>`, from absent to the agent's name;
+the claim is never deleted, so once any adoption has started the legacy token
+is consumed for that agent forever, even after the agent's token is revoked or
+rotated away, and a retired secret can never be adopted again. The claim is
+inert to admission: an adoption aborted after it leaves the token adoptable
+only by the same agent. It then writes a new record
 carrying the agent and the legacy digest, checks the signal, commits by
 compare-and-setting the agent's slot from none to `issued` with that record,
 then moves the digest's lookup from the legacy record to the new one by
@@ -196,11 +207,12 @@ request ended. Running the same adoption again, when the slot already names a
 record with this digest, completes the lookup step and succeeds; there is no
 release step. If the lookup step cannot be confirmed the call says so and asks
 for a rerun. Adoption refuses a human-bound, revoked, or already adopted token,
-a token another agent's slot already carries, and an agent whose slot names
-anything else. If two agents race for one token, the lookup goes to one and the
-other's slot moves forward to `revoked`. `unboundTokens()` lists the legacy
-records adopt accepts: unbound, unrevoked, still owning their digest's lookup,
-and carried by no declared agent's slot. The Node template wraps both as
+a token claimed by another agent, a token another agent's slot already carries,
+and an agent whose slot names anything else. Of two agents racing for one
+token, the claim admits one; the other is refused before its commit.
+`unboundTokens()` lists the legacy records adopt accepts: unbound, unrevoked,
+never claimed, still owning their digest's lookup, and carried by no declared
+agent's slot. The Node template wraps both as
 `npm run adopt-token`.
 Human-bound tokens, which earlier UI issuance tied to the issuing operator,
 cannot be adopted and stay refused; issue the agent a new token instead. Rows
