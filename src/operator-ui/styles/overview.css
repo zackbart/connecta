@@ -1,184 +1,166 @@
 /*
- * The Overview page: its headline numbers, the "Needs attention" list, and
- * the connection map. Every color comes from tokens.css, mixed here, so a
- * branded accent and both color schemes carry through without new values.
+ * The Overview page: its stat cards, the "Needs attention" card, and the
+ * connection map. Cards, pills, chips and marks come from primitives.css;
+ * this file only places them and draws the map. Every color is a token, so a
+ * branded accent and both schemes carry through.
  */
 
 #overviewView {
-  --map-read: color-mix(in srgb, var(--muted) 62%, var(--surface));
-  --map-write: var(--blue);
-  --map-line: color-mix(in srgb, var(--text) 22%, var(--surface));
-  --map-ok: color-mix(in srgb, var(--ok) 62%, var(--map-line));
-  --soft-ok: color-mix(in srgb, var(--ok) 12%, var(--surface));
-  --soft-warn: color-mix(in srgb, var(--warn) 13%, var(--surface));
-  --soft-danger: color-mix(in srgb, var(--danger) 11%, var(--surface));
-  --card-radius: calc(var(--radius) + 6px);
+  /* Read tools are quiet; write tools take the same amber as a write chip. */
+  --map-read: var(--line-strong);
+  --map-write: var(--warn);
+  --map-line: color-mix(in srgb, var(--text) 20%, var(--surface));
+  --map-ok: color-mix(in srgb, var(--ok) 60%, var(--map-line));
 }
 
-.overview-lede {
-  font-size: var(--text-base) !important;
-}
-
-.overview-section {
-  margin-top: 2.25rem;
-}
-.overview-section-head {
+.overview-title {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 0.875rem;
+  gap: var(--space-3) var(--space-4);
 }
-.overview-section-head h2 {
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0;
-}
-.overview-section-head .meta {
-  font-size: var(--text-sm);
+.overview-section {
+  margin-top: var(--space-6);
 }
 
-/* Headline numbers */
+/* Stat cards: a label, a number, and the picture that explains it. */
 
 .overview-stats {
   display: grid;
+  gap: var(--gap);
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.875rem;
 }
-.overview-stat {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  min-width: 0;
-  padding: 1.125rem 1.25rem 1.125rem;
-  position: relative;
+.overview-stat > .card-body {
+  gap: var(--space-3);
 }
-.overview-number {
-  /* "3 people · 2 agents" stays on one line in a third of an 800px page. */
-  font-size: clamp(1.25rem, 2.2vw, 1.5rem);
-  font-weight: 650;
-  letter-spacing: -0.025em;
-  line-height: 1.2;
-}
-.overview-label {
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
-.overview-link {
+.stat-head {
   align-items: center;
-  color: var(--link);
-  display: inline-flex;
+  display: flex;
+  justify-content: space-between;
+  min-height: 1.5rem;
+}
+.stat-label {
+  color: var(--text-2);
   font-size: var(--text-sm);
-  font-weight: 500;
-  gap: 0.25rem;
-  position: absolute;
-  right: 1.25rem;
-  text-decoration: none;
-  top: 1.25rem;
+  font-weight: var(--weight-semibold);
 }
-.overview-link:hover {
-  text-decoration: underline;
+.stat-link {
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  display: inline-grid;
+  height: 1.5rem;
+  place-items: center;
+  width: 1.5rem;
 }
-.health-bar {
+.stat-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.stat-link .icon {
+  rotate: 180deg;
+}
+.stat-number {
+  font-size: var(--text-3xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.stat-of {
+  color: var(--text-3);
+  font-weight: var(--weight-medium);
+}
+.stat-bar {
   display: flex;
   gap: 3px;
-  margin-top: 0.875rem;
 }
-.health-bar > span {
-  background: var(--border-strong);
-  border-radius: 999px;
+.stat-bar > span {
+  background: var(--sunk);
+  border-radius: var(--radius-pill);
   flex: 1;
   height: 0.375rem;
 }
-.health-bar > .tone-ok {
+.stat-bar > .tone-ok {
   background: var(--ok);
 }
-.health-bar > .tone-warn {
+.stat-bar > .tone-warn {
   background: var(--warn);
 }
-.health-bar > .tone-danger {
+.stat-bar > .tone-danger {
   background: var(--danger);
 }
-.health-bar > .mode-read-only,
-.health-legend .dot.read-only {
-  background: var(--blue);
+.stat-bar > .mode-read-only,
+.stat-legend .dot.read-only {
+  background: var(--accent);
 }
-.health-bar > .mode-read-write,
-.health-legend .dot.read-write {
-  background: var(--map-read);
+.stat-bar > .mode-read-write,
+.stat-legend .dot.read-write {
+  background: var(--line-strong);
 }
-.health-legend {
-  color: var(--muted);
+.stat-legend {
+  color: var(--text-2);
   display: flex;
   flex-wrap: wrap;
   font-size: var(--text-xs);
-  gap: 0.25rem 0.875rem;
+  gap: var(--space-1) var(--space-4);
   list-style: none;
-  margin: 0.625rem 0 0;
+  margin: 0;
+  min-height: 1rem;
   padding: 0;
 }
-.health-legend li {
+.stat-legend li {
   align-items: center;
   display: inline-flex;
   gap: 0.375rem;
 }
-.overview-callers {
+.stat-callers {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
   list-style: none;
-  margin: 0.875rem 0 0;
+  margin: 0;
   padding: 0;
 }
-.overview-callers .avatar {
+.stat-callers li {
+  display: inline-grid;
+}
+.stat-callers .avatar,
+.stat-callers .agent-mark {
+  height: 1.5rem;
+  width: 1.5rem;
+}
+.stat-callers .avatar {
   font-size: 0.625rem;
-  height: 1.5rem;
-  width: 1.5rem;
 }
-.overview-callers .agent-mark {
-  border-radius: 6px;
-  height: 1.5rem;
-  width: 1.5rem;
-  background:
-    radial-gradient(circle at 50% 42%, var(--surface) 0 2.5px, transparent 3px),
-    linear-gradient(var(--surface), var(--surface)) 50% 72% / 2px 6px no-repeat,
-    var(--text);
-}
-.overview-callers .agent-mark.muted {
-  opacity: 0.45;
-}
-.overview-more {
-  color: var(--muted);
+.stat-more {
+  color: var(--text-3);
   font-size: var(--text-xs);
-  padding-left: 0.25rem;
+  padding-left: var(--space-1);
 }
 
-/* Needs attention */
+/* Needs attention: one row per problem, its fix on the right. */
 
+.overview-attention > .card-body {
+  padding: 0;
+}
 .attention-list {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
   list-style: none;
   margin: 0;
   padding: 0;
 }
 .attention-item,
 .attention-clear {
-  align-items: flex-start;
+  align-items: center;
   display: flex;
-  gap: 1rem;
-  padding: 1rem 1.25rem;
+  gap: var(--space-4);
+  padding: var(--space-4) 1.375rem;
 }
 .attention-item + .attention-item {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 .attention-icon {
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   display: grid;
   flex: none;
   height: 2rem;
@@ -186,71 +168,65 @@
   width: 2rem;
 }
 .attention-icon.tone-warn {
-  background: var(--soft-warn);
+  background: var(--warn-soft);
   color: var(--warn);
 }
 .attention-icon.tone-danger {
-  background: var(--soft-danger);
+  background: var(--danger-soft);
   color: var(--danger);
 }
 .attention-icon.tone-ok {
-  background: var(--soft-ok);
+  background: var(--ok-soft);
   color: var(--ok);
 }
 .attention-text {
   flex: 1;
   min-width: 0;
 }
-.attention-text h3 {
-  font-size: var(--text-base);
-  font-weight: 600;
+.attention-text h3,
+.attention-clear h3 {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   line-height: 1.4;
-  margin: 0;
 }
 .attention-text h3 a {
   color: inherit;
   text-decoration: none;
 }
 .attention-text h3 a:hover {
-  text-decoration: underline;
-}
-.attention-text h3 code {
-  font-size: 0.95em;
+  color: var(--link);
 }
 .attention-text p {
-  color: var(--muted);
-  font-size: var(--text-sm);
-  margin: 0.1875rem 0 0;
-  max-width: 68ch;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  margin-top: 0.125rem;
 }
 .attention-actions {
   align-items: center;
   display: flex;
   flex: none;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: flex-end;
+  gap: var(--space-2);
 }
 .attention-actions .btn {
-  min-height: 2rem;
   text-decoration: none;
 }
 
-/* The connection map */
+/* The connection map: the drawing on a sunk canvas, a footer below it. */
 
-.map-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
-  overflow: hidden;
+.overview-map > .card-body {
+  gap: 0;
+  padding: 0;
+}
+.overview-map .state-block {
+  border: 0;
 }
 .map-canvas {
   background:
-    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 9%, transparent) 1px, transparent 1.2px) 0 0 /
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 8%, transparent) 1px, transparent 1.2px) 0 0 /
       18px 18px,
     var(--surface-2);
   overflow-x: auto;
-  padding: 1rem 0.75rem 0.75rem;
+  padding: var(--space-4) var(--space-3) var(--space-3);
 }
 /* Below this width the text scales under 12px, so the card scrolls instead. */
 .map-svg {
@@ -271,28 +247,21 @@
   font-family: var(--mono);
   font-size: 12.5px;
 }
-.map-column {
-  fill: var(--muted) !important;
-  font-family: var(--mono) !important;
-  font-size: 10.5px !important;
-  letter-spacing: 0.12em;
+.map-svg text.map-column {
+  fill: var(--text-2);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
 }
 .map-column-count {
-  fill: color-mix(in srgb, var(--muted) 55%, var(--surface));
+  fill: var(--text-3);
+  font-weight: var(--weight-medium);
 }
 .map-title {
-  font-weight: 500;
+  font-weight: var(--weight-semibold);
 }
-.kind-endpoint .map-title {
-  font-weight: 600;
-}
-.map-detail,
 .map-svg text.map-detail {
-  fill: var(--muted);
+  fill: var(--text-3);
   font-size: 11px;
-}
-.map-svg text.map-detail.mono {
-  font-size: 10.5px;
 }
 .map-svg .map-detail.tone-warn {
   fill: var(--warn);
@@ -301,7 +270,7 @@
   fill: var(--danger);
 }
 .map-count {
-  font-weight: 650;
+  font-weight: var(--weight-bold);
 }
 
 .map-edge {
@@ -326,7 +295,7 @@
   stroke-dasharray: 5 4;
 }
 .map-edge.no-token {
-  stroke: color-mix(in srgb, var(--muted) 70%, var(--surface));
+  stroke: var(--text-3);
   stroke-dasharray: 1 5;
   stroke-linecap: round;
   stroke-width: 2;
@@ -339,26 +308,27 @@
 }
 .map-node .map-box {
   fill: var(--surface);
-  stroke: var(--border);
+  filter: drop-shadow(0 1px 1px rgb(40 30 10 / 0.04));
+  stroke: var(--line);
   stroke-width: 1;
   transition: stroke 0.15s;
 }
 .map-node:hover .map-box,
 .map-node.lit .map-box {
-  stroke: var(--border-strong);
+  stroke: var(--line-strong);
 }
 .map-node:focus-visible .map-box {
-  stroke: var(--accent);
+  stroke: var(--link);
   stroke-width: 2;
 }
 .map-node.problem-warn .map-box {
-  stroke: color-mix(in srgb, var(--warn) 45%, var(--border));
+  stroke: var(--warn-line);
 }
 .map-node.problem-danger .map-box {
-  stroke: color-mix(in srgb, var(--danger) 45%, var(--border));
+  stroke: var(--danger-line);
 }
 .map-node .map-box.tools {
-  stroke: var(--border);
+  stroke: var(--line);
 }
 .map-node.no-token .map-box {
   stroke-dasharray: 4 3;
@@ -373,50 +343,47 @@
   stroke-width: 2.4;
 }
 
+/* The same marks the endpoint chips draw: a solid initial, an agent square. */
 .map-avatar {
-  fill: color-mix(in srgb, var(--avatar) 16%, var(--surface));
+  fill: var(--avatar);
 }
 .map-svg text.map-avatar-text {
-  fill: var(--text);
-  font-size: 10.5px;
-  font-weight: 650;
+  fill: #ffffff;
+  font-size: 10px;
+  font-weight: var(--weight-bold);
   letter-spacing: 0.02em;
 }
 .map-agent-mark {
-  fill: var(--text);
+  fill: var(--text-3);
 }
-.map-agent-eye {
-  fill: var(--surface);
+.map-agent-glyph {
+  color: var(--surface);
 }
 .no-token .map-agent-mark {
-  fill: var(--surface-2);
-  stroke: color-mix(in srgb, var(--muted) 70%, var(--surface));
-  stroke-dasharray: 2 2;
+  fill: var(--surface);
+  stroke: var(--line-strong);
 }
-.no-token .map-agent-eye {
-  fill: color-mix(in srgb, var(--muted) 70%, var(--surface));
+.no-token .map-agent-glyph {
+  color: var(--text-3);
 }
 .map-mode.read-only {
-  fill: color-mix(in srgb, var(--blue) 12%, var(--surface));
-  stroke: color-mix(in srgb, var(--blue) 30%, var(--border));
+  fill: var(--accent-soft);
 }
 .map-svg text.map-mode-text {
-  fill: var(--blue);
-  font-size: 10px;
-  font-weight: 600;
+  fill: var(--link);
+  font-size: 10.5px;
+  font-weight: var(--weight-semibold);
 }
 .map-tile {
-  fill: var(--surface-2);
-  stroke: var(--border-strong);
+  fill: var(--sunk);
 }
 .map-svg text.map-tile-text {
-  fill: var(--text);
-  font-family: var(--mono);
+  fill: var(--text-2);
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 .map-health {
-  fill: var(--muted);
+  fill: var(--text-3);
 }
 .map-health.tone-ok {
   fill: var(--ok);
@@ -428,7 +395,7 @@
   fill: var(--danger);
 }
 .map-bar {
-  fill: color-mix(in srgb, var(--text) 7%, var(--surface));
+  fill: var(--sunk);
 }
 .map-bar.read {
   fill: var(--map-read);
@@ -437,38 +404,41 @@
   fill: var(--map-write);
 }
 
-.map-trace {
-  align-items: center;
-  border-top: 1px solid var(--border);
-  color: var(--text);
-  display: flex;
-  font-size: var(--text-sm);
-  gap: 0.75rem;
-  min-height: 3.25rem;
-  padding: 0.75rem 1.25rem;
+/* The footer: the legend, or a hovered node's sentence in its place. */
+.map-foot {
+  border-top: 1px solid var(--line);
+  display: grid;
+  min-height: 2.875rem;
 }
-.map-trace > svg {
-  color: var(--accent);
-  flex: none;
+.map-foot > * {
+  align-self: center;
+  grid-area: 1 / 1;
+  padding: var(--space-3) 1.375rem;
+}
+.map-trace {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
 }
 .map-trace.idle {
-  color: var(--muted);
+  visibility: hidden;
+}
+.map-trace:not(.idle) + .map-legend {
+  visibility: hidden;
 }
 .map-legend {
-  border-top: 1px solid var(--border);
-  color: var(--muted);
+  color: var(--text-3);
   display: flex;
   flex-wrap: wrap;
   font-size: var(--text-xs);
-  gap: 0.375rem 1.125rem;
+  gap: var(--space-1) var(--space-4);
   list-style: none;
   margin: 0;
-  padding: 0.75rem 1.25rem 0.875rem;
 }
 .map-legend li {
   align-items: center;
   display: inline-flex;
-  gap: 0.4375rem;
+  gap: 0.375rem;
 }
 .map-legend svg {
   overflow: visible;
@@ -477,7 +447,7 @@
   stroke-width: 2;
 }
 .map-swatch {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   display: inline-block;
   height: 0.375rem;
   width: 1rem;
@@ -489,7 +459,7 @@
   background: var(--map-write);
 }
 
-/* Narrow screens read the map as a list, one card per endpoint. */
+/* Narrow screens read the map as a list, one entry per endpoint. */
 
 .map-list {
   display: none;
@@ -499,53 +469,28 @@
 }
 .map-list-entry {
   display: grid;
-  gap: 0.375rem;
-  padding: 1rem 1.125rem;
+  gap: var(--space-2);
+  padding: var(--space-4) 1.125rem;
 }
 .map-list-entry + .map-list-entry {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 .map-list-head {
   align-items: center;
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
   justify-content: space-between;
 }
 .map-list-path {
   color: var(--text);
   font-family: var(--mono);
-  font-size: var(--text-base);
-  font-weight: 600;
-  text-decoration: none;
-}
-.map-list-mode {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: var(--text-xs);
-  padding: 0 0.5rem;
-}
-.map-list-mode.read-only {
-  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
-  border-color: color-mix(in srgb, var(--blue) 26%, var(--border));
-  color: var(--blue);
-}
-.map-list-summary {
-  color: var(--muted);
   font-size: var(--text-sm);
-}
-.map-list-label {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 0.6875rem;
-  letter-spacing: 0.1em;
-  margin-top: 0.375rem;
-  text-transform: uppercase;
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
 }
 .map-list-items {
   display: grid;
-  gap: 0.25rem;
+  gap: var(--space-1);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -555,16 +500,20 @@
   display: flex;
   flex-wrap: wrap;
   font-size: var(--text-sm);
-  gap: 0.25rem 0.5rem;
+  gap: var(--space-1) var(--space-2);
 }
 .map-list-name {
   color: var(--text);
   overflow-wrap: anywhere;
+  text-decoration: none;
 }
 .map-list-note {
-  color: var(--muted);
+  color: var(--text-3);
   font-size: var(--text-xs);
   margin-left: auto;
+}
+.access-chip .map-list-note {
+  margin-left: 0;
 }
 .map-list-note.tone-warn {
   color: var(--warn);
@@ -584,13 +533,13 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .attention-item {
+    align-items: flex-start;
     flex-wrap: wrap;
   }
   .attention-text {
     flex-basis: calc(100% - 3rem);
   }
   .attention-actions {
-    justify-content: flex-start;
     padding-left: 3rem;
     width: 100%;
   }

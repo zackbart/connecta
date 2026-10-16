@@ -16,7 +16,7 @@ describe("overview attention list", () => {
         tone: "warn",
         subject: "Notion",
         problem: "needs a credential",
-        body: "Nothing usable is stored in its credential slot. Affects /mcp and /mcp/team.",
+        body: "Affects /mcp and /mcp/team",
         action: { label: "Connect", href: "/connectors/notion#connection", ariaLabel: "Connect Notion" },
         href: "/connectors/notion#connection",
         fix: { kind: "credential_required", connectorId: "notion" },
@@ -27,7 +27,7 @@ describe("overview attention list", () => {
         tone: "warn",
         subject: "triage",
         problem: "has no token",
-        body: "It's in /agent/support but can't connect until you issue one.",
+        body: "Can't connect at /agent/support",
         action: { label: "Issue token", href: "/tokens", ariaLabel: "Issue a token for triage" },
         href: "/tokens",
         fix: null,
@@ -57,7 +57,7 @@ describe("overview attention list", () => {
     ]);
     expect(items[0]!.problem).toBe("is unavailable");
     expect(items[2]!.problem).toBe("has a changed tool list");
-    expect(items[3]!.body).toBe("Its details couldn't be read. Open it to try again. Affects /mcp and /mcp/support.");
+    expect(items[3]!.body).toBe("Affects /mcp and /mcp/support");
   });
 
   it("keeps a problem's row and fix prompt when the detail read also failed", () => {
@@ -66,7 +66,7 @@ describe("overview attention list", () => {
       key: "connector:notion",
       tone: "warn",
       problem: "needs a credential",
-      body: "Nothing usable is stored in its credential slot. Its details also couldn't be read on this page. Affects /mcp and /mcp/team.",
+      body: "Details didn't load · Affects /mcp and /mcp/team",
       action: { label: "Connect" },
       fix: { kind: "credential_required", connectorId: "notion" },
     });
@@ -81,7 +81,7 @@ describe("overview attention list", () => {
     expect(attentionItems(contract)).toEqual([]);
     expect(attentionItems(structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2)).toEqual([]);
     const headline = overviewHeadline(contract, connectionMap(contract), []);
-    expect(headline.sentence).toBe("All 6 connectors are healthy. Nothing needs attention.");
+    expect(headline).toMatchObject({ connectors: 6, healthy: 6, warn: 0, danger: 0 });
   });
 });
 
@@ -99,17 +99,16 @@ describe("overview headline", () => {
       readOnlyEndpoints: 1,
       people: 3,
       agents: 2,
-      sentence: "5 of 6 connectors are healthy. 2 things need attention.",
     });
     expect(headline.bar.map((entry) => entry.tone)).toEqual(["ok", "ok", "ok", "ok", "ok", "warn"]);
   });
 
-  it("says so when no connectors are declared", () => {
+  it("has an empty bar when no connectors are declared", () => {
     const contract = maintainer();
     contract.config!.connectors = [];
     contract.live.connectors = [];
     const headline = overviewHeadline(contract, connectionMap(contract), []);
-    expect(headline.sentence).toBe("No connectors are declared yet. Add them in the deployment code.");
+    expect(headline).toMatchObject({ connectors: 0, healthy: 0 });
     expect(headline.bar).toEqual([]);
   });
 });

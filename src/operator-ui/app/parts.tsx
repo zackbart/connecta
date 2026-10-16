@@ -3,6 +3,7 @@ import type { MouseEvent, ReactNode } from "react";
 import type { Notice, OperatorPage, OperatorState, Tone } from "../view.js";
 import { loadFailureCopy, PAGE_META, pageForPath } from "../view.js";
 import { fixPrompt, type FixPromptKind } from "../fix-prompts.js";
+import type { AccessChip } from "../endpoints.js";
 import { productName } from "./config.js";
 import { Icon } from "./icons.js";
 import { navigate, retryLoad } from "./store.js";
@@ -383,4 +384,29 @@ export function CopyButton({
 
 function CopyIcon({ done }: { done: boolean }) {
   return <Icon name={done ? "check" : "copy"} size={15} />;
+}
+
+/** A person's colored initials, or an agent's mark: who someone is at a glance. */
+export function MemberMark({ chip, muted }: { chip: Pick<AccessChip, "kind" | "initials" | "hue">; muted?: boolean }) {
+  return chip.kind === "agent" ? (
+    <span className={muted ? "agent-mark muted" : "agent-mark"} aria-hidden="true">
+      <Icon name="agent" size={12} />
+    </span>
+  ) : (
+    <span className={`avatar hue-${chip.hue}`} aria-hidden="true">
+      {chip.initials}
+    </span>
+  );
+}
+
+/** A person by avatar and name, or an agent by name with an agent mark. */
+export function MemberChip({ chip, muted, children }: { chip: AccessChip; muted?: boolean; children?: ReactNode }) {
+  return (
+    <li className={`access-chip ${chip.kind}`}>
+      <MemberMark chip={chip} muted={Boolean(muted)} />
+      {chip.kind === "agent" ? <span className="visually-hidden">Agent </span> : null}
+      <span className="access-chip-text">{chip.text}</span>
+      {children}
+    </li>
+  );
 }

@@ -85,10 +85,10 @@ refresh with focus on Retry, Tokens under recovery (an open rotate question
 closes with focus on Retry and nothing sent; an unseen secret dialog stays open
 over the banner until dismissed), payload sentinels, CSP, and the refusal of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
 `test/browser/operator-overview.spec.ts` covers the Overview on the frozen v2
-fixtures: the headline numbers, map columns, dashed read-only grants and dotted
+fixtures: the status pill, stat labels and numbers, map columns, dashed read-only grants and dotted
 tokenless access; attention rows with their fix links, a copied fix prompt equal
 to the catalogue's text and a failing connector sorted first; the hover
-sentence and dimming; keyboard focus in column order with each node's sentence
+sentence replacing the legend, and dimming; keyboard focus in column order with each node's sentence
 as its accessible name, Enter opening an endpoint's row and a connector; the
 narrow list; an empty deployment; and a member at `/` getting the member page
 with no maintainer read, plus CSP and no `style` attributes.

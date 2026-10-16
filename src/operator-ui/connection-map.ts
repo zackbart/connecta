@@ -76,8 +76,6 @@ export interface ConnectionMap {
   columns: MapColumn[];
   width: number;
   height: number;
-  /** One sentence for the whole deployment, shown when nothing is hovered. */
-  summary: string;
 }
 
 export interface ConnectionMapOptions {
@@ -110,7 +108,7 @@ export function joinList(items: readonly string[]): string {
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
-export function plural(count: number, one: string, many = `${one}s`): string {
+function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
@@ -450,8 +448,6 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
     }
   }
 
-  const people = callers.filter((caller) => caller.kind === "person").length;
-  const agents = callers.length - people;
   return {
     nodes,
     edges,
@@ -463,7 +459,6 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
       { label: "Connectors", count: connectors.length, x: COLUMN_X[2] },
       { label: "Tools", count: connectors.reduce((n, { live }) => n + live.tools.length, 0), x: TOOLS_X },
     ],
-    summary: `${plural(people, "person", "people")} and ${plural(agents, "agent")} reach ${plural(connectors.length, "connector")} through ${plural(rows.length, "endpoint")}.`,
   };
 }
 

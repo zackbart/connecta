@@ -7,12 +7,13 @@ import {
   type MapEdge,
   type MapNode,
 } from "../connection-map.js";
-import { followLink } from "./parts.js";
+import { Icon } from "./icons.js";
+import { followLink, MemberChip, StateBlock } from "./parts.js";
 
 /**
  * The connection map: callers, endpoints and connectors as an SVG flow, drawn
  * from `connectionMap()` and nothing else. Hover or focus a node to light its
- * paths and read what it reaches; click or Enter opens its page. The map is
+ * paths; its sentence takes the legend's place. Click or Enter opens its page. The map is
  * one tab stop: arrow keys move between nodes. Narrow screens get the same
  * facts as a stacked list instead of a shrunken drawing.
  */
@@ -59,23 +60,14 @@ function NodeBody({ node }: { node: MapNode }) {
     );
   }
   if (node.kind === "agent") {
-    const cx = x + 24;
-    const cy = y + height / 2;
-    const hexagon = [
-      [cx, cy - 12],
-      [cx + 10.4, cy - 6],
-      [cx + 10.4, cy + 6],
-      [cx, cy + 12],
-      [cx - 10.4, cy + 6],
-      [cx - 10.4, cy - 6],
-    ]
-      .map((point) => point.join(","))
-      .join(" ");
+    // The same mark the endpoint chips draw: a rounded square, not a face.
     return (
       <>
         {box}
-        <polygon className="map-agent-mark" points={hexagon} />
-        <circle className="map-agent-eye" cx={cx} cy={cy} r={3.2} />
+        <rect className="map-agent-mark" x={x + 11} y={y + height / 2 - 13} width={26} height={26} rx={7} />
+        <g className="map-agent-glyph" transform={`translate(${x + 16} ${y + height / 2 - 8})`}>
+          <Icon name="agent" size={16} />
+        </g>
         {title(node.label, true)}
         {detail(node.detail, x + 46, node.tone === "warn" ? "map-detail tone-warn" : "map-detail")}
       </>
@@ -88,7 +80,7 @@ function NodeBody({ node }: { node: MapNode }) {
         {title(node.label, true, x + 14)}
         {node.readOnly ? (
           <>
-            <rect className="map-mode read-only" x={x + width - 70} y={y + 10} width={58} height={18} rx={5} />
+            <rect className="map-mode read-only" x={x + width - 70} y={y + 10} width={58} height={18} rx={9} />
             <text className="map-mode-text" x={x + width - 41} y={y + 22.5} textAnchor="middle">
               read-only
             </text>
@@ -261,8 +253,8 @@ function MapDrawing({ map }: { map: ConnectionMap }) {
           <g aria-hidden="true">
             {map.columns.map((column) => (
               <text key={column.label} className="map-column" x={column.x + 2} y={20}>
-                {column.label.toUpperCase()}
-                <tspan className="map-column-count" dx={8}>
+                {column.label}
+                <tspan className="map-column-count" dx={6}>
                   {column.count}
                 </tspan>
               </text>
@@ -298,14 +290,13 @@ function MapDrawing({ map }: { map: ConnectionMap }) {
           ))}
         </svg>
       </div>
-      {/* Not a live region: a focused node already speaks this as its name. */}
-      <p id="mapTrace" className={summary ? "map-trace" : "map-trace idle"} aria-hidden="true">
-        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
-          <path d="M2 8h3l2-5 2 10 2-5h3" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        </svg>
-        <span>{summary ?? "Hover or focus a node to see what it reaches. Click to open it."}</span>
-      </p>
-      <MapLegend />
+      <div className="map-foot">
+        {/* Not a live region: a focused node already speaks this as its name. */}
+        <p id="mapTrace" className={summary ? "map-trace" : "map-trace idle"} aria-hidden="true">
+          {summary ?? ""}
+        </p>
+        <MapLegend />
+      </div>
     </div>
   );
 }
@@ -322,17 +313,17 @@ function MapLegend() {
   return (
     <ul className="map-legend" aria-label="Map legend">
       {line("tone-ok", "Healthy")}
-      {line("tone-warn", "Needs attention")}
+      {line("tone-warn", "Attention")}
       {line("tone-danger", "Failing")}
-      {line("tone-neutral read-only", "Read-only endpoint")}
-      {line("tone-neutral no-token", "Agent without a token")}
+      {line("tone-neutral read-only", "Read-only")}
+      {line("tone-neutral no-token", "No token")}
       <li>
         <span className="map-swatch read" aria-hidden="true" />
-        Read tools
+        Read
       </li>
       <li>
         <span className="map-swatch write" aria-hidden="true" />
-        Write tools
+        Write
       </li>
     </ul>
   );
@@ -358,25 +349,27 @@ function MapList({ map }: { map: ConnectionMap }) {
             <ListLink node={endpoint} className="map-list-path">
               {endpoint.name}
             </ListLink>
-            {endpoint.readOnly ? <span className="map-list-mode read-only">read-only</span> : null}
+            {endpoint.readOnly ? <span className="badge tag accent">read-only</span> : null}
           </div>
-          <p className="map-list-summary">{endpoint.summary}</p>
-          <p className="map-list-label">Used by</p>
           {callers.length ? (
-            <ul className="map-list-items">
+            <ul className="access-chips">
               {callers.map(({ node, noToken }) => (
-                <li key={node.id}>
-                  <ListLink node={node} className={node.kind === "agent" ? "map-list-name mono" : "map-list-name"}>
-                    {node.name}
-                  </ListLink>
+                <MemberChip
+                  key={node.id}
+                  muted={noToken}
+                  chip={{
+                    key: node.id,
+                    kind: node.kind === "agent" ? "agent" : "human",
+                    text: node.name,
+                    initials: node.initials,
+                    hue: node.hue,
+                  }}
+                >
                   {noToken ? <span className="map-list-note tone-warn">no token</span> : null}
-                </li>
+                </MemberChip>
               ))}
             </ul>
-          ) : (
-            <p className="meta">Nobody is listed.</p>
-          )}
-          <p className="map-list-label">Connectors</p>
+          ) : null}
           {connectors.length ? (
             <ul className="map-list-items">
               {connectors.map(({ node, served }) => (
@@ -391,9 +384,7 @@ function MapList({ map }: { map: ConnectionMap }) {
                 </li>
               ))}
             </ul>
-          ) : (
-            <p className="meta">No connectors.</p>
-          )}
+          ) : null}
         </li>
       ))}
     </ul>
@@ -402,17 +393,12 @@ function MapList({ map }: { map: ConnectionMap }) {
 
 export function ConnectionMapView({ map }: { map: ConnectionMap }) {
   if (!map.nodes.some((node) => node.kind === "connector")) {
-    return (
-      <div className="state-block" role="status">
-        <p className="state-title">Nothing to map yet</p>
-        <p className="state-copy">Declare connectors and pools in the deployment code to see who reaches what.</p>
-      </div>
-    );
+    return <StateBlock title="Nothing to map yet" />;
   }
   return (
-    <div className="map-card">
+    <>
       <MapDrawing map={map} />
       <MapList map={map} />
-    </div>
+    </>
   );
 }

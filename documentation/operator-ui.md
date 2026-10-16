@@ -28,20 +28,25 @@ maintainer's pages. Overview is the default page at `/`; a member sees their
 member page there instead. It reads only the contract and `/ui/data` and has no
 controls of its own:
 
-- **Headline.** One sentence ("5 of 6 connectors are healthy. 2 things need
-  attention.") and three cards: connectors healthy with a bar segment per
-  connector, endpoints with a segment per endpoint split read-only and
-  read-write, and people and agents.
+- **Headline.** A status pill beside the heading ("2 need attention", red when
+  any connector is failing, or "All healthy"; none without connectors) and three
+  cards labeled Connectors, Endpoints, and People · Agents. Connectors shows
+  healthy of total over a bar with one segment per connector in its health
+  color; Endpoints shows the count over a bar split read-only and read-write;
+  People · Agents shows both counts over up to eight avatars and agent marks
+  (a tokenless agent's mark is hollow). A dot legend under each bar counts each
+  segment kind; the first two cards link to their pages.
 - **Needs attention.** One row per connector whose health is not ok, failing
   ones first, then one per agent in a pool whose token is missing or revoked.
-  Each row says what is wrong and which endpoints it affects, and links to the
+  Each row is a title naming what is wrong and one short line: the endpoints
+  it affects ("Affects /mcp and /mcp/team"), and links to the
   fix the Connectors list offers for the same connector (Connect, Replace key,
   Inspect or Review on its Connection tab), or to Issue token on Tokens when
-  that page is open to the viewer. An agent's row names its agent URL
-  (`/agent/<pool>`), where agents connect. A row with a problem code, or drift,
+  that page is open to the viewer. An agent's line names its agent URL
+  ("Can't connect at /agent/<pool>"). A row with a problem code, or drift,
   also has Copy fix prompt with the fixed text from the fix-prompt catalogue; a
   problem keeps its row and prompt when the connector's detail read also failed,
-  and the row says so. With no rows it reads "All clear".
+  and its line starts "Details didn't load". With no rows it reads "All clear".
 - **Who reaches what.** The connection map, an SVG flow of callers (people in
   the order the contract first lists them, then declared agents) to endpoints
   (`/mcp`, then pools) to connectors in config order, with each connector's
@@ -49,8 +54,9 @@ controls of its own:
   connector's health color; grants on a read-only endpoint are dashed, and an
   agent's link to its pool is dotted while it has no issued token. Plain `/mcp`
   admits no agents, so no agent links to it. A read-only endpoint carries a
-  read-only chip; a read-write one carries none. Hovering or focusing a node
-  dims everything off its paths and writes one sentence under the map, such as
+  read-only chip; a read-write one carries none. The card's footer holds the
+  legend. Hovering or focusing a node dims everything off its paths and puts one
+  sentence in the legend's place, such as
   "alice reaches 5 connectors through /mcp/support and /mcp/team: 6 tools, 1
   write."; an agent's sentence names its `/agent/<pool>` URLs instead. The same
   sentence is the node's accessible name. Hover and focus are tracked
@@ -62,8 +68,8 @@ controls of its own:
   Endpoints (`/endpoints#mcp/<pool>`, which opens that row), a person's first
   endpoint, or Tokens for an agent when that page is open. The drawing never
   scales below 880px wide; a narrower card scrolls it sideways. At 960px and
-  below the map becomes a list with one entry per endpoint: its mode, the sentence, who uses
-  it, and its connectors with health. A deployment with no connectors shows
+  below the map becomes a list with one entry per endpoint: its mode, who uses
+  it as the chips Endpoints draws, and its connectors with health. A deployment with no connectors shows
   "Nothing to map yet".
 
 Endpoints, at `/endpoints`, has one row for `/mcp` and each pool,

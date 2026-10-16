@@ -104,7 +104,6 @@ describe("connection map layout", () => {
     const map = connectionMap(contract);
     expect(map.nodes.map((entry) => entry.id)).toEqual([ADA, GRACE, "endpoint:/mcp"]);
     expect(node(map, "endpoint:/mcp").summary).toBe("/mcp serves 2 maintainers. It has no connectors.");
-    expect(map.summary).toBe("2 people and 0 agents reach 0 connectors through 1 endpoint.");
     expect(map.height).toBeGreaterThan(0);
     const member = connectionMap(structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2);
     expect(member.nodes).toEqual([]);

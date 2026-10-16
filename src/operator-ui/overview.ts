@@ -2,7 +2,7 @@ import type { OperatorUiContractV2 } from "./contract.js";
 import type { FixPromptKind } from "./fix-prompts.js";
 import type { UiProblem } from "./model.js";
 import { endpointRows } from "./endpoints.js";
-import { joinList, plural, type ConnectionMap } from "./connection-map.js";
+import { joinList, type ConnectionMap } from "./connection-map.js";
 import { connectorVerdict, type ConnectorSignals } from "./view.js";
 
 /**
@@ -25,8 +25,6 @@ export interface OverviewHeadline {
   readOnlyEndpoints: number;
   people: number;
   agents: number;
-  /** One plain sentence under the heading. */
-  sentence: string;
 }
 
 export interface AttentionItem {
@@ -37,6 +35,7 @@ export interface AttentionItem {
   subject: string;
   /** What is wrong, after the subject: "needs a credential". */
   problem: string;
+  /** One short line under the title: where it bites. */
   body: string;
   /** The existing fix: a page that holds the control. Null when this viewer has none. */
   action: { label: string; href: string; ariaLabel: string } | null;
@@ -55,17 +54,8 @@ const PROBLEM_TITLE: Readonly<Record<UiProblem, string>> = {
   catalog_failed: "couldn't load its tools",
 };
 
-const PROBLEM_BODY: Readonly<Record<UiProblem, string>> = {
-  connector_unavailable: "Its status check or tool list failed or timed out. The deployment log has the error.",
-  oauth_required: "No OAuth grant is stored, or the grant expired or was revoked.",
-  credential_required: "Nothing usable is stored in its credential slot.",
-  auth_required: "Its secret is set in deployment config, so the fix is in code or the environment.",
-  credential_mismatch: "The saved credential doesn't match the fields this connector declares.",
-  catalog_failed: "It connected, but its tool list failed to load, so none of its tools are served.",
-};
-
 function affects(paths: string[]): string {
-  return paths.length ? `Affects ${joinList(paths)}.` : "No endpoint serves it.";
+  return paths.length ? `Affects ${joinList(paths)}` : "No endpoint serves it";
 }
 
 /**
@@ -104,18 +94,17 @@ export function attentionItems(
     const reported = live.problem ?? (live.status === "error" ? "connector_unavailable" : undefined);
     const problem = signals.failed && reported === "connector_unavailable" ? undefined : reported;
     if (problem) {
-      const unread = signals.failed ? " Its details also couldn't be read on this page." : "";
       connectors.push({
         ...base,
         problem: PROBLEM_TITLE[problem],
-        body: `${PROBLEM_BODY[problem]}${unread} ${affects(paths)}`,
+        body: signals.failed ? `Details didn't load · ${affects(paths)}` : affects(paths),
         fix: { kind: problem, connectorId: config.id },
       });
     } else if (signals.failed) {
       connectors.push({
         ...base,
         problem: "didn't load on this page",
-        body: `Its details couldn't be read. Open it to try again. ${affects(paths)}`,
+        body: affects(paths),
         fix: null,
       });
     } else if (live.status !== "ok") {
@@ -130,7 +119,7 @@ export function attentionItems(
       connectors.push({
         ...base,
         problem: "has a changed tool list",
-        body: `Its live tools differ from the reviewed manifest. New tools stay withheld until a release classifies them. ${affects(paths)}`,
+        body: affects(paths),
         fix: { kind: "catalog_drift", connectorId: config.id },
       });
     }
@@ -149,7 +138,7 @@ export function attentionItems(
         tone: "warn",
         subject: agent.name,
         problem: revoked ? "has a revoked token" : "has no token",
-        body: `It's in ${joinList(paths)} but can't connect until you issue ${revoked ? "a new one" : "one"}.`,
+        body: `Can't connect at ${joinList(paths)}`,
         action: options.tokensPage
           ? { label: "Issue token", href: "/tokens", ariaLabel: `Issue a token for ${agent.name}` }
           : null,
@@ -181,13 +170,6 @@ export function overviewHeadline(
   const warn = bar.filter((entry) => entry.tone === "warn").length;
   const danger = bar.filter((entry) => entry.tone === "danger").length;
   const count = (kind: string) => map.nodes.filter((node) => node.kind === kind).length;
-  const sentence = !bar.length
-    ? "No connectors are declared yet. Add them in the deployment code."
-    : items.length
-      ? `${healthy} of ${plural(bar.length, "connector")} ${healthy === 1 ? "is" : "are"} healthy. ${plural(items.length, "thing needs", "things need")} attention.`
-      : bar.length === 1
-        ? "The one connector is healthy. Nothing needs attention."
-        : `All ${bar.length} connectors are healthy. Nothing needs attention.`;
   return {
     connectors: bar.length,
     healthy,
@@ -198,6 +180,5 @@ export function overviewHeadline(
     readOnlyEndpoints: map.nodes.filter((node) => node.kind === "endpoint" && node.readOnly).length,
     people: count("person"),
     agents: contract.agents.length,
-    sentence,
   };
 }

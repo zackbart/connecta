@@ -1,10 +1,13 @@
-import { connectionMap, plural, type MapNode } from "../connection-map.js";
+import type { ReactNode } from "react";
+import { connectionMap, type MapNode } from "../connection-map.js";
 import { attentionItems, overviewHeadline, type AttentionItem, type OverviewHeadline } from "../overview.js";
 import { driftState, type ConnectorSignals, type OperatorState } from "../view.js";
 import { fixPrompt } from "../fix-prompts.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
 import { ConnectionMapView } from "./connection-map.js";
-import { CopyButton, followLink } from "./parts.js";
+import { Icon } from "./icons.js";
+import { CopyButton, followLink, MemberMark, Pill } from "./parts.js";
+import { Card } from "./primitives.js";
 
 /**
  * The maintainer's landing page: how the deployment is doing, what needs
@@ -23,15 +26,60 @@ function connectorSignals(state: OperatorState): Record<string, ConnectorSignals
   return signals;
 }
 
+/** A count with its dot, under a stat's bar. Zero counts drop out. */
+function Legend({ entries }: { entries: Array<[tone: string, count: number, label: string]> }) {
+  return (
+    <ul className="stat-legend">
+      {entries
+        .filter(([, count]) => count > 0)
+        .map(([tone, count, label]) => (
+          <li key={label}>
+            <span className={`dot ${tone}`} aria-hidden="true" />
+            {count} {label}
+          </li>
+        ))}
+    </ul>
+  );
+}
+
+function Stat({ label, href, children }: { label: string; href?: string; children: ReactNode }) {
+  return (
+    <Card className="overview-stat" aria-label={label}>
+      <div className="stat-head">
+        <h2 className="stat-label">{label}</h2>
+        {href ? (
+          <a
+            className="stat-link"
+            href={href}
+            aria-label={`View ${label.toLowerCase()}`}
+            onClick={(event) => followLink(event, href)}
+          >
+            <Icon name="back" size={14} />
+          </a>
+        ) : null}
+      </div>
+      {children}
+    </Card>
+  );
+}
+
 function Stats({ headline, callers }: { headline: OverviewHeadline; callers: MapNode[] }) {
   const shown = callers.slice(0, 8);
   const readWrite = headline.endpoints - headline.readOnlyEndpoints;
   return (
     <div className="overview-stats">
-      <section className="overview-stat" aria-label="Connector health">
-        <p className="overview-number">{headline.connectors ? `${headline.healthy} of ${headline.connectors}` : "0"}</p>
-        <p className="overview-label">{headline.connectors ? "connectors healthy" : "connectors declared"}</p>
-        <div className="health-bar" aria-hidden="true">
+      <Stat label="Connectors" href="/connectors">
+        <p className="stat-number">
+          {headline.connectors ? (
+            <>
+              {headline.healthy}
+              <span className="stat-of">/{headline.connectors}</span>
+            </>
+          ) : (
+            0
+          )}
+        </p>
+        <div className="stat-bar" aria-hidden="true">
           {headline.bar.length ? (
             headline.bar.map((entry) => (
               <span key={entry.id} className={`tone-${entry.tone}`} title={`${entry.title}: ${entry.label}`} />
@@ -40,132 +88,60 @@ function Stats({ headline, callers }: { headline: OverviewHeadline; callers: Map
             <span />
           )}
         </div>
-        {headline.connectors ? (
-          <ul className="health-legend">
-            <li>
-              <span className="dot ok" aria-hidden="true" />
-              {headline.healthy} healthy
-            </li>
-            {headline.warn ? (
-              <li>
-                <span className="dot warn" aria-hidden="true" />
-                {headline.warn} {headline.warn === 1 ? "needs" : "need"} attention
-              </li>
-            ) : null}
-            {headline.danger ? (
-              <li>
-                <span className="dot danger" aria-hidden="true" />
-                {headline.danger} failing
-              </li>
-            ) : null}
-          </ul>
-        ) : (
-          <p className="health-legend">Each connector gets a segment here once declared.</p>
-        )}
-      </section>
-      <section className="overview-stat" aria-label="Endpoints">
-        <p className="overview-number">{headline.endpoints}</p>
-        <p className="overview-label">{headline.endpoints === 1 ? "endpoint" : "endpoints"}, defined in code</p>
-        <div className="health-bar" aria-hidden="true">
+        <Legend
+          entries={[
+            ["ok", headline.healthy, "healthy"],
+            ["warn", headline.warn, "attention"],
+            ["danger", headline.danger, "failing"],
+          ]}
+        />
+      </Stat>
+      <Stat label="Endpoints" href="/endpoints">
+        <p className="stat-number">{headline.endpoints}</p>
+        <div className="stat-bar" aria-hidden="true">
           {Array.from({ length: headline.endpoints }, (_, index) => (
             <span key={index} className={index < headline.readOnlyEndpoints ? "mode-read-only" : "mode-read-write"} />
           ))}
         </div>
-        <ul className="health-legend">
-          {headline.readOnlyEndpoints ? (
-            <li>
-              <span className="dot read-only" aria-hidden="true" />
-              {headline.readOnlyEndpoints} read-only
-            </li>
-          ) : null}
-          <li>
-            <span className="dot read-write" aria-hidden="true" />
-            {readWrite === headline.endpoints && readWrite > 1 ? "All read-write" : `${readWrite} read-write`}
-          </li>
-        </ul>
-        <a
-          className="overview-link"
-          href="/endpoints"
-          aria-label="View endpoints"
-          onClick={(event) => followLink(event, "/endpoints")}
-        >
-          View
-          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
-            <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-        </a>
-      </section>
-      <section className="overview-stat" aria-label="People and agents">
-        <p className="overview-number">
-          {plural(headline.people, "person", "people")} · {plural(headline.agents, "agent")}
+        <Legend
+          entries={[
+            ["read-only", headline.readOnlyEndpoints, "read-only"],
+            ["read-write", readWrite, "read-write"],
+          ]}
+        />
+      </Stat>
+      <Stat label="People · Agents">
+        <p className="stat-number">
+          {headline.people}
+          <span className="stat-of"> · </span>
+          {headline.agents}
         </p>
-        <p className="overview-label">can use this deployment</p>
         {shown.length ? (
-          <ul className="overview-callers" aria-hidden="true">
-            {shown.map((node) =>
-              node.kind === "person" ? (
-                <li key={node.id} className={`avatar hue-${node.hue}`} title={node.name}>
-                  {node.initials}
-                </li>
-              ) : (
-                <li
-                  key={node.id}
-                  className={node.tone === "warn" ? "agent-mark muted" : "agent-mark"}
-                  title={node.name}
+          <ul className="stat-callers" aria-hidden="true">
+            {shown.map((node) => (
+              <li key={node.id} title={node.name}>
+                <MemberMark
+                  chip={{ kind: node.kind === "agent" ? "agent" : "human", initials: node.initials, hue: node.hue }}
+                  muted={node.kind === "agent" && node.tone === "warn"}
                 />
-              ),
-            )}
-            {callers.length > shown.length ? <li className="overview-more">+{callers.length - shown.length}</li> : null}
+              </li>
+            ))}
+            {callers.length > shown.length ? <li className="stat-more">+{callers.length - shown.length}</li> : null}
           </ul>
         ) : null}
-      </section>
+      </Stat>
     </div>
-  );
-}
-
-function AttentionIcon({ item }: { item: AttentionItem }) {
-  return (
-    <span className={`attention-icon tone-${item.tone}`} aria-hidden="true">
-      <svg viewBox="0 0 16 16" width="16" height="16" focusable="false">
-        {item.kind === "agent" ? (
-          <>
-            <circle cx="5.5" cy="10.5" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
-            <path
-              d="M7.7 8.3 13.5 2.5M11.5 4.5l1.8 1.8"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </>
-        ) : item.tone === "danger" ? (
-          <>
-            <path d="M8 2.2 14.2 13H1.8z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-            <path d="M8 6.5v3M8 11.3v.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </>
-        ) : (
-          <>
-            <path d="M5.5 1.8v3M10.5 1.8v3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            <path
-              d="M3.5 4.8h9v2.4a4.5 4.5 0 0 1-9 0z"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinejoin="round"
-            />
-            <path d="M8 11.7v2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </>
-        )}
-      </svg>
-    </span>
   );
 }
 
 function AttentionRow({ item }: { item: AttentionItem }) {
   const subject = item.kind === "agent" ? <code>{item.subject}</code> : item.subject;
+  const icon = item.kind === "agent" ? "key" : item.tone === "danger" ? "alert" : "plug";
   return (
     <li className="attention-item" data-attention={item.key}>
-      <AttentionIcon item={item} />
+      <span className={`attention-icon tone-${item.tone}`} aria-hidden="true">
+        <Icon name={icon} size={15} />
+      </span>
       <div className="attention-text">
         <h3>
           {item.href ? (
@@ -184,13 +160,13 @@ function AttentionRow({ item }: { item: AttentionItem }) {
           <CopyButton
             value={fixPrompt(item.fix.kind, item.fix.connectorId)}
             label="Copy fix prompt"
-            className="btn"
+            className="btn sm quiet"
             ariaLabel={`Copy fix prompt for ${item.subject}`}
           />
         ) : null}
         {item.action ? (
           <a
-            className="btn primary"
+            className="btn sm"
             href={item.action.href}
             aria-label={item.action.ariaLabel}
             onClick={(event) => followLink(event, item.action!.href)}
@@ -203,15 +179,9 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   );
 }
 
-function Attention({ items, empty }: { items: AttentionItem[]; empty: boolean }) {
+function Attention({ items }: { items: AttentionItem[] }) {
   return (
-    <section className="section overview-section" aria-labelledby="attentionHeading">
-      <div className="overview-section-head">
-        <h2 id="attentionHeading">Needs attention</h2>
-        {items.length ? (
-          <p className="meta">Each row links to its fix. Copy fix prompt hands the problem to a coding agent.</p>
-        ) : null}
-      </div>
+    <Card className="overview-section overview-attention" title="Needs attention" titleId="attentionHeading">
       {items.length ? (
         <ul className="attention-list" aria-labelledby="attentionHeading">
           {items.map((item) => (
@@ -219,23 +189,25 @@ function Attention({ items, empty }: { items: AttentionItem[]; empty: boolean })
           ))}
         </ul>
       ) : (
-        <div className="attention-list attention-clear" role="status">
+        <div className="attention-clear" role="status">
           <span className="attention-icon tone-ok" aria-hidden="true">
-            <svg viewBox="0 0 16 16" width="16" height="16" focusable="false">
-              <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-            </svg>
+            <Icon name="check" size={15} />
           </span>
-          <div className="attention-text">
-            <h3>All clear</h3>
-            <p>
-              {empty
-                ? "Nothing needs attention yet."
-                : "Every connector is healthy, and every agent in an endpoint has a token."}
-            </p>
-          </div>
+          <h3>All clear</h3>
         </div>
       )}
-    </section>
+    </Card>
+  );
+}
+
+/** The page's status in a word: the cards below carry the numbers. */
+function Status({ items }: { items: AttentionItem[] }) {
+  if (!items.length) return <Pill status="healthy">All healthy</Pill>;
+  const failing = items.some((item) => item.tone === "danger");
+  return (
+    <Pill status={failing ? "error" : "attention"}>
+      {items.length} {items.length === 1 ? "needs" : "need"} attention
+    </Pill>
   );
 }
 
@@ -249,11 +221,11 @@ export function OverviewPage({ state }: { state: OperatorState }) {
   return (
     <section id="overviewView">
       <div className="page-heading">
-        <div>
+        <div className="overview-title">
           <h1 id="overviewHeading" tabIndex={-1}>
             Overview
           </h1>
-          {headline ? <p className="meta overview-lede">{headline.sentence}</p> : null}
+          {headline?.connectors ? <Status items={items} /> : null}
         </div>
       </div>
       {!contract || !map || !headline ? (
@@ -261,14 +233,10 @@ export function OverviewPage({ state }: { state: OperatorState }) {
       ) : (
         <>
           <Stats headline={headline} callers={map.nodes.filter((node) => node.column === 0)} />
-          <Attention items={items} empty={!headline.connectors} />
-          <section className="section overview-section" aria-labelledby="mapHeading">
-            <div className="overview-section-head">
-              <h2 id="mapHeading">Who reaches what</h2>
-              {headline.connectors ? <p className="meta">{map.summary}</p> : null}
-            </div>
+          <Attention items={items} />
+          <Card className="overview-section overview-map" title="Who reaches what" titleId="mapHeading">
             <ConnectionMapView map={map} />
-          </section>
+          </Card>
         </>
       )}
     </section>

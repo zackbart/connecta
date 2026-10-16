@@ -89,9 +89,11 @@ test("the overview is the maintainer's landing page, with health, attention and 
   await page.goto(VISUAL_ORIGIN + "/");
   await expect(page.getByRole("heading", { name: "Overview", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("link", { name: "Overview", exact: true })).toHaveAttribute("aria-current", "page");
-  await expect(page.locator(".overview-lede")).toHaveText("5 of 6 connectors are healthy. 2 things need attention.");
-  await expect(page.locator(".overview-number")).toHaveText(["5 of 6", "4", "3 people · 2 agents"]);
-  await expect(page.locator(".map-column")).toHaveText(["CALLERS5", "ENDPOINTS4", "CONNECTORS6", "TOOLS9"]);
+  await expect(page.locator(".overview-title .badge")).toHaveText("2 need attention");
+  await expect(page.locator(".stat-label")).toHaveText(["Connectors", "Endpoints", "People · Agents"]);
+  await expect(page.locator(".stat-number")).toHaveText(["5/6", "4", "3 · 2"]);
+  await expect(page.getByRole("link", { name: "View endpoints", exact: true })).toHaveAttribute("href", "/endpoints");
+  await expect(page.locator(".map-column")).toHaveText(["Callers5", "Endpoints4", "Connectors6", "Tools9"]);
   await expect(page.locator(".map-node")).toHaveCount(15);
   // Read-only grants are dashed, and a tokenless agent's access is dotted.
   await expect(page.locator("svg.map-svg .map-edge.read-only")).toHaveCount(2);
@@ -106,7 +108,7 @@ test("each problem row links to its existing fix and copies its fixed prompt", a
   await page.goto(VISUAL_ORIGIN + "/");
   const rows = page.locator(".attention-item");
   await expect(rows.locator("h3")).toHaveText(["Notion needs a credential", "triage has no token"]);
-  await expect(rows.first()).toContainText("Affects /mcp and /mcp/team.");
+  await expect(rows.locator("p")).toHaveText(["Affects /mcp and /mcp/team", "Can't connect at /agent/support"]);
   await page.getByRole("button", { name: "Copy fix prompt for Notion", exact: true }).click();
   expect(await page.evaluate("navigator.clipboard.readText()")).toBe(fixPrompt("credential_required", "notion"));
   await expect(page.getByRole("link", { name: "Issue a token for triage", exact: true })).toHaveAttribute(
@@ -133,18 +135,22 @@ test("a failing connector comes first and turns its links red", async ({ page })
   );
   // Two grants and the link to its tools.
   await expect(page.locator("svg.map-svg .map-edge.tone-danger")).toHaveCount(3);
-  await expect(page.locator(".overview-lede")).toHaveText("4 of 6 connectors are healthy. 3 things need attention.");
+  await expect(page.locator(".overview-title .badge")).toHaveText("3 need attention");
+  await expect(page.locator(".overview-title .badge")).toHaveClass(/danger/);
 });
 
 test("hovering a node lights its paths and says what it reaches", async ({ page }) => {
   await install(page, maintainer());
   await page.goto(VISUAL_ORIGIN + "/");
-  await expect(trace(page)).toHaveText("Hover or focus a node to see what it reaches. Click to open it.");
+  // Idle, the footer shows the legend; a hovered node's sentence takes its place.
+  await expect(trace(page)).toHaveText("");
+  await expect(page.locator(".map-legend")).toBeVisible();
   await mapNode(page, LIN).hover();
   await expect(trace(page)).toHaveText(
     "Lin Chen reaches 5 connectors through /mcp/support and /mcp/team: 6 tools, 1 write.",
   );
   await expect(page.locator("svg.map-svg")).toHaveClass(/tracing/);
+  await expect(page.locator(".map-legend")).toBeHidden();
   await expect(page.locator(".map-node.lit")).toHaveCount(8);
   await expect(mapNode(page, ADA)).toHaveClass(/dim/);
   await expect(mapNode(page, "agent:triage")).toHaveClass(/dim/);
@@ -217,13 +223,11 @@ test("narrow screens read the map as a list by endpoint", async ({ page }) => {
   await expect(page.locator(".map-list")).toBeVisible();
   await expect(page.locator(".map-figure")).toBeHidden();
   const support = page.locator(".map-list-entry").filter({ hasText: "/mcp/support" });
-  await expect(support.locator(".map-list-mode")).toHaveText("read-only");
-  await expect(support.locator(".map-list-items").first().locator("li")).toHaveText(["Lin Chen", "triageno token"]);
+  await expect(support.locator(".map-list-head .badge")).toHaveText("read-only");
+  // Who uses it, as the same chips Endpoints draws.
+  await expect(support.locator(".access-chip")).toHaveText(["LCLin Chen", "Agent triageno token"]);
   // What this endpoint serves: GitHub's write tool is off on read-only support.
-  await expect(support.locator(".map-list-items").nth(1).locator(".map-list-note")).toHaveText([
-    "1 tool, all read",
-    "1 tool, all read",
-  ]);
+  await expect(support.locator(".map-list-items .map-list-note")).toHaveText(["1 tool, all read", "1 tool, all read"]);
   await expect(support.getByRole("link", { name: "Drive", exact: true })).toHaveAttribute(
     "href",
     "/connectors/drive#tools",
@@ -241,9 +245,8 @@ test("an empty deployment says there is nothing to map and nothing to fix", asyn
   contract.agents = [];
   await install(page, contract, { ...data, connectors: [] });
   await page.goto(VISUAL_ORIGIN + "/");
-  await expect(page.locator(".overview-lede")).toHaveText(
-    "No connectors are declared yet. Add them in the deployment code.",
-  );
+  await expect(page.locator(".overview-title .badge")).toHaveCount(0);
+  await expect(page.locator(".stat-number").first()).toHaveText("0");
   await expect(page.getByText("Nothing to map yet", { exact: true })).toBeVisible();
   await expect(page.locator(".attention-clear h3")).toHaveText("All clear");
   await expect(page.locator(".map-svg")).toHaveCount(0);
