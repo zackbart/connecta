@@ -2514,3 +2514,134 @@ describe("review round 4: one generation fence per agent slot", () => {
     expect(store.getState().unresolvedSlots).toEqual([]);
   });
 });
+
+describe("round 5 independent review probes", () => {
+  const none = { name: "triage", state: "none", revision: "r0" };
+  const issued = { name: "triage", state: "issued", issuedAt: NOW, revision: "r1" };
+  const writes = (mock: ReturnType<typeof vi.fn>) =>
+    mock.mock.calls.filter(([, init]) => ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""));
+
+  it("a recovered contract that drops an agent invalidates a pending Issue even after an intervening failure", async () => {
+    let armed = false;
+    const authToken = deferred<string>();
+    const loaded = await loadStore({
+      id: "a",
+      getToken: () => {
+        if (armed) {
+          armed = false;
+          return authToken.promise;
+        }
+        return Promise.resolve("token");
+      },
+    });
+    const { store, fetchMock, configMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
+    await store.loadAccessTokens();
+    armed = true;
+    const pending = store.rotateAgentToken("triage");
+    configMock.mockResolvedValueOnce(Response.json({}, { status: 503 }));
+    await store.loadOperatorContract();
+    expect(store.getState().contract).toBeNull();
+    const newer = structuredClone(OPERATOR_V2_MAINTAINER);
+    newer.agents = newer.agents.filter((agent) => agent.name !== "triage");
+    configMock.mockResolvedValueOnce(Response.json(newer));
+    await store.loadOperatorContract();
+    const beforeDispatch = store.getState();
+    fetchMock.mockResolvedValueOnce(Response.json({}, { status: 404 }));
+    authToken.resolve("token");
+    await pending;
+    expect.soft(beforeDispatch.unresolvedSlots).toContain("triage");
+    expect.soft(writes(fetchMock)).toHaveLength(0);
+  });
+
+  it("an abandoned identity's completion must not leave a fresh identity's row silently actionable", async () => {
+    const loaded = await loadStore({ id: "a", getToken: async () => "a" });
+    const { store, fetchMock, changeSession } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
+    await store.loadAccessTokens();
+    const old = deferred<Response>();
+    fetchMock.mockReturnValueOnce(old.promise);
+    const pending = store.rotateAgentToken("triage");
+    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("b")));
+    changeSession({ id: "b", getToken: async () => "b" });
+    await vi.waitFor(() => expect(store.getState().data?.serverInfo.name).toBe("b"));
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
+    await store.loadAccessTokens();
+    old.resolve(Response.json({ token: "cta_old_identity", agent: issued }));
+    await pending;
+    expect(store.getState().createdToken).toBeNull();
+    // If completion invalidates this row, the projected state must show that.
+    const shownAsResolved = !store.getState().unresolvedSlots.includes("triage");
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_b", agent: issued }));
+    await store.rotateAgentToken("triage");
+    expect({ shownAsResolved, dispatched: writes(fetchMock).length }).not.toEqual({
+      shownAsResolved: true,
+      dispatched: 0,
+    });
+    // Stronger: A's completion leaves B's fence alone, so B's row is resolved and its Issue goes out.
+    expect(shownAsResolved).toBe(true);
+    expect(writes(fetchMock)).toHaveLength(1);
+  });
+
+  it("a superseded secret remains bound to its requested agent, then dismissal and rereads cannot replay it", async () => {
+    const loaded = await loadStore({ id: "a", getToken: async () => "a" }, undefined, "tokens");
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
+    await store.loadAccessTokens();
+    const delayed = deferred<Response>();
+    fetchMock.mockReturnValueOnce(delayed.promise);
+    const pending = store.rotateAgentToken("triage");
+    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+    const revoked = { name: "triage", state: "revoked", revokedAt: NOW, revision: "r2" };
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
+    await store.loadAccessTokens();
+    delayed.resolve(Response.json({ token: "cta_once", agent: issued }));
+    await pending;
+    expect(store.getState()).toMatchObject({
+      createdToken: "cta_once",
+      createdTokenFor: "triage",
+      tokens: [revoked],
+      unresolvedSlots: ["triage"],
+    });
+    store.dismissCreatedToken();
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
+    await store.loadAccessTokens();
+    store.routeChanged("/connections");
+    store.routeChanged("/tokens");
+    expect(store.getState()).toMatchObject({ createdToken: null, createdTokenFor: null });
+    expect(writes(fetchMock)).toHaveLength(1);
+  });
+
+  it("a list read that drops an agent invalidates a pending Issue against it", async () => {
+    let armed = false;
+    const authToken = deferred<string>();
+    const loaded = await loadStore({
+      id: "a",
+      getToken: () => {
+        if (armed) {
+          armed = false;
+          return authToken.promise;
+        }
+        return Promise.resolve("token");
+      },
+    });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
+    await store.loadAccessTokens();
+    armed = true;
+    const pending = store.rotateAgentToken("triage");
+    // The agent is no longer declared: the next list read leaves it out.
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [] }));
+    await store.loadAccessTokens();
+    expect(store.getState().unresolvedSlots).toContain("triage");
+    authToken.resolve("token");
+    await pending;
+    expect(writes(fetchMock)).toHaveLength(0);
+  });
+});

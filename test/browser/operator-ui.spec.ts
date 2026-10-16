@@ -305,7 +305,39 @@ test.beforeAll(async () => {
       return;
     }
     if (method === "GET" && url.pathname === "/ui/api/config") {
-      sendJson(response, 200, await fixtureContract(data()));
+      const contract = await fixtureContract(data());
+      // P6b lists every declared agent with its token state. Where a test
+      // routes the slot API to a real deployment, emulate that from the same
+      // slots, so the contract and the list describe one deployment.
+      if (realRoutes?.paths.has("/ui/access-tokens")) {
+        const real = await realRoutes.connecta.fetch(
+          new Request(`${REAL_BASE}/ui/access-tokens`, {
+            headers: {
+              ...(request.headers.authorization === `Bearer ${TOKEN}`
+                ? { Authorization: "Bearer clerk-operator" }
+                : {}),
+              ...(request.headers.cookie ? { Cookie: request.headers.cookie } : {}),
+            },
+          }),
+        );
+        const { agents = [] } = real.ok
+          ? ((await real.json()) as {
+              agents?: Array<{ name: string; state: string; issuedAt?: string; revokedAt?: string }>;
+            })
+          : {};
+        contract.agents = agents.map(({ name, state, issuedAt, revokedAt }) => ({
+          name,
+          pools: [],
+          token:
+            state === "issued"
+              ? { state: "issued" as const, issuedAt: issuedAt! }
+              : state === "revoked"
+                ? { state: "revoked" as const, revokedAt: revokedAt! }
+                : { state: "none" as const },
+          lastSeenAt: null,
+        }));
+      }
+      sendJson(response, 200, contract);
       return;
     }
     const detailMatch = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(url.pathname);

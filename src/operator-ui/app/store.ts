@@ -118,8 +118,7 @@ function gate(notice: Notice | null = null, session: OperatorState["session"] = 
   returnTimer = undefined;
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
-  unresolvedAt.clear();
-  slotsInFlight.clear();
+  forgetSlotFence();
   state = { ...resetIdentity(state, notice), session };
   for (const listener of listeners) listener();
 }
@@ -1681,6 +1680,24 @@ function touch(name: string): number {
   return generation;
 }
 
+/**
+ * The agents the last successful maintainer contract listed. Like the last
+ * confirmed role, it outlives a failed refresh that clears `contract`, so the
+ * next good answer is still compared with what came before it.
+ */
+let confirmedAgents = new Set<string>();
+
+/**
+ * The fence belongs to one identity. A new one starts empty, and a ticket
+ * from the old one never touches it again (see `SlotTicket.identity`).
+ */
+function forgetSlotFence(): void {
+  slotGeneration.clear();
+  unresolvedAt.clear();
+  slotsInFlight.clear();
+  confirmedAgents = new Set();
+}
+
 const generationOf = (name: string) => slotGeneration.get(name) ?? 0;
 const unresolvedList = (): Pick<OperatorState, "unresolvedSlots"> => ({ unresolvedSlots: [...unresolvedAt.keys()] });
 
@@ -1727,8 +1744,11 @@ function parseSlot(value: unknown): AgentSlot | null {
 function contractSlotsRefreshed(contract: OperatorUiContractV2): Partial<OperatorState> {
   if (contract.role !== "maintainer") return {};
   const next = new Map(contract.agents.map((agent) => [agent.name, agent.token]));
-  const previous = state.contract?.role === "maintainer" ? state.contract.agents.map((agent) => agent.name) : [];
-  const changed = new Set(previous.filter((name) => !next.has(name)));
+  // Compared with the last confirmed agents plus every live slot, not with
+  // `state.contract`, which a failed refresh in between may have cleared.
+  const previous = new Set([...confirmedAgents, ...state.tokens.map((slot) => slot.name)]);
+  confirmedAgents = new Set(next.keys());
+  const changed = new Set([...previous].filter((name) => !next.has(name)));
   const stamp = (token: { state: string; issuedAt?: string; revokedAt?: string }) =>
     `${token.state}:${token.issuedAt ?? ""}:${token.revokedAt ?? ""}`;
   for (const slot of state.tokens) {
@@ -1774,8 +1794,14 @@ function expectBody(checked: SlotChecked): { expect: string } | undefined {
 
 /** One mutation's claim on its slot, from dispatch to settlement. */
 interface SlotTicket {
+  /** The identity (`state.generation`) that created it; another identity's fence is never touched. */
+  identity: number;
   /** The generation its dispatch took; null until it is sent. */
   dispatched: number | null;
+}
+
+function slotTicket(): SlotTicket {
+  return { identity: state.generation, dispatched: null };
 }
 
 /**
@@ -1805,6 +1831,8 @@ function slotDispatch(name: string, checked: SlotChecked, ticket: SlotTicket): (
  * newer evidence stays, the slot stays unresolved, and the caller says so.
  */
 function settleSlot(ticket: SlotTicket, slot: AgentSlot): { applied: boolean; patch: Partial<OperatorState> } {
+  // `mutate` only lands results for the identity that asked; check anyway.
+  if (ticket.identity !== state.generation) return { applied: false, patch: {} };
   slotsInFlight.delete(slot.name);
   const untouched = ticket.dispatched !== null && generationOf(slot.name) === ticket.dispatched;
   touch(slot.name);
@@ -1815,7 +1843,8 @@ function settleSlot(ticket: SlotTicket, slot: AgentSlot): { applied: boolean; pa
 
 /** Settle a mutation that failed or could not be read: unresolved, and touched after any read already running. */
 function abandonSlot(name: string, ticket: SlotTicket): Pick<OperatorState, "unresolvedSlots"> | Record<string, never> {
-  if (ticket.dispatched === null) return {};
+  // Never sent, or sent by an identity that is gone: nothing here to settle.
+  if (ticket.dispatched === null || ticket.identity !== state.generation) return {};
   slotsInFlight.delete(name);
   return unresolve([name]);
 }
@@ -1849,11 +1878,11 @@ export async function loadAccessTokens(): Promise<void> {
       touch(slot.name);
       if (!slotsInFlight.has(slot.name)) unresolvedAt.delete(slot.name);
     }
-    // Agents the read no longer lists leave, unless something newer touched them.
+    // Agents the read no longer lists leave, unresolved, unless something newer touched them.
     for (const slot of state.tokens) {
       if (read.has(slot.name)) continue;
       if (!fresh(slot.name)) tokens.push(slot);
-      else touch(slot.name);
+      else unresolvedAt.set(slot.name, touch(slot.name));
     }
     set({ tokenPhase: "ready", tokens, ...unresolvedList() });
   } catch {
@@ -1887,7 +1916,7 @@ export function rotateAgentToken(name: string): Promise<void> {
   if (action === "rotate" && !window.confirm(`Rotate ${name}'s token? Its current token stops working immediately.`)) {
     return Promise.resolve();
   }
-  const ticket: SlotTicket = { dispatched: null };
+  const ticket = slotTicket();
   return mutate({
     request: (current) =>
       operatorRequest(
@@ -1932,7 +1961,7 @@ export function revokeAgentToken(name: string): Promise<void> {
   const checked = slotCheck(name, ["revoke"]);
   if (!checked) return Promise.resolve();
   if (!window.confirm(`Revoke ${name}'s token? The agent will immediately lose access.`)) return Promise.resolve();
-  const ticket: SlotTicket = { dispatched: null };
+  const ticket = slotTicket();
   return mutate({
     request: (current) =>
       operatorRequest(
