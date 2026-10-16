@@ -766,7 +766,7 @@ describe("operator recovery bounds and snapshot ordering", () => {
         return pendingContract.promise;
       });
       await vi.advanceTimersByTimeAsync(2100);
-      if (path === "unmount") store.stopOAuthPolling("svc");
+      if (path === "unmount") store.stopConnectorReads("svc");
       else if (path === "sign-out") store.signOut();
       else if (path === "deadline") await vi.advanceTimersByTimeAsync(30_000);
       else store.routeChanged(path);
@@ -891,6 +891,64 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
+  it.each(["summary", "config", "config-body", "detail", "detail-body", "token"])(
+    "INV-4 INV-10: publishes a healthy 16-second normal %s read without aborting or duplicating it",
+    async (delayed) => {
+      vi.useFakeTimers();
+      const wait = () => new Promise<void>((resolve) => setTimeout(resolve, 16_000));
+      const { store, fetchMock, configMock, windowListeners } = await loadStore({
+        id: "a",
+        getToken: vi
+          .fn()
+          .mockImplementationOnce(async () => {
+            if (delayed === "token") await wait();
+            return "token";
+          })
+          .mockResolvedValue("token"),
+      });
+      const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
+      const contract = {
+        schemaVersion: 1,
+        config: { connectors: [{ id: "svc", title: "fresh" }] },
+        you: { permissions: { connectors: [] } },
+        live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
+      };
+      const signals: AbortSignal[] = [];
+      const response = async (kind: string, value: object, init: RequestInit) => {
+        signals.push(init.signal!);
+        if (delayed === kind) await wait();
+        const result = Response.json(value);
+        if (delayed === `${kind}-body`)
+          vi.spyOn(result, "json").mockImplementation(async () => {
+            await wait();
+            return value;
+          });
+        return result;
+      };
+      configMock.mockImplementation((_path, init) => response("config", contract, init));
+      fetchMock.mockImplementation((path: string, init: RequestInit) =>
+        path === "/ui/data"
+          ? response("summary", { ...uiData("operator"), connectors: [connector] }, init)
+          : response("detail", connector, init),
+      );
+      const boot = store.boot();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await boot;
+      expect(store.getState().recoveryPending).toBe(false);
+      expect(signals.every((signal) => !signal.aborted)).toBe(true);
+      windowListeners.get("focus")?.();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(store.getState().contractPhase).toBe("ready");
+      expect(store.getState().contract?.config.connectors[0]?.title).toBe("fresh");
+      expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+      await vi.advanceTimersByTimeAsync(100_000);
+      expect(signals.every((signal) => !signal.aborted)).toBe(true);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(1);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/connectors/svc")).toHaveLength(1);
+      expect(configMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("INV-4 INV-10: bounds stalled session-token acquisition and fences its late continuation", async () => {
     const token = vi.fn(async () => "token");
     const { store, fetchMock, windowListeners } = await loadStore({ id: "a", getToken: token });
@@ -959,17 +1017,18 @@ describe("operator recovery bounds and snapshot ordering", () => {
       expect(signals[0]?.aborted).toBe(false);
       expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(300);
-      expect(signals[0]?.aborted).toBe(true);
+      expect(signals[0]?.aborted).toBe(false);
       expect(store.getState().recoveryPending).toBe(false);
       expect(stalled === "summary" ? store.getState().session : store.getState().contractPhase).toBe(
         stalled === "summary" ? "gated" : "error",
       );
-      // Timeout consumes the next shared backoff slot, rather than resetting it.
-      await vi.advanceTimersByTimeAsync(1999);
+      // Timers and focus coalesce onto the pending read even after its guard
+      // releases. They cannot abort it or start another request of any kind.
+      await vi.advanceTimersByTimeAsync(100_000);
+      windowListeners.get("focus")?.();
+      await vi.advanceTimersByTimeAsync(160);
       expect(signals).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(signals).toHaveLength(2);
-      expect(signals[1]?.aborted).toBe(false);
+      expect(signals[0]?.aborted).toBe(false);
       configMock.mockImplementation(async () => Response.json(contract));
       fetchMock.mockImplementation(async (path: string) =>
         Response.json(path === "/ui/data" ? { ...uiData("recovered"), connectors: [connector] } : connector),
@@ -981,13 +1040,13 @@ describe("operator recovery bounds and snapshot ordering", () => {
       pending.resolve(Response.json({ ...uiData("stale"), ...contract, ...connector }));
       await vi.advanceTimersByTimeAsync(60_000);
       expect(store.getState().data?.serverInfo.name).toBe("recovered");
-      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(4);
-      expect(configMock).toHaveBeenCalledTimes(stalled === "summary" ? 1 : 3);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(3);
+      expect(configMock).toHaveBeenCalledTimes(stalled === "summary" ? 1 : 2);
     },
   );
 
   it.each(["summary", "config"])(
-    "INV-4 INV-10: exhausts the automatic budget despite never-settling %s reads",
+    "INV-4 INV-10: coalesces the automatic schedule onto a never-settling %s read",
     async (stalled) => {
       const { store, fetchMock, configMock, windowListeners } = await loadStore(
         { id: "unused", getToken: async () => "unused" },
@@ -1004,16 +1063,15 @@ describe("operator recovery bounds and snapshot ordering", () => {
       fetchMock.mockImplementation(stalled === "summary" ? stuck : async () => Response.json(uiData("operator")));
       await store.boot();
       await vi.advanceTimersByTimeAsync(100_000);
-      expect(signals).toHaveLength(4);
-      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(false);
       expect(store.getState().recoveryPending).toBe(false);
-      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(5);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(2);
       windowListeners.get("focus")?.();
       await vi.advanceTimersByTimeAsync(160);
-      expect(signals).toHaveLength(5);
       await vi.advanceTimersByTimeAsync(100_000);
-      expect(signals).toHaveLength(5);
-      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(false);
     },
   );
 
@@ -1046,6 +1104,40 @@ describe("operator recovery bounds and snapshot ordering", () => {
       expect(configMock).toHaveBeenCalledTimes(stalled === "summary" ? 0 : 1);
       expect(store.getState().data).toBeNull();
       expect(store.getState().contract).toBeNull();
+    },
+  );
+
+  it.each(["navigation", "unmount", "sign-out"])(
+    "INV-4: %s aborts a timed-out config read and fences its late result",
+    async (action) => {
+      const { store, fetchMock, configMock } = await loadStore(
+        { id: "unused", getToken: async () => "unused" },
+        { kind: "cloudflare-access" },
+      );
+      vi.useFakeTimers();
+      const pending = deferred<Response>();
+      configMock.mockReturnValueOnce(pending.promise);
+      fetchMock.mockResolvedValue(Response.json(uiData("operator")));
+      const boot = store.boot();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await boot;
+      const signal = configMock.mock.calls[0]?.[1].signal;
+      expect(signal?.aborted).toBe(false);
+      if (action === "navigation") store.routeChanged("/tools");
+      else if (action === "unmount") store.stopConnectorReads("svc");
+      else store.signOut();
+      expect(signal?.aborted).toBe(true);
+      pending.resolve(
+        Response.json({
+          schemaVersion: 1,
+          config: { connectors: [] },
+          you: { permissions: { connectors: [] } },
+          live: { connectors: [] },
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getState().contract).toBeNull();
+      expect(store.getState().recoveryPending).toBe(false);
     },
   );
 
@@ -1229,6 +1321,8 @@ describe("operator recovery bounds and snapshot ordering", () => {
     fetchMock.mockReturnValueOnce(pendingDetail.promise);
     const first = store.loadOperatorContract();
     await vi.waitFor(() => expect(configMock).toHaveBeenCalledTimes(2));
+    const oldSignal = configMock.mock.calls[1]?.[1].signal;
+    expect(oldSignal?.aborted).toBe(false);
     configMock.mockImplementation(async () => Response.json(contract(live)));
     fetchMock.mockImplementation(async () => Response.json({ ...old, status: "ok", problem: undefined }));
     const seen: string[] = [];
@@ -1238,6 +1332,7 @@ describe("operator recovery bounds and snapshot ordering", () => {
         seen.push(`${state.contract.live.connectors[0]?.status}/${state.data?.connectors[0]?.status}`);
     });
     await store.loadOperatorContract();
+    expect(oldSignal?.aborted).toBe(false);
     pendingContract.resolve(Response.json(contract(old)));
     pendingDetail.resolve(Response.json(old));
     await first;

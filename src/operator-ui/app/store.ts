@@ -404,7 +404,7 @@ async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?:
       (outcome) => outcome.kind !== "detail" || outcome.detail.credential?.problem === "credential_unreadable",
     );
   if (needsRecovery) scheduleRecovery();
-  else resetRecovery();
+  else resetRecovery(false);
 }
 
 /** A scoped poll replaces one live row; all unrelated contract facts stay put. */
@@ -478,6 +478,7 @@ export function routeChanged(path: string): void {
   if (path !== currentPath) {
     currentPath = path;
     ++navigationRevision;
+    cancelRecoveryRead();
     for (const id of awaitingAuthorization.keys()) {
       if (path !== `/connectors/${encodeURIComponent(id)}`) stopOAuthPolling(id);
     }
@@ -575,6 +576,12 @@ export function stopOAuthPolling(connector?: string): void {
   oauthDeadlineTimer = undefined;
   oauthPollController?.abort();
   oauthPollController = undefined;
+}
+
+/** Connector-page unmount cancels any read still owned by that view. */
+export function stopConnectorReads(id: string): void {
+  cancelRecoveryRead();
+  stopOAuthPolling(id);
 }
 
 function scheduleOAuthPoll(): void {
@@ -913,64 +920,88 @@ let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
 let recoveryAttempt = 0;
 let recoveryNotBefore = 0;
 const RECOVERY_READ_TIMEOUT_MS = 15_000;
-let recoveryRead:
-  | {
-      controller: AbortController;
-      timer: ReturnType<typeof setTimeout>;
-      finish: () => void;
-    }
-  | undefined;
+interface RecoveryRead {
+  controller: AbortController;
+  timer: ReturnType<typeof setTimeout>;
+  finish: () => void;
+}
+let recoveryRead: RecoveryRead | undefined;
+// Superseded catalog refreshes are revision-fenced, but still need physical
+// cancellation if this identity or view goes away before their transport lands.
+const recoveryReads = new Set<RecoveryRead>();
 
 function cancelRecoveryRead(): void {
-  const read = recoveryRead;
-  if (!read) return;
+  if (recoveryReads.size === 0) return;
   recoveryRead = undefined;
-  clearTimeout(read.timer);
-  read.controller.abort();
-  read.finish();
-  set({ recoveryPending: false });
+  for (const read of recoveryReads) {
+    clearTimeout(read.timer);
+    read.controller.abort();
+    read.finish();
+  }
+  recoveryReads.clear();
+  set({
+    recoveryPending: false,
+    refreshing: false,
+    ...(state.contractPhase === "loading" ? { contractPhase: "error" } : {}),
+  });
 }
 
-/** Bound the entire cycle, including token acquisition and response bodies.
- * Racing cancellation also releases callers when a transport ignores abort.
- * The aborted signal fences any late completion before it can publish.
+/** Release the admission guard at the deadline, but keep the read alive.
+ * Passive returns coalesce onto that read until it settles. Explicit Retry
+ * and lifecycle changes abort it; a newer catalog refresh only revision-fences
+ * its result, so no deadline can discard healthy data.
  */
 function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, exposeRetry = false): Promise<void> {
-  cancelRecoveryRead();
+  if (recoveryRead) {
+    clearTimeout(recoveryRead.timer);
+    recoveryRead.finish();
+  }
   const current = fence();
   const controller = new AbortController();
   let finish!: () => void;
-  const cancelled = new Promise<void>((resolve) => {
+  const released = new Promise<void>((resolve) => {
     finish = resolve;
   });
   const cycle = {
     controller,
     finish,
     timer: setTimeout(() => {
-      if (recoveryRead !== cycle) return;
-      cancelRecoveryRead();
-      if (!current() || signedOut) return;
-      ++dataRevision;
-      ++snapshotRevision;
-      if (state.data) {
-        set({ contract: null, contractPhase: "error", refreshing: false });
-        scheduleRecovery();
-      } else unreachable("network");
+      if (recoveryRead !== cycle || !current() || signedOut) return;
+      finish();
+      set({
+        recoveryPending: false,
+        refreshing: false,
+        ...(state.data
+          ? { contract: null, contractPhase: "error" }
+          : auth.kind === "cloudflare-access"
+            ? {
+                session: "gated",
+                gate: failure("Cloudflare Access identity is unavailable. Retry to check your session."),
+              }
+            : { session: "ready", gate: null, loadFailure: "network" }),
+      });
+      scheduleRecovery();
     }, RECOVERY_READ_TIMEOUT_MS),
   };
   recoveryRead = cycle;
+  recoveryReads.add(cycle);
   set({ recoveryPending: exposeRetry });
-  return Promise.race([read(controller.signal), cancelled]).finally(() => {
-    if (recoveryRead === cycle) cancelRecoveryRead();
+  const work = read(controller.signal).finally(() => {
+    recoveryReads.delete(cycle);
+    if (recoveryRead !== cycle) return;
+    recoveryRead = undefined;
+    clearTimeout(cycle.timer);
+    set({ recoveryPending: false });
   });
+  return Promise.race([work, released]);
 }
 
-function resetRecovery(): void {
+function resetRecovery(cancelRead = true): void {
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
   recoveryAttempt = 0;
   recoveryNotBefore = 0;
-  cancelRecoveryRead();
+  if (cancelRead) cancelRecoveryRead();
   lastReturnPass = -Infinity;
 }
 
@@ -1029,7 +1060,7 @@ function recheckAuthorization(): void {
         (connector.status === "auth_required" && (connector.oauth || connector.authorizationUrl)) ||
         awaitingAuthorization.has(connector.id),
     );
-  if (retry && !state.oauthBusy) void refreshSnapshot(true);
+  if (retry && !state.oauthBusy) void guardedRecoveryRead((signal) => refreshSnapshot(true, undefined, signal));
 }
 
 export async function boot(): Promise<void> {

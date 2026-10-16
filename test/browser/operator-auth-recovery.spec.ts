@@ -214,6 +214,55 @@ for (const delayed of ["config", "detail"] as const) {
   });
 }
 
+for (const delayed of ["summary", "config", "config-body", "detail", "detail-body"] as const) {
+  test(`INV-4 INV-10: healthy 16-second normal ${delayed} read publishes after the admission deadline`, async ({
+    page,
+  }) => {
+    const start = new Date("2026-01-01T00:00:00Z");
+    await page.clock.install({ time: start });
+    await page.clock.pauseAt(start);
+    await page.addInitScript(`(() => {
+      const target = ${JSON.stringify(delayed)};
+      const original = window.fetch.bind(window);
+      const counts = { summary: 0, config: 0, detail: 0 };
+      window.fetch = async (input, init) => {
+        const path = new URL(String(input), location.href).pathname;
+        const kind = path === "/ui/data" ? "summary" : path === "/ui/api/config" ? "config" : path === "/ui/connectors/oauth" ? "detail" : undefined;
+        if (kind) document.documentElement.dataset[kind + "Reads"] = String(++counts[kind]);
+        const response = await original(input, init);
+        if (kind && (target === kind || target === kind + "-body")) {
+          const root = document.documentElement;
+          root.dataset.delayedRead = "true";
+          root.dataset.delayedAborted = String(init.signal.aborted);
+          init.signal.addEventListener("abort", () => { root.dataset.delayedAborted = "true"; });
+          const wait = () => new Promise(resolve => setTimeout(resolve, 16000));
+          if (target.endsWith("-body")) {
+            const json = response.json.bind(response);
+            response.json = async () => { await wait(); return json(); };
+          } else await wait();
+        }
+        return response;
+      };
+    })();`);
+    connected = true;
+    await open(page);
+    await expect(page.locator("html")).toHaveAttribute("data-delayed-read", "true");
+    await page.clock.runFor(15_000);
+    await expect(page.locator("html")).toHaveAttribute("data-delayed-aborted", "false");
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+    await page.evaluate("window.dispatchEvent(new Event('focus'))");
+    await page.clock.runFor(1000);
+    await expect(page.getByRole("button", { name: "Reconnect CRM", exact: true })).toBeVisible();
+    await expect(page.locator("#connectorView .conn-head")).toContainText("Connected");
+    await page.clock.runFor(100_000);
+    await expect(page.locator("html")).toHaveAttribute("data-delayed-aborted", "false");
+    for (const kind of ["summary", "config", "detail"])
+      await expect(page.locator("html")).toHaveAttribute(`data-${kind}-reads`, "1");
+    expect(reads.filter((path) => path === "/connectors/oauth")).toHaveLength(1);
+    expect(reads.filter((path) => path.startsWith("/ui/oauth/"))).toHaveLength(0);
+  });
+}
+
 for (const stalled of ["summary", "config"] as const) {
   for (const action of ["deadline", "retry", "sign-out"] as const) {
     test(`INV-4 INV-10: ${action} releases a never-settling ${stalled} recovery with bounded reads`, async ({
@@ -268,9 +317,18 @@ for (const stalled of ["summary", "config"] as const) {
         await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "2");
         await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
         await page.clock.runFor(300);
-        await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "true");
+        await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
         if (stalled === "config") await expect(page.getByText("Configuration couldn't be loaded")).toBeVisible();
         await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+        // The timed-out request still owns passive reads. Neither the retry
+        // timer nor repeated returns may start a duplicate while it is pending.
+        for (let i = 0; i < 4; i++) {
+          await page.evaluate("window.dispatchEvent(new Event('focus'))");
+          await page.clock.runFor(20_000);
+        }
+        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "2");
+        expect(await page.locator("html").getAttribute("data-config-reads")).toBe(stalled === "summary" ? null : "1");
+        await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
       }
       if (action === "sign-out") {
         await page.getByRole("button", { name: "Sign out", exact: stalled === "config" }).click();

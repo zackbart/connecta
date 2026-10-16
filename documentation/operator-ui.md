@@ -123,10 +123,15 @@ with at least two seconds between passive attempts. An in-flight passive attempt
 coalesces returns until its summary and matching catalog/auth cycle finish,
 so slow successful reads can publish. Each admission summary and its matching
 config/auth cycle share a 15-second deadline, including token acquisition,
-fetches and response bodies. The deadline aborts and fences the cycle, releases
-its guard, and reports retryable unavailability through the same backoff without
-resetting its budget. Retry remains available during recovery configuration
-loading and supersedes and aborts the old cycle; identity changes cancel it. Failed reads retry after
+fetches and response bodies. This is an admission deadline, not a request
+lifetime limit: it releases the recovery guard and exposes Retry without aborting
+the pending read or invalidating its identity/revision fence. A late healthy
+response still publishes if that cycle is current. Passive timers and returns
+coalesce onto the pending cycle, including after its deadline; they never start
+duplicate summary, token, config, detail or body reads. The passive retry schedule
+stays bounded and does not reset its budget on a deadline. Retry remains available
+during recovery configuration loading and supersedes and aborts the old cycle;
+identity changes, navigation and connector-page unmount also cancel it. Failed reads retry after
 2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
 those four automatic retries, a focus return can request one more read after
 the eight-second backoff, without replenishing the automatic budget. Retry
@@ -140,8 +145,8 @@ Catalog and connector auth details share one revisioned refresh cycle. Each
 completed connector publishes its catalog facts and auth controls together,
 while a slow provider leaves other rows usable.
 Catalog refresh, connector refresh, and mutation follow-up reads update both
-consumers together. A later refresh or mutation invalidates an older cycle,
-and a failed contract read clears its old snapshot. After an explicit OAuth
+consumers together. A later refresh or mutation invalidates an older cycle's publication fence
+without aborting its read, and a failed contract read clears its old snapshot. After an explicit OAuth
 start, visible tabs poll only that connector's read-only catalog and auth facts
 every two seconds for up to 30 seconds. The scoped result replaces only that
 connector's matching live row and auth controls. Success, a failed read or status,
