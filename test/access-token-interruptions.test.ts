@@ -863,6 +863,40 @@ describe("pre-commit acknowledgements", () => {
     },
   );
 
+  it("INV-7: a stalled discard of an aborted rotation starts no further delete after the deadline", async () => {
+    const base = memoryStorage();
+    const seed = new AccessTokenManager(base, { agents: ["simon"] });
+    const previous = await seed.rotate("simon");
+    const controller = new AbortController();
+    const {
+      storage: withheld,
+      calls,
+      release,
+    } = withholding(base, (operation, key) => operation === "compareAndSet" && key.startsWith(LOOKUPS));
+    // Leave once this rotation's lookup is written, so the signal check before
+    // the commit fails and the provisional pair is discarded.
+    const storage: KVStorage = {
+      ...withheld,
+      set: async (key, value, options) => {
+        const result = await withheld.set(key, value, options);
+        if (key.startsWith(LOOKUPS)) controller.abort();
+        return result;
+      },
+    };
+    const outcome = await new AccessTokenManager(storage, { agents: ["simon"] })
+      .rotate("simon", "operator", { signal: controller.signal, deadline: Date.now() + 300 })
+      .then(
+        () => "success",
+        (error: { code?: string }) => error.code,
+      );
+    expect(outcome).toBe("aborted");
+    const settled = calls.length;
+    release.open();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(calls.slice(settled)).toEqual([]);
+    expect(await admits(seed, previous.token)).toBe(true);
+  });
+
   it("INV-7: a withheld pre-commit write after the caller left reports aborted, since nothing was published", async () => {
     const base = memoryStorage();
     const seed = new AccessTokenManager(base, { agents: ["simon"] });

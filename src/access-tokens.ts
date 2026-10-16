@@ -418,13 +418,12 @@ export class AccessTokenManager {
     // This call's own record and lookup, while known to be uncommitted: one
     // conditional delete each, matching exactly what was written, inside the
     // window like everything else.
-    const discard = () =>
-      window
-        .run(async () => {
-          await this.storage.compareAndSet(lookupKey(hash), lookupRaw, null).catch(() => false);
-          await this.storage.compareAndSet(recordKey(record.id), recordRaw, null).catch(() => false);
-        })
-        .catch(() => {});
+    // Each delete is raced on its own, so a stalled first delete can never
+    // start the second after the deadline.
+    const discard = async () => {
+      await window.run(() => this.storage.compareAndSet(lookupKey(hash), lookupRaw, null)).catch(() => false);
+      await window.run(() => this.storage.compareAndSet(recordKey(record.id), recordRaw, null)).catch(() => false);
+    };
     let raw: string | null;
     try {
       ({ raw } = await window.run(() => this.readSlot(agent)));
