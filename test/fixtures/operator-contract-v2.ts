@@ -180,10 +180,10 @@ const agents: OperatorAgent[] = [
 ];
 
 const matrix: OperatorConnectorPoolCell[] = [
-  { connectorId: "github", pool: null, tools: "all", runsAs: { kind: "shared", savedAt: EARLIER } },
-  { connectorId: "github", pool: "ada", tools: ["read"], runsAs: { kind: "shared", savedAt: EARLIER } },
-  { connectorId: "github", pool: "support", tools: ["read"], runsAs: { kind: "shared", savedAt: EARLIER } },
-  { connectorId: "github", pool: "team", tools: ["read"], runsAs: { kind: "shared", savedAt: EARLIER } },
+  { connectorId: "github", pool: null, tools: "all", runsAs: { kind: "shared", source: "vault", savedAt: EARLIER } },
+  { connectorId: "github", pool: "ada", tools: ["read"], runsAs: { kind: "shared", source: "vault", savedAt: EARLIER } },
+  { connectorId: "github", pool: "support", tools: ["read"], runsAs: { kind: "shared", source: "vault", savedAt: EARLIER } },
+  { connectorId: "github", pool: "team", tools: ["read"], runsAs: { kind: "shared", source: "vault", savedAt: EARLIER } },
   // Plain /mcp admits no agents, so the mapping has no agent subject there.
   { connectorId: "gmail", pool: null, tools: "all", runsAs: { kind: "workspace", humans: "self", agents: null } },
   {

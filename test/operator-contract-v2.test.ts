@@ -1,5 +1,10 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { OperatorMemberManage, OperatorRunsAs, OperatorUiContractV2 } from "../src/operator-ui/contract.js";
+import type {
+  OperatorMemberManage,
+  OperatorRunsAs,
+  OperatorSharedSource,
+  OperatorUiContractV2,
+} from "../src/operator-ui/contract.js";
 import {
   OPERATOR_V2_MAINTAINER,
   OPERATOR_V2_MEMBER,
@@ -301,5 +306,26 @@ describe("operator contract v2 fixtures", () => {
       ["a repeated grant", (view) => pool(view, "team").tools.push({ connectorId: "slack", tools: "all" })],
       ["a repeated field", (view) => credential(view).fields!.push({ name: "token", label: "Token" })],
     ])("INV-4: rejects %s", (_name, mutate) => expectRejected(mutate));
+  });
+});
+
+describe("shared runsAs source", () => {
+  it("names every credential origin, with savedAt only where the server knows a save time", () => {
+    const sources = {
+      vault: true,
+      missing: true,
+      oauth: true,
+      config: true,
+      unauthenticated: true,
+    } as const satisfies Record<OperatorSharedSource, true>;
+    expect(Object.keys(sources).sort()).toEqual(["config", "missing", "oauth", "unauthenticated", "vault"]);
+    const cells: Array<Extract<OperatorRunsAs, { kind: "shared" }>> = [
+      { kind: "shared", source: "vault", savedAt: "2026-10-01T00:00:00.000Z" },
+      { kind: "shared", source: "oauth", savedAt: "2026-10-01T00:00:00.000Z" },
+      { kind: "shared", source: "missing", savedAt: null },
+      { kind: "shared", source: "config", savedAt: null },
+      { kind: "shared", source: "unauthenticated", savedAt: null },
+    ];
+    expect(cells.map((cell) => cell.source).sort()).toEqual(Object.keys(sources).sort());
   });
 });
