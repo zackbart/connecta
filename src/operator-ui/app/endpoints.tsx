@@ -242,10 +242,10 @@ function ToolSummary({ endpoint }: { endpoint: EndpointRow }) {
   );
 }
 
-/** A runs-as label with its kind ("Shared", "Personal", …) set apart from the detail. */
+/** A runs-as label with its kind ("Shared", "Personal", …) set apart from the detail, when it has one. */
 export function RunsAs({ label }: { label: string }) {
   const at = label.indexOf(" · ");
-  if (at < 0) return <span className="runs-as-kind">{label}</span>;
+  if (at < 0) return <>{label}</>;
   return (
     <>
       <span className="runs-as-kind">{label.slice(0, at)}</span>
