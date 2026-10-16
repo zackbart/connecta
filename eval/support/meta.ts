@@ -106,7 +106,7 @@ export function runProtocol(pairId?: string) {
       "eval/fakes",
       "eval/support",
       "eval/run-agent.ts",
-      "package-lock.json",
+      "pnpm-lock.yaml",
       "tsconfig.json",
     ]),
   };

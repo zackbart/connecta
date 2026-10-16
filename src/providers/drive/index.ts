@@ -26,7 +26,7 @@ import { skill } from "./skill.generated.js";
  * changes sharing is destructive and crosses the host's approval prompt.
  *
  * Drift. `src/providers/drive/drift.json` records the eleven methods the
- * tools call, and `npm run providers:check -- --provider drive` reports a
+ * tools call, and `pnpm run providers:check --provider drive` reports a
  * touched contract that moved or a method that stopped accepting the scope
  * below.
  */

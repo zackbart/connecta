@@ -1,6 +1,6 @@
 // Local evaluation of Effect 4.0.0's MCP, Schema, and HTTP replacements.
 // Synthetic requests only. Never deploys or contacts a provider.
-// Run npm run build, then node scripts/probes/effect-v4-evaluation.mjs output.json.
+// Run pnpm run build, then node scripts/probes/effect-v4-evaluation.mjs output.json.
 // Bundle figures are incremental probes alongside existing implementations,
 // not measurements of complete replacements or of removed dependency savings.
 import { execFileSync } from "node:child_process";

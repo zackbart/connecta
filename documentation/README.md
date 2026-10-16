@@ -71,7 +71,7 @@ own scoped change procedures. Each [provider folder](https://github.com/zackbart
 owns its maintained `SKILL.md`, options, tests, fixtures, and review data.
 Use those details instead of copying provider catalogs into general guides.
 The provider list in the human README is generated; preserve its marker pair
-and run `npm run check:providers-generated` after edits.
+and run `pnpm run check:providers-generated` after edits.
 
 When changing behavior, update its owning contract and task guide in the same
 change. Check examples against current source and point to the tests that

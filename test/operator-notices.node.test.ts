@@ -13,7 +13,7 @@ const SEPARATOR = "\n\n----------------------------------------\n\n";
  * the asset build: bundle the entry again and read the packages off its
  * metafile. The two Geist packages ship as fonts through the stylesheet.
  */
-async function shippedPackages(): Promise<string[]> {
+async function shippedPackages(): Promise<Map<string, string>> {
   const result = await build({
     absWorkingDir: root,
     bundle: true,
@@ -30,17 +30,23 @@ async function shippedPackages(): Promise<string[]> {
     target: "es2022",
     logLevel: "silent",
   });
-  const packages = new Set(["@fontsource-variable/geist", "@fontsource-variable/geist-mono"]);
+  // Name each package by its last node_modules segment and read it from the
+  // directory esbuild resolved, under npm's flat tree and pnpm's store alike.
+  const packages = new Map(
+    ["@fontsource-variable/geist", "@fontsource-variable/geist-mono"].map((name) => [
+      name,
+      resolve(root, "node_modules", name),
+    ]),
+  );
   for (const input of Object.keys(result.metafile.inputs)) {
-    const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input);
-    if (match) packages.add(match[1]!);
+    const match = /^(.*node_modules\/((?:@[^/]+\/)?[^/]+))\//.exec(input);
+    if (match) packages.set(match[2]!, resolve(root, match[1]!));
   }
-  return [...packages].sort();
+  return packages;
 }
 
 /** What each package's notice must say, verbatim, from its own files. */
-async function expectedText(name: string): Promise<{ text: string; heading: string }> {
-  const directory = resolve(root, "node_modules", name);
+async function expectedText(name: string, directory: string): Promise<{ text: string; heading: string }> {
   const license = (await readdir(directory)).find((file) => /^licen[cs]e(?:\.|$)/i.test(file));
   if (license) return { heading: name, text: await readFile(resolve(directory, license), "utf8") };
   // No LICENSE in the tarball: its declared MIT license, with the grant this repository ships.
@@ -65,8 +71,8 @@ describe("operator dependency notices", () => {
       }
     }
     const expected = new Map<string, string>();
-    for (const name of await shippedPackages()) {
-      const { heading, text } = await expectedText(name);
+    for (const [name, directory] of await shippedPackages()) {
+      const { heading, text } = await expectedText(name, directory);
       expected.set(heading, text);
     }
     // The same packages, no more and no fewer, each under exactly its own text.

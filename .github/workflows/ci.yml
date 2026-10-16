@@ -47,65 +47,71 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run format:check
-      - run: npm run check:providers-generated
-      - run: npm run check:docs
-      - run: npm run check:changes
-      - run: npm run check:operator-ui
-      - run: npm run check:clerk-sdk
-      - run: npm run check:lint
-      - run: npm run check:unused
-      - run: npm run typecheck
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
+      - run: pnpm run check:providers-generated
+      - run: pnpm run check:docs
+      - run: pnpm run check:changes
+      - run: pnpm run check:operator-ui
+      - run: pnpm run check:clerk-sdk
+      - run: pnpm run check:lint
+      - run: pnpm run check:unused
+      - run: pnpm run typecheck
 
   node:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       # A Node-only config, not --project: retain invariant/spec enforcement.
-      - run: npm run test -- --config vitest.config.node.ts
+      - run: pnpm run test --config vitest.config.node.ts
 
   workers:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run test:workers
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:workers
 
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run check:declarations
-      # build already generated the UI; avoid check:bundle's duplicate prehook.
-      - run: npm --ignore-scripts run check:bundle
-      - run: npm run check:examples
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run check:declarations
+      # build already generated the UI. Run check:bundle's script directly: pnpm runs
+      # its pre-hook even under --ignore-scripts.
+      - run: node scripts/bundle-size.mjs
+      - run: pnpm run check:examples
       # Reuse this job's dist/. Smoke packs with --ignore-scripts, without a rebuild.
-      - run: npm run check:package
+      - run: pnpm run check:package
 
-  # npm audit reads the lockfile and the registry, so it needs no install.
+  # pnpm audit reads the lockfile and the registry, so it needs no install;
+  # verify-deps-before-run=false stops pnpm run from installing first.
   security:
     needs: changes
     if: needs.changes.outputs.security == 'true'
@@ -113,10 +119,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: npm run check:security
+      - run: pnpm --config.verify-deps-before-run=false run check:security
 
   # Gate the job, not the workflow, so irrelevant PRs report a skipped check.
   browser:
@@ -126,14 +133,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Read installed Playwright version
         id: playwright
-        run: echo "version=$(node -p 'require("playwright/package.json").version')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
@@ -143,15 +151,15 @@ jobs:
         id: install
         timeout-minutes: 5
         continue-on-error: true
-        run: npm run test:browser:install -- --with-deps
+        run: pnpm run test:browser:install --with-deps
       # A timed-out first attempt can leave apt-get holding the dpkg lock.
       - name: Retry Chromium installation once
         if: steps.install.outcome == 'failure'
         timeout-minutes: 9
         run: |
           bash scripts/ci-settle-apt.sh
-          npm run test:browser:install -- --with-deps
-      - run: npm run test:browser
+          pnpm run test:browser:install --with-deps
+      - run: pnpm run test:browser
 
   # Keep the existing check name as the gate for every job, even on failure.
   check:

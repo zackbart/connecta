@@ -17,7 +17,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: npm run check:security
+      - run: pnpm --config.verify-deps-before-run=false run check:security

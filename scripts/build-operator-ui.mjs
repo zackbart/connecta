@@ -85,18 +85,18 @@ const assets = Object.fromEntries(
   }),
 );
 // Carry the notices with the shipped browser bundle, including both Geist OFL notices.
-const packages = new Set(
-  Object.keys(result.metafile.inputs).flatMap((input) => {
-    const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input);
-    return match ? [match[1]] : [];
-  }),
-);
-packages.add("@fontsource-variable/geist");
-packages.add("@fontsource-variable/geist-mono");
+// The last node_modules segment names the package under npm's flat tree and
+// pnpm's .pnpm store alike; its directory comes from the path esbuild resolved.
+const packages = new Map();
+for (const input of Object.keys(result.metafile.inputs)) {
+  const match = /^(.*node_modules\/((?:@[^/]+\/)?[^/]+))\//.exec(input);
+  if (match) packages.set(match[2], resolve(root, match[1]));
+}
+packages.set("@fontsource-variable/geist", resolve(root, "node_modules", "@fontsource-variable/geist"));
+packages.set("@fontsource-variable/geist-mono", resolve(root, "node_modules", "@fontsource-variable/geist-mono"));
 /** Each package's heading beside its verbatim license text. */
 const notices = [];
-for (const name of [...packages].sort()) {
-  const directory = resolve(root, "node_modules", name);
+for (const [name, directory] of [...packages].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
   const license = (await readdir(directory)).find((file) => /^licen[cs]e(?:\.|$)/i.test(file));
   if (license) {
     notices.push({ heading: name, text: await readFile(resolve(directory, license), "utf8") });
@@ -166,7 +166,7 @@ for (const [path, contents] of [
   // must match a deterministic rebuild. Shared core styles stay tracked.
   if (checkOnly && (current !== undefined || path !== generatedPath)) {
     if (current !== contents) {
-      console.error(`${relative(root, path)} is stale; run npm run build:operator-ui`);
+      console.error(`${relative(root, path)} is stale; run pnpm run build:operator-ui`);
       process.exitCode = 1;
     }
   } else await writeFile(path, contents);

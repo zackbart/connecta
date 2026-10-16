@@ -93,7 +93,7 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
   rather than leaving the default. README "UI and encrypted credentials" shows
   the shape.
 - After configuration changes, typecheck: inside the connecta repository that
-  is `npm run check:examples`; a copied deployment runs its own `tsc --noEmit`.
+  is `pnpm run check:examples`; a copied deployment runs its own `tsc --noEmit`.
   After deployment, connect both Claude and ChatGPT to `<PUBLIC_URL>/mcp` and
   complete their browser authorization flows before calling setup complete.
 

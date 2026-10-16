@@ -12,13 +12,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run test:browser:install -- --with-deps
-      - run: npm run test:browser:snapshots
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:browser:install --with-deps
+      - run: pnpm run test:browser:snapshots
       - uses: actions/upload-artifact@v6
         with:
           name: operator-linux-snapshots

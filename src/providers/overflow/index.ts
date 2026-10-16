@@ -10,7 +10,7 @@ import { skill } from "./skill.generated.js";
  * nothing to install. Every tool below is hand-written. Overflow's OpenAPI
  * document is drift evidence only — `src/providers/overflow/drift.json`
  * records the operations the named tools touch, and
- * `npm run providers:check -- --provider overflow` compares them with the
+ * `pnpm run providers:check --provider overflow` compares them with the
  * published document without a credential. That document is served only by
  * staging (`server.stage.overflow.co/api/docs/openapi.json`; production's
  * equivalent answers 404), so the check reads staging's contract and assumes

@@ -25,7 +25,7 @@ import { skill } from "./skill.generated.js";
  *
  * Drift is handled the Vercel way: `src/providers/ccb/drift.json` records
  * every endpoint a named tool touches, and
- * `npm run providers:check -- --provider ccb` compares those rows with the
+ * `pnpm run providers:check --provider ccb` compares those rows with the
  * published, credential-free OpenAPI document at
  * https://docs.pushpay.io/chms-v2/openapi/chms-api-specs.json.
  */

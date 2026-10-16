@@ -1,5 +1,5 @@
 /**
- * `npm run eval:smoke -- [--targets a,b] [--no-build] [--out path]` — boot both
+ * `pnpm run eval:smoke [--targets a,b] [--no-build] [--out path]` — boot both
  * deployment shapes from this checkout and drive them over MCP and a browser.
  *
  * Targets:
@@ -13,7 +13,7 @@
  * downstream write where the target has a write-capable tool), and the
  * operator UI loading in headless Chromium with a screenshot.
  *
- * `npm run build` runs first: the template and the Worker import the package
+ * `pnpm run build` runs first: the template and the Worker import the package
  * by name, which resolves to dist/. No LLM; needs no network.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -408,9 +408,9 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
 // ---------------------------------------------------------------------- run
 
 if (!args.has("no-build")) {
-  console.error("[smoke] npm run build");
-  const built = spawnSync("npm", ["run", "build"], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"] });
-  if (built.status !== 0) throw new Error("npm run build failed");
+  console.error("[smoke] pnpm run build");
+  const built = spawnSync("pnpm", ["run", "build"], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"] });
+  if (built.status !== 0) throw new Error("pnpm run build failed");
 }
 const runners: Record<string, () => Promise<SmokeTarget>> = {
   "node-template": nodeTemplate,

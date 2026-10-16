@@ -55,6 +55,22 @@ function satisfiesCaretRange(version: string, range: string): boolean {
   });
 }
 
+// pnpm-lock.yaml read with two patterns rather than a YAML dependency, for the
+// reason above. pnpm 12 writes a leading document that pins pnpm itself; the
+// project's lockfile is the last document.
+function lockedVersions(name: string): { resolved: string | undefined; locked: string[] } {
+  const lock = readFileSync(join(ROOT, "pnpm-lock.yaml"), "utf8").split(/^---$/m).at(-1) ?? "";
+  const escaped = name.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  const key = name.startsWith("@") ? `'${escaped}'` : escaped;
+  // The root importer's entry: `name:` then its `specifier:` and `version:` lines.
+  const resolved = new RegExp(`^      ${key}:\\n        specifier: .+\\n        version: ([^(\\s]+)`, "m").exec(
+    lock,
+  )?.[1];
+  // Every package key (`name@version` or `'@scope/name@version(peers)'`).
+  const locked = [...lock.matchAll(new RegExp(`^  '?${escaped}@([^(':]+)`, "gm"))].map((match) => match[1]!);
+  return { resolved, locked: [...new Set(locked)] };
+}
+
 describe("public package boundary", () => {
   it("is configured as a public package that ships built output", () => {
     expect(packageJson.private).not.toBe(true);
@@ -207,10 +223,7 @@ describe("public package boundary", () => {
     expect(arms).toContain(packageJson.devDependencies?.["@cloudflare/codemode"]);
     // …and the version actually resolved has to sit inside it, which is the
     // half a range string cannot state on its own.
-    const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8")) as {
-      packages?: Record<string, { version?: string }>;
-    };
-    const resolved = lock.packages?.["node_modules/@cloudflare/codemode"]?.version;
+    const { resolved } = lockedVersions("@cloudflare/codemode");
     expect(resolved, "@cloudflare/codemode is not in the lockfile").toBeTruthy();
     expect(
       satisfiesCaretRange(resolved ?? "", published ?? ""),
@@ -442,18 +455,15 @@ describe("Effect behind the published surface", () => {
     expect(range).toMatch(/^\^4\.\d+\.\d+$/);
     expect(packageJson.peerDependencies).not.toHaveProperty("effect");
     expect(packageJson.devDependencies).not.toHaveProperty("effect");
-    const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8")) as {
-      packages?: Record<string, { version?: string }>;
-    };
-    const locked = lock.packages?.["node_modules/effect"]?.version ?? "";
+    const effect = lockedVersions("effect");
+    const locked = effect.resolved ?? "";
     const [floorMinor = 0, floorPatch = 0] = range!.slice(3).split(".").map(Number);
     const [major, minor = 0, patch = 0] = locked.split(".").map(Number);
     expect(major, `locked effect ${locked}`).toBe(4);
     expect(minor * 1e6 + patch, `locked effect ${locked} is below ${range}`).toBeGreaterThanOrEqual(
       floorMinor * 1e6 + floorPatch,
     );
-    const nested = Object.keys(lock.packages ?? {}).filter((path) => path.endsWith("/node_modules/effect"));
-    expect(nested, "a second copy of effect is locked").toEqual([]);
+    expect(effect.locked, "a second copy of effect is locked").toEqual([locked]);
   });
 
   it("declares exactly the core runtime dependencies", () => {

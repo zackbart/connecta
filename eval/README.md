@@ -17,9 +17,9 @@ fixture-invalid Luna refund trial.
 ## Runners
 
 ```sh
-npm run build
-npm run eval:agent -- --runner codex --models gpt-6-luna --tasks p5-known-read-routing --repeats 1
-npm run eval:agent -- --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
+pnpm run build
+pnpm run eval:agent --runner codex --models gpt-6-luna --tasks p5-known-read-routing --repeats 1
+pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
 ```
 
 Codex uses the signed-in `codex` CLI, `~/.codex/auth.json`, and defaults to
@@ -126,10 +126,10 @@ Claude's two unobservable rich-output tasks remain N/A in both arms and modes.
 
 ```sh
 comparison_tasks=$(node --import tsx --input-type=module -e 'import { COMPARISON_TASKS } from "./eval/tasks/index.ts"; console.log(COMPARISON_TASKS.map(t => t.id).join(","))')
-npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface six --grading outcome --tasks "$comparison_tasks" --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-six.json
-npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface code --grading outcome --tasks "$comparison_tasks" --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-code.json
-npm run eval:compare -- --a eval/results/haiku-six.json --b eval/results/haiku-code.json
-npm run eval:regrade -- --grading outcome --in eval/baselines/gpt-6-luna-0.29.json --out eval/results/luna-outcome.json
+pnpm run eval:agent --runner claude --models claude-haiku-5-5 --surface six --grading outcome --tasks "$comparison_tasks" --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-six.json
+pnpm run eval:agent --runner claude --models claude-haiku-5-5 --surface code --grading outcome --tasks "$comparison_tasks" --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-code.json
+pnpm run eval:compare --a eval/results/haiku-six.json --b eval/results/haiku-code.json
+pnpm run eval:regrade --grading outcome --in eval/baselines/gpt-6-luna-0.29.json --out eval/results/luna-outcome.json
 ```
 
 Result config and every trial record `surface`, `grading` and runner. Historical
@@ -373,10 +373,10 @@ supported `connector:<id>` aliases and `connecta.skill`. The selected arm determ
 ## Verification without model spend
 
 ```sh
-npm run eval:selftest
-npm run eval:smoke
-VITEST_MAX_WORKERS=2 npx vitest run --project node test/claude-eval.node.test.ts test/codex-eval.node.test.ts test/agent-eval-trace.node.test.ts
-VITEST_MAX_WORKERS=2 npm run release:check
+pnpm run eval:selftest
+pnpm run eval:smoke
+VITEST_MAX_WORKERS=2 pnpm exec vitest run --project node test/claude-eval.node.test.ts test/codex-eval.node.test.ts test/agent-eval-trace.node.test.ts
+VITEST_MAX_WORKERS=2 pnpm run release:check
 ```
 
 The self-test executes all 29 references in both arms and grading modes through real MCP, checks exact usage-guide parity across aliases and host representations, JSON/SSE guidance, six-arm byte preservation, hidden-tool refusals and terminal caught/uncaught errors, and verifies the paired decision rule and provenance refusals, then proves that its
@@ -395,7 +395,7 @@ Skipped features remain untested until enabled against a supporting checkout.
 Fake CLI protocol tests cover isolation, inventory/model refusal, multiple
 turns, rich output, usage accounting, deadlines and cancellation. These checks
 require no API keys or model calls. Eval smoke uses both deployment shapes and
-headless Chromium; install it with `npm run test:browser:install` if needed.
+headless Chromium; install it with `pnpm run test:browser:install` if needed.
 
 ## Follow-up baseline allowance and time
 
@@ -406,11 +406,11 @@ repeat = 29 trials per runner. A two-repeat baseline runs 58 per runner.
 Both use signed-in CLI subscription logins and consume plan allowance.
 
 ```sh
-npm run eval:agent -- --runner claude --models claude-sonnet-5-5 --repeats 2 --out eval/results/sonnet-5-5.json
-npm run eval:agent -- --runner codex --models gpt-6-luna --repeats 2 --out eval/results/gpt-6-luna.json
+pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --repeats 2 --out eval/results/sonnet-5-5.json
+pnpm run eval:agent --runner codex --models gpt-6-luna --repeats 2 --out eval/results/gpt-6-luna.json
 ```
 
-Node/npm, the two CLIs, and the signed-in credentials described above are
+Node/pnpm, the two CLIs, and the signed-in credentials described above are
 required. Homebrew can manage the CLIs with `brew install --cask codex
 claude-code`. No downstream credentials or Cloudflare deployment login are
 needed. The tiny authentication smoke uses one `p5-known-read-routing` trial
@@ -462,7 +462,7 @@ triage. Both final files have complete grading inputs with no required live
 rerun. The original JSON files stay unchanged.
 
 ```sh
-npm run eval:regrade -- --in eval/results/sonnet-5-5.json --out eval/results/sonnet-5-5-regraded.json
+pnpm run eval:regrade --in eval/results/sonnet-5-5.json --out eval/results/sonnet-5-5-regraded.json
 ```
 
 `--grading route` is the default; `--grading outcome` applies the route-neutral checks described above. Regrading starts no CLI, model, HTTP server, or saved program. It preserves the

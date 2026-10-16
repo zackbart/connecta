@@ -47,7 +47,7 @@ This example has no `package.json` of its own — it resolves the installed
 package from the repository root.
 
 ```sh
-npm install                                    # from the package root
+pnpm install                                   # from the repository root
 
 wrangler d1 create connecta                    # paste the id into wrangler.jsonc
 # In wrangler.jsonc also set PUBLIC_URL to this Worker's URL and
@@ -232,7 +232,7 @@ Access adoption or preserve production identity.
 
 ### Copied into its own repository
 
-The `npm install` above is the connecta repository's, which already has every
+The `pnpm install` above is the connecta repository's, which already has every
 dependency this file imports. A copy with its own `package.json` installs
 Connecta and the separately installed `@cloudflare/codemode` peer:
 

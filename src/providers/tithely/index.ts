@@ -46,7 +46,7 @@ import { skill } from "./skill.generated.js";
  * as `.md` embeds a one-operation OpenAPI 3.1 snippet. `scripts/drift-check.mjs`
  * assembles those snippets for the pages listed in
  * `src/providers/tithely/drift.json` and digests each operation like any
- * other provider's, so `npm run providers:check -- --provider tithely` runs
+ * other provider's, so `pnpm run providers:check --provider tithely` runs
  * credential-free.
  */
 import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";

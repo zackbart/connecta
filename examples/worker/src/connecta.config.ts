@@ -17,7 +17,7 @@
  *
  * Setup (this example has no package.json of its own — it self-references the
  * installed `@zackbart/connecta` package):
- *   1. `npm install` in the connecta package root (../../ from here) so the
+ *   1. `pnpm install` in the connecta repository root (../../ from here) so the
  *      package import and wrangler resolve. A copy in its own repository
  *      installs `@zackbart/connecta @cloudflare/codemode` instead. Codemode is
  *      an optional peer.

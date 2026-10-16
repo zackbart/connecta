@@ -22,7 +22,7 @@ import { skill } from "./skill.generated.js";
  * documentation graph listing every version (`/<app>/v2/documentation`).
  * `src/providers/planning-center/drift.json` records each endpoint a named
  * tool calls, digested at the version pinned below, and
- * `npm run providers:check -- --provider planning-center` reports a touched
+ * `pnpm run providers:check --provider planning-center` reports a touched
  * contract that moved and a newly published version of any pinned product.
  * Both are evidence only: no tool here is generated from either document.
  */

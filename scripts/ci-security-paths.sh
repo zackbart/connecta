@@ -9,7 +9,7 @@ set -euo pipefail
 security=false
 while IFS= read -r -d '' path; do
   case "$path" in
-    package.json|*/package.json|package-lock.json|*/package-lock.json|npm-shrinkwrap.json|*/npm-shrinkwrap.json|.npmrc|*/.npmrc)
+    package.json|*/package.json|package-lock.json|*/package-lock.json|pnpm-lock.yaml|*/pnpm-lock.yaml|pnpm-workspace.yaml|*/pnpm-workspace.yaml|npm-shrinkwrap.json|*/npm-shrinkwrap.json|.npmrc|*/.npmrc)
       security=true
       break
       ;;
