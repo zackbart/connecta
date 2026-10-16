@@ -1,6 +1,0 @@
----
-type: changed
-breaking: true
----
-
-`GET /ui/api/config` serves operator contract v2 and is the operator page's only gate: 401 with the auth challenge when signed out (an agent token gets the machine-only 401 every human route gives it), the private 404 for anyone who is neither a maintainer nor a pool member, and 200 with `role` otherwise. A maintainer gets the whole view: `root` and every pool with their members and directory labels, pool owners, every declared agent with its token slot and last activity, and a connector × endpoint matrix naming who each connector runs as. A pool member gets only their own pools and connectors, with their own connection state and the actions they may take. Contract v1, its `you` and `hasGrant` facts, and the `OperatorViewer` and `OperatorPool` types are removed; `OperatorUiContract` now names the v2 shape. `/ui/data` and `/ui/connectors/<id>` stay maintainer-only. `/ui/oauth/<id>` gates each verb on its own hooks: connecting needs `startAuth`, `finishAuth` and `verifyState`, and disconnecting needs only `disconnectAuth`, so a connector provisioned out of band can be disconnected. `DELETE /ui/credentials/<id>` refuses to clear an empty partition or slot with 409 `credential_required`. `connecta doctor --config` reads v2 and refuses a member's view.
