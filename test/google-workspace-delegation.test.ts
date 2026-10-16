@@ -920,6 +920,21 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expected: { tools: [{ address: "mail.list_labels", guide: "connector:mail" }] },
       },
       {
+        name: "off-page aggregate counts",
+        args: { query: "labels", offset: 10_000 },
+        expected: { tools: [], total: 2, hasMore: false },
+      },
+      {
+        name: "off-page term analysis",
+        args: { query: "labels zzzzzqwerty", offset: 10_000 },
+        expected: {
+          tools: [],
+          total: 2,
+          hasMore: false,
+          queryAnalysis: { otherResultTerms: ["labels"], unmatchedTerms: ["zzzzzqwerty"] },
+        },
+      },
+      {
         name: "fixed-subject guide control",
         args: { connector: "shared_mail", query: "zzzzzqwerty" },
         expected: { tools: [], queryAnalysis: { guide: "connector:shared_mail", guideSummary: expect.any(String) } },
@@ -1009,6 +1024,14 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       // Same storage, token, identity and endpoint; only the owner changes.
       const ownerless = deployment();
       try {
+        if (name.startsWith("off-page")) {
+          const fresh = await readJsonRpc(
+            await ownerless.fetch(
+              mcpRpc("tools/call", { name: "search_tools", arguments: args }, { token: assistant, agentPool: "group" }),
+            ),
+          );
+          expect(fresh.result.structuredContent).toMatchObject({ tools: [], total: 1, hasMore: false });
+        }
         const page = await run(ownerless);
         if (name === "fixed-subject guide control") {
           expect(page.isError).toBeFalsy();

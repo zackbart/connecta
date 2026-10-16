@@ -466,8 +466,11 @@ one fixed address, is applied once per call and only to a request an inbound
 provider authenticated: any `ok`, a subject-less custom credential included, never an open
 deployment's anonymous admission. An agent never reaches the function; it acts
 as its pool's `owner` ([Pool owners](#pool-owners-for-google-workspace)).
-Otherwise, or on `undefined`, the call fails
-`auth_required` before any request leaves. Arguments, headers, and programs
+Without an owner, a mapping-subject connector is absent for agents, and a call
+by address fails `unknown_address`. The provider-level fallback is
+`auth_required` when no inbound provider authenticated the caller or the
+mapping returns `undefined`; it also rejects an ownerless agent context that
+bypasses the scoped registry. These refusals happen before any request leaves. Arguments, headers, and programs
 never reach it; a deployment's own connectors still cannot read the caller.
 
 Access is read from one place, deployment code. Top-level

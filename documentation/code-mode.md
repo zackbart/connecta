@@ -699,6 +699,8 @@ Search guidance retains its referenced connectors even when no tool matches,
 including connectors named by id or title and identities summarized as an
 additional count. Scoped guides and summaries, absence rosters, and catalog
 errors retain their contributing connectors as well.
+Search counts, ranking, and term analysis retain every searched connector,
+including matches outside the returned page or beyond the requested offset.
 Each page rechecks current auth,
 grants, pool membership, and the endpoint's `readOnly`. Reading a stash inside a program carries
 its dependencies forward to any new return stash. The page cap is the smallest

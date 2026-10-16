@@ -1307,21 +1307,16 @@ export class CatalogService {
         : "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches.";
     };
     const guidance = searchGuidance();
-    // Record provenance beside the fields that expose it, including prose
-    // that names a connector even when no tool matched. Keep it host-only:
-    // program return pages need these bindings, not another wire field.
+    // Counts, ranking, and term analysis use the whole searched corpus, not
+    // just this page's tools. Bind every searched connector, including failed
+    // catalogs and off-page matches, so paging cannot reveal a hidden
+    // connector's contribution. Keep provenance host-only.
+    for (const connector of connectors) onCatalogReference?.(connector.id);
     for (const entry of entries) onCatalogReference?.(entry.connector.id, entry.tool.name);
-    for (const error of catalogErrors) onCatalogReference?.(error.connector);
     for (const connector of absence?.configuredConnectors ?? []) onCatalogReference?.(connector);
-    if (reportsQueryAnalysis) {
-      // The scope also owns its guide, summary, and catalog error. An unknown
-      // scope's guidance lists the visible roster instead.
-      if (scopedConnector) onCatalogReference?.(scopedConnector.id);
-      if (args.connector && !scopedConnector)
-        for (const connector of visibleConnectors) onCatalogReference?.(connector.id);
-      // Include identities summarized by "and N more", as well as named ids.
-      for (const connector of identityConnectorIds) onCatalogReference?.(connector);
-    }
+    // An unknown scope's guidance lists the visible roster without searching it.
+    if (reportsQueryAnalysis && args.connector && !scopedConnector)
+      for (const connector of visibleConnectors) onCatalogReference?.(connector.id);
     return {
       catalogErrors,
       ...(absence ? { absence } : {}),
