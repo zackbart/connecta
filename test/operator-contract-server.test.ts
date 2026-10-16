@@ -255,7 +255,7 @@ const notesManage = (actions: Array<"save" | "test" | "clear">): OperatorMemberM
 });
 
 describe("operator contract v2 server", () => {
-  it("INV-4: /ui/api/config is the one gate: 401 signed out, the private 404 for nobody, 200 with a role otherwise", async () => {
+  it("INV-4: /ui/api/config is the one gate: 401 signed out or with an agent token, the private 404 for nobody, 200 with a role otherwise", async () => {
     const { send, storage } = await team();
     const signedOut = await send(null, "/ui/api/config");
     expect(signedOut.status).toBe(401);
@@ -270,7 +270,11 @@ describe("operator contract v2 server", () => {
     // An agent listed in a pool is a member there, never on an operator page.
     const { issueAgentToken } = await import("./helpers/agent-tokens.js");
     const bot = await issueAgentToken(storage, "bot");
-    expect((await send(bot, "/ui/api/config")).status).toBe(404);
+    // Agents reach only /agent/<pool>: a cta_ token on a human route gets the
+    // machine-only challenge before any token storage is read (#837 P4).
+    const agent = await send(bot, "/ui/api/config");
+    expect(agent.status).toBe(401);
+    expect(agent.headers.get("WWW-Authenticate")).toBe("Bearer");
     expect((await read(send, "alice")).role).toBe("maintainer");
     expect((await read(send, "machine")).role).toBe("maintainer");
     expect((await read(send, "bob")).role).toBe("member");

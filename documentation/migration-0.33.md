@@ -13,31 +13,34 @@ the sections in order, then [verify](#verify).
 
 ## Old option to new option
 
-| 0.32                                                           | 0.33                                                                                                                                    |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `identity.connectorAccess`                                     | A pool per audience, with `tools` and `members`. A guarded `{ tool, requireReadOnly: true }` grant becomes a pool with `readOnly: true` |
-| Top-level `grant`                                              | `maintainers`                                                                                                                           |
-| Pool `grant`                                                   | Pool `members`                                                                                                                          |
-| `describeConfig().hasGrant` (root and pools)                   | `describeConfig().maintainers` and each pool's `members`                                                                                |
-| `identity.credentialAdministration`                            | `maintainers` (interactive)                                                                                                             |
-| `identity.personalConnection`                                  | Pool `members` for personal connectors in their pools; maintainers for their own                                                        |
-| `identity.accessTokenManagement`                               | `maintainers` (interactive)                                                                                                             |
-| `identity.activityAccess`                                      | `maintainers`, still narrowed by `activity.readGate`                                                                                    |
-| The `identity` section, even empty                             | Removed; delete it                                                                                                                      |
-| `ConnectaIdentityConfig`, `ConnectorPermission` types          | Removed                                                                                                                                 |
-| Tokens created or named in the UI, human-bound tokens          | `agents: ["<name>"]`, one token slot each                                                                                               |
-| `accessTokens(storage, { maxActive })`                         | `accessTokens(storage)`                                                                                                                 |
-| `describeConfig().modules.accessTokens.maxActive`              | `describeConfig().agents`                                                                                                               |
-| Node template `provision-token`                                | `npm run --silent rotate-token -- <agent>`; existing tokens: `npm run adopt-token`                                                      |
-| A machine at `/mcp` or `/mcp/<pool>` with `cta_`               | `/agent/<pool>`, with `"agent:<name>"` in the pool's `members`                                                                          |
-| Access service token plus `cta_` behind Cloudflare Access      | `cta_` alone, through an `/agent/*` Access Bypass application                                                                           |
-| Grant callbacks matching token record ids                      | Membership by agent name; `identity.agent` in custom code                                                                               |
-| A Workspace `subject` mapping that answered for machine tokens | The pool's `owner`                                                                                                                      |
-| One Workspace connector per person (`gmail_alice`)             | One connector with a mapping `subject`, plus pool owners                                                                                |
-| `POST`/`DELETE /ui/access-tokens/<agent>` without a body       | `{ "expect": "<revision>" }` from `GET /ui/access-tokens`                                                                               |
-| Operator contract `schemaVersion: 1`                           | `schemaVersion: 2`                                                                                                                      |
-| `/ui/data`                                                     | Maintainers only; members read their view from `/ui/api/config`                                                                         |
-| The `agent_not_maintainer` denial reason                       | Removed; agents are refused at human endpoints before admission                                                                         |
+| 0.32                                                                               | 0.33                                                                                                                                    |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity.connectorAccess`                                                         | A pool per audience, with `tools` and `members`. A guarded `{ tool, requireReadOnly: true }` grant becomes a pool with `readOnly: true` |
+| Top-level `grant`                                                                  | `maintainers`                                                                                                                           |
+| Pool `grant`                                                                       | Pool `members`                                                                                                                          |
+| `describeConfig().hasGrant` (root and pools)                                       | `describeConfig().maintainers` and each pool's `members`                                                                                |
+| `identity.credentialAdministration`                                                | `maintainers` (interactive)                                                                                                             |
+| `identity.personalConnection`                                                      | Pool `members` for personal connectors in their pools; maintainers for their own                                                        |
+| `identity.accessTokenManagement`                                                   | `maintainers` (interactive)                                                                                                             |
+| `identity.activityAccess`                                                          | `maintainers`, still narrowed by `activity.readGate`                                                                                    |
+| The `identity` section, even empty                                                 | Removed; delete it                                                                                                                      |
+| `ConnectaIdentityConfig`, `ConnectorPermission` types                              | Removed                                                                                                                                 |
+| Tokens created or named in the UI, human-bound tokens                              | `agents: ["<name>"]`, one token slot each                                                                                               |
+| `accessTokens(storage, { maxActive })`                                             | `accessTokens(storage)`                                                                                                                 |
+| `describeConfig().modules.accessTokens.maxActive`                                  | `describeConfig().agents`                                                                                                               |
+| Node template `provision-token`                                                    | `npm run --silent rotate-token -- <agent>`; existing tokens: `npm run adopt-token`                                                      |
+| A machine at `/mcp` or `/mcp/<pool>` with `cta_`                                   | `/agent/<pool>`, with `"agent:<name>"` in the pool's `members`                                                                          |
+| Access service token plus `cta_` behind Cloudflare Access                          | `cta_` alone, through an `/agent/*` Access Bypass application                                                                           |
+| Grant callbacks matching token record ids                                          | Membership by agent name; `identity.agent` in custom code                                                                               |
+| A Workspace `subject` mapping that answered for machine tokens                     | The pool's `owner`                                                                                                                      |
+| One Workspace connector per person (`gmail_alice`)                                 | One connector with a mapping `subject`, plus pool owners                                                                                |
+| `POST`/`DELETE /ui/access-tokens/<agent>` without a body                           | `{ "expect": "<revision>" }` from `GET /ui/access-tokens`                                                                               |
+| Operator contract `schemaVersion: 1`, its `you` and `hasGrant`                     | `schemaVersion: 2` with `role`, `root`, `pools`, `agents`, `matrix`, and `connectors`; `OperatorUiContract` names v2                    |
+| `OperatorViewer`, `OperatorPool` types                                             | Removed; `OperatorPoolV2`, `OperatorRootEndpoint`, `OperatorMemberConnector` and the other v2 types                                     |
+| `/ui/data`, `/ui/connectors/<id>`                                                  | Maintainers only; members read their view from `/ui/api/config`                                                                         |
+| A connector that connects with `startAuth` alone, or disconnects only alongside it | Connect needs `startAuth`, `finishAuth`, and `verifyState`; disconnect needs only `disconnectAuth`                                      |
+| `DELETE /ui/credentials/<id>` on an empty slot answering 204                       | 409 `{ "problem": "credential_required" }`                                                                                              |
+| The `agent_not_maintainer` denial reason                                           | Removed; agents are refused at human endpoints before admission                                                                         |
 
 ## Maintainers and pool members
 
@@ -187,15 +190,41 @@ function, and give each person's pool its `owner`.
 
 ## Operator contract v2
 
-`GET /ui/api/config` serves `OperatorUiContractV2` (`schemaVersion: 2`) to
-maintainers and pool members, and the v1 contract is removed. A signed-out
-caller gets 401 with the auth challenge, someone who is neither a maintainer
-nor a member gets the private JSON 404, and everyone else gets 200 with their
-`role`. The member view carries only that member's pools and connectors.
-`/ui/data` is maintainer-only. Code that read v1's `hasGrant`, `you.grants`,
-or `permissions` reads v2's `role`, `root`, `pools`, `agents`, `matrix`, and
-`connectors` instead; [decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract)
-freezes the shape. The bundled operator UI needs no change.
+`GET /ui/api/config` serves `OperatorUiContractV2` (`schemaVersion: 2`) and
+is the operator page's only gate; the v1 contract is removed:
+
+- A signed-out caller gets 401 with the auth challenge.
+- A `cta_` agent token gets the machine-only 401 Bearer challenge, as on every
+  human route, before token storage is read.
+- A signed-in person who is neither a maintainer nor in any pool's `members`
+  gets the private JSON 404.
+- A maintainer, or a person in a pool's `members`, gets 200 with their `role`.
+
+The maintainer view carries `config`, `configSources`, `root`, every pool
+with its owner and labelled members, every declared agent with its token slot
+and `lastSeenAt`, and the connector × endpoint `matrix`. The member view
+carries only that member's pools, without owner or members, and the
+connectors in them, with their own connection and a `manage` naming the
+actions they may take. `/ui/data` and `/ui/connectors/<id>` are
+maintainer-only and give anyone else the same 404. Code that read v1's
+`hasGrant`, `you.grants`, or `you.permissions` reads v2's `role`, `root`,
+`pools`, `agents`, `matrix`, and `connectors` instead;
+[the operator contract](./operator-ui.md#operator-data-contract) documents
+every field and [decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract)
+freezes the shape. `OperatorUiContract` now names v2, and `OperatorViewer` and
+`OperatorPool` are removed. `connecta doctor --config` reads v2 and prints a
+maintainer's `config`; a member's view has none.
+
+The connector auth routes accept exactly what `manage` lists.
+`/ui/oauth/<id>` gates each verb on its own hooks: connecting needs
+`startAuth`, `finishAuth`, and `verifyState`, and disconnecting needs only
+`disconnectAuth`. A custom connector that offered connect with `startAuth`
+alone adds the other two, without which its callback never completed. A
+connector provisioned out of band, with `disconnectAuth` and no `startAuth`,
+can now be disconnected. `DELETE /ui/credentials/<id>` refuses to clear a slot
+that holds nothing, the caller's own partition for a personal connector, with
+409 `{ "error": "no credential is stored to clear", "problem": "credential_required" }`.
+The bundled operator UI needs no change.
 
 ## Security fix: pre-auth listen buffering
 

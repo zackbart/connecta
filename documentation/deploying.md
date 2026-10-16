@@ -204,7 +204,7 @@ Bump the exact package pin, read the [changelog](../CHANGELOG.md) for every
 intervening release, and apply the relevant migration before startup. `init`
 does not merge changes into an existing deployment.
 
-- [Migration to 0.33](./migration-0.33.md) maps every removed access option to `maintainers`, pool `members`, and `agents`, moves agents to `/agent/<pool>`, and covers pool owners, token revisions, operator contract v2, and the pre-auth listen fix.
+- [Migration to 0.33](./migration-0.33.md) maps every removed access option to `maintainers`, pool `members`, and `agents`, moves agents to `/agent/<pool>`, and covers pool owners, token revisions, operator contract v2 with its operator route changes, and the pre-auth listen fix.
 - [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Grants match `identity.agent` instead of token record ids.
 - [Node storage from 0.28](../templates/node/README.md#storage) uses `connecta migrate-state` to copy the JSON state into SQLite. Activity JSONL is not imported.
 - [Worker storage from 0.28](../examples/worker/README.md#upgrading-from-028) copies KV into D1 with a one-shot migration.

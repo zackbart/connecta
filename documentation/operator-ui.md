@@ -91,10 +91,11 @@ interactive credential or token management authority.
 [decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract).
 `src/operator-ui/contract.ts` is also the browser's type source. Schema
 version 1 and its `you` and `hasGrant` facts were removed. It is the page's
-only gate: a signed-out caller gets the auth provider's 401 challenge; a
-maintainer, or a person listed in a pool's `members`, gets 200 with `role`
-`"maintainer"` or `"member"`; anyone else, agents included, gets the private
-JSON 404 `{ "error": "not found" }`. An open deployment's anonymous caller is
+only gate: a signed-out caller gets the auth provider's 401 challenge, and a
+`cta_` agent token the machine-only 401 Bearer challenge every human route
+gives it; a maintainer, or a person listed in a pool's `members`, gets 200
+with `role` `"maintainer"` or `"member"`; anyone else gets the private JSON 404
+`{ "error": "not found" }`. An open deployment's anonymous caller is
 a maintainer. Every response is private, `no-store` JSON, and only GET is
 allowed. One shape serves both roles; a field a role does not receive is
 `null` or empty, never omitted.

@@ -360,8 +360,9 @@ describe("management collapses to maintainers", () => {
     // Carol's pool holds no personal connector, so she manages nothing.
     const carol = await contract("carol");
     expect(carol.connectors.map((c) => [c.id, c.manage])).toEqual([["wiki", { kind: "none" }]]);
-    // Dave is nobody, and an agent never reads an operator contract.
+    // Dave is nobody, and an agent never reads an operator contract: its
+    // token is refused on every human route with the machine-only challenge.
     expect((await flow.send("dave", "/ui/api/config")).status).toBe(404);
-    expect((await flow.send(flow.bot, "/ui/api/config")).status).toBe(404);
+    expect((await flow.send(flow.bot, "/ui/api/config")).status).toBe(401);
   });
 });

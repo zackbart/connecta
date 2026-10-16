@@ -536,7 +536,8 @@ listed in a pool's `members` only their own view: their pools without owner or
 members, and the connectors in them with the tools those pools grant, their
 own connection on personal connectors, and what they may do about it. It
 carries no shared credential state, agents, other members, owners, or
-activity. Anyone else, an agent included, gets the same 404; see the
+activity. Anyone else gets the same 404, and an agent token the machine-only
+401 every human route gives it; see the
 [operator contract](./operator-ui.md#operator-data-contract). The public HTML
 shell carries no catalog data.
 
