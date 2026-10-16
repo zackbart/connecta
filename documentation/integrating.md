@@ -47,7 +47,8 @@ credential while the connector still exists, using a signed-in maintainer
 for shared auth. Each person disconnects their own personal account. Remove
 `crm` and all `crm.*` addresses from every pool (including base constants),
 then remove its entry from `connectors`, unused imports, and unused secret
-configuration. Typecheck, restart/redeploy, run doctor, and confirm discovery
+configuration. Remove any pools left with no tools (empty `tools` fails
+construction), and update or retire clients pointing at those pools. Typecheck, restart/redeploy, run doctor, and confirm discovery
 and calls no longer find it. Removing configuration alone does not revoke a
 credential at the downstream service; revoke unused credentials there too.
 

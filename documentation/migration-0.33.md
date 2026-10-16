@@ -96,12 +96,12 @@ root catalog and administrative authority.
 
 For example, suppose Alice administered the deployment, while Bob's old team
 pool listed `crm` and `tickets` but his `connectorAccess` allowed only
-`{ tool: "tickets", requireReadOnly: true }`. The new configuration is:
+`{ tool: "tickets.search", requireReadOnly: true }`. The new configuration is:
 
 ```ts
 maintainers: ["user_alice"],
 pools: {
-  team: { tools: ["tickets"], members: ["user_bob"], readOnly: true },
+  team: { tools: ["tickets.search"], members: ["user_bob"], readOnly: true },
 },
 // Delete identity and all grant callbacks; Bob connects at /mcp/team.
 ```
