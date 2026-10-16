@@ -369,6 +369,166 @@ and deletes the Worker in `finally`. It uses no `waitUntil`, which would change
 the lifetime being measured. The production runtime build number was not
 exposed by the deployment; these findings are tied to the date and flags above.
 
+### Production Access bypass for agent endpoints
+
+P0 of [#837](https://github.com/zackbart/connecta/issues/837) asked whether
+`/agent/*` can skip a Worker-level Cloudflare Access application, so an agent
+sends only its `cta_` token, while every other path keeps Access and
+`ctx.access`. It can. The probe ran on 2026-10-15 against a disposable Worker on
+its `workers.dev` hostname, with compatibility date `2026-09-01`, `cf`
+1.0.0-beta.14, Wrangler 4.114.0, and curl 8.7.1 with `--path-as-is`, so raw
+paths reached the edge unnormalized. The Worker-level application allowed only
+a probe service token. Its unauthenticated refusal was therefore Access's 403
+page rather than a login redirect. The [observations](https://github.com/zackbart/connecta/blob/main/scripts/probes/access-agent-bypass-2026-10-15.json)
+record three identical rounds after each configuration change had produced
+three consecutive matching responses.
+
+- **Precedence.** A self-hosted application whose destination is
+  `{ "type": "public", "uri": "<host>/agent/*" }`, with one `bypass` policy
+  including `everyone`, overrides the Worker-level application on matching
+  paths only. Unauthenticated requests reach the Worker there. `/mcp`, `/`,
+  and every unmatched path still get the Access refusal. A service token is
+  still admitted on them with `ctx.access` from the Worker-level application.
+  This confirms Cloudflare's documented hierarchy, and that Worker-level
+  protection still covers the `workers.dev` hostname.
+- **`ctx.access` on a bypassed request is present, not absent.** Its `aud` is
+  nonempty and is the _path_ application's AUD, not the Worker-level one.
+  `getIdentity()` resolved to `undefined` for every credential tested: none, a
+  valid service token, a `cta_`-style bearer token, and a forged
+  `Cf-Access-Jwt-Assertion`. A service token on a protected path also gave
+  `undefined` identity, carrying the Worker-level AUD. A human
+  `CF_Authorization` cookie on a bypassed path was not tested, so what
+  `getIdentity()` returns there is unknown. That is one more reason the agent
+  route ignores Access context rather than relying on its contents.
+- **API shape.** A Worker destination is exclusive to one application. A
+  second application with `{ "type": "worker", "worker_id" }` plus `uri` or
+  `path` was refused with 409 `destination belongs to another application`. The
+  bypass must be hostname-and-path, stored with domain `<host>/agent/*`, and it
+  covers only that exact hostname.
+- **Propagation.** Creating or deleting each application took 15–19 seconds to
+  settle across runs. While a deployment or application change was propagating,
+  the edge returned transient 500 (`error code: 1104`) and 404 (`error code:
+  1042` or `1043`) responses. The recorded run has one such 404, on the
+  Worker-level-only service-token control for `/agent/x`. Deleting the path
+  application restored the 403 on `/agent/x`.
+
+| Raw request path           | Access outcome | Worker pathname (+ search) |
+| -------------------------- | -------------- | -------------------------- |
+| `/agent/x`                 | bypassed       | `/agent/x`                 |
+| `/agent/simon-zack`        | bypassed       | `/agent/simon-zack`        |
+| `/agent/`                  | bypassed       | `/agent/`                  |
+| `/agent/x/`                | bypassed       | `/agent/x/`                |
+| `/agent/x?y`               | bypassed       | `/agent/x?y`               |
+| `/AGENT/x`                 | bypassed       | `/AGENT/x`                 |
+| `/%61gent/x`               | bypassed       | `/%61gent/x`               |
+| `//agent/x`                | bypassed       | `//agent/x`                |
+| `/agent/%2f/mcp`           | bypassed       | `/agent/%2f/mcp`           |
+| `/agent/x%2f..%2f..%2fmcp` | bypassed       | `/agent/x%2f..%2f..%2fmcp` |
+| `/mcp/../agent/x`          | bypassed       | `/agent/x`                 |
+| `/mcp`                     | protected      | not reached                |
+| `/`                        | protected      | not reached                |
+| `/agent`                   | protected      | not reached                |
+| `/agentx`                  | protected      | not reached                |
+| `/mcp/agent/x`             | protected      | not reached                |
+| `/agent/../mcp`            | protected      | not reached                |
+| `/agent/x/../../mcp`       | protected      | not reached                |
+| `/agent/%2e%2e/mcp`        | protected      | not reached                |
+| `/agent/%2E%2E/mcp`        | protected      | not reached                |
+| `/agent%2f..%2fmcp`        | protected      | not reached                |
+
+Access matches after resolving dot segments, including `%2e` forms. It matches
+case-insensitively, decodes unreserved escapes such as `%61`, collapses a
+leading `//`, and treats `%2f` as data, not a separator. The effective Worker
+pathname, `new URL(request.url).pathname`, is the raw request path with case,
+escapes, and slashes untouched, except that dot segments arrive resolved:
+`/mcp/../agent/x` arrives as `/agent/x`. Every path that
+resolves outside `/agent/*`, including every `/mcp` form, stayed protected. The
+inverse is the risk: Access bypasses paths
+that connecta must not treat as an agent pool. Connecta's router compares raw
+pathnames without decoding, case folding, or slash collapsing, so an `/agent/`
+route must keep that property. It should accept exactly
+`/agent/<pool>`, with `<pool>` byte-equal to a declared pool name. It should
+refuse an empty segment, a trailing slash, any extra segment, `%`, uppercase
+variants, and a leading `//`, all with the same 404. It must ignore
+`ctx.access` entirely, since a bypassed request still carries an AUD.
+
+To configure the bypass, keep the Worker-level application described in
+[Cloudflare Access on Workers](./auth.md#cloudflare-access-on-workers). Then,
+for each hostname agents use (the `workers.dev` hostname, each Custom Domain,
+or route host), add a self-hosted Access application. In the dashboard, set
+domain to that hostname and path to `agent/*`, with one policy whose action is
+**Bypass** and whose include rule is **Everyone**. Through the API, that is:
+
+```json
+{
+  "type": "self_hosted",
+  "name": "connecta agents",
+  "destinations": [{ "type": "public", "uri": "connecta.example.com/agent/*" }],
+  "policies": [{ "name": "agents bypass", "decision": "bypass", "include": [{ "everyone": {} }] }]
+}
+```
+
+Only the `workers.dev` hostname was probed. A Custom Domain application is the
+same documented hostname-and-path form, but it was not observed here. Do not
+rely on a fixed wait after a change. Changes settled in 15–19 seconds, yet one
+earlier round still saw a 403 on a bypassed path more than 30 seconds after
+the change. Test only after the positive and negative controls agree together
+for several consecutive rounds. The positive controls are bypassed paths
+reaching the Worker with the path AUD and a service token reaching a protected
+path with the Worker-level AUD; the negative controls are `/mcp` and `/`
+returning the Access refusal. The current script requires five such rounds
+after creating the bypass and three after other changes. The recorded run
+predates this: after the bypass it converged only the positive `/agent/x`
+control, then waited a fixed 90 seconds, and its negative controls were checked
+in the recorded rounds rather than before them.
+
+To repeat from a repository checkout, run
+`node scripts/probes/access-agent-bypass.mjs [--profile <name>] [output.json]`.
+Every `cf` call passes `--profile` explicitly, defaulting to `onemany`. Name
+the profile for the account that should host the probe; the profile needs
+Access application, policy, and service-token writes, plus Workers script
+writes. The script deploys and deletes the Worker with `cf`. `cf deploy` builds
+through Wrangler 4.136.0 or newer, so the probe installs Wrangler 4.145.0 into
+its temporary project. Wrangler needs no login. The script records only the
+count of existing Access applications, then names everything it creates
+`connecta-probe-<run>`. It force-deletes and verifies each resource in
+`finally`, then checks that the non-probe application ids are unchanged.
+Observations record statuses, outcome classes, pathnames, and which
+application's AUD matched, compared by digest inside the Worker. They contain no
+hostnames, account ids, tokens, cookies, or JWTs. `cf` delete commands prompt
+for confirmation and exit 0 without deleting when stdin is not a terminal, so
+the script passes `--force`. `cf deploy` printed `Deploy complete` and then
+kept running, so the script stops it after that line. The recorded run deployed
+with Wrangler 4.114.0 and used `cf` for Access. A standalone deploy and delete
+verified the `cf` deploy and delete path. The full probe has not been rerun on
+that path.
+
+Every subprocess (`cf`, `curl`, `npm`) runs through one runner. It enforces a
+deadline by killing the process group, keeps stdout and stderr in memory, and
+returns only facts: success, exit code, timeout, HTTP status, numeric API
+code, and an error slug from a fixed set (anything else is `unknown`). Commands
+that return data are parsed inside the runner against schemas that copy only
+whitelisted fields: ids, names, counts, booleans, and the Worker's `ctx.access`
+summary. Credentials stay in a holder that prints as `[secret]`. An unexpected
+shape, including `null` where a list belongs, is a failure, never an empty
+result. Errors are fixed diagnostics plus those facts. Teardown deletes every
+tracked id on its own. Then Access applications, service tokens, and Workers
+each get their own bounded discovery-and-delete pass by name, for resources
+whose create response was lost, so a failure in one family never skips
+another. Each discovered resource is deleted independently. Access policies are
+inline on their applications and go with them. A resource counts as gone only
+when a successful lookup omits it, and the final inventory verifies each family
+separately. Run
+`node scripts/probes/access-agent-bypass.mjs --self-test` to check the runner
+offline. It feeds canary secrets, suffixed slugs, malformed JSON, and a stalled
+process tree through it. It also runs teardown against a fake `cf` whose
+application listing always fails, after a lost token-create response, and
+checks that the token is still found and deleted. It also checks that a Worker
+that refuses deletion does not block another Worker's deletion. It runs no real
+`cf`, `curl`, or network command. This
+hardening and the joint convergence are verified offline only and have not run
+against Cloudflare.
+
 ## Storage, credentials, and connectors
 
 A deployment has one store. On Workers it is one D1 database

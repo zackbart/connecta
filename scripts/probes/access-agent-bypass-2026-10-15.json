@@ -1,0 +1,1331 @@
+{
+  "testedAt": "2026-10-15T22:07:45.072Z",
+  "name": "connecta-probe-mva3arao",
+  "tools": {
+    "cf": "1.0.0-beta.14",
+    "wrangler": "4.114.0",
+    "node": "v26.11.1",
+    "curl": "curl 8.7.1"
+  },
+  "inventory": {
+    "before": {
+      "count": 5
+    },
+    "after": {
+      "count": 5,
+      "nonProbeIdsUnchanged": true,
+      "probeApplicationsRemaining": 0,
+      "probeWorkersRemaining": 0,
+      "probeServiceTokensRemaining": 0
+    }
+  },
+  "api": [
+    {
+      "label": "worker-level application",
+      "request": {
+        "type": "self_hosted",
+        "name": "connecta-probe-mva3arao-worker",
+        "destinations": [
+          {
+            "type": "worker",
+            "worker_id": "<probe-worker-id>"
+          }
+        ],
+        "session_duration": "1h",
+        "policies": ["non_identity"]
+      },
+      "accepted": true,
+      "storedDestinations": [
+        {
+          "type": "worker",
+          "worker_id": "<probe-worker-id>"
+        }
+      ],
+      "storedSelfHostedDomains": null
+    },
+    {
+      "label": "worker destination with uri",
+      "request": {
+        "type": "self_hosted",
+        "name": "connecta-probe-mva3arao-variant",
+        "destinations": [
+          {
+            "type": "worker",
+            "worker_id": "<probe-worker-id>",
+            "uri": "<probe-host>/agent/*"
+          }
+        ],
+        "session_duration": "1h",
+        "policies": ["bypass"]
+      },
+      "accepted": false,
+      "error": "┌ APIError │ [12132] access.api.error.conflict: destination belongs to another application │ 409 Conflict · HTTP /accounts/<account>/access/apps └"
+    },
+    {
+      "label": "worker destination with path",
+      "request": {
+        "type": "self_hosted",
+        "name": "connecta-probe-mva3arao-variant",
+        "destinations": [
+          {
+            "type": "worker",
+            "worker_id": "<probe-worker-id>",
+            "path": "/agent/*"
+          }
+        ],
+        "session_duration": "1h",
+        "policies": ["bypass"]
+      },
+      "accepted": false,
+      "error": "┌ APIError │ [12132] access.api.error.conflict: destination belongs to another application │ 409 Conflict · HTTP /accounts/<account>/access/apps └"
+    },
+    {
+      "label": "path application",
+      "request": {
+        "type": "self_hosted",
+        "name": "connecta-probe-mva3arao-agent",
+        "destinations": [
+          {
+            "type": "public",
+            "uri": "<probe-host>/agent/*"
+          }
+        ],
+        "session_duration": "1h",
+        "policies": ["bypass"]
+      },
+      "accepted": true,
+      "storedDestinations": [
+        {
+          "type": "public",
+          "uri": "<probe-host>/agent/*"
+        }
+      ],
+      "storedDomain": "<probe-host>/agent/*",
+      "storedSelfHostedDomains": ["<probe-host>/agent/*"]
+    }
+  ],
+  "phases": [
+    {
+      "label": "baseline: no Access application",
+      "rows": [
+        {
+          "path": "/mcp",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/mcp",
+          "access": {
+            "state": "undefined"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "undefined"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        }
+      ]
+    },
+    {
+      "label": "worker-level only",
+      "rows": [
+        {
+          "path": "/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/mcp",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/mcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "worker-level"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": true,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "service-token",
+          "method": "GET",
+          "status": 404,
+          "outcome": "edge-error",
+          "body": "error code: 1042 "
+        }
+      ]
+    },
+    {
+      "label": "worker-level plus /agent/* bypass, round 1",
+      "rows": [
+        {
+          "path": "/agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/simon-zack",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/simon-zack",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agentx",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/AGENT/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/AGENT/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/%61gent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/%61gent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/../mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/x/../../mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/%2e%2e/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/%2E%2E/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent%2f..%2fmcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/x%2f..%2f..%2fmcp",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x%2f..%2f..%2fmcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/%2f/mcp",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/%2f/mcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "//agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "//agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x?y",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x?y",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x/",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp/agent/x",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/mcp/../agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "bearer",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": true,
+          "method": "POST"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": true,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "forged-assertion",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/mcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "worker-level"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": true,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "bearer",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "worker-level"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": true,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        }
+      ]
+    },
+    {
+      "label": "worker-level plus /agent/* bypass, round 2",
+      "rows": [
+        {
+          "path": "/agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/simon-zack",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/simon-zack",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agentx",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/AGENT/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/AGENT/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/%61gent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/%61gent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/../mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/x/../../mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/%2e%2e/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/%2E%2E/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent%2f..%2fmcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/x%2f..%2f..%2fmcp",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x%2f..%2f..%2fmcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/%2f/mcp",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/%2f/mcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "//agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "//agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x?y",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x?y",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x/",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp/agent/x",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/mcp/../agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "bearer",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": true,
+          "method": "POST"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": true,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "forged-assertion",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/mcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "worker-level"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": true,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "bearer",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "worker-level"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": true,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        }
+      ]
+    },
+    {
+      "label": "worker-level plus /agent/* bypass, round 3",
+      "rows": [
+        {
+          "path": "/agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/simon-zack",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/simon-zack",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agentx",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/AGENT/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/AGENT/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/%61gent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/%61gent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/../mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/x/../../mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/%2e%2e/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/%2E%2E/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent%2f..%2fmcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/agent/x%2f..%2f..%2fmcp",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x%2f..%2f..%2fmcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/%2f/mcp",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/%2f/mcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "//agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "//agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x?y",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x?y",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x/",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp/agent/x",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/mcp/../agent/x",
+          "credential": "none",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "bearer",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": true,
+          "method": "POST"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": false,
+          "authorizationCookie": false,
+          "clientIdHeader": true,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/agent/x",
+          "credential": "forged-assertion",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/agent/x",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "path"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": false,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/mcp",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "worker-level"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": true,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        },
+        {
+          "path": "/mcp",
+          "credential": "bearer",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/",
+          "credential": "service-token",
+          "status": 200,
+          "outcome": "worker",
+          "received": "/",
+          "access": {
+            "state": "present",
+            "aud": "nonempty",
+            "identity": "undefined",
+            "audApplication": "worker-level"
+          },
+          "jwtAssertionHeader": true,
+          "authorizationCookie": true,
+          "clientIdHeader": false,
+          "authorizationHeader": false,
+          "method": "GET"
+        }
+      ]
+    },
+    {
+      "label": "after removing the path application",
+      "rows": [
+        {
+          "path": "/agent/x",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        },
+        {
+          "path": "/mcp",
+          "credential": "none",
+          "method": "GET",
+          "status": 403,
+          "outcome": "access-denied"
+        }
+      ]
+    }
+  ],
+  "compatibilityDate": "2026-09-01",
+  "propagation": {
+    "workerLevelMs": 15379,
+    "pathBypassMs": 15781,
+    "pathRemovalMs": 18337
+  }
+}
