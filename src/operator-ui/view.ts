@@ -834,6 +834,7 @@ const ACTOR_KINDS: Readonly<Record<string, string>> = {
   bearer: "Bearer token",
   "cloudflare-access": "Cloudflare Access",
   anonymous: "Anonymous",
+  access_token: "Agent token",
 };
 
 /** How a caller signed in, as a person reads it. An unknown kind is shown as sent. */
@@ -955,6 +956,12 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
 
 function reasonLabel(code: string): string {
   return REASON_LABELS[code] ?? code.replaceAll("_", " ");
+}
+
+/** Why a call stalled or failed, in words; "" when nothing was recorded. */
+export function activityReason(event: UiActivityEvent): string {
+  const reasons = [event.friction, event.errorCode].filter((code): code is string => Boolean(code)).map(reasonLabel);
+  return [...new Set(reasons)].join(" · ");
 }
 
 /** The one-line detail under an address: where it ran, retries, and why it stalled. */

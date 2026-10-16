@@ -335,7 +335,7 @@ function RecoveryBanner({ state }: { state: OperatorState }) {
 function CurrentPage({ state }: { state: OperatorState }) {
   const role = displayRole(state);
   // Every other page is built from maintainer facts a member never receives.
-  if (role === "member" || state.role === "member") return <MemberPage state={state} />;
+  if (role === "member" || state.role === "member") return <MemberPage state={state} account={accountLabel()} />;
   if (role !== "maintainer") return <RolePending state={state} />;
   if (state.page === "settings") return <SettingsPage state={state} />;
   if (state.page === "connector") return <ConnectorDetailPage state={state} />;

@@ -252,14 +252,14 @@ describe("member page", () => {
       expect(labels(["save", "test", "clear"], connection)).toEqual(["Replace", "Test", "Clear"]);
     }
     expect(labels([], { state: "credential_required", problem: "credential_required" })).toEqual([]);
-    expect(account({ state: "ok" }, { ...credential, actions: ["save"] }).summary).toBe(
-      "Add your credential to use its tools.",
-    );
+    // The badge carries the state; a note appears only where it would leave something out.
+    expect(account({ state: "ok" }, { ...credential, actions: ["save"] }).summary).toBeNull();
     expect(account({ state: "credential_required", problem: "credential_mismatch" }, credential).summary).toBe(
-      "Your saved credential no longer fits. Replace it.",
+      "Saved credential no longer fits",
     );
-    expect(account({ state: "ok" }, { ...credential, actions: ["save", "clear"] }).summary).toBe(
-      "Your credential is saved.",
+    expect(account({ state: "ok" }, { ...credential, actions: ["save", "clear"] }).summary).toBeNull();
+    expect(account({ state: "error" }, { ...credential, actions: ["save", "clear"] }).summary).toBe(
+      "Saved, but not working",
     );
   });
 
@@ -273,7 +273,7 @@ describe("member page", () => {
     expect(toolCountLabel(1)).toBe("1 tool");
     expect(toolCountLabel(3)).toBe("3 tools");
     expect(memberConfirmCopy("oauth_disconnect", "Slack")).toEqual({
-      question: "Disconnect your Slack account? Its tools stop working for you until you connect again.",
+      question: "Disconnect your Slack account? Its tools stop working for you.",
       confirm: "Disconnect",
     });
     expect(memberConfirmCopy("credential_remove", "Notion").confirm).toBe("Clear");

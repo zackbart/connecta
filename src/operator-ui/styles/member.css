@@ -1,26 +1,97 @@
 /*
- * The member page: one narrow column, three short sections, no tabs.
+ * The member page: one column. Who is signed in, their endpoints as cards,
+ * their own accounts with status and actions in aligned columns, and the
+ * names of what is shared with them.
  */
 
 .member-page {
   margin: 0 auto;
-  max-width: 40rem;
+  max-width: 46rem;
 }
 .member-heading {
+  align-items: center;
+  display: flex;
+  gap: var(--space-4);
   margin-bottom: var(--space-8);
 }
 .member-heading h1 + .meta {
-  color: var(--text-2);
-  font-size: var(--text-md);
-  margin-top: 0.625rem;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  margin-top: 0.25rem;
+}
+.member-avatar {
+  align-items: center;
+  background: var(--accent-soft);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  color: var(--link);
+  display: inline-grid;
+  flex: none;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  height: 3rem;
+  justify-content: center;
+  width: 3rem;
 }
 .member-section {
   margin-bottom: var(--space-8);
 }
 .member-label {
-  font-size: var(--text-lg);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   margin: 0 0 var(--space-3);
 }
+.member-empty {
+  font-size: var(--text-sm);
+}
+
+/* Endpoints: one card each, its URL to copy and its client setup. */
+.member-endpoints {
+  display: grid;
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.member-endpoint {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: var(--space-4) var(--space-5);
+}
+.member-endpoint-mark {
+  align-items: center;
+  background: var(--accent-soft);
+  border-radius: var(--radius-md);
+  color: var(--link);
+  display: inline-grid;
+  height: 2.25rem;
+  justify-content: center;
+  width: 2.25rem;
+}
+.member-endpoint-copy {
+  min-width: 0;
+}
+.member-endpoint-name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  margin: 0;
+}
+.member-endpoint .endpoint {
+  align-items: center;
+}
+.member-endpoint .endpoint code {
+  font-size: var(--text-xs);
+  padding-block: 0;
+}
+
+/* Accounts: mark, name, a status column, then actions. */
 .member-card {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -33,51 +104,32 @@
 .member-card > li + li {
   border-top: 1px solid var(--line);
 }
-.member-endpoint {
-  align-items: center;
-  display: flex;
-  gap: var(--space-3);
-  justify-content: space-between;
-  padding: var(--space-4) 1.375rem;
-}
-.member-endpoint .endpoint code {
-  color: var(--text);
-  font-size: var(--text-sm);
-}
 .account-row {
-  padding: var(--space-4) 1.375rem;
+  padding: var(--space-4) var(--space-5);
 }
 .account-main {
   align-items: center;
   display: grid;
-  gap: var(--space-3);
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: var(--space-4);
+  grid-template-columns: auto minmax(0, 1fr) 9.5rem 12.5rem;
 }
-.account-mark {
-  align-items: center;
-  background: var(--text);
-  border-radius: var(--radius-md);
-  color: var(--bg);
-  display: inline-grid;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-bold);
-  height: 2.25rem;
-  justify-content: center;
-  width: 2.25rem;
-}
-.account-mark.small {
-  border-radius: var(--radius-sm);
-  font-size: 0.625rem;
-  height: 1.25rem;
-  width: 1.25rem;
+.account-copy {
+  min-width: 0;
 }
 .account-copy h3 {
   font-size: var(--text-base);
   margin: 0;
 }
 .account-copy .meta {
+  color: var(--text-3);
   font-size: var(--text-xs);
-  margin: 0;
+  margin: 0.125rem 0 0;
+}
+.account-note {
+  color: var(--warn);
+}
+.account-status {
+  display: flex;
 }
 .account-actions {
   display: inline-flex;
@@ -85,23 +137,19 @@
   gap: 0.375rem;
   justify-content: flex-end;
 }
-.account-actions .btn {
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  min-height: 1.875rem;
-  padding: 0.25rem 0.6875rem;
-}
 .account-row .confirm,
 .account-form {
-  margin-top: var(--space-3);
+  margin-top: var(--space-4);
 }
 .account-row .notice:not(:empty) {
   margin: var(--space-2) 0 0;
 }
-.shared-chips {
+
+/* Shared: names and counts, nothing to do. */
+.shared-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.375rem;
+  gap: var(--space-2);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -110,12 +158,17 @@
   align-items: center;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   display: inline-flex;
   font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
   gap: 0.4375rem;
-  padding: 0.25rem 0.625rem 0.25rem 0.25rem;
+  padding: 0.25rem 0.75rem 0.25rem 0.3125rem;
+}
+.shared-name {
+  font-weight: var(--weight-semibold);
+}
+.shared-count {
+  color: var(--text-3);
 }
 .member-footer {
   font-size: var(--text-xs);
@@ -125,8 +178,12 @@
 
 @media (max-width: 40rem) {
   .member-endpoint {
-    flex-wrap: wrap;
+    grid-template-columns: auto minmax(0, 1fr);
     padding: var(--space-4);
+  }
+  .member-endpoint .endpoint-setup {
+    grid-column: 2;
+    justify-self: start;
   }
   .account-row {
     padding: var(--space-4);
@@ -135,7 +192,7 @@
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
   .account-actions {
-    grid-column: 1 / -1;
+    grid-column: 2 / -1;
     justify-content: flex-start;
   }
 }

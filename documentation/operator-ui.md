@@ -218,6 +218,27 @@ controls are off with "Refresh to continue", and each action is
 checked again immediately before it is sent. Under the recovery banner Tokens
 offers no Refresh of its own, and an open rotate or revoke question closes.
 
+Activity opens with counts for the loaded history (calls, failed, tools, and
+catalog changes) and, when the loaded calls span more than a minute, a strip
+of calls over time with failures in red. Filters sit in one bar: a search box,
+an All / Failed / Succeeded control (`?outcome=failed` keeps errors and
+timeouts, `?outcome=succeeded` keeps successes and approvals), and chips for
+each connector and source that the loaded history holds (`?connector=`,
+`?source=`); pressing a pressed chip clears it. There are no select menus.
+Rows group by recorded request id, and calls of one request share a rail.
+Each call row shows one status dot, the time, the caller (a person by label or
+id beside their initials, an agent token by agent name beside an agent mark,
+anything else by its kind), the connector's monogram and the tool address, a
+write tag for write calls, the failure reason for a failed call, and duration
+and result size on the right. Opening a row lists what was recorded: result,
+how it ran, classification, exact duration and size, caller, stable caller id
+for a person, request id, client, and connecta version; a field that was not
+recorded is left out. Catalog changes are rows in the same columns with added,
+removed, and changed counts. With no history the page shows "No calls yet" and
+Refresh; a filter that matches nothing shows "No matches" and Clear filters.
+A connector's Activity tab draws the same counts, filters and rows for that
+connector, without connector chips or monograms.
+
 Install the vault for declared credential slots and activity history for
 persisted call records. Neither module grants permission to manage or read
 it: [auth](./auth.md#management-permissions) does. Interactive maintainers
@@ -232,19 +253,21 @@ interactive credential or token management authority.
 With `operatorUi()` enabled, sign in at the deployment's public URL using
 Clerk (Node) or Cloudflare Access (Workers). A person listed in a pool's
 `members` can open the page without becoming a maintainer. The page, **Your
-connections**, has no tabs; its top bar shows branding and an **Account**
-button that opens the signed-in account (Clerk's primary email, when there is
-one) with Sign out or Change token. It lists:
+connections**, has no tabs; its heading shows the signed-in email when the
+sign-in exposes one (Clerk's primary email), and its top bar shows branding and
+an **Account** button with Sign out or Change token. It lists:
 
-- **Your endpoints**: each admitted `/mcp/<pool>` URL with a copy button and
-  **Client setup**. For example, Bob in pool `team` copies
+- **Your endpoints**: one card per admitted `/mcp/<pool>` URL with a copy button
+  and **Client setup**. For example, Bob in pool `team` copies
   `https://connecta.example.com/mcp/team` into an MCP client and authenticates
   as Bob.
-- **Your accounts**: the personal connectors in their pools, each with one
-  status badge and only the controls its `manage.actions` lists. An OAuth
-  connector offers Connect, Reconnect or Disconnect; Reconnect and Disconnect
-  ask first. A credential connector offers **Add credential** when only `save`
-  is listed, and Replace, Test and Clear once a value is stored.
+- **Your accounts**: the personal connectors in their pools, each with a
+  monogram, tool count, one status badge in an aligned column, and only the
+  controls its `manage.actions` lists. A saved credential that no longer fits
+  or does not work adds a short note beside the tool count. An OAuth connector
+  offers Connect, Reconnect or Disconnect; Reconnect and Disconnect ask first.
+  A credential connector offers **Add credential** when only `save` is listed,
+  and Replace, Test and Clear once a value is stored; Clear asks first.
 - **Shared with you**: shared connectors by name and tool count, without status.
 
 Every browser path shows that same member page; it does not expose maintainer

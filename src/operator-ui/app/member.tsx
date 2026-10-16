@@ -11,6 +11,8 @@ import { clientServerName } from "../setup-commands.js";
 import { productName } from "./config.js";
 import { CredentialForm } from "./credentials.js";
 import { ConfirmBar, focusableId, NoticeLine, Pill, pillStatus, StateBlock } from "./parts.js";
+import { Icon } from "./icons.js";
+import { ConnectorMark } from "./marks.js";
 import { Button } from "./primitives.js";
 import { ClientSetupDialog, EndpointLine, endpointUrl, type SetupTarget } from "./endpoints.js";
 import { useCloseOnRecovery } from "./contract-state.js";
@@ -54,7 +56,7 @@ function controlId(control: AccountControl["kind"], connector: string): string {
   return `${CONTROL_ID[control]}-${connector}`;
 }
 
-function AccountRow({ account, state }: { account: MemberAccount; state: OperatorState }) {
+function AccountRow({ account, state, hue }: { account: MemberAccount; state: OperatorState; hue: number }) {
   const { id, title, manage } = account;
   const confirming = state.confirming?.connectorId === id ? state.confirming.action : null;
   const oauthBusy = state.oauthBusy === id;
@@ -83,19 +85,20 @@ function AccountRow({ account, state }: { account: MemberAccount; state: Operato
   return (
     <li className="account-row" aria-labelledby={`account-${id}`}>
       <div className="account-main">
-        <span className="account-mark" aria-hidden="true">
-          {title.slice(0, 1).toUpperCase()}
-        </span>
+        <ConnectorMark id={id} title={title} size="lg" hue={hue} />
         <div className="account-copy">
           <h3 id={`account-${id}`}>{title}</h3>
           <p className="meta">
-            {toolCountLabel(account.toolCount)} · {account.summary}
+            {toolCountLabel(account.toolCount)}
+            {account.summary ? <span className="account-note"> · {account.summary}</span> : null}
           </p>
         </div>
-        {account.badge ? <Pill status={pillStatus(account.badge.tone)}>{account.badge.label}</Pill> : null}
+        <div className="account-status">
+          {account.badge ? <Pill status={pillStatus(account.badge.tone)}>{account.badge.label}</Pill> : null}
+        </div>
         <div className="account-actions">
           {blocked ? (
-            <a className="btn primary" href={blocked} target="_blank" rel="noopener noreferrer">
+            <a className="btn primary sm" href={blocked} target="_blank" rel="noopener noreferrer">
               Open authorization page
             </a>
           ) : (
@@ -103,10 +106,13 @@ function AccountRow({ account, state }: { account: MemberAccount; state: Operato
               <Button
                 key={control.kind}
                 id={controlId(control.kind, id)}
+                size="sm"
                 variant={
                   control.kind === "connect" || (control.kind === "save" && control.label === "Add credential")
                     ? "primary"
-                    : "default"
+                    : control.kind === "disconnect" || control.kind === "clear"
+                      ? "quiet"
+                      : "default"
                 }
                 disabled={busyFor(control)}
                 aria-label={`${control.label} ${title}`}
@@ -166,7 +172,7 @@ function AccountRow({ account, state }: { account: MemberAccount; state: Operato
   );
 }
 
-export function MemberPage({ state }: { state: OperatorState }) {
+export function MemberPage({ state, account }: { state: OperatorState; account?: string | null }) {
   const [setup, setSetup] = useState<SetupTarget | null>(null);
   // Members never get the maintainer recovery banner, so this is a no-op for
   // them; their confirmations and credential form close with the
@@ -176,10 +182,15 @@ export function MemberPage({ state }: { state: OperatorState }) {
   const page = memberPage(state.contract);
   const heading = (
     <div className="member-heading">
-      <h1 id="memberHeading" tabIndex={-1}>
-        Your connections
-      </h1>
-      <p className="meta">Connect the accounts your AI tools act as. Everything else is set up for you.</p>
+      <span className="member-avatar" aria-hidden="true">
+        {account ? account.trim().charAt(0).toUpperCase() : <Icon name="user" size={18} />}
+      </span>
+      <div>
+        <h1 id="memberHeading" tabIndex={-1}>
+          Your connections
+        </h1>
+        {account ? <p className="meta">{account}</p> : null}
+      </div>
     </div>
   );
   // Confirmed a member, but the latest contract read failed or is pending:
@@ -213,12 +224,18 @@ export function MemberPage({ state }: { state: OperatorState }) {
           {page.endpoints.length === 1 ? "Your endpoint" : "Your endpoints"}
         </h2>
         {page.endpoints.length ? (
-          <ul className="member-card">
+          <ul className="member-endpoints">
             {page.endpoints.map((endpoint) => {
               const url = endpointUrl(endpoint.path);
               return (
                 <li className="member-endpoint" key={endpoint.pool} aria-label={endpoint.path}>
-                  <EndpointLine url={url} label={endpoint.pool} />
+                  <span className="member-endpoint-mark" aria-hidden="true">
+                    <Icon name="plug" size={16} />
+                  </span>
+                  <div className="member-endpoint-copy">
+                    <p className="member-endpoint-name">{endpoint.pool}</p>
+                    <EndpointLine url={url} label={endpoint.pool} />
+                  </div>
                   <Button
                     size="sm"
                     className="endpoint-setup"
@@ -240,7 +257,7 @@ export function MemberPage({ state }: { state: OperatorState }) {
             })}
           </ul>
         ) : (
-          <StateBlock>You aren't a member of any endpoint yet.</StateBlock>
+          <StateBlock>No endpoints yet.</StateBlock>
         )}
       </section>
 
@@ -250,12 +267,12 @@ export function MemberPage({ state }: { state: OperatorState }) {
         </h2>
         {page.accounts.length ? (
           <ul className="member-card">
-            {page.accounts.map((account) => (
-              <AccountRow key={account.id} account={account} state={state} />
+            {page.accounts.map((account, index) => (
+              <AccountRow key={account.id} account={account} state={state} hue={index} />
             ))}
           </ul>
         ) : (
-          <p className="meta">Nothing on your endpoints uses an account of your own.</p>
+          <p className="member-empty meta">Nothing to connect.</p>
         )}
       </section>
 
@@ -264,20 +281,19 @@ export function MemberPage({ state }: { state: OperatorState }) {
           <h2 id="memberSharedHeading" className="member-label">
             Shared with you
           </h2>
-          <ul className="shared-chips">
-            {page.shared.map((connector) => (
+          <ul className="shared-list">
+            {page.shared.map((connector, index) => (
               <li key={connector.id} className="shared-chip">
-                <span className="account-mark small" aria-hidden="true">
-                  {connector.title.slice(0, 1).toUpperCase()}
-                </span>
-                {connector.title} · {toolCountLabel(connector.toolCount)}
+                <ConnectorMark id={connector.id} title={connector.title} size="sm" hue={page.accounts.length + index} />
+                <span className="shared-name">{connector.title}</span>
+                <span className="shared-count">{toolCountLabel(connector.toolCount)}</span>
               </li>
             ))}
           </ul>
         </section>
       ) : null}
 
-      <p className="member-footer meta">Something not working? Ask whoever runs {productName} for your team.</p>
+      <p className="member-footer meta">Trouble? Ask whoever runs {productName}.</p>
       <ClientSetupDialog target={setup} onClose={() => setSetup(null)} returnFocus={returnFocus} />
     </section>
   );
