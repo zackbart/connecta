@@ -1,107 +1,167 @@
 # connecta
 
-![A monochrome clay Connecta hub joining many tools](https://raw.githubusercontent.com/zackbart/connecta/main/assets/connecta-clay-hero.png)
+**One connection between your agent and the services you choose.**
 
-One connection between your agent and the services you choose.
+Connecta puts your MCP servers and HTTP APIs behind one endpoint that you run
+yourself. Connect your agent once; decide in code who can reach what.
 
-Connecta brings your MCP servers and HTTP APIs together behind one endpoint.
-Connect your agent once, then choose which integrations it can use. You run
-Connecta yourself, on your own machine or infrastructure.
-
-## The mental model
-
-Ask your agent to find open issues, compare them with customer feedback, or
-prepare a report. Connecta gives it a small set of tools for finding and using
-the services you connected, without loading every service's tool definitions
-into the conversation.
-
-The agent writes a short program that runs in a sandbox beside those
-integrations. It can gather results, combine them, and return the parts that
-answer your question. Fifty issues can become a short list grouped by owner
-before the result reaches the conversation. The agent writes the code; you
-ask for the work.
+## How it works
 
 ```mermaid
 flowchart LR
-    Agent["Your agent"] <-->|"One connection"| Connecta["Your Connecta deployment"]
-    Connecta <--> Work["Work tools<br/>Linear, GitHub, Notion"]
-    Connecta <--> Business["Business services<br/>Stripe, RevenueCat, Mixpanel"]
-    Connecta <--> Yours["Your other services<br/>Remote MCP servers and HTTP APIs"]
+    Agent["Your agent"] <-->|"One connection<br/>six small tools"| Connecta
+
+    subgraph Connecta["Your Connecta deployment"]
+        Sandbox["Sandbox<br/>runs the agent's short programs"]
+        Keys["Credentials<br/>stay on the server"]
+    end
+
+    Connecta <--> Work["Linear, GitHub, Notion"]
+    Connecta <--> Business["Stripe, RevenueCat, Mixpanel"]
+    Connecta <--> Yours["Any remote MCP server<br/>or HTTP API"]
 
     style Connecta fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
 ```
 
-You choose which services to connect and who can use them: the maintainers
-you name reach everything, and everyone else, people and agents alike, reaches
-only the pools of tools you list them in. Your agent keeps the same connection
-as those services change.
+The agent doesn't load every service's tools into the conversation. It writes
+a short program that gathers, joins, and trims results inside Connecta, so
+only the answer comes back.
 
-## From a question to an answer
+```mermaid
+flowchart LR
+    Q["Which open issues affect<br/>our biggest customers?"] --> P["Program in Connecta"]
+    P --> I["Open issues"]
+    P --> C["Customer records"]
+    I --> J["Match, filter, group"]
+    C --> J
+    J --> A["Short answer"]
 
-Say you ask, "Which open issues affect our highest-value customers?" Your agent
-can gather information from your issue tracker and customer records, combine
-it inside Connecta, and bring back a focused answer.
+    style J fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
+    style A fill:#dcfce7,stroke:#15803d,color:#14532d
+```
+
+## What you can connect
+
+Maintained connections: <!-- providers:start -->Basecamp, Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Infisical, Linear, Mixpanel, Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, Vercel, and Wispr Flow<!-- providers:end -->.
+Plus any remote MCP server or HTTP API you describe.
+
+| Connection                         | Notes                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| Stripe, Notion, Cloudflare, Vercel | OAuth uses the vendor's hosted MCP server; an API key or token uses Connecta's own client. |
+| Gmail                              | Reads mail and attachments, writes drafts. Never sends.                                    |
+| Google Drive                       | Reads, writes, and shares files. Never permanently deletes.                                |
+| Google Workspace (all)             | A Workspace admin authorizes it once for the domain.                                       |
+| Your own MCP servers and HTTP APIs | Add them in deployment code.                                                               |
+
+## Who can use it
+
+Two kinds of caller, kept apart on purpose:
+
+|                          | People                                               | Agents                                                  |
+| ------------------------ | ---------------------------------------------------- | ------------------------------------------------------- |
+| What they are            | You and your team                                    | Bots, assistants, CI, scheduled jobs                    |
+| How they prove it        | Sign in: Clerk (Node) or Cloudflare Access (Workers) | One token Connecta issues to that agent                 |
+| How they're added        | Named in deployment code                             | Named in deployment code; a maintainer issues the token |
+| Their own service logins | Yes                                                  | No. An agent uses accounts you assign it                |
+| Can manage Connecta      | Maintainers only                                     | Never                                                   |
+
+People come in two roles:
+
+- **Maintainers** run the deployment: they reach every tool, connect shared
+  accounts, manage agent tokens, and read activity.
+- **Pool members** reach only the pools they're listed in.
+
+### Pools
+
+A **pool** is a named set of tools plus a list of who may use it. Each pool
+has its own address, and every caller sees exactly that pool's tools.
+
+```mermaid
+flowchart LR
+    Maint["Maintainer<br/>(signs in)"] --> Main["/mcp<br/>every tool"]
+    Bob["Bob<br/>(signs in)"] --> Team["/mcp/team<br/>CRM + tickets"]
+    Bot["assistant agent<br/>(token)"] --> AgentPool["/agent/assistant<br/>CRM + tickets"]
+
+    style Main fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
+    style Team fill:#dcfce7,stroke:#15803d,color:#14532d
+    style AgentPool fill:#fef3c7,stroke:#b45309,color:#78350f
+```
+
+| Address         | Who gets in               | What they see     |
+| --------------- | ------------------------- | ----------------- |
+| `/mcp`          | Maintainers               | Everything        |
+| `/mcp/<pool>`   | People listed in the pool | That pool's tools |
+| `/agent/<pool>` | Agents listed in the pool | That pool's tools |
+
+- Not a member? You get the same "not found" as a pool that doesn't exist.
+- In two pools? You use two addresses. Pools never merge.
+- Maintainers aren't in any pool automatically.
+- Agent tokens are refused at people addresses, and sign-ins are ignored at
+  agent addresses. Behind Cloudflare Access, an agent sends only its token.
+- With no sign-in and no agent tokens configured, a deployment is open: anyone
+  who can reach it gets everything, and Connecta warns at startup. The shipped
+  templates always configure agent tokens, so they are never open.
+
+### Whose account a connection uses
+
+Reaching a tool and which downstream account it runs as are separate questions.
 
 ```mermaid
 flowchart TB
-    Question["You ask a question"] --> Plan["Your agent works out what to look up"]
-    Plan --> Gather["A program in Connecta gathers the relevant records"]
-    Gather --> Tracker["Open issues from your tracker"]
-    Gather --> Customers["Customer records from a connected service"]
-    Tracker --> Combine["The program matches, filters, and groups the results"]
-    Customers --> Combine
-    Combine --> Answer["Your agent explains the answer"]
+    Call["An allowed call"] --> Kind{"Connection type"}
+    Kind -->|"Shared (default)"| Dep["The deployment's account<br/>connected once by a maintainer"]
+    Kind -->|"Personal"| Own["The caller's own account<br/>each person connects their own"]
+    Kind -->|"Google Workspace"| WS["The signed-in person's account<br/>for an agent, the pool's owner<br/>or one fixed shared account"]
 
-    style Combine fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
-    style Answer fill:#dcfce7,stroke:#15803d,color:#14532d
+    style Dep fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
+    style Own fill:#dcfce7,stroke:#15803d,color:#14532d
+    style WS fill:#fef3c7,stroke:#b45309,color:#78350f
 ```
 
-The records are an example; the available information depends on the services
-and access you have configured. Processing results inside Connecta keeps the
-conversation focused on the answer.
+Agents have no account of their own, so personal connections never appear for
+them. An agent reaches a person's account only through a shared connection set
+up for that person and placed in that person's pool.
 
-## What you can do with it
+### One agent, many people
 
-Connect hosted MCP services, add an internal HTTP API, and let the agent work
-across them in one task. Changing your connected services does not require
-changing the agent's connection. Your deployment decides which services and
-operations each caller can reach.
+An assistant that talks to several people keeps **one token and one
+connection**. Its harness, not the model, picks the pool each turn:
 
-Connecta includes maintained connections for <!-- providers:start -->Basecamp, Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Infisical, Linear, Mixpanel, Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, Vercel, and Wispr Flow<!-- providers:end -->.
-Each connection has its own setup guide.
-Stripe, Notion, Cloudflare, and Vercel use their hosted MCP servers when you
-sign in with OAuth, and Connecta's own API connections when you use an API key,
-a Cloudflare API token or Global API Key, a Notion integration token, or a
-Vercel access token. You can also
-connect other remote MCP servers or define the operations you need from an
-HTTP API.
+```mermaid
+flowchart LR
+    Group["Group chat or<br/>scheduled job"] --> Base["/agent/assistant<br/>shared tools only"]
+    Alice["One-on-one<br/>with Alice"] --> PA["/agent/assistant-alice<br/>shared tools + Alice's accounts"]
+    Bob["One-on-one<br/>with Bob"] --> PB["/agent/assistant-bob<br/>shared tools + Bob's accounts"]
 
-Google Workspace connections use the account your deployment assigns to each
-signed-in person. A Workspace administrator authorizes them for your domain.
-Gmail reads mail and attachments and writes drafts, but does not send mail.
-Google Drive can read, write, and share files, but does not permanently delete
-them. Available
-operations and account access depend on the integration and your deployment.
+    style Base fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
+    style PA fill:#dcfce7,stroke:#15803d,color:#14532d
+    style PB fill:#dcfce7,stroke:#15803d,color:#14532d
+```
 
-Large results need not fill the conversation. The agent can filter and
-summarize them in its program, or read a large result in smaller pieces.
+Anyone else in a person's pool would act as that person, so those pools hold
+only the agent. [Organizing an agent's pools](./documentation/auth.md#organizing-an-agents-pools)
+has the full layout.
 
-## Writes, credentials, and access
+### Who can do what
 
-Connecta distinguishes reads from writes, and each endpoint is either writable
-or read-only. By default an endpoint is writable: your agent can make a change
-with one visible tool call or inside a program, and your agent's host decides
-whether to ask for approval; it sees the program tool as a write. You can mark
-the whole deployment or a single endpoint read-only, and then nothing there can
-change anything: search leaves write tools out and every write is refused. You
-make this choice explicitly for each deployment. Neither choice gives a caller
-access to additional services.
+|                              | Maintainer                        | Pool member                    | Agent       |
+| ---------------------------- | --------------------------------- | ------------------------------ | ----------- |
+| Use tools                    | Everything, plus pools they're in | Their pools                    | Their pools |
+| Connect shared accounts      | Yes                               | No                             | No          |
+| Connect their own accounts   | Yes                               | Yes, in their pools            | No          |
+| Issue or rotate agent tokens | Yes                               | No                             | No          |
+| Read activity                | Yes                               | No                             | No          |
+| Operator UI                  | Everything                        | Their addresses and own logins | No          |
+
+## Reads and writes
+
+Every endpoint is writable or read-only, and you choose explicitly.
 
 ```mermaid
 flowchart TB
     Change["Your agent wants to change something"] --> Choice{"Is this endpoint<br/>read-only?"}
-    Choice -->|"Explicit choice: yes"| Refused["Refused; nothing is sent"]
-    Choice -->|"Default: no"| Host["Your agent's host handles approval"]
+    Choice -->|"Yes"| Refused["Refused; nothing is sent"]
+    Choice -->|"No"| Host["Your agent's host handles approval"]
     Host --> Access["Connecta checks the caller's access"]
     Access --> Services["The connected service receives the change"]
 
@@ -109,49 +169,40 @@ flowchart TB
     style Access fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
 ```
 
-Connecta handles integration credentials on the server. Its sandbox does not
-receive them. Optional encrypted storage protects saved credentials. Connections can use
-shared credentials or a person's own account, with access rules set by the
-deployment owner. Permission to use a connection is separate from permission
-to manage its credentials.
+On a read-only endpoint, search hides write tools and every write is refused.
+Neither setting grants access to more services.
 
-People sign in through Clerk on Node or Cloudflare Access on Workers. Machine
-clients are agents you name in deployment code, each with one token issued by
-your Connecta deployment. Agents connect through their own address for each
-pool, separate from the one people use, so an agent sends only its token, even
-behind Cloudflare Access. A deployment can serve
-several people within one tenant, each with the access you assign. An agent
-that serves several people keeps one connection and switches pools per turn:
-a shared pool for group chats and scheduled work, and a pool per person, with
-that person's own accounts, used only when that person is the one talking.
+## Operator UI (optional)
 
-## A place to see your connections
+A web page for seeing connections, tools, access, and configuration. Changes
+to integrations and access rules still happen in deployment code.
 
-The optional operator UI shows connected services, available tools, access,
-and configuration. Maintainers manage shared credentials, issue or rotate agent
-tokens, and read the optional activity history, which shows who called what,
-when, and whether it worked, without recording arguments, results, or program
-code. Pool members connect their own accounts on personal connections.
-
-Your agent or developer changes the integrations and access rules in deployment
-code. The UI helps you inspect them and manage authentication.
+| Maintainers see                                                                                             | Pool members see                         |
+| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Every connection, its tools, and its status                                                                 | Their pool addresses and client setup    |
+| Shared credentials and OAuth controls                                                                       | Their own logins on personal connections |
+| Agent tokens: issue, rotate, revoke                                                                         |                                          |
+| Optional activity: who called what, when, and whether it worked. Never arguments, results, or program code. |                                          |
 
 ## Where it runs
 
-Run Connecta locally or on a server with Node, including in Docker, or host it
-on Cloudflare Workers. Both offer the same agent tools. Running programs on
-Workers requires Cloudflare's Workers Paid plan.
+|                 | Node or Docker | Cloudflare Workers                |
+| --------------- | -------------- | --------------------------------- |
+| People sign in  | Clerk          | Cloudflare Access                 |
+| Storage         | SQLite         | D1                                |
+| Program sandbox | QuickJS        | Worker Loader (Workers Paid plan) |
+
+Both serve the same agent tools.
 
 ## Getting started
 
-Give your agent the [agent documentation](./documentation/README.md) and ask it
-to set up Connecta with the integrations you want. Tell it where you want to
-run it and who should have access. The setup guides cover Node, Docker, and
-Cloudflare Workers, including connecting your agent client.
+Give your agent the [agent documentation](./documentation/README.md) and ask
+it to set up Connecta with the integrations you want, where to run it, and who
+should have access.
 
 <a id="existing-client-tokens"></a>
 
-For an existing deployment, ask your agent to follow the
+Upgrading? Point your agent at the
 [upgrade guidance](./documentation/deploying.md#upgrade-an-existing-deployment).
 
 ## Status
@@ -160,7 +211,7 @@ Built for its author's deployments first and published openly. Breaking
 changes are expected before 1.0. See the [changelog](./CHANGELOG.md) and
 [security policy](./SECURITY.md).
 
-The [principles](https://github.com/zackbart/connecta/blob/main/PRINCIPLES.md)
-state the goals and tested rules. [Decision records](https://github.com/zackbart/connecta/tree/main/decisions)
-explain past choices. [GitHub issues](https://github.com/zackbart/connecta/issues)
-track planned work; a plan is not a shipped feature.
+[Principles](https://github.com/zackbart/connecta/blob/main/PRINCIPLES.md) ·
+[Decision records](https://github.com/zackbart/connecta/tree/main/decisions) ·
+[Planned work](https://github.com/zackbart/connecta/issues) (a plan is not a
+shipped feature)

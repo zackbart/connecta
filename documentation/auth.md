@@ -108,8 +108,8 @@ remoteMcp("crm", {
 
 To rotate a saved token, save its replacement in the same slot; subsequent
 calls use it. Revoke the retired token at the downstream service. For OAuth,
-use Restart to authorize afresh, Continue to resume a pending consent, and
-Disconnect to invalidate the local grant and catalog. To remove a credential,
+use Reconnect (or Connect account) to authorize afresh, Continue requested
+authorization to resume a pending consent link, and Disconnect to invalidate the local grant and catalog. To remove a credential,
 use the connector's credential delete control. Clearing a slot with no saved
 value returns 409 with `problem: "credential_required"`; it does not revoke
 anything downstream. An unreadable stored value can still be cleared for
@@ -132,7 +132,7 @@ pools: { assistant: { tools: ["crm", "tickets"], members: ["agent:assistant"] } 
 Typecheck and restart/redeploy, then use either procedure:
 
 - **Signed-in maintainer:** with human auth and `operatorUi()` enabled, open
-  the Access tokens page, select `assistant`, and issue, rotate, or revoke
+  the Tokens page, select `assistant`, and issue, rotate, or revoke
   its token. Save an issued secret privately immediately; it appears once.
   The UI reads the slot revision and sends it with the operation. If the slot
   changed, reload and decide again.
@@ -233,7 +233,7 @@ lists them: each name matches `^[a-z0-9_-]+$`, at most 64 characters, and is
 unique; anything else, or agents without `accessTokens`, throws at
 construction. `describeConfig()` lists the names and never token state.
 `accessTokens` from `@zackbart/connecta/auth/access-tokens` installs the `cta_`
-inbound adapter and, beside `ui`, the Access tokens page and `/ui/access-tokens`
+inbound adapter and, beside `ui`, the Tokens page and `/ui/access-tokens`
 routes. Omitted, none of it loads or is served. It takes no options;
 `accessTokens(storage, { maxActive })` throws, since each declared agent has
 exactly one token slot.
@@ -281,7 +281,8 @@ The token routes require the revision the caller decided from:
 | `POST /ui/access-tokens/<agent>` (issue, rotate) | JSON body `{ "expect": "<revision>" }`, `Content-Type: application/json`                          |
 | `DELETE /ui/access-tokens/<agent>` (revoke)      | the same body, or `?expect=<revision>` for a client that cannot send a body with DELETE; not both |
 
-A missing or malformed `expect` is 400; a body that is not JSON is 415 and one
+A missing or malformed `expect` is 400, as is a JSON body that does not parse
+to an object; a body without `Content-Type: application/json` is 415, and one
 over 1,024 characters is 413. They are checked after authorization and before
 the operation. If the slot's current revision differs, the route answers 409
 `{ "error": "…", "code": "slot_changed" }` before minting a secret or writing
@@ -387,8 +388,9 @@ outcome depends on cleanup or on undoing a write.
   undelivered rotation secret may keep admitting, but it never left the server:
   a liveness problem reported as `outcome_unknown`, never a credential exposure.
 
-The routes pass the request's `AbortSignal` to `rotate`, `revoke`, and `adopt`
-(`{ signal }`); a signal already aborted performs no storage call at all. Authorization caches no token, and D1 and SQLite are strongly
+The routes pass the request's `AbortSignal` to `rotate` and `revoke`
+(`{ signal, expect }`); `adopt` has no route and runs only from trusted
+provisioning, which may pass its own `{ signal }`; a signal already aborted performs no storage call at all. Authorization caches no token, and D1 and SQLite are strongly
 consistent; admitted requests are not recalled. Management writes require an
 exact same-origin Origin; responses are private and non-cacheable.
 
@@ -499,7 +501,7 @@ deployment is open (see [pools](#pools)). `describeConfig()` lists
 `maintainers` as `{ namespace, id }` and each pool's resolved `members`.
 
 Pool tools are enforced in the scoped registry view, below the catalog service,
-so `search_tools`, `describe_tools`, both call tools, a program's
+so `search_tools`, both call tools, a program's
 `connecta.search`, `connecta.describe`, and `connecta.call` read one filtered
 list. Connector-level discovery, guides, and `authorize_connector` keep a
 connector when any of its tools is in the pool — `docs.read` permits the
@@ -572,7 +574,7 @@ secrets. Declare each machine as an agent instead:
 
 1. Configure the existing D1 or SQLite store as `storage`, and install
    `accessTokens(storage)`. Keep its existing keys and namespaces.
-2. Add the machine's name to `agents`. Issue its token from the Access tokens
+2. Add the machine's name to `agents`. Issue its token from the Tokens
    page as a signed-in maintainer, or from trusted
    deployment code with
    `new AccessTokenManager(storage, { agents }).rotate("machine-name", "deployment-provisioning")`.
@@ -728,19 +730,19 @@ change it, and the `auth_required` message never names an address. One
 
 ```ts
 const team = [
-  { id: "alice", email: "alice@example.com" },
-  { id: "bob", email: "bob@example.com" },
+  { handle: "alice", id: "user_alice", email: "alice@example.com" },
+  { handle: "bob", id: "user_bob", email: "bob@example.com" },
 ];
 createConnecta({
   auth: clerkAuth({ publishableKey, secretKey }),
   storage,
   accessTokens: accessTokens(storage),
   readOnly: false,
-  maintainers: ["alice"],
+  maintainers: ["user_alice"],
   agents: ["assistant"],
   pools: Object.fromEntries(
     team.map((person) => [
-      `assistant-${person.id}`,
+      `assistant-${person.handle}`,
       { tools: ["gmail", "drive"], owner: person.email, members: [person.id, "agent:assistant"] },
     ]),
   ),
@@ -941,12 +943,12 @@ namespace is left to clean up. They then delete each consent whose epoch is no
 longer live; one left behind cannot complete and expires with its link.
 `POST /ui/oauth/<id>` takes a `mode`:
 
-| Request                                  | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /ui/oauth/<id>` or `?mode=restart` | Issues a signed `/connect/<id>` link requesting a fresh epoch. No downstream authorization starts until the verified browser visits it.                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `?mode=continue`                         | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending consent can be reused; otherwise authorization begins in the current epoch.                                                                                                                                                                                                                                                                                                                                                          |
-| `GET /connect/<id>?h=...`                | Verifies the signed handoff and, when signed in, browser identity, connector visibility and management permission. With the UI mounted, hands off to `/connectors/<id>?h=...#auth` without consuming the link or starting OAuth; Clerk sign-in uses that shell. The Auth tab continues with `start=1`, which repeats verification, consumes the link and calls `startAuth`. Without the UI, the original browser visit starts consent. Explicit `POST /ui/oauth/<id>` actions return a signed link with `start=1` when the UI is mounted. |
-| `DELETE /ui/oauth/<id>`                  | Disconnects and invalidates the cached catalog, even if the browser leaves.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Request                                  | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /ui/oauth/<id>` or `?mode=restart` | Issues a signed `/connect/<id>` link requesting a fresh epoch. No downstream authorization starts until the verified browser visits it.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `?mode=continue`                         | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending consent can be reused; otherwise authorization begins in the current epoch.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `GET /connect/<id>?h=...`                | Verifies the signed handoff and, when signed in, browser identity, connector visibility and management permission. With the UI mounted and a maintainer signed in, hands off to `/connectors/<id>?h=...#auth` without consuming the link or starting OAuth; Clerk sign-in uses that shell. The Auth tab continues with `start=1`, which repeats verification, consumes the link and calls `startAuth`. Without the UI, or for a pool member, the original browser visit starts consent. Explicit `POST /ui/oauth/<id>` actions return a signed link with `start=1` when the UI is mounted. |
+| `DELETE /ui/oauth/<id>`                  | Disconnects and invalidates the cached catalog, even if the browser leaves.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 `authorize_connector` issues the same browser link, with `force` carried in the
 signed handoff. On hosts without URL elicitation, direct and program auth
@@ -1827,7 +1829,7 @@ For providers offering both, deployment config chooses; handlers check `ctx.oaut
 
 ## Request-local downstream Bearer tokens
 
-`remoteMcp({ auth: { type: "request", token: async (ctx) => … } })` resolves
+`remoteMcp("<id>", { auth: { type: "request", token: async (ctx) => … } })` resolves
 its token before connecting and before reusing a client. The callback receives
 the operation's cancellation context, never an agent-selected credential owner.
 Only shared ownership is accepted. Tokens remain inside the request's hardened

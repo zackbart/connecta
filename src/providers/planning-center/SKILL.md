@@ -19,7 +19,7 @@ Planning Center Online church management — <!-- endfragment -->
 
 ## Identity first
 
-- A person id is the join key across every product: the id `search_people` returns is the `personId` for <!-- endfragment -->
+- A person id is the join key across every product: the id `search_people` returns is the person id (`personId` argument, `person_id` field) for <!-- endfragment -->
 
 <!-- fragment: conventions -->
 . Resolve ids with list tools; never guess one.
@@ -28,7 +28,7 @@ Planning Center Online church management — <!-- endfragment -->
 
 ## Results and paging
 
-- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the untouched JSON:API resources and `included`.
+- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the untouched JSON:API resources and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.
 - Lists page by offset: `perPage` up to 100, then pass `page.nextOffset` back as `offset` while `page.hasMore` is true. `page.totalCount` answers "how many" without paging — request `perPage: 1`.
 - A bare date in a date filter is the organization's local day; pass a full timestamp for exact bounds. Name filters are exact; end one with `%` for a prefix match.
 <!-- endfragment -->
@@ -123,13 +123,13 @@ Planning Center Online church management — People, Services, Groups, Check-Ins
 
 ## Identity first
 
-- A person id is the join key across every product: the id `search_people` returns is the `personId` for Services schedules, Groups memberships, Giving donations, and Check-Ins. Resolve ids with list tools; never guess one.
+- A person id is the join key across every product: the id `search_people` returns is the person id (`personId` argument, `person_id` field) for Services schedules, Groups memberships, Giving donations, and Check-Ins. Resolve ids with list tools; never guess one.
 - A person id that used to resolve and now answers `not_found` was most likely merged. Read `/people/v2/person_mergers` with `where[person_to_remove_id]` and follow `person_to_keep_id`.
 - `get_me` names the user this token acts as. Every read and write runs with that user's permissions, product by product; a `provider_permission_denied` means an administrator must grant that user access to the product or record.
 
 ## Results and paging
 
-- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the untouched JSON:API resources and `included`.
+- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the untouched JSON:API resources and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.
 - Lists page by offset: `perPage` up to 100, then pass `page.nextOffset` back as `offset` while `page.hasMore` is true. `page.totalCount` answers "how many" without paging — request `perPage: 1`.
 - A bare date in a date filter is the organization's local day; pass a full timestamp for exact bounds. Name filters are exact; end one with `%` for a prefix match.
 - `get_plan` fetches the plan, its items, and its team in one call and sets `itemsTruncated`/`teamMembersTruncated` past 100 rows; page the rest with `pco_api_get`.

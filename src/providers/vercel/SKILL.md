@@ -18,6 +18,7 @@ Tool names, descriptions, argument schemas, and result schemas come from Vercel'
 - `get_project_env` and `filter_project_envs` can return decrypted environment values, so Connecta reviews them as writes, and a read-only endpoint refuses them. Prefer reading variable keys and targets without values.
 - Purchase tools change billing. Read a quote first and carry its price, idempotency key, and requested term into the confirmed purchase unchanged.
 - `get_access_to_vercel_url` creates a temporary access grant. Treat the URL it returns as a credential and do not expose it outside the requested task.
+- `web_fetch_vercel_url` runs application code and is reviewed as destructive; the toolbar reply, reaction, edit, and resolve tools are writes.
 - `deploy_to_vercel` and `import-claude-design-from-url` can create or update live projects. Read the target and deployment mode before invoking them.
 - An `auth_required` failure means this connector's OAuth grant is missing or expired. Run `authorize_connector` for this connector id, then retry.
 <!-- endfragment -->

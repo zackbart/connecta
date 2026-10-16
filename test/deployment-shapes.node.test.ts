@@ -276,7 +276,7 @@ describe("deployment shapes", () => {
     expect(readdirSync(join(WORKER, "src")).sort()).toEqual(["connecta.config.ts", "index.ts"]);
     const workerReadme = readWorker("README.md");
     expect(workerReadme).toContain("## Select optional modules");
-    expect(workerReadme).toContain("Connections");
+    expect(workerReadme).toContain("Connection tab");
     expect(workerReadme).toContain("Authorization: Bearer <stored-cta-token>");
     for (const variable of ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CONNECTA_TOKEN"]) {
       expect(workerReadme).toContain(variable);

@@ -39,7 +39,8 @@ from a Drive search or from a URL (`/presentation/d/<id>/`).
 - Nothing is cut without a way back. Text past `maxCharsPerSlide`, or past
   what one result can carry (about 192 KB), ends with a marker, and its
   element's `textCursor` (the slide's `notesCursor` for notes) is a
-  `get_page` cursor that continues from the cut. A slide too crowded to
+  `get_page` cursor that continues from the cut; pass it with the page it came
+  from (the slide's `notesPageId` for a `notesCursor`). A slide too crowded to
   list whole gives `elementsNotShown` and an `elementsCursor`.
 - `get_page` reads any page by objectId — a slide, a layout (its
   placeholders' types and indexes, for `placeholderIdMappings`), a master,
@@ -67,7 +68,8 @@ from a Drive search or from a URL (`/presentation/d/<id>/`).
   `matchCase: false`. Pass `requiredRevisionId` to refuse a deck that
   changed since you read it.
 - `batch_update_presentation` takes Slides' own Request objects and always
-  requires the `revisionId` from the read the requests were built on. All
+  requires `requiredRevisionId`: the `revisionId` from the read the requests
+  were built on. All
   requests apply or none do, except comment changes (below). Each write
   returns the new `revisionId` for the next one. A `conflict` means the
   deck changed since that read: re-read it, rebuild the requests, and send

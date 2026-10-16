@@ -11,7 +11,8 @@ A deployable Worker that aggregates a downstream remote MCP and an in-code HTTP
 API connector, guarded by Cloudflare Access. It uses three Cloudflare resources
 and nothing else: one D1 database (`CONNECTA_DB`) for every piece of state, the
 Worker Loader binding (`LOADER`) behind the six-tool surface, which requires
-the Workers Paid plan, and one secret (`CREDENTIAL_ENCRYPTION_KEY`).
+the Workers Paid plan, and two secrets: `DOWNSTREAM_TOKEN` (the example remote
+MCP connector's token) and `CREDENTIAL_ENCRYPTION_KEY` (the credential vault).
 
 This is also the **starting template for a deployment**: a real deployment
 should be its own repository that pins an exact `@zackbart/connecta` version and
@@ -49,6 +50,8 @@ package from the repository root.
 npm install                                    # from the package root
 
 wrangler d1 create connecta                    # paste the id into wrangler.jsonc
+# In wrangler.jsonc also set PUBLIC_URL to this Worker's URL and
+# CONNECTA_MAINTAINERS to your Access user ids (user_uuid, else email).
 
 cd examples/worker
 wrangler secret put DOWNSTREAM_TOKEN
@@ -140,7 +143,8 @@ auth. [Deploying Connecta](https://github.com/zackbart/connecta/blob/main/docume
 records the untested cases and the propagation details.
 
 The checked-in `access.dev` block gives `wrangler dev` a local operator
-identity. Remove the block to test the missing-Access refusal. It has no effect
+identity; it requires Wrangler 4.123.0 or later, and earlier versions ignore it
+with an unexpected-field warning. Remove the block to test the missing-Access refusal. It has no effect
 on a deployed Worker's production identity.
 
 ### Optional resource management with Alchemy
@@ -233,7 +237,29 @@ dependency this file imports. A copy with its own `package.json` installs
 Connecta and the separately installed `@cloudflare/codemode` peer:
 
 ```sh
-npm install @zackbart/connecta @cloudflare/codemode
+npm install --save-exact @zackbart/connecta@<version>
+npm install @cloudflare/codemode
+npm install --save-dev wrangler @cloudflare/workers-types typescript @types/node
+```
+
+A `tsconfig.json` like the following lets `tsc --noEmit` resolve `D1Database`,
+`WorkerLoader`, and `ExecutionContext`. `wrangler` also serves
+`scripts/copy-kv-to-d1.mjs`.
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types", "node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}
 ```
 
 `@cloudflare/codemode` is the optional peer behind `execute_code`, declared in
@@ -250,12 +276,12 @@ Then list the maintainers' Access user ids (`user_uuid`, else email) in the
 `CONNECTA_MAINTAINERS` var and point a maintainer's MCP client at
 `<PUBLIC_URL>/mcp`. Other people use `<PUBLIC_URL>/mcp/<pool>`, and agents
 `<PUBLIC_URL>/agent/<pool>`, for a pool that lists them in `members`. The example explicitly enables
-`ui: operatorUi()`; open `<PUBLIC_URL>/` for Connections and each connection's
-authentication controls. The page labels tool safety, offers fixed repair
+`ui: operatorUi()`; open `<PUBLIC_URL>/` for endpoints, and each connector's Connection tab
+(`/connectors/<id>`) for its authentication controls. The page labels tool safety, offers fixed repair
 prompts for classified failures, and shows client setup commands for endpoints
 the signed-in person may use. Those commands contain no token. There is no
-separate Credentials tab. The Access tokens page, listing one token slot per
-declared agent, is available to permitted interactive operators.
+separate Credentials tab. The Tokens page, listing one token slot per
+declared agent, is available to signed-in maintainers.
 
 ## Select optional modules
 
@@ -281,9 +307,9 @@ See [inbound identity](../../documentation/auth.md#principals-visibility-and-ope
 Machine clients are agents declared by name in `agents` in
 `src/connecta.config.ts`; this example declares `ci`. Each agent has one
 `cta_` token held by `accessTokens(storage)` over `CONNECTA_DB`, with no new
-binding. An agent with no issued token admits nothing. A human authenticated
-through Access can still sign in and issue the first token. Open
-`<PUBLIC_URL>/`, select Access tokens, and issue the agent's token. Save the
+binding. An agent with no issued token admits nothing. A maintainer (an Access
+identity listed in `CONNECTA_MAINTAINERS`) signs in and issues the first token.
+Open `<PUBLIC_URL>/`, select Tokens, and issue the agent's token. Save the
 returned `cta_` secret privately; it is returned once. Rotating replaces it
 immediately: the old secret stops on its next request. An agent has no human
 principal, so personal connectors are absent for it; connector and pool rules
@@ -380,7 +406,7 @@ with the `cta_` token alone:
 CF_ACCESS_CLIENT_ID='REPLACE_WITH_ACCESS_CLIENT_ID' \
 CF_ACCESS_CLIENT_SECRET='REPLACE_WITH_ACCESS_CLIENT_SECRET' \
 CONNECTA_TOKEN='cta_REPLACE_WITH_STORED_SECRET' \
-connecta doctor --url "$PUBLIC_URL" --pool ci
+npx connecta doctor --url https://connecta.example.workers.dev --pool ci
 ```
 
 Doctor reports the configured `DynamicWorkerExecutor`, not a presumed Node
@@ -439,7 +465,8 @@ CREATE TABLE IF NOT EXISTS connecta_kv (
 );
 CREATE INDEX IF NOT EXISTS connecta_kv_expiry ON connecta_kv (expires_at_ms);
 -- tool_call_activity: one row per completed call, keyset-paged on
--- (occurred_at_ms, id); see src/storage/sql.ts in the package.
+-- (occurred_at_ms, id); see
+-- https://github.com/zackbart/connecta/blob/main/src/storage/sql.ts
 ```
 
 ### Upgrading from 0.28

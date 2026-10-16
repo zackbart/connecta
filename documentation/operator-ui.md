@@ -160,8 +160,9 @@ only gate: a signed-out caller gets the auth provider's 401 challenge, and a
 `cta_` agent token the machine-only 401 Bearer challenge every human route
 gives it; a maintainer, or a person listed in a pool's `members`, gets 200
 with `role` `"maintainer"` or `"member"`; anyone else gets the private JSON 404
-`{ "error": "not found" }`. An open deployment's anonymous caller is
-a maintainer. Every response is private, `no-store` JSON, and only GET is
+`{ "error": "not found" }`. An open deployment's anonymous caller gets
+`role: "maintainer"` but has no principal: activity is `"forbidden"`, the
+activity and access-token routes answer 404, and owners are `null`. Every response is private, `no-store` JSON, and only GET is
 allowed. One shape serves both roles; a field a role does not receive is
 `null` or empty, never omitted.
 

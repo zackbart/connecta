@@ -43,14 +43,14 @@ mode returns native `content`. Default-mode successes declare
 `_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
 `data` and declares `format` in its complete result envelope.
 
-| Tool                    | Arguments                                                                                                                           | Returns                                                                                                       |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `execute_code`          | `code`, `diagnostics?`                                                                                                              | `{ result?, error?, hostCalls }`, plus diagnostics when asked                                                 |
-| `search_tools`          | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
-| `call_tool`             | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?`                                                   | the downstream result, bounded as [result representation](#result-representation) describes                   |
-| `call_destructive_tool` | the same, plus `reason?`                                                                                                            | the same                                                                                                      |
-| `authorize_connector`   | `connector`, `force?`                                                                                                               | the class-specific handoff in [authorization recovery](#authorization-recovery)                               |
-| `skills`                | `name?`                                                                                                                             | the listing when `name` is absent, that skill's markdown when it is present                                   |
+| Tool                    | Arguments                                                                                                                           | Returns                                                                                                                                                                                                                                                |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `execute_code`          | `code`, `diagnostics?`                                                                                                              | `{ result?, error?, hostCalls }`, plus `logs`, `emitted`, and `emittedDiscarded` when present and diagnostics when asked                                                                                                                               |
+| `search_tools`          | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remain, `absence` when the query names a service with no configured connector, and `queryAnalysis` on a partial, failed, unsearchable, or absent-service search |
+| `call_tool`             | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?`                                                   | the downstream result, bounded as [result representation](#result-representation) describes                                                                                                                                                            |
+| `call_destructive_tool` | the same, plus `reason?`                                                                                                            | the same                                                                                                                                                                                                                                               |
+| `authorize_connector`   | `connector`, `force?`                                                                                                               | the class-specific handoff in [authorization recovery](#authorization-recovery)                                                                                                                                                                        |
+| `skills`                | `name?`                                                                                                                             | the listing when `name` is absent, that skill's markdown when it is present                                                                                                                                                                            |
 
 `limit` defaults to 8 and is capped at 100, as is one `connecta.describe` batch.
 `connecta.result`'s `offset` is a whole number of bytes ≥ 0 defaulting to 0 and
@@ -66,8 +66,8 @@ refuse a consequential call.
 
 `diagnostics: true` adds compact request-local timing and serialized-size
 aggregates for a caller measuring a workflow: a `diagnostics` block from
-`execute_code`, a `timing` block on a call response that is already structured
-(value mode, or a failure carrying recovery). Normal calls pay nothing for it,
+`execute_code`, a `timing` block on every structured call response: value-mode successes
+and every `{ ok: false }` failure. Normal calls pay nothing for it,
 and the measurements never contain program source, arguments, values, addresses,
 credentials, logs, or raw error text.
 
@@ -221,7 +221,7 @@ declared schema exactly as they do for compact.
 A connector may attach a deployment-owned guide as markdown, keeping the
 original `usageGuide: string` configuration, or as
 `{ content, summary?, required? }` — which registers no connector and creates no
-shared runtime template. The registry prepends Agent Skills frontmatter to
+shared runtime template. The skills catalog prepends Agent Skills frontmatter to
 `content` and preserves the guide body, including its whitespace.
 `summary` is normalized and refuses construction over 120 characters; absent,
 Connecta derives the same bounded fallback the skills listing uses from the
@@ -253,8 +253,8 @@ A connector-scoped lexical miss keeps that connector's guide metadata under
 contains no endpoint vocabulary: a required guide stays discoverable instead of
 disappearing with the zero-tool page.
 
-Two built-in skills are byte-identical across deployments. `usage` says to read
-it at most once per task and owns program selection detail, examples, runtime
+Two built-in skills are byte-identical across deployments. `usage` is fetched
+only for missing guidance or program repair, and owns program selection detail, examples, runtime
 differences, and repair guidance; `investigate` is on-demand guidance for
 purchase verification, experiment checks, and customer or deployment
 investigations — shared guidance, not a saved workflow and not a source of
@@ -394,7 +394,7 @@ handle, never an access grant.
 
 New entries store UTF-8 bytes in a base64 envelope split across storage keys,
 48 KiB of result text per chunk — widening past roughly 1.5 MB so no result
-occupies more than 33 keys, because every chunk is also a write. `connecta.result`
+occupies more than 32 keys, because every chunk is also a write. `connecta.result`
 reads and decodes only the chunks a page covers plus a few boundary bytes, so
 paging a 1.2 MB result costs the same per page as paging a 300 KB one; it
 neither encodes nor reads the whole result per page. Entries without the required identity and invocation bindings fail closed,
@@ -426,7 +426,7 @@ JSON; everything after the first newline is the preview. `structuredContent`
 is absent, so the notice cannot hide the preview in clients that prefer it:
 
 ```text
-{"truncated":true,"resultId":"…","totalBytes":161420,"hint":"This write already ran: do not call it again to see its result. Bytes 0-24000 of 161420 follow; page the rest with connecta.result using nextAction.","nextOffset":24000,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => await connecta.result(\"…\", { offset: 24000 })"}}}
+{"truncated":true,"resultId":"…","totalBytes":161420,"hint":"This write already ran: do not call it again to see its result. Bytes 0-24000 of 161420 follow; page the rest with connecta.result using nextAction.","nextOffset":24000,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => await connecta.result(\"…\", { offset: 24000, maxBytes: 3829 })"}}}
 {"ts":"2026-09-16T21:31:11.759Z","actor":"sam.ortiz@example.com",…
 ```
 
@@ -458,7 +458,7 @@ characters. One that rejects outright — Claude Code with
 `MAX_MCP_OUTPUT_TOKENS` set below 12,500 — needs a cap under twice its limit.
 
 The preview is the head of what `connecta.result` pages, cut on a character
-boundary, so `nextAction.arguments.offset` continues exactly where it stops. A
+boundary, so the `offset` in `nextAction.arguments.code` continues exactly where it stops. A
 lone text block — including the one synthesized from `structuredContent` — is
 measured, stashed, previewed, and paged as its text: wrapping it in a content
 envelope added nothing but a second layer of JSON escaping, so a JSON payload
@@ -682,8 +682,8 @@ replay. Downstream payloads and input responses are capped at 64 KiB, with at
 most 16 inputs and 256 characters per downstream key. The combined private
 state history is also capped at 64 KiB. Sealed wire state is
 capped at 128 KiB. `input_required_invalid`, `input_required_limit`,
-`input_required_unsupported`, and `input_required_round_limit` are non-retryable
-typed failures.
+and `input_required_unsupported` are non-retryable typed failures;
+`input_required_round_limit` is an untyped failure with `retryable: false`.
 
 Programs and in-process meta-tools return `input_required_unsupported`, with a
 `nextAction` naming the equivalent direct call and bounded original arguments.

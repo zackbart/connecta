@@ -4,8 +4,9 @@
  * One MCP endpoint aggregating a downstream remote MCP and an HTTP API, guarded
  * by Cloudflare Access. It needs three resources and nothing else: one D1
  * database (CONNECTA_DB) holding every piece of state, the Worker Loader
- * binding (LOADER) behind execute_code, and one secret
- * (CREDENTIAL_ENCRYPTION_KEY) sealing credentials in that database. Access
+ * binding (LOADER) behind execute_code, and two secrets: DOWNSTREAM_TOKEN for
+ * the example Notion connector and CREDENTIAL_ENCRYPTION_KEY sealing
+ * credentials in that database. Access
  * admits the request before this Worker runs and supplies trusted human
  * identity through ctx.access. Machines use stored cta_ tokens inside connecta.
  *
@@ -90,7 +91,7 @@ export default defineConfig((env: Env) => {
     // alone is refused everywhere.
     auth: [cloudflareAccessAuth()],
     // Machine clients are agents declared here by name, each with one cta_
-    // token. An Access-authenticated operator issues, rotates, and revokes it
+    // token. A signed-in maintainer issues, rotates, and revokes it
     // in the operator UI; removing a name stops its token on the next request.
     agents: ["ci"],
     // Always installed over the same D1 storage. An agent with no issued token

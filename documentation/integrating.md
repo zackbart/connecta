@@ -92,7 +92,7 @@ Linear defaults to OAuth; its read-only endpoint requests only the downstream
 read scope. That is separate from a Connecta `readOnly` endpoint. Read the installed `dist/providers/linear/index.d.ts` for API-key framing,
 workspace instructions, and admission choices.
 
-The [human README](../README.md#what-you-can-do-with-it) lists available
+The [human README](../README.md#what-you-can-connect) lists available
 integrations. In the installed package, `dist/providers/<name>/index.d.ts`
 and its imported declarations describe each factory's options. After adding
 a connector, use `search_tools` to discover its current tools and `connecta.skill("connector:<id>")` in `execute_code`

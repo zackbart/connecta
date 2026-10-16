@@ -555,6 +555,15 @@ URL-elicitation hosts retain their existing flow.
 **E2.** The taxonomy: `retryable` is what connecta reports, `Y3` what a program
 may do. A provider maps each downstream failure to the code that tells the
 caller what to do next, and never invents a cause it was not told.
+The table lists the codes a program commonly sees. Codes owned by one
+mechanism are specified with it: `resource_template_ambiguous` and
+`resource_match_budget_exceeded` with resource reads above; the
+`executor_*` admission codes in `E5`; `destructive_tool_requires_approval` with
+direct calls; and `input_required_invalid`, `input_required_limit`,
+`downstream_oauth_required`, `oauth_revocation_failed`,
+`provider_permission_denied`, and `auth_replay_refused` in
+[meta-tools](./meta-tools.md). Each of those is non-retryable except
+`executor_overloaded`.
 
 | Code                         | Raised when                                                                                                                                                                                           | `retryable`   |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
@@ -577,6 +586,7 @@ caller what to do next, and never invents a cause it was not told.
 | `result_too_large`           | a discovery response exceeded its byte bound                                                                                                                                                          | false         |
 | `budget_exceeded`            | the run exhausted a host-call, write, or emitted-output budget                                                                                                                                        | false         |
 | `write_outcome_unknown`      | a program write was sent and no answer came back; it is never sent again (`W9`)                                                                                                                       | false         |
+| `executor_failed`            | the executor returned a malformed result or failed outside the guest program                                                                                                                          | false         |
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
 `connector`, `operation`, `recovery` (`oauth`, `operator_config`, or
@@ -711,7 +721,7 @@ has no host log stream and cannot supply logs from its suspended guest (`L4`).
 
 **R6.** Every run returns `hostCalls: { attempted, admitted, succeeded, failed }`,
 including admission failure, cancellation, budget refusal, and code-size refusal.
-Calls include search, describe, call, result, and skill. `emit` has separate budgets.
+Calls include search, describe, call, read, result, and skill. `emit` has separate budgets.
 An abandoned host call counts as failed when the run ends; guest catches do not
 change the counts. These numbers are outside the program's returned `result`.
 `diagnostics: true` adds the existing payload-free timing block. Emitting adds
@@ -770,7 +780,8 @@ a successful result, appended to `content` after the JSON envelope, which gains
 response (`R6`). `structuredContent` stays the envelope alone — emission is
 presentation, not a second data channel.
 
-**M3.** Text emission shares `R2`'s 24,000 serialized-character cap. Its
+**M3.** Text emission shares `R2`'s 24,000 serialized-character cap, less 512
+characters reserved for the envelope (23,488 for emitted text). Its
 serialized block size reduces the return budget, and oversized text fails with
 `result_too_large`. Image/audio blocks use the separate transport budget and
 reach the model as real MCP media content, including when `emit` is not awaited.
@@ -881,7 +892,7 @@ because connecta enforces them above the sandbox:
 
 | Bound                                                                                   | Value                                                                                                        |
 | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Host calls per execution, shared by `search`, `describe`, `call`, and `read`            | 20 by default, `execute.maxHostCalls`                                                                        |
+| Host calls per execution, shared by every guest call except `emit`                      | 20 by default, `execute.maxHostCalls`                                                                        |
 | Writes per run on a writable endpoint, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites`                                                                           |
 | Deadline per host call                                                                  | 15 s, `execute.hostCallTimeoutMs`; one deadline covers catalog resolution, admission, and the connector call |
 | Discovery page                                                                          | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                      |
@@ -891,8 +902,9 @@ because connecta enforces them above the sandbox:
 | Result                                                                                  | 24,000 serialized characters                                                                                 |
 | Logs presented to the model                                                             | 4,000 characters                                                                                             |
 
-Every `call`, `read`, `search`, and `describe` spends one host call on entry, before
-resolution, validation, or dispatch. Catching a local refusal refunds nothing.
+Every `call`, `read`, `search`, `describe`, `result`, and `skill` spends one host
+call on entry, before resolution, validation, or dispatch; automatic transfer
+pages of a paged result do not. Catching a local refusal refunds nothing.
 The first call beyond the budget ends the host run with one non-retryable
 `budget_exceeded` (`E2`). Its bridge stays pending until lease disposal so guest
 `try/catch` cannot swallow it. Later host access, including `emit`, stops; pending

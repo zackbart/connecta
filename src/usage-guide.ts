@@ -77,7 +77,7 @@ async () => {
 
 Host-call budget exhaustion ends the run with budget_exceeded. Catch and
 allSettled cannot recover it or return partial output. Bound batches before
-starting them; search, describe, call, result, and skill spend host calls.
+starting them; every guest call except emit spends host calls.
 Split remaining reads. Never replay writes for their output.
 
 ## Per-connector guides

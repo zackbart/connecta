@@ -37,8 +37,9 @@ chargeback. Contributions also carry their `depositId`.
 
 Giving history and donor contact details are personal data. Reduce inside
 `execute_code` — aggregate, count, or keep ids — and return names, emails,
-phones, or addresses only when the task needs them. Lists and contributions
-already omit contact details; `get_donor` is the deliberate lookup.
+phones, or addresses only when the task needs them. Contribution rows carry
+only the donor's id and name; `list_donors` includes email but omits phone and
+address; `get_donor` is the deliberate full-contact lookup.
 
 ## Writes go through `overflow_api_mutate`
 

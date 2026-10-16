@@ -72,7 +72,7 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
   `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN`
   together, and pass `--pool ci`, a pool that lists the agent.
   Machine clients are the `agents` declared in `src/connecta.config.ts`. Issue
-  or rotate a token through the Access-authenticated operator page or trusted
+  or rotate a token through the operator Tokens page as a signed-in maintainer or trusted
   `AccessTokenManager.rotate` tooling against this same D1 storage, as README
   "Machine tokens" describes. Never configure a static bearer or open startup.
   UI, vault, and activity use explicit optional imports;
