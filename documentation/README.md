@@ -12,7 +12,7 @@ For a new deployment, start with [Deploying Connecta](./deploying.md).
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Add or remove a connector                | [Change the connector roster](./integrating.md#add-or-remove-a-connector)                                                           |
 | Organize an agent's pools                | [Organizing an agent's pools](./auth.md#organizing-an-agents-pools)                                                                 |
-| Add a person (maintainer or pool member) | [Add a person](./auth.md#add-a-person)                                                                                              |
+| Add a person (maintainer or pool member) | [Add a person](./auth.md#add-a-person), [member page](./operator-ui.md#use-the-member-page)                                         |
 | Connect a shared credential              | [Connect a shared credential](./auth.md#connect-a-shared-credential)                                                                |
 | Issue, rotate, or revoke an agent token  | [Manage an agent token](./auth.md#issue-rotate-or-revoke-an-agent-token)                                                            |
 | Upgrade between versions                 | [Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment), including [migration to 0.33](./migration-0.33.md) |

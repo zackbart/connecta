@@ -44,7 +44,10 @@ auth through the operator UI.
    Keep these stable: personal credentials are partitioned by principal.
 4. Typecheck and restart/redeploy. Sign in as the person and verify their
    intended endpoint and tools. A pool-only member at plain `/mcp` gets 404.
-   For their own downstream login, use `authScope: "personal"`; they connect
+   With the UI enabled, the [member page](./operator-ui.md#use-the-member-page)
+   shows their pool URLs and client setup; `/ui/api/config` returns 200 with
+   `role: "member"`. It does not grant the maintainer pages, shared credential
+   controls, activity, or token management. For their own downstream login, use `authScope: "personal"`; they connect
    only their own account on connectors included in their pools.
 
 For example, with one Clerk provider, Alice administers the deployment and
@@ -82,7 +85,7 @@ maintainer can change it; an agent token cannot perform the setup.
    See the platform README's credential-vault setup. Enable `operatorUi()`
    for credential-slot editing and human auth with a maintainer roster.
 3. Typecheck and restart/redeploy. Sign in as a maintainer, open the
-   connector's page, and use its Auth controls. For a credential slot, enter
+   connector's page, and use its Connection tab. For a credential slot, enter
    and save the downstream token. For OAuth, connect and finish the browser
    consent as the intended downstream account. An MCP maintainer can also
    call `authorize_connector` for that id and follow its signed browser link;
@@ -107,7 +110,10 @@ To rotate a saved token, save its replacement in the same slot; subsequent
 calls use it. Revoke the retired token at the downstream service. For OAuth,
 use Restart to authorize afresh, Continue to resume a pending consent, and
 Disconnect to invalidate the local grant and catalog. To remove a credential,
-use the connector's credential delete control. These changes do not change
+use the connector's credential delete control. Clearing a slot with no saved
+value returns 409 with `problem: "credential_required"`; it does not revoke
+anything downstream. An unreadable stored value can still be cleared for
+recovery. These changes do not change
 pool membership. Environment-backed header auth has no editable vault slot:
 rotate that secret in the deployment's secret store and restart/redeploy.
 
@@ -1341,7 +1347,8 @@ maintainer's link continues in the operator UI; a member's link starts the
 authorization directly, as it does on a deployment without the UI. A member's
 operator contract names, per personal connector, the actions their permission,
 the deployment and the connector's hooks support: credential `save` with a
-vault, `test` and `clear` once their own partition holds a value; OAuth
+vault, `clear` once their own partition holds a value, and `test` only when that
+value matches the declared shape and a matching test hook exists; OAuth
 `connect` and `restart` with `startAuth`, `finishAuth` and `verifyState`, and
 `disconnect` with `disconnectAuth`. `/ui/oauth/<id>` gates each verb on those
 same hooks, so a connector provisioned out of band can still be disconnected,
