@@ -1,16 +1,62 @@
 # Integrating services
 
-Use this guide to add a connector to deployment configuration. To implement a
-new maintained provider in Connecta itself, follow the repository's
-[add-provider skill](https://github.com/zackbart/connecta/blob/main/.claude/skills/add-provider/SKILL.md)
-and [AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md).
+Use this guide to change connectors in deployment configuration.
 [All agent routes](./README.md) are in the index.
+
+## Add or remove a connector
+
+Connectors are code-owned. Edit the deployment's `src/connecta.config.ts`;
+there is no install button or runtime registration API.
+
+To add one:
+
+1. Choose a maintained provider, `remoteMcp()`, or `api()` using the sections
+   below. Give it a unique, stable id such as `crm`; renaming an id selects
+   different stored credentials and changes every tool address.
+2. Put the constructed connector in `connectors`. Keep secrets in environment
+   variables or the encrypted vault. Choose shared or personal auth explicitly
+   for the intended audience; agents cannot see personal-auth connectors.
+3. Add the id (all its tools) or exact `id.tool` addresses to the intended
+   pools' `tools`. Maintainers at plain `/mcp` already see the whole catalog.
+   Follow [the agent pool layout](./auth.md#organizing-an-agents-pools) for an
+   agent: shared connectors go in its base constant, per-user connectors only
+   in that user's pool.
+4. Run the deployment's `npm run typecheck` (Worker copies: `tsc --noEmit`),
+   restart Node or redeploy the Worker, and
+   [connect its credential](./auth.md#connect-a-shared-credential) if needed.
+   Run [doctor](./deploying.md#verify-and-diagnose), discover its tools from
+   the intended pool, and perform a bounded read. Check an excluded pool too.
+
+For example, merge this fragment into the existing configuration, retaining
+its storage, executor, auth, and `readOnly` settings:
+
+```ts
+import { remoteMcp } from "@zackbart/connecta";
+
+const crm = remoteMcp("crm", {
+  url: "https://crm.example.com/mcp",
+  authScope: "shared",
+  auth: { type: "credential", credential: { label: "CRM API token" } },
+});
+const assistant = { tools: ["crm", "tickets"], members: ["agent:assistant"] };
+// connectors: [crm, tickets], agents: ["assistant"], pools: { assistant }
+```
+
+To remove `crm`, first disconnect its OAuth grant or delete its saved
+credential while the connector still exists, using a signed-in maintainer
+for shared auth. Each person disconnects their own personal account. Remove
+`crm` and all `crm.*` addresses from every pool (including base constants),
+then remove its entry from `connectors`, unused imports, and unused secret
+configuration. Remove any pools left with no tools (empty `tools` fails
+construction), and update or retire clients pointing at those pools. Typecheck, restart/redeploy, run doctor, and confirm discovery
+and calls no longer find it. Removing configuration alone does not revoke a
+credential at the downstream service; revoke unused credentials there too.
 
 ## Choose a connector
 
 | Need                             | Configuration path                                | Check before using                                                                    |
 | -------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| A maintained integration         | Its `@zackbart/connecta/providers/<name>` factory | Provider `SKILL.md`, options, auth ownership, supported tools                         |
+| A maintained integration         | Its `@zackbart/connecta/providers/<name>` factory | Published factory declarations, auth ownership, supported tools                       |
 | Another hosted remote MCP server | `remoteMcp()` from the root package               | Endpoint, authentication, current catalog, and read/write annotations                 |
 | A selected HTTP API capability   | `api()` from the root package                     | Input/output schemas, explicit read/write hints, bounded handler, credential handling |
 
@@ -43,15 +89,15 @@ const tracker = linear("tracker", {
 ```
 
 Linear defaults to OAuth; its read-only endpoint requests only the downstream
-read scope. That is separate from a Connecta `readOnly` endpoint. Read the
-[Linear skill](https://github.com/zackbart/connecta/blob/main/src/providers/linear/SKILL.md)
-and [factory options](https://github.com/zackbart/connecta/blob/main/src/providers/linear/index.ts)
-for API-key framing, workspace instructions, and admission choices.
+read scope. That is separate from a Connecta `readOnly` endpoint. Read the installed `dist/providers/linear/index.d.ts` for API-key framing,
+workspace instructions, and admission choices.
 
 The [human README](../README.md#what-you-can-do-with-it) lists available
-integrations. Each [provider folder](https://github.com/zackbart/connecta/tree/main/src/providers)
-contains its scoped guide, options, tests, fixtures, and review data. Prefer
-that guide to general assumptions about a service's API. Google Workspace
+integrations. In the installed package, `dist/providers/<name>/index.d.ts`
+and its imported declarations describe each factory's options. After adding
+a connector, use `search_tools` to discover its current tools and `connecta.skill("connector:<id>")` in `execute_code`
+to read its runtime guide; provider source skills are not installed files.
+Google Workspace
 providers require administrator-managed domain-wide delegation and a deployment
 mapping from admitted identity to the downstream account; an agent acts as its
 pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
@@ -61,8 +107,8 @@ deletes files.
 Wispr Flow uses OAuth only through `wisprFlow()` from
 `@zackbart/connecta/providers/wispr-flow`. It reaches the authorized account's
 Notetaker content, with personal and work accounts holding separate data.
-Its [provider guide](https://github.com/zackbart/connecta/blob/main/src/providers/wispr-flow/SKILL.md)
-owns account access, search limits, transcript permissions and paging. The
+Its runtime guide, available through `connecta.skill("connector:<id>")` in `execute_code`, describes account access,
+search limits, transcript permissions and paging. The
 reviewed classification includes task writes listed in Claude's directory even
 though Wispr's public help describes read-only access; discover the account's
 actual tools before assuming those writes exist.
@@ -229,7 +275,13 @@ perform a bounded read. Add negative checks for target restrictions and writes
 when authoring a handler or provider. Follow repository verification policy
 when changing package code.
 
-## Implementation and evidence
+## Contributor reference
+
+### Implementation and evidence
+
+To implement a maintained provider in Connecta itself, follow the repository's
+[add-provider skill](https://github.com/zackbart/connecta/blob/main/.claude/skills/add-provider/SKILL.md)
+and [AGENTS.md](https://github.com/zackbart/connecta/blob/main/AGENTS.md).
 
 Factory contracts live in [remote MCP](https://github.com/zackbart/connecta/blob/main/src/connectors/remote-mcp.ts),
 [API connector](https://github.com/zackbart/connecta/blob/main/src/connectors/api-connector.ts),

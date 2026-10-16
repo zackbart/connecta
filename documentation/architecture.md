@@ -1,5 +1,11 @@
 # Architecture
 
+## Contributor reference
+
+This guide describes Connecta implementation and repository verification.
+It is optional for deployment operators. Start with the
+[operator task index](./README.md#operator-tasks) for package-local procedures.
+
 One Web-standard `fetch(request) => Promise<Response>` handler, a long-lived
 registry behind it, and a strict rule about what may be imported. Everything
 else in this repository is a detail of those three things.

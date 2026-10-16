@@ -22,6 +22,20 @@ and test evidence. Describe planned work as planned, not shipped behavior.
 The roadmap lives in [GitHub issues](https://github.com/zackbart/connecta/issues):
 file new work with motivation, behavior, and acceptance criteria, not a TODO.md.
 
+## Shipped documentation audience
+
+Write `documentation/`, `templates/`, `examples/worker/`, and `README.md`
+first for an agent operating a deployment from the installed package. Route
+operator tasks through `node_modules/@zackbart/connecta/documentation/README.md`.
+State every operator convention as self-contained rules with a neutral example;
+decision records and issues may explain why, never supply required steps.
+`decisions/`, `spec/`, and `.claude/` do not ship. Separate contributor-only
+source maps, INV citations, and implementation/test evidence under clearly
+labeled contributor headings; operator tasks must not need them. Use neutral
+names (`assistant`, `alice`, `bob`, `crm`, `tickets`, `notes_alice`,
+`alice@example.com`), never real deployments, clients, people, or organizations.
+Maintained provider product names remain valid.
+
 ## Verification
 
 `npm run check:fast` is the inner loop: formatting, docs, fragment, Node-suite, UI, lint,

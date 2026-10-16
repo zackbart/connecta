@@ -3,7 +3,7 @@
 ## Task routes
 
 [Agent index](./README.md) distinguishes endpoint operation from deployment
-and package maintenance. This guide owns identity, grants, and downstream
+and package maintenance. This guide owns identity, membership, and downstream
 credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 
 | Task                                                                | Sections                                                                                                                                                                      |
@@ -21,6 +21,154 @@ credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 defines refusal precedence.
 [Source and tests](#source-and-tests) points to the implementation. Migration
 sections describe upgrade procedures, not additional auth modes to enable.
+
+## Add a person
+
+People authenticate with Clerk on Node or Cloudflare Access on Workers.
+Finish [Clerk setup](#clerk-oauth-tokens-and-operator-sessions) or
+[Access setup](#cloudflare-access-on-workers) if the deployment has no human
+provider yet. A machine-only deployment cannot admit people or manage shared
+auth through the operator UI.
+
+1. Admit the person in the identity provider's sign-in policy. Obtain their
+   stable principal id there: Clerk's user id, or Access's `user_uuid` (email
+   only when no `user_uuid` is supplied). A display name or an email for a
+   Clerk user is not their principal id.
+2. Choose their role in `src/connecta.config.ts`. Add an administrator to
+   `maintainers`; they can reach plain `/mcp`, manage shared credentials and
+   agent tokens, and read activity. For a person needing selected tools, add
+   them to the intended pool's `members` instead. Maintainers need explicit
+   pool membership too if they will use `/mcp/<pool>`.
+3. Use a bare id with exactly one interactive provider, or `{ namespace, id }`
+   with several (Clerk's Frontend API URL or `cloudflare-access` as namespace).
+   Keep these stable: personal credentials are partitioned by principal.
+4. Typecheck and restart/redeploy. Sign in as the person and verify their
+   intended endpoint and tools. A pool-only member at plain `/mcp` gets 404.
+   With the UI enabled, the [member page](./operator-ui.md#use-the-member-page)
+   shows their pool URLs and client setup; `/ui/api/config` returns 200 with
+   `role: "member"`. It does not grant the maintainer pages, shared credential
+   controls, activity, or token management. For their own downstream login, use `authScope: "personal"`; they connect
+   only their own account on connectors included in their pools.
+
+For example, with one Clerk provider, Alice administers the deployment and
+Bob uses only the team pool. Replace these illustrative Clerk ids with the
+ids from that deployment's Clerk instance:
+
+```ts
+maintainers: ["user_alice"],
+pools: {
+  team: { tools: ["crm", "tickets"], members: ["user_alice", "user_bob"] },
+},
+```
+
+In the Node template and Worker example, `CONNECTA_MAINTAINERS` is a
+comma-separated list of these ids; update that environment variable when
+using their roster wiring. Pool membership remains code. To remove a person,
+remove their memberships and maintainer entry, restart/redeploy, and remove
+their sign-in admission as appropriate. Never add another person to an
+agent's `<agent>-<user>` pool; follow [the pool layout](#organizing-an-agents-pools).
+
+## Connect a shared credential
+
+Shared auth belongs to the deployment. Every admitted caller of that
+connector uses the same downstream account. Only a signed-in interactive
+maintainer can change it; an agent token cannot perform the setup.
+
+1. Configure the connector in `connectors` with `authScope: "shared"`
+   (the default) and either OAuth or a credential slot. Include it only in
+   the intended pools. For a user's account used by an agent, give it its
+   own id such as `notes_alice` and expose it only in `assistant-alice`.
+2. Enable the encrypted vault over the deployment's existing storage before
+   saving credentials or OAuth tokens. Keep its base64 32-byte key in secret
+   storage and preserve it across restarts. Node's template reads
+   `CONNECTA_CREDENTIAL_KEY`; Workers read `CREDENTIAL_ENCRYPTION_KEY`.
+   See the platform README's credential-vault setup. Enable `operatorUi()`
+   for credential-slot editing and human auth with a maintainer roster.
+3. Typecheck and restart/redeploy. Sign in as a maintainer, open the
+   connector's page, and use its Connection tab. For a credential slot, enter
+   and save the downstream token. For OAuth, connect and finish the browser
+   consent as the intended downstream account. An MCP maintainer can also
+   call `authorize_connector` for that id and follow its signed browser link;
+   that link grants no extra authority.
+4. Check connected status, then make a bounded read from the intended pool.
+   Check the downstream account, not just successful authentication. For
+   `notes_alice`, the maintainer must authorize Alice's intended account.
+
+For example, this connector expects a Bearer token entered in the UI; the
+secret never belongs in the configuration:
+
+```ts
+remoteMcp("crm", {
+  url: "https://crm.example.com/mcp",
+  authScope: "shared",
+  auth: { type: "credential", credential: { label: "CRM API token" } },
+});
+// OAuth alternative: auth: { type: "oauth" }
+```
+
+To rotate a saved token, save its replacement in the same slot; subsequent
+calls use it. Revoke the retired token at the downstream service. For OAuth,
+use Restart to authorize afresh, Continue to resume a pending consent, and
+Disconnect to invalidate the local grant and catalog. To remove a credential,
+use the connector's credential delete control. Clearing a slot with no saved
+value returns 409 with `problem: "credential_required"`; it does not revoke
+anything downstream. An unreadable stored value can still be cleared for
+recovery. These changes do not change
+pool membership. Environment-backed header auth has no editable vault slot:
+rotate that secret in the deployment's secret store and restart/redeploy.
+
+## Issue, rotate, or revoke an agent token
+
+Each declared agent has exactly one token slot. Keep `accessTokens(storage)`
+on the same database as the server. Declare the agent and its pools in code
+before issuing a token, for example:
+
+```ts
+agents: ["assistant"],
+accessTokens: accessTokens(storage),
+pools: { assistant: { tools: ["crm", "tickets"], members: ["agent:assistant"] } },
+```
+
+Typecheck and restart/redeploy, then use either procedure:
+
+- **Signed-in maintainer:** with human auth and `operatorUi()` enabled, open
+  the Access tokens page, select `assistant`, and issue, rotate, or revoke
+  its token. Save an issued secret privately immediately; it appears once.
+  The UI reads the slot revision and sends it with the operation. If the slot
+  changed, reload and decide again.
+- **Trusted local provisioning:** the Node template's
+  `npm run --silent rotate-token -- assistant` both issues and rotates.
+  Run it with the same environment and database path as the server; local
+  commands do not load `.env`. Store stdout privately. For revocation, add a
+  small trusted script such as the following to `src/revoke-token.ts` and
+  run `npx tsx src/revoke-token.ts` with that same environment. Workers use
+  the maintainer UI or trusted tooling bound to the same D1 database;
+  a local SQLite script cannot manage a Worker's slots.
+
+```ts
+import { AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
+import config from "./connecta.config.js";
+
+const { storage, agents } = config(process.env);
+const manager = new AccessTokenManager(storage!, { agents: agents ?? [] });
+const slot = (await manager.list()).find((entry) => entry.name === "assistant");
+if (!slot) throw new Error("Declare assistant before managing its token");
+await manager.revoke("assistant", { expect: slot.revision });
+```
+
+Set the client URL to `https://connecta.example.com/agent/assistant` and
+`Authorization: Bearer <saved-cta-token>`. Its one token also works on every
+personal pool listing `agent:assistant`; the client picks the pool per turn.
+Behind Access, configure the [agent bypass](./deploying.md#agent-endpoints-behind-cloudflare-access).
+Run [doctor](./deploying.md#verify-and-diagnose) with the new token. After a
+rotation, replace the client's saved secret immediately: the old token stops
+admitting on its next request. After revocation, confirm the old token gets 401. Already admitted requests are not recalled. Never put tokens in source,
+activity, or committed output, and never use `/mcp` with a `cta_` token.
+
+If a rotation reports `outcome_unknown`, inspect the slot; an issued secret
+that was not delivered cannot be recovered. Rotate again deliberately for a
+replacement. For older tokens, follow [adoption](#agent-tokens-and-upgrading-from-earlier-tokens)
+instead of assuming they still admit after an upgrade.
 
 ## Credential recognition and admission
 
@@ -319,8 +467,7 @@ Otherwise, or on `undefined`, the call fails
 `auth_required` before any request leaves. Arguments, headers, and programs
 never reach it; a deployment's own connectors still cannot read the caller.
 
-Access is read from one place, deployment code
-([decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)). Top-level
+Access is read from one place, deployment code. Top-level
 `maintainers` lists the people who reach plain `/mcp`, which serves the whole
 catalog with the deployment's `readOnly`, and the operator routes. Each pool's
 `members` lists who reaches that pool, people at `/mcp/<pool>` and agents at
@@ -339,7 +486,7 @@ A member reference is one of:
 
 A person matches when the admitted principal equals the reference exactly; an
 agent matches by `identity.agent`, which only the built-in token adapter sets.
-Construction throws (INV-11) on a bare id without exactly one interactive
+Construction throws on a bare id without exactly one interactive
 provider, a bare id containing `:`, an undeclared agent, a repeated reference,
 an empty or missing pool `members`, an agent in `maintainers`, `maintainers`
 missing or empty when a provider that admits people is configured (any
@@ -415,7 +562,7 @@ minutes after expiry. Failed pagination, permission and auth failures do not
 use this fallback. The expired deadline cannot authorize auth recovery.
 Personal OAuth ownership and credential administration are separate from
 endpoint access; writes follow the endpoint's `readOnly` setting and client
-approval. `test/identity-scope.test.ts` exercises these boundaries.
+approval.
 
 ## Migrating static bearer clients
 
@@ -622,9 +769,7 @@ members must not share that account.
 
 Use this layout for every agent's pools. It gives each person's own accounts
 to the agent only when that person is the one talking, without a second
-connection. This section holds the complete rules;
-[decision 0007](https://github.com/zackbart/connecta/blob/main/decisions/0007-agent-pool-layout.md)
-records why, and the alternatives it rejected.
+connection. This section holds the complete rules.
 
 1. **One connection per agent.** Each agent has exactly one Connecta
    connection, and its client (the harness, never the model) chooses the
@@ -757,7 +902,7 @@ namespace: the live **epoch**, the latest consent's state digest, and one
 authorization server's client registration, tokens, and discovery. Each
 consent has a **flow record**, `oauth:flow:<sha256(state)>`, holding its
 epoch, consent URL, and PKCE verifier for fifteen minutes; the state itself is
-stored nowhere. Keys come from `src/storage/keys.ts`.
+stored nowhere.
 
 With a vault, the grant's body and each verifier are sealed with its AES-GCM
 key, the additional authenticated data naming the connector, owner partition,
@@ -1173,9 +1318,7 @@ anything, so SDK hook order cannot mix servers or cross a reset.
 
 ## Management permissions
 
-Management follows `maintainers` and pool `members` (#837,
-[decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)); no
-resolver configures it. The former `identity.credentialAdministration`,
+Management follows `maintainers` and pool `members`; no resolver configures it. The former `identity.credentialAdministration`,
 `identity.personalConnection`, `identity.accessTokenManagement`, and
 `identity.activityAccess` each fail construction naming their replacement,
 and so does the `identity` section itself, even empty.
@@ -1204,7 +1347,8 @@ maintainer's link continues in the operator UI; a member's link starts the
 authorization directly, as it does on a deployment without the UI. A member's
 operator contract names, per personal connector, the actions their permission,
 the deployment and the connector's hooks support: credential `save` with a
-vault, `test` and `clear` once their own partition holds a value; OAuth
+vault, `clear` once their own partition holds a value, and `test` only when that
+value matches the declared shape and a matching test hook exists; OAuth
 `connect` and `restart` with `startAuth`, `finishAuth` and `verifyState`, and
 `disconnect` with `disconnectAuth`. `/ui/oauth/<id>` gates each verb on those
 same hooks, so a connector provisioned out of band can still be disconnected,
@@ -1273,8 +1417,7 @@ human identity, including a service identity or an unusable user id, returns 403
 carries `Cache-Control: no-store`. None of these failures admits an identity,
 and an unavailable lookup never falls back to another provider. The operator
 UI can re-request admission after a failure without a browser reload. It does not support Node, a `cloudflared` origin, or a Service Binding
-hop. [Decision 0003](https://github.com/zackbart/connecta/blob/main/decisions/0003-inbound-auth.md) records that boundary
-and replaces #506's provisional verdict with supported Worker Access.
+hop.
 Connecta configuration still decides connector access and management: `maintainers` and pool `members`.
 
 Protect the Worker with a Worker-level Access application whose destination is
@@ -1672,7 +1815,7 @@ owner's access token as `Authorization: Bearer` with these rules:
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.
 - The answer's `.text()` and `.json()`, clones' too, decode its bytes as UTF-8, so
-  workerd never quotes a downstream's Content-Type in its own log (INV-6).
+  workerd never quotes a downstream's Content-Type in its own log.
 
 The grant record and consents, epoch fencing, vault sealing, shared/personal ownership,
 callback state/principal checks, `authorize_connector`, Connect, Restart, and
@@ -1702,7 +1845,14 @@ is retained across requests, and rejected writes are never replayed. An omitted
 `describe()` includes neither the key nor the minted tokens. The maintained
 provider skill explains App permissions and installation prerequisites.
 
-## Source and tests
+## Contributor reference
+
+### Source and tests
+
+[Decision 0007](https://github.com/zackbart/connecta/blob/main/decisions/0007-agent-pool-layout.md)
+explains the pool layout; [decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)
+explains pools as the access model. `test/identity-scope.test.ts` checks identity
+boundaries, and `src/storage/keys.ts` owns credential key families.
 
 Inbound adapters live in [src/auth](https://github.com/zackbart/connecta/tree/main/src/auth);
 [auth routes](https://github.com/zackbart/connecta/blob/main/src/routes/oauth.ts)

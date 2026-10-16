@@ -194,8 +194,7 @@ discovery made the same bet).
 ```
 
 It is something to read, not something that runs: programs stay JavaScript,
-and `execute_code` accepts no erasable TypeScript
-([decision history](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md)). The output half is the provider's declared
+and `execute_code` accepts no erasable TypeScript. The output half is the provider's declared
 schema, else an `S9` observation that opens with the
 `/* observed, not declared */` marker and keeps the `outputSchemaSource`
 field, else `unknown` — runtime evidence never reads as a contract, even when
@@ -282,7 +281,7 @@ is its slug; other IDs use `connector-` followed by a stable SHA-256 prefix.
 The suffix makes each
 document a valid Agent Skills file; the roots `skill://connecta/usage` and
 `skill://connecta/connectors/<connector-id>` also resolve. Provider guides are
-built from the generated `src/providers/*/SKILL.md` content with the existing
+built from maintained provider guides with the existing
 connection context and deployment instructions. Local manifests contain a
 SHA-256 digest and UTF-8 byte size of the complete document. `usage` and
 `investigate` remain compatibility names; `connector:<id>` remains a
@@ -933,7 +932,7 @@ list connectors from another pool or identity's grants.
 A write that times out after dispatch returns `write_outcome_unknown` with
 `retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted?, recovery? }`.
 No write is automatically replayed. `recovery` carries facts the connector
-recorded before dispatch (`src/call-recovery.ts`), such as a REST connector's
+recorded before dispatch, such as a REST connector's
 generated or caller-supplied `idempotencyKey`. Recovery accepts keys up to 255
 characters, matching the REST write schema. Other recovery values remain capped
 at 128 characters, with at most four facts per call and camelCase names of at
@@ -958,7 +957,9 @@ SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:
 name, or URL never changes the verdict. JSON-RPC `ProtocolError.data` is dropped
 at the downstream boundary, even when the agent may see the error's message.
 
-## Source and tests
+## Contributor reference
+
+### Source and tests
 
 Handlers and schemas live in [meta-tools.ts](https://github.com/zackbart/connecta/blob/main/src/meta-tools.ts).
 [Catalog service](https://github.com/zackbart/connecta/blob/main/src/catalog-service.ts)
