@@ -1,4 +1,4 @@
-import type { OperatorUiContract } from "../contract.js";
+import type { OperatorUiContractV2 } from "../contract.js";
 import { queryClient } from "./query.js";
 import { isCancelledError } from "@tanstack/react-query";
 import type { UiConnector, UiData } from "../model.js";
@@ -108,7 +108,7 @@ export function navHint(): { activity: boolean } {
   }
 }
 
-function gate(notice: Notice | null = null): void {
+function gate(notice: Notice | null = null, session: OperatorState["session"] = "gated"): void {
   cancelRecoveryRead();
   queryClient.clear();
   forgetNav();
@@ -117,8 +117,33 @@ function gate(notice: Notice | null = null): void {
   returnTimer = undefined;
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
-  state = resetIdentity(state, notice);
+  state = { ...resetIdentity(state, notice), session };
   for (const listener of listeners) listener();
+}
+
+/**
+ * The session's own refusal, in the words of the sign-in in use. Clerk and
+ * Access keep the shared recovery schedule, so a transient refusal clears on
+ * its own; a bearer token the deployment refused is forgotten instead, so the
+ * gate asks for another.
+ */
+function refuseSession(status: number): void {
+  if (auth.kind === "clerk") {
+    gate(
+      failure(
+        status === 403
+          ? `This Clerk account can't open ${productName}'s operator pages.`
+          : "Your Clerk session wasn't accepted. Sign out, then sign in again.",
+      ),
+    );
+    return scheduleRecovery();
+  }
+  if (auth.kind === "cloudflare-access") {
+    gate(failure("Cloudflare Access did not accept this identity for operator pages. Retry to check again."));
+    return scheduleRecovery();
+  }
+  localStorage.removeItem(TOKEN_KEY);
+  gate(failure("That token wasn't accepted. Paste a valid operator token."));
 }
 
 interface OperatorResponse {
@@ -157,6 +182,68 @@ function factsOf(error: unknown): RequestFailureFacts {
   return error instanceof RequestFailure ? error : { kind: "refused" };
 }
 
+/** Routes only a maintainer may call; a member's page never sends them. */
+const MAINTAINER_ONLY = ["/ui/data", "/ui/connectors/", "/ui/api/activity", "/ui/access-tokens"];
+
+type ConnectionAction = "connect" | "restart" | "disconnect" | "save" | "test" | "clear";
+
+/**
+ * A credential or OAuth write as the contract's `manage` names it: which
+ * connector, which kind of management, and which action. Null for any other
+ * path.
+ */
+function connectionWrite(
+  path: string,
+  method: string,
+): { connectorId: string; kind: "oauth" | "credential"; action: ConnectionAction } | null {
+  const url = new URL(path, "http://operator.invalid");
+  const oauth = /^\/ui\/oauth\/([^/]+)$/.exec(url.pathname);
+  if (oauth) {
+    const action =
+      method === "DELETE" ? "disconnect" : url.searchParams.get("mode") === "continue" ? "connect" : "restart";
+    return { connectorId: decodeURIComponent(oauth[1]!), kind: "oauth", action };
+  }
+  const credential = /^\/ui\/credentials\/([^/]+)(\/test)?$/.exec(url.pathname);
+  if (credential) {
+    const action = credential[2] ? "test" : method === "DELETE" ? "clear" : "save";
+    return { connectorId: decodeURIComponent(credential[1]!), kind: "credential", action };
+  }
+  return null;
+}
+
+/**
+ * Whether this viewer may send a credential or OAuth write right now. Only a
+ * contract on screen that agrees with the confirmed role decides: a maintainer
+ * acts on any connector it shows; a member only on a personal connector their
+ * contract lists, with an action its `manage` names.
+ */
+function connectionWriteAllowed(write: NonNullable<ReturnType<typeof connectionWrite>>): boolean {
+  const contract = state.contract;
+  if (!contract || state.role !== contract.role) return false;
+  if (contract.role === "maintainer") {
+    return Boolean(contract.config?.connectors.some((connector) => connector.id === write.connectorId));
+  }
+  const connector = contract.connectors.find((c) => c.id === write.connectorId);
+  if (!connector || connector.authScope !== "personal" || connector.manage.kind !== write.kind) return false;
+  return (connector.manage.actions as readonly string[]).includes(write.action);
+}
+
+/**
+ * The last step before an operator request reaches the network, checked here
+ * after every await its caller made, because a contract refresh can fail or
+ * change the role while a session token is being read. A maintainer-only
+ * route needs a confirmed maintainer; a credential or OAuth write needs a
+ * contract that allows it (see `connectionWriteAllowed`). Anything else is
+ * withheld (null), and callers treat null as a request that was never sent.
+ */
+function send(path: string, init: RequestInit): Promise<Response> | null {
+  const privileged = MAINTAINER_ONLY.some((route) => path === route || path.startsWith(route));
+  if (privileged && !maintainerNow()) return null;
+  const write = connectionWrite(path, init.method ?? "GET");
+  if (write && !connectionWriteAllowed(write)) return null;
+  return fetch(path, init);
+}
+
 async function operatorRequest(
   path: string,
   method: "DELETE" | "GET" | "POST" | "PUT",
@@ -171,14 +258,17 @@ async function operatorRequest(
   }
   if (!current()) throw new RequestFailure("session");
   if (!token && auth.kind !== "cloudflare-access") throw new RequestFailure("session");
+  const sent = send(path, {
+    method,
+    headers: requestHeaders(token, Boolean(body)),
+    credentials: "same-origin",
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  // Withheld: this viewer is not a confirmed maintainer any more.
+  if (!sent) throw new RequestFailure("forbidden");
   let res: Response;
   try {
-    res = await fetch(path, {
-      method,
-      headers: requestHeaders(token, Boolean(body)),
-      credentials: "same-origin",
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
+    res = await sent;
   } catch {
     throw new RequestFailure("network");
   }
@@ -212,14 +302,115 @@ function unreachable(loadFailure: "server" | "network"): void {
 
 let dataRevision = 0;
 
-/** Fetch `/ui/data`. The only route that decides gated versus signed in. */
+/**
+ * Contract v2 only: one cutover, no v1 fallback. A maintainer view carries
+ * `config` and `root`; a member view carries neither, and nothing on screen
+ * reads a maintainer field without checking `role` first.
+ */
+function isContractV2(value: OperatorUiContractV2 | null): value is OperatorUiContractV2 {
+  if (!value || value.schemaVersion !== 2) return false;
+  if (value.role !== "maintainer" && value.role !== "member") return false;
+  if (!value.you || !Array.isArray(value.live?.connectors) || !Array.isArray(value.pools)) return false;
+  if (!Array.isArray(value.matrix) || !Array.isArray(value.agents) || !Array.isArray(value.connectors)) return false;
+  return value.role === "member" || (Boolean(value.config) && Boolean(value.root));
+}
+
+type ContractOutcome =
+  | { kind: "contract"; contract: OperatorUiContractV2 }
+  | { kind: "session"; status: number }
+  | { kind: "denied" }
+  | { kind: "network" }
+  | { kind: "refused" };
+
+/** One `GET /ui/api/config`, classified. Never throws; an abort reads as network. */
+async function fetchContract(
+  path: string,
+  token: string | null | undefined,
+  signal: AbortSignal,
+): Promise<ContractOutcome> {
+  let response: Response;
+  try {
+    response = await fetch(path, { headers: requestHeaders(token), credentials: "same-origin", signal });
+  } catch {
+    return { kind: "network" };
+  }
+  if (response.status === 401 || response.status === 403) return { kind: "session", status: response.status };
+  // The private 404: signed in, but neither a maintainer nor a pool member.
+  if (response.status === 404) return { kind: "denied" };
+  if (!response.ok) return { kind: "refused" };
+  try {
+    const value = (await response.json()) as OperatorUiContractV2;
+    return isContractV2(value) ? { kind: "contract", contract: value } : { kind: "refused" };
+  } catch {
+    return { kind: "refused" };
+  }
+}
+
+/**
+ * Whether a maintainer-only read may go out now: the last confirmed role is
+ * maintainer and the contract on screen still says so. Every privileged read
+ * checks this when it is sent, not only at boot, so a background refetch
+ * never runs for a member or while the role is unknown.
+ */
+function maintainerNow(): boolean {
+  return state.role === "maintainer" && state.contract?.role === "maintainer";
+}
+
+/**
+ * A role other than the last confirmed one is a different viewer, even when a
+ * failed refresh cleared `contract` in between: drop everything read for the
+ * old role, cancel its reads, and admit the viewer again from the top.
+ * Returns true when it did.
+ */
+function resetOnRoleChange(contract: OperatorUiContractV2): boolean {
+  if (state.role === null || state.role === contract.role) return false;
+  resetRecovery();
+  gate(null, "loading");
+  void loadCurrent();
+  return true;
+}
+
+/**
+ * The contract could not be read for a reason other than the session: no
+ * role to render by. Access cannot establish an identity without it and
+ * returns to its gate; other modes stay signed in on an error state with no
+ * maintainer navigation. Both keep the shared recovery schedule.
+ */
+function contractUnavailable(outcome: "network" | "refused"): void {
+  if (auth.kind === "cloudflare-access") {
+    gate(failure("Cloudflare Access identity is unavailable. Retry to check your session."));
+  } else {
+    set({
+      session: "ready",
+      gate: null,
+      refreshing: false,
+      contract: null,
+      contractPhase: "error",
+      loadFailure: outcome === "network" ? "network" : null,
+    });
+  }
+  scheduleRecovery();
+}
+
+/**
+ * The admission read. `GET /ui/api/config` is the one gate, for both roles:
+ * 401 is signed out, the private 404 is signed in without access, and 200
+ * says who this viewer is. A member's page is ready on that answer alone.
+ * Only a confirmed maintainer goes on to `/ui/data` and the connector
+ * details, which reuse this contract rather than read it again.
+ */
 async function loadData(signal: AbortSignal): Promise<void> {
   if (signedOut) return;
   const identityCurrent = fence();
   const revision = ++dataRevision;
   ++snapshotRevision;
   const current = () => identityCurrent() && revision === dataRevision && !signal.aborted;
-  set(state.session === "ready" ? { refreshing: true, loadFailure: null } : { loadFailure: null });
+  // The contract is what this read is waiting on first.
+  set({
+    ...(state.session === "ready" ? { refreshing: true } : {}),
+    loadFailure: null,
+    ...(state.contractPhase === "ready" ? {} : { contractPhase: "loading" as const }),
+  });
   let token;
   try {
     token = await sessionToken();
@@ -229,36 +420,39 @@ async function loadData(signal: AbortSignal): Promise<void> {
   }
   if (!current()) return;
   if (!token && auth.kind !== "cloudflare-access") return gate(null);
+  const outcome = await fetchContract("/ui/api/config", token, signal);
+  if (!current()) return;
+  if (outcome.kind === "session") return refuseSession(outcome.status);
+  if (outcome.kind === "denied") return gate(null, "denied");
+  if (outcome.kind !== "contract") return contractUnavailable(outcome.kind);
+  const { contract } = outcome;
+  if (resetOnRoleChange(contract)) return;
+  if (contract.role === "member") {
+    set({
+      contract,
+      role: "member",
+      contractPhase: "ready",
+      session: "ready",
+      gate: null,
+      refreshing: false,
+      loadFailure: null,
+    });
+    return resetRecovery(false);
+  }
+  // A maintainer's page waits for `/ui/data` too.
+  set({ contract, role: "maintainer", contractPhase: "loading" });
+  // Withheld: the role became unknown or changed; its own state says so.
+  const sent = send("/ui/data", { signal, headers: requestHeaders(token), credentials: "same-origin" });
+  if (!sent) return;
   let res: Response;
   try {
-    res = await fetch("/ui/data", {
-      signal,
-      headers: requestHeaders(token),
-      credentials: "same-origin",
-    });
+    res = await sent;
   } catch {
     if (!current()) return;
     return unreachable("network");
   }
   if (!current()) return;
-  if (res.status === 401 || res.status === 403) {
-    if (auth.kind === "clerk") {
-      gate(
-        failure(
-          res.status === 403
-            ? `This Clerk account can't open ${productName}'s operator pages.`
-            : "Your Clerk session wasn't accepted. Sign out, then sign in again.",
-        ),
-      );
-      return scheduleRecovery();
-    }
-    if (auth.kind === "cloudflare-access") {
-      gate(failure("Cloudflare Access did not accept this identity for operator pages. Retry to check again."));
-      return scheduleRecovery();
-    }
-    localStorage.removeItem(TOKEN_KEY);
-    return gate(failure("That token wasn't accepted. Paste a valid operator token."));
-  }
+  if (res.status === 401 || res.status === 403) return refuseSession(res.status);
   if (!res.ok) return unreachable("server");
   let data: UiData;
   try {
@@ -272,8 +466,6 @@ async function loadData(signal: AbortSignal): Promise<void> {
   rememberNav(data);
   set({
     data,
-    contract: null,
-    contractPhase: "loading",
     session: "ready",
     gate: null,
     refreshing: false,
@@ -281,17 +473,35 @@ async function loadData(signal: AbortSignal): Promise<void> {
   });
   // A passive recovery owns the whole matching catalog/auth cycle. Releasing
   // its in-flight guard at the summary would let focus supersede slow reads.
-  await refreshSnapshot(false, undefined, signal);
+  await refreshSnapshot(false, undefined, signal, contract);
 }
 
 /** Catalog and auth controls publish together, guarded by one refresh revision. */
 let snapshotRevision = 0;
+/**
+ * Refresh the catalog and auth controls. A viewer never confirmed as a
+ * maintainer, or with no maintainer data yet, has nothing maintainer-only to
+ * refresh: admit again from the top instead.
+ */
 export function loadOperatorContract(): Promise<void> {
+  if (state.role !== "maintainer" || !state.data) return loadCurrent(true);
   return guardedRecoveryRead((signal) => refreshSnapshot(false, undefined, signal), true);
 }
 
-async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?: AbortSignal): Promise<void> {
-  if (signedOut) return;
+/**
+ * One catalog/auth cycle for a confirmed maintainer: the contract (unless the
+ * admission read just supplied it as `preloaded`) and every connector's
+ * details, published together. When a failed read left no contract on
+ * screen, the role is unknown until this one answers, so the details wait
+ * for it instead of running alongside.
+ */
+async function refreshSnapshot(
+  quiet = false,
+  connectorId?: string,
+  pollSignal?: AbortSignal,
+  preloaded?: OperatorUiContractV2,
+): Promise<void> {
+  if (signedOut || state.role !== "maintainer") return;
   // A scoped OAuth cycle supersedes general publication without cancelling
   // the older transport or letting its deadline overwrite the newer state.
   if (recoveryRead && recoveryRead.controller.signal !== pollSignal) releaseRecoveryRead();
@@ -314,7 +524,7 @@ async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?:
   }
   if (!current()) return;
   const outcomes = new Map<string, DetailOutcome>();
-  let loadedContract: OperatorUiContract | null | undefined;
+  let loadedContract: OperatorUiContractV2 | null | undefined = preloaded;
   const publish = () => {
     if (!current() || loadedContract === undefined) return;
     if (connectorId && loadedContract && !outcomes.has(connectorId)) return;
@@ -363,41 +573,37 @@ async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?:
       }
     }
   };
-  const contractRead = queryClient
-    .fetchQuery({
-      queryKey: ["operator-config", state.generation, revision],
-      queryFn: async ({ signal }) => {
-        const response = await fetch(
-          connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
-          {
-            headers: requestHeaders(token),
-            credentials: "same-origin",
-            signal: pollSignal ? AbortSignal.any([signal, pollSignal]) : signal,
-          },
-        );
-        if (response.status === 401 || response.status === 403) throw new RequestFailure("session");
-        if (!response.ok) throw new RequestFailure("refused");
-        const value = (await response.json()) as OperatorUiContract;
-        if (value.schemaVersion !== 1 || !value.config || !value.you || !Array.isArray(value.live?.connectors))
-          throw new RequestFailure("refused");
-        return value;
-      },
-    })
-    .then(
-      (contract) => ({ contract, error: undefined }),
-      (error: unknown) => ({ contract: undefined, error }),
-    )
-    .then((result) => {
-      if (!current()) return;
-      if (result.error instanceof RequestFailure && result.error.kind === "session") {
-        gate(failure("Your session cannot read this configuration. Retry to check again."));
-        if (!connectorId) scheduleRecovery();
-      } else {
-        loadedContract = result.contract ?? null;
-        publish();
-      }
-    });
-  await Promise.all([contractRead, ...Array.from({ length: Math.min(4, connectors.length) }, worker)]);
+  const contractRead = preloaded
+    ? Promise.resolve(publish())
+    : queryClient
+        .fetchQuery({
+          queryKey: ["operator-config", state.generation, revision],
+          queryFn: ({ signal }) =>
+            fetchContract(
+              connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
+              token,
+              pollSignal ? AbortSignal.any([signal, pollSignal]) : signal,
+            ),
+        })
+        .catch((): ContractOutcome => ({ kind: "network" }))
+        .then((outcome) => {
+          if (!current()) return;
+          if (outcome.kind === "session") {
+            gate(failure("Your session cannot read this configuration. Retry to check again."));
+            if (!connectorId) scheduleRecovery();
+          } else if (outcome.kind === "denied") {
+            gate(null, "denied");
+          } else if (outcome.kind === "contract" && resetOnRoleChange(outcome.contract)) {
+            // A different viewer: everything above was dropped and admission restarted.
+          } else {
+            // A failed read clears the old snapshot; the role it confirmed stays.
+            loadedContract = outcome.kind === "contract" ? outcome.contract : null;
+            publish();
+          }
+        });
+  if (!preloaded && !state.contract) await contractRead;
+  const workers = maintainerNow() ? Array.from({ length: Math.min(4, connectors.length) }, worker) : [];
+  await Promise.all([contractRead, ...workers]);
   if (!current()) return;
   // OAuth recovery has its own cap and cancellation. Never turn a failed poll
   // into a deployment-wide retry through the general recovery backoff.
@@ -413,7 +619,7 @@ async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?:
 }
 
 /** A scoped poll replaces one live row; all unrelated contract facts stay put. */
-function mergeConnectorContract(next: OperatorUiContract, id: string): OperatorUiContract | null {
+function mergeConnectorContract(next: OperatorUiContractV2, id: string): OperatorUiContractV2 | null {
   const previous = state.contract;
   const live = next.live.connectors.find((connector) => connector.id === id);
   if (!previous || !live) return null;
@@ -521,7 +727,9 @@ export function signInWithBearer(value: string): void {
   localStorage.setItem(TOKEN_KEY, value);
   const current = fence();
   void loadCurrent().then(() => {
-    if (current() && state.session === "ready") set({ pendingFocus: `${state.page}Heading` });
+    if (!current()) return;
+    if (state.session === "ready") set({ pendingFocus: `${state.page}Heading` });
+    else if (state.session === "denied") set({ pendingFocus: "gateHeading" });
   });
 }
 
@@ -542,6 +750,11 @@ export function forgetBearer(): void {
  */
 export function askConfirm(connectorId: string, action: PendingConfirm["action"]): void {
   set({ confirming: { connectorId, action }, pendingFocus: `confirm-cancel-${connectorId}` });
+}
+
+/** Recovery started: close the page's in-row confirmation; the page is stale. */
+export function closeForRecovery(): void {
+  if (state.confirming) set({ confirming: null });
 }
 
 export function cancelConfirm(returnFocusTo: string): void {
@@ -816,7 +1029,7 @@ export function testCredential(connector: string): Promise<void> {
 
 let activityRevision = 0;
 export async function loadActivity(reset: boolean): Promise<void> {
-  if (!state.data?.activityEnabled) return;
+  if (!maintainerNow() || !state.data?.activityEnabled) return;
   const identityCurrent = fence();
   const revision = ++activityRevision;
   const current = () => identityCurrent() && revision === activityRevision;
@@ -1049,18 +1262,22 @@ function scheduleRecovery(): void {
 }
 
 function recheckAuthorization(): void {
-  if (signedOut || recoveryRead) return;
+  // No access is an answer, not a transient failure: nothing to recheck.
+  if (signedOut || recoveryRead || state.session === "denied") return;
   // Focus is also a way out of a refusal. It only re-requests admission.
+  // A member's page is whole without `/ui/data`; it has nothing else to recheck.
+  const member = state.role === "member" && state.contract?.role === "member";
   if (
     recoveryAttempt > 0 ||
     state.session !== "ready" ||
-    !state.data ||
+    (!state.data && !member) ||
     state.loadFailure ||
     state.contractPhase === "error"
   ) {
     recover();
     return;
   }
+  if (!state.data || !maintainerNow()) return;
   const now = Date.now();
   if (now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
   lastReturnPass = now;
@@ -1157,13 +1374,16 @@ async function fetchConnector(
   token: string | null | undefined,
   signal: AbortSignal,
 ): Promise<DetailOutcome> {
+  const sent = send(`/ui/connectors/${encodeURIComponent(id)}`, {
+    signal,
+    headers: requestHeaders(token),
+    credentials: "same-origin",
+  });
+  // Withheld: the cycle that asked is fenced or about to be.
+  if (!sent) return { kind: "local", failure: "session" };
   let response: Response;
   try {
-    response = await fetch(`/ui/connectors/${encodeURIComponent(id)}`, {
-      signal,
-      headers: requestHeaders(token),
-      credentials: "same-origin",
-    });
+    response = await sent;
   } catch {
     return { kind: "local", failure: "network" };
   }
@@ -1195,13 +1415,13 @@ function withoutKey<T>(record: Readonly<Record<string, T>>, key: string): Record
 function detailsPatch(
   outcomes: Map<string, DetailOutcome>,
   quiet: boolean,
-  contract: OperatorUiContract | null,
+  contract: OperatorUiContractV2 | null,
 ): Partial<OperatorState> {
   if (!state.data) return {};
   let connectorFailures = state.connectorFailures;
   const patch: Partial<OperatorState> = {};
   const connectors = state.data.connectors
-    .filter((c) => !contract || contract.config.connectors.some((v) => v.id === c.id))
+    .filter((c) => !contract?.config || contract.config.connectors.some((v) => v.id === c.id))
     .map((c) => {
       const outcome = outcomes.get(c.id);
       if (!outcome) return c;
@@ -1260,7 +1480,7 @@ function detailsPatch(
 
 /** Refreshes never replay the mutation that caused them. */
 export function refreshConnector(id: string, quiet = false): Promise<void> {
-  if (!state.data?.connectors.some((connector) => connector.id === id)) return Promise.resolve();
+  if (!maintainerNow() || !state.data?.connectors.some((connector) => connector.id === id)) return Promise.resolve();
   if (!quiet && state.data)
     set({
       data: {
@@ -1313,6 +1533,7 @@ export function slotState(row: UiAccessToken): UiAgentSlot["state"] {
 
 let tokenRevision = 0;
 export async function loadAccessTokens(): Promise<void> {
+  if (!maintainerNow()) return;
   const identityCurrent = fence();
   const revision = ++tokenRevision;
   const current = () => identityCurrent() && revision === tokenRevision;
@@ -1352,7 +1573,7 @@ function replaceRow(slot: UiAgentSlot): UiAccessToken[] {
 
 /** Issue the agent's first token or rotate it; the previous secret stops at once. */
 export function rotateAgentToken(name: string): Promise<void> {
-  if (state.tokenBusy) return Promise.resolve();
+  if (state.tokenBusy || !maintainerNow()) return Promise.resolve();
   const row = state.tokens.find((token) => token.id === name);
   if (
     row &&
@@ -1387,6 +1608,7 @@ export function dismissCreatedToken(): void {
 }
 
 export function revokeAgentToken(name: string): Promise<void> {
+  if (!maintainerNow()) return Promise.resolve();
   if (!window.confirm(`Revoke ${name}'s token? The agent will immediately lose access.`)) return Promise.resolve();
   return mutate({
     request: (current) =>

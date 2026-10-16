@@ -1,4 +1,4 @@
-import type { OperatorUiContract } from "./contract.js";
+import type { OperatorRole, OperatorUiContractV2 } from "./contract.js";
 import type { CatalogDriftReport } from "../types.js";
 import type { CredentialManagementCapability, UiConnector, UiData, UiProblem } from "./model.js";
 import type { FixPromptKind } from "./fix-prompts.js";
@@ -62,6 +62,20 @@ export function pageDescription(page: OperatorPage, productDescription: string):
     return "Every connector tool call, by who made it and how it ended. Arguments and results are never stored.";
   }
   return productDescription;
+}
+
+/**
+ * Signed in, but neither a maintainer nor a member of any endpoint: who to
+ * ask, and that this is not an error to retry.
+ */
+export function noAccessCopy(kind: string, productName: string): string {
+  const who =
+    kind === "clerk"
+      ? "This account is signed in"
+      : kind === "cloudflare-access"
+        ? "Cloudflare Access signed you in"
+        : "This token is valid";
+  return `${who}, but it isn't a maintainer or a member of any endpoint on ${productName}. Ask a maintainer of this deployment to add you to an endpoint, then reload.`;
 }
 
 /** What the gate says while the session is checked, page by page. */
@@ -377,8 +391,12 @@ export interface OperatorState {
    * the fence that keeps one identity's data off another identity's screen.
    */
   generation: number;
-  /** `loading` until the first /ui/data answer decides gated or ready. */
-  session: "loading" | "gated" | "ready";
+  /**
+   * `loading` until `/ui/api/config` answers (and, for a maintainer,
+   * `/ui/data` too). `denied` is signed in as someone who is neither a
+   * maintainer nor a pool member.
+   */
+  session: "loading" | "gated" | "ready" | "denied";
   gate: Notice | null;
   /** True while a signed-in operator's /ui/data is in flight. */
   refreshing: boolean;
@@ -403,7 +421,14 @@ export interface OperatorState {
    */
   focusIfLost: string | null;
   data: UiData | null;
-  contract: OperatorUiContract | null;
+  /** Operator contract v2, for either role; null until `/ui/api/config` answers. */
+  contract: OperatorUiContractV2 | null;
+  /**
+   * The role the last good contract confirmed. It outlives a failed refresh
+   * that clears `contract`, so the next answer with a different role is
+   * still recognized as a different viewer. Only an identity reset clears it.
+   */
+  role: OperatorRole | null;
   contractPhase: LoadPhase;
   health: "loading" | "ok" | "unavailable";
   connectorFilter: string;
@@ -435,6 +460,52 @@ export interface OperatorState {
   activitySearch: string;
 }
 
+/** Who the contract says this viewer is, or null before it loads. */
+export function operatorRole(state: Pick<OperatorState, "contract">): OperatorRole | null {
+  return state.contract?.role ?? null;
+}
+
+/**
+ * The role pages and navigation render for. The contract's, or, while a
+ * refresh that failed has left no contract on screen, maintainer when the
+ * last good contract confirmed one and that maintainer's data is still here:
+ * their page stays mounted on its own retry state instead of being torn down
+ * mid-recovery. Never a request's permission; the store sends maintainer
+ * reads only while the contract itself says maintainer.
+ */
+export function displayRole(state: Pick<OperatorState, "contract" | "role" | "data">): OperatorRole | null {
+  if (state.contract) return state.contract.role;
+  return state.role === "maintainer" && state.data ? "maintainer" : null;
+}
+
+/**
+ * A confirmed maintainer's page is mounted without a contract behind it: a
+ * refresh failed, or its read ran past the deadline. The shell shows one
+ * recovery banner with Retry above whichever page is open, and that page is
+ * stale until a contract confirms the role again.
+ */
+export function contractRecovering(state: Pick<OperatorState, "contract" | "role" | "data">): boolean {
+  return !state.contract && displayRole(state) === "maintainer";
+}
+
+/**
+ * Whether Activity is open to this viewer: maintainers only, on a deployment
+ * that records history. Members always read "forbidden".
+ */
+export function activityReadable(state: Pick<OperatorState, "contract" | "data">): boolean {
+  return Boolean(state.data?.activityEnabled) && activityAllowed(state);
+}
+
+/** The contract's half of `activityReadable`: a maintainer, on a deployment that records. */
+export function activityAllowed(state: Pick<OperatorState, "contract">): boolean {
+  const contract = state.contract;
+  return (
+    contract?.role === "maintainer" &&
+    contract.live.activity !== "forbidden" &&
+    contract.live.activity !== "unconfigured"
+  );
+}
+
 export function initialState(page: OperatorPage): OperatorState {
   return {
     page,
@@ -459,6 +530,7 @@ function identityScopedState() {
     recoveryPending: false,
     data: null,
     contract: null,
+    role: null,
     contractPhase: "idle" as LoadPhase,
     health: "loading" as const,
     connectorFilter: "",

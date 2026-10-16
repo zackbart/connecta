@@ -1,6 +1,8 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { OperatorUiContract } from "../src/operator-ui/contract.js";
+import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
 import type { UiData } from "../src/operator-ui/model.js";
+import { OPERATOR_V2_MEMBER_EXPECTED } from "./fixtures/operator-contract-v2.js";
+import { expectMemberViewWithholds } from "./helpers/operator-member-view.js";
 import {
   createOperatorVisualFixture,
   VISUAL_STATES,
@@ -14,26 +16,36 @@ import {
 describe("operator visual fixture contract", () => {
   it.each(VISUAL_STATES)("INV-4 INV-6: validates the %s fixture against the server contract", async (state) => {
     const fixture = await createOperatorVisualFixture(state);
-    expectTypeOf(fixture.contract).toEqualTypeOf<OperatorUiContract>();
+    expectTypeOf(fixture.contract).toEqualTypeOf<OperatorUiContractV2>();
     expectTypeOf(fixture.data).toEqualTypeOf<UiData>();
     const { contract, data } = fixture;
-    expect(contract.schemaVersion).toBe(1);
-    expect(contract.config.schemaVersion).toBe(1);
-    // Inbound auth is configured, so maintainers gate plain /mcp in every
-    // state; v1 reports that as hasGrant (#837).
-    expect(contract.config.hasGrant).toBe(true);
-    expect(contract.configSources?.["config.hasGrant"]).toBe("config");
-    expect(contract.config.maintainers).toEqual([{ namespace: "https://clerk.example.test", id: "alice" }]);
-    expect(contract.config).not.toHaveProperty("pools.0.hasGrant");
-    // A maintainer is granted every connector whole and sees every pool.
-    expect(contract.you.grants).toEqual(contract.config.connectors.map((c) => ({ connectorId: c.id, tools: "all" })));
-    expect(contract.you.pools.map((p) => p.name)).toEqual(contract.config.pools.map((p) => p.name));
+    expect(contract.schemaVersion).toBe(2);
+    // Only fixed metadata reaches these records; test fixture tokens and the
+    // vault key must not become server-produced contract or detail facts.
+    expect(JSON.stringify({ contract, data })).not.toContain("visual-operator");
+    expect(JSON.stringify({ contract, data })).not.toContain("BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=");
+    expect(JSON.parse(JSON.stringify(fixture))).toEqual(fixture);
+    if (state === "restricted") {
+      // The restricted viewer is a pool member: the complete body withholds every maintainer fact.
+      expect(contract.role).toBe("member");
+      expectMemberViewWithholds(JSON.parse(JSON.stringify(contract)), OPERATOR_V2_MEMBER_EXPECTED);
+      return;
+    }
+    expect(contract.role).toBe("maintainer");
+    const config = contract.config!;
+    expect(config.schemaVersion).toBe(1);
+    // v2 carries describeConfig()'s own shape: maintainers and pool members,
+    // never v1's hasGrant (#837).
+    expect(config).not.toHaveProperty("hasGrant");
+    expect(contract.configSources).not.toHaveProperty(["config.hasGrant"]);
+    expect(config.maintainers).toEqual([{ namespace: "https://clerk.example.test", id: "alice" }]);
+    expect(config).not.toHaveProperty("pools.0.hasGrant");
+    expect(contract.root?.maintainers.map((m) => (m.kind === "human" ? m.id : m.name))).toEqual(["alice"]);
     expect(contract.configSources?.["config.limits.calls.maxResultBytes"]).toBe("config");
-    const ids = contract.config.connectors.map((c) => c.id);
+    const ids = config.connectors.map((c) => c.id);
     expect(contract.live.connectors.map((c) => c.id)).toEqual(ids);
     expect(data.connectors.map((c) => c.id)).toEqual(ids);
-    expect(contract.you.permissions.connectors.map((c) => c.id)).toEqual(ids);
-    expect(data.connectaVersion).toBe(contract.config.connectaVersion);
+    expect(data.connectaVersion).toBe(config.connectaVersion);
     for (const live of contract.live.connectors) {
       const detail = data.connectors.find((c) => c.id === live.id)!;
       expect(detail.status).toBe(live.status);
@@ -46,30 +58,28 @@ describe("operator visual fixture contract", () => {
         );
       }
     }
-    for (const pool of contract.you.pools) {
-      expect(contract.config.pools.find((p) => p.name === pool.name)?.readOnly).toBe(pool.readOnly);
-      expect(contract.config.pools.find((p) => p.name === pool.name)?.members).toEqual([
+    expect(contract.pools.map((p) => p.name)).toEqual(config.pools.map((p) => p.name));
+    for (const pool of contract.pools) {
+      expect(config.pools.find((p) => p.name === pool.name)?.readOnly).toBe(pool.readOnly);
+      // The maintainer view carries each pool's described owner (#855).
+      expect(pool.owner).toBe(config.pools.find((p) => p.name === pool.name)?.owner ?? null);
+      expect(config.pools.find((p) => p.name === pool.name)?.members).toEqual([
         { kind: "human", namespace: "https://clerk.example.test", id: "alice" },
       ]);
-      for (const grant of pool.grants) expect(ids).toContain(grant.connectorId);
+      for (const grant of pool.tools) expect(ids).toContain(grant.connectorId);
     }
-    if (state === "restricted") {
-      expect(ids).toEqual(["github", "slot"]);
-      expect(contract.live.connectors[0]?.tools.map((t) => t.address)).toEqual(["github.read"]);
-      expect(contract.you.permissions).toMatchObject({ activity: false, accessTokenManagement: false });
-      expect(contract.you.permissions.connectors.every((p) => !p.manageSharedAuth && !p.connectPersonal)).toBe(true);
-    } else if (state === "empty") {
+    // Every matrix cell names a configured connector and a served endpoint.
+    for (const cell of contract.matrix) {
+      expect(ids).toContain(cell.connectorId);
+      if (cell.pool !== null) expect(contract.pools.map((p) => p.name)).toContain(cell.pool);
+    }
+    if (state === "empty") {
       expect(ids).toEqual([]);
-      expect(contract.live.connectors.flatMap((c) => c.tools)).toEqual([]);
+      expect(contract.matrix).toEqual([]);
       expect(data.connectors).toEqual([]);
     } else {
       expect(contract.live.connectors.find((c) => c.id === "slot")?.status).toBe("credential_required");
     }
-    // Only fixed metadata reaches these records; test fixture tokens and the
-    // vault key must not become server-produced contract or detail facts.
-    expect(JSON.stringify({ contract, data })).not.toContain("visual-operator");
-    expect(JSON.stringify({ contract, data })).not.toContain("BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=");
-    expect(JSON.parse(JSON.stringify(fixture))).toEqual(fixture);
   });
   it("validates detail variants against the same contract and declared credential fields", async () => {
     const base = await createOperatorVisualFixture("populated");
@@ -80,7 +90,7 @@ describe("operator visual fixture contract", () => {
         expect(detail.status, variant).toBe(live.status);
         expect(detail.registrationPath, variant).toBe(live.auth?.registrationPath);
         if (detail.credential?.fields) {
-          const configured = contract.config.connectors.find((c) => c.id === detail.id)?.credential?.fields;
+          const configured = contract.config?.connectors.find((c) => c.id === detail.id)?.credential?.fields;
           expect(
             detail.credential.fields.map((f) => ({ name: f.name, label: f.label })),
             variant,

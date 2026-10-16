@@ -6,7 +6,11 @@ import {
   operatorPageTitle,
   type UiConnector,
 } from "../src/ui.js";
+import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./fixtures/operator-contract-v2.js";
+import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
+import type { UiData } from "../src/operator-ui/model.js";
 import {
+  activityReadable,
   activitySummary,
   connectorSourceLabel,
   credentialUnavailableCopy,
@@ -16,6 +20,7 @@ import {
   filterActivity,
   info,
   initialState,
+  operatorRole,
   resetIdentity,
   safeHttpHref,
   withPage,
@@ -285,5 +290,29 @@ describe("operator app state", () => {
     expect(credentialUnavailableCopy("no_slots")).toContain("No connectors declare operator-managed credential slots");
     expect(credentialUnavailableCopy("vault_not_configured")).toContain("Configure a vault");
     expect(credentialUnavailableCopy("requires_operator")).toContain("interactive user");
+  });
+});
+
+describe("operator contract v2 role", () => {
+  const data = { activityEnabled: true, connectors: [] } as unknown as UiData;
+  const maintainer = structuredClone(OPERATOR_V2_MAINTAINER) as OperatorUiContractV2;
+  const member = structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2;
+
+  it("INV-4: exposes the role and opens Activity only to a maintainer with readable history", () => {
+    expect(operatorRole({ contract: null })).toBeNull();
+    expect(operatorRole({ contract: maintainer })).toBe("maintainer");
+    expect(operatorRole({ contract: member })).toBe("member");
+    expect(activityReadable({ contract: maintainer, data })).toBe(true);
+    expect(activityReadable({ contract: member, data })).toBe(false);
+    expect(activityReadable({ contract: maintainer, data: { ...data, activityEnabled: false } })).toBe(false);
+    for (const activity of ["unconfigured", "forbidden"] as const) {
+      expect(activityReadable({ contract: { ...maintainer, live: { ...maintainer.live, activity } }, data })).toBe(
+        false,
+      );
+    }
+    // A failed history read still opens the page, which reports the failure.
+    expect(
+      activityReadable({ contract: { ...maintainer, live: { ...maintainer.live, activity: "unavailable" } }, data }),
+    ).toBe(true);
   });
 });

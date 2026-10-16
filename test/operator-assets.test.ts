@@ -60,6 +60,10 @@ describe("operator assets on both runtimes", () => {
     expect(notices).toContain("@fontsource-variable/geist");
     expect(notices).toContain("@fontsource-variable/geist-mono");
     expect(notices).toContain("SIL OPEN FONT LICENSE");
+    // The complete package-to-license mapping is checked in operator-notices.node.test.ts.
+    const sections = notices.split("\n\n----------------------------------------\n\n");
+    const texts = sections.map((section) => section.slice(section.indexOf("\n\n")));
+    expect(new Set(texts).size).toBe(texts.length);
     expect(html).not.toContain("https://fonts.");
   });
 });

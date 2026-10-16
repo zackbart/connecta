@@ -1,11 +1,13 @@
 import { useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { OperatorConnectorOverlay } from "../contract.js";
 import { formatDate, type OperatorState } from "../view.js";
 import { StateBlock } from "./parts.js";
 import { Button, DataTable, Input } from "./primitives.js";
 import { ConnectorStatus } from "./problems.js";
-import { ContractState } from "./contract-state.js";
+import { ContractState, maintainerContract } from "./contract-state.js";
+import { ConnectorMatrix } from "./matrix.js";
 import { loadOperatorContract, navigate } from "./store.js";
 
 function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
@@ -63,11 +65,36 @@ const columns = (state: OperatorState): ColumnDef<Row>[] => [
   },
 ];
 
+type View = "list" | "matrix";
+
+/** List or Matrix, kept in the query string so a matrix link opens on the matrix. */
+function ViewToggle({ view, onChange }: { view: View; onChange: (view: View) => void }) {
+  return (
+    <div className="segmented" role="group" aria-label="Connector view">
+      {(["list", "matrix"] as const).map((value) => (
+        <button key={value} type="button" aria-pressed={view === value} onClick={() => onChange(value)}>
+          {value === "list" ? "List" : "Matrix"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function ConnectorsPage({ state }: { state: OperatorState }) {
   const [query, setQuery] = useState("");
-  const contract = state.contract;
+  const location = useLocation();
+  const go = useNavigate();
+  const view: View = new URLSearchParams(location.searchStr).get("view") === "matrix" ? "matrix" : "list";
+  const setView = (next: View) =>
+    void go({
+      to: location.pathname,
+      search: { ...location.search, view: next === "matrix" ? "matrix" : undefined },
+      hash: location.hash,
+      replace: true,
+    });
+  const contract = maintainerContract(state);
   const rows: Row[] =
-    contract?.config.connectors.flatMap((config) => {
+    contract?.config?.connectors.flatMap((config) => {
       const live = contract.live.connectors.find((c) => c.id === config.id);
       return live
         ? [
@@ -99,6 +126,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
           )}
         </div>
         <div className="page-actions">
+          {contract ? <ViewToggle view={view} onChange={setView} /> : null}
           {contract ? (
             <Input
               id="filter"
@@ -119,7 +147,14 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
         <ContractState state={state} />
       ) : (
         <section className="section" aria-labelledby="connectorLedgerHeading">
-          {visible.length ? (
+          {visible.length && view === "matrix" ? (
+            <ConnectorMatrix
+              contract={contract}
+              rows={visible}
+              state={state}
+              link={(row) => <ConnectorLink id={row.id} name={row.title} />}
+            />
+          ) : visible.length ? (
             <DataTable data={visible} columns={columns(state)} label="Connectors" />
           ) : (
             <StateBlock>

@@ -88,24 +88,33 @@ const packages = new Set(
 );
 packages.add("@fontsource-variable/geist");
 packages.add("@fontsource-variable/geist-mono");
+/** Each package's heading beside its verbatim license text. */
 const notices = [];
 for (const name of [...packages].sort()) {
   const directory = resolve(root, "node_modules", name);
   const license = (await readdir(directory)).find((file) => /^licen[cs]e(?:\.|$)/i.test(file));
   if (license) {
-    notices.push(`${name}\n\n${await readFile(resolve(directory, license), "utf8")}`);
+    notices.push({ heading: name, text: await readFile(resolve(directory, license), "utf8") });
   } else {
     const metadata = JSON.parse(await readFile(resolve(directory, "package.json"), "utf8"));
     // Some npm tarballs omit their LICENSE. Preserve their declared attribution
     // and license alongside the MIT grant shipped by this repository.
     if (metadata.license !== "MIT") throw new Error(`Missing license text for ${name}`);
     const mit = (await readFile(resolve(root, "LICENSE"), "utf8")).split("Permission is hereby granted")[1];
-    notices.push(
-      `${name} ${metadata.version}\nAuthor: ${typeof metadata.author === "string" ? metadata.author : (metadata.author?.name ?? "see upstream")}\nLicense: MIT\nRepository: ${typeof metadata.repository === "string" ? metadata.repository : (metadata.repository?.url ?? "see package metadata")}\n\nPermission is hereby granted${mit}`,
-    );
+    notices.push({
+      heading: `${name} ${metadata.version}\nAuthor: ${typeof metadata.author === "string" ? metadata.author : (metadata.author?.name ?? "see upstream")}\nLicense: MIT\nRepository: ${typeof metadata.repository === "string" ? metadata.repository : (metadata.repository?.url ?? "see package metadata")}`,
+      text: `Permission is hereby granted${mit}`,
+    });
   }
 }
-const noticeBody = notices.join("\n\n----------------------------------------\n\n");
+// Packages that ship the same license text byte for byte (one vendor's
+// monorepo, usually) share one copy, listed under every package's name.
+// Nothing is reworded or dropped; most of the file was repeats.
+const byText = new Map();
+for (const { heading, text } of notices) byText.set(text, [...(byText.get(text) ?? []), heading]);
+const noticeBody = [...byText]
+  .map(([text, headings]) => `${headings.join("\n")}\n\n${text}`)
+  .join("\n\n----------------------------------------\n\n");
 const noticeHash = createHash("sha256").update(noticeBody).digest("hex").slice(0, 16);
 const noticePath = `/ui/assets/notices-${noticeHash}.txt`;
 assets[noticePath] = { type: "text/plain; charset=utf-8", body: noticeBody, binary: false };

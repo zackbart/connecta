@@ -47,7 +47,11 @@ export function Dialog({
           className={drawer ? "dialog-content drawer-content" : "dialog-content"}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            if (returnFocusTo.current?.isConnected) returnFocusTo.current.focus();
+            // While the recovery banner is up its Retry is the one way on; the
+            // control that opened this dialog is behind the inert page.
+            const retry = document.getElementById("recoveryRetry");
+            if (retry) retry.focus();
+            else if (returnFocusTo.current?.isConnected) returnFocusTo.current.focus();
           }}
         >
           <DialogPrimitive.Title className="text-base font-semibold">{title}</DialogPrimitive.Title>

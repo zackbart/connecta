@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
 import type { UiData } from "../src/operator-ui/model.js";
+import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./fixtures/operator-contract-v2.js";
 
 const NOW = "2026-10-15T12:00:00.000Z";
 
@@ -13,6 +15,41 @@ const NOW = "2026-10-15T12:00:00.000Z";
 const stores: Array<{ forgetBearer(): void }> = [];
 
 const BASE = "https://deployment.example";
+const CONFIG = "/ui/api/config";
+
+type ConfigConnector = { id: string; title?: string };
+type LiveConnector = { id: string; status: string; [key: string]: unknown };
+
+/**
+ * A maintainer's v2 contract with these configured connectors and live rows,
+ * on the frozen fixture's other facts. Live rows gain the overlay fields the
+ * contract requires.
+ */
+function v2(config: ConfigConnector[], live: LiveConnector[] = []): OperatorUiContractV2 {
+  const base = structuredClone(OPERATOR_V2_MAINTAINER) as OperatorUiContractV2;
+  return {
+    ...base,
+    config: {
+      ...base.config!,
+      connectors: config as NonNullable<OperatorUiContractV2["config"]>["connectors"],
+    },
+    live: {
+      ...base.live,
+      connectors: live.map((row) => ({
+        tools: [],
+        catalogAgeMs: null,
+        lastCall: null,
+        ...row,
+      })) as never,
+    },
+    matrix: [],
+  };
+}
+
+/** A v2 contract body for one role, fresh for every response. */
+function contract(role: "maintainer" | "member"): Response {
+  return Response.json(role === "maintainer" ? v2([]) : (structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2));
+}
 
 /** The constants `renderUiHtml` writes into the page ahead of the bundle. */
 const PAGE_CONSTANTS = {
@@ -54,6 +91,13 @@ function uiData(identity: string): UiData {
  * configuration and its globals at import time, so the globals go up first and
  * the module registry is reset for every test — one store, one identity, one
  * test.
+ *
+ * `GET /ui/api/config`, the gate every load starts with, answers from its own
+ * mock: a maintainer's v2 contract unless a test says otherwise, whose
+ * connectors are the ones `declare()` names, else those of the last
+ * `/ui/data` seen. The contract is read before `/ui/data`, so a test whose
+ * first summary lists connectors declares them. `paths` records every request
+ * in order, config included.
  */
 async function loadStore(
   session: FakeSession,
@@ -77,7 +121,12 @@ async function loadStore(
     signOut: vi.fn(async () => {}),
   };
   const window = {
-    location: { href: `${BASE}/`, pathname: "/connectors", assign: vi.fn(), reload: vi.fn() },
+    location: {
+      href: `${BASE}/`,
+      pathname: "/connectors",
+      assign: vi.fn(),
+      reload: vi.fn(),
+    },
     Clerk: clerk,
     addEventListener: (name: string, listener: () => void) => {
       windowListeners.set(name, listener);
@@ -91,15 +140,13 @@ async function loadStore(
     removeItem: () => {},
   });
   let summary: UiData | undefined;
+  let declared: string[] | undefined;
+  const paths: string[] = [];
   const configMock = vi.fn(async (_path: string, _init: RequestInit) =>
-    Response.json({
-      schemaVersion: 1,
-      config: { connectors: summary?.connectors.map(({ id }) => ({ id })) ?? [] },
-      you: { permissions: { connectors: [] } },
-      live: { connectors: [] },
-    }),
+    Response.json(v2((declared ?? summary?.connectors.map(({ id }) => id) ?? []).map((id) => ({ id })))),
   );
   vi.stubGlobal("fetch", async (path: string, init: RequestInit) => {
+    paths.push(path);
     if (path.startsWith("/ui/api/config")) return configMock(path, init);
     const response = (await fetchMock(path, init)) as Response | undefined;
     if (path === "/ui/data" && response?.ok) {
@@ -130,14 +177,32 @@ async function loadStore(
     clerk,
     fetchMock,
     configMock,
+    paths,
     windowListeners,
     window,
+    /** The connectors the default contract configures, before any `/ui/data` is seen. */
+    declare(ids: string[]) {
+      declared = ids;
+    },
     /** Hand Clerk's listener a session change, the way Clerk itself would. */
     changeSession(next: FakeSession | null) {
       clerk.session = next as FakeSession;
       clerkListener?.({ session: next });
     },
   };
+}
+
+/** Boot as a maintainer with no connectors, then forget the boot's calls. */
+async function bootMaintainer(loaded: Awaited<ReturnType<typeof loadStore>>, identity = "operator") {
+  loaded.fetchMock.mockResolvedValueOnce(Response.json(uiData(identity)));
+  await loaded.store.boot();
+  expect(loaded.store.getState()).toMatchObject({
+    session: "ready",
+    role: "maintainer",
+  });
+  loaded.fetchMock.mockClear();
+  loaded.configMock.mockClear();
+  loaded.paths.length = 0;
 }
 
 /** The Authorization header the nth request carried. */
@@ -154,7 +219,11 @@ afterEach(() => {
 
 describe("operator store identity wiring", () => {
   it("consumes Query cancellation and drops a pending connector detail after sign-out", async () => {
-    const { store, fetchMock, changeSession } = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
+    const { store, fetchMock, changeSession, declare } = await loadStore({
+      id: "sess_a",
+      getToken: async () => "token-a",
+    });
+    declare(["github"]);
     const connector = { id: "github", status: "ok", toolCount: 0, tools: [] };
     fetchMock.mockImplementation(async (path: string) =>
       Response.json(path === "/ui/data" ? { ...uiData("identity-a"), connectors: [connector] } : connector),
@@ -178,13 +247,16 @@ describe("operator store identity wiring", () => {
       id: "sess_a",
       getToken: async () => "token-a",
     };
-    const { store, fetchMock, changeSession } = await loadStore(sessionA);
+    const { store, fetchMock, configMock, paths, changeSession } = await loadStore(sessionA);
 
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.boot();
+    // The contract decides the role first; a maintainer's data follows.
+    expect(paths).toEqual([CONFIG, "/ui/data"]);
     expect(store.getState().session).toBe("ready");
     expect(store.getState().data?.serverInfo.name).toBe("identity-a");
     expect(bearerOf(fetchMock, 0)).toBe("Bearer token-a");
+    expect(bearerOf(configMock, 0)).toBe("Bearer token-a");
 
     // Fill the rest of the identity-scoped state the way a working page does.
     fetchMock.mockResolvedValueOnce(
@@ -232,8 +304,10 @@ describe("operator store identity wiring", () => {
       expect(store.getState().data?.serverInfo.name).toBe("identity-b");
     });
     // The refetch asked as the new identity, not with the token that was
-    // current when the listener fired.
+    // current when the listener fired, and asked for the contract first.
     expect(bearerOf(fetchMock, fetchMock.mock.calls.length - 1)).toBe("Bearer token-b");
+    expect(bearerOf(configMock, configMock.mock.calls.length - 1)).toBe("Bearer token-b");
+    expect(paths.slice(-2)).toEqual([CONFIG, "/ui/data"]);
   });
 
   it("drops a response the previous identity asked for", async () => {
@@ -241,30 +315,35 @@ describe("operator store identity wiring", () => {
       id: "sess_a",
       getToken: async () => "token-a",
     };
-    const { store, fetchMock, changeSession } = await loadStore(sessionA);
+    const { store, fetchMock, configMock, changeSession } = await loadStore(sessionA);
 
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.boot();
 
-    // identity-a asks for its access tokens and the answer is slow.
+    // identity-a asks for its activity and the answer is slow. The request is
+    // on the wire, past its token lookup, before anything else happens.
     const slow = deferred<Response>();
     fetchMock.mockImplementationOnce(() => slow.promise);
     const inFlight = store.loadActivity(true);
+    await vi.waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/^\/ui\/api\/activity\?/), expect.anything()),
+    );
 
-    // identity-b arrives first, and its own /ui/data never settles here.
-    fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
+    // identity-b arrives while it is in flight, and its own load never settles here.
+    configMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
     changeSession({ id: "sess_b", getToken: async () => "token-b" });
 
     slow.resolve(Response.json({ events: [{ connectorId: "identity-a client" }] }));
     await inFlight;
 
-    // The fence, not a race: identity-a's tokens never land on identity-b's
+    // The fence, not a race: identity-a's events never land on identity-b's
     // screen, and the collection stays idle so the new identity refetches.
+    expect(store.getState()).toMatchObject({ activityEvents: [], activityPhase: "idle", activityNotice: null });
     expect(JSON.stringify(store.getState())).not.toContain("identity-a client");
   });
 
   it("gates without a session and never asks for operator data", async () => {
-    const { store, fetchMock } = await loadStore({
+    const { store, fetchMock, paths } = await loadStore({
       id: "sess_a",
       getToken: async () => "",
     });
@@ -272,6 +351,7 @@ describe("operator store identity wiring", () => {
     expect(store.getState().session).toBe("gated");
     expect(store.getState().data).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(paths).toEqual([]);
   });
 
   it("uses the same-origin Access session without a browser-readable token", async () => {
@@ -282,6 +362,9 @@ describe("operator store identity wiring", () => {
 
     expect(loaded.store.getState().session).toBe("ready");
     expect(loaded.clerk.load).not.toHaveBeenCalled();
+    // The contract decides the role first; a maintainer's data follows.
+    expect(loaded.paths).toEqual([CONFIG, "/ui/data"]);
+    expect(loaded.configMock.mock.calls[0]?.[1]).toMatchObject({ headers: {}, credentials: "same-origin" });
     expect(loaded.fetchMock).toHaveBeenCalledWith("/ui/data", {
       signal: expect.any(AbortSignal),
       headers: {},
@@ -295,10 +378,12 @@ describe("operator store action notices", () => {
     // Stands in for an older or hostile server: every answer below carries a
     // downstream's words where the current routes send fixed ones or none.
     const SECRET = "sk_live_store_leak";
-    const { store, fetchMock } = await loadStore({
+    const { store, fetchMock, declare } = await loadStore({
       id: "sess_a",
       getToken: async () => "token-a",
     });
+    // Writes go out only for a connector the maintainer's contract shows.
+    declare(["svc"]);
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.boot();
 
@@ -333,7 +418,10 @@ describe("operator store action notices", () => {
         () => Response.json({ error: SECRET }, { status: 400 }),
         "oauthNotice",
       ),
-    ).toMatchObject({ tone: "error", message: expect.stringContaining("Disconnect didn't finish.") });
+    ).toMatchObject({
+      tone: "error",
+      message: expect.stringContaining("Disconnect didn't finish."),
+    });
     // No window.open in this fake browser: the tab counts as blocked, and the
     // notice points at the link the row now offers.
     expect(
@@ -369,7 +457,10 @@ describe("operator store action notices", () => {
         () => Response.json({ error: SECRET }, { status: 502 }),
         "credentialNotice",
       ),
-    ).toMatchObject({ tone: "error", message: "The credential test couldn't run." });
+    ).toMatchObject({
+      tone: "error",
+      message: "The credential test couldn't run.",
+    });
     expect(
       await land(
         () => store.testCredential("svc"),
@@ -384,7 +475,10 @@ describe("operator store action notices", () => {
         () => Response.json({ error: `vault said ${SECRET}` }, { status: 400 }),
         "credentialNotice",
       ),
-    ).toMatchObject({ tone: "error", message: expect.stringContaining("wasn't saved") });
+    ).toMatchObject({
+      tone: "error",
+      message: expect.stringContaining("wasn't saved"),
+    });
     // A failure the page words itself keeps its words: a 403 on a mutation is
     // a missing permission, answered inline, and never a trip to the gate.
     expect(
@@ -403,10 +497,12 @@ describe("operator store action notices", () => {
   });
 
   it("asks the route to continue or restart through the mode parameter", async () => {
-    const { store, fetchMock } = await loadStore({
+    const { store, fetchMock, declare } = await loadStore({
       id: "sess_a",
       getToken: async () => "token-a",
     });
+    // Writes go out only for a connector the maintainer's contract shows.
+    declare(["svc"]);
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.boot();
     fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
@@ -420,7 +516,10 @@ describe("operator store action notices", () => {
       ["/ui/oauth/svc?mode=restart", "POST"],
     ]);
     // `continue` on a healthy connector changes nothing and says so.
-    expect(store.getState().oauthNotice).toEqual({ tone: "info", message: "Connected." });
+    expect(store.getState().oauthNotice).toEqual({
+      tone: "info",
+      message: "Connected.",
+    });
   });
 });
 
@@ -432,17 +531,27 @@ describe("operator store load failures", () => {
     });
     fetchMock.mockResolvedValueOnce(Response.json({ error: "boom" }, { status: 500 }));
     await store.boot();
-    expect(store.getState()).toMatchObject({ session: "ready", loadFailure: "server", gate: null });
+    expect(store.getState()).toMatchObject({
+      session: "ready",
+      loadFailure: "server",
+      gate: null,
+    });
 
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     await store.retryLoad();
-    expect(store.getState()).toMatchObject({ session: "ready", loadFailure: "network" });
+    expect(store.getState()).toMatchObject({
+      session: "ready",
+      loadFailure: "network",
+    });
 
     vi.useFakeTimers();
     await vi.advanceTimersByTimeAsync(150);
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.retryLoad();
-    expect(store.getState()).toMatchObject({ session: "ready", loadFailure: null });
+    expect(store.getState()).toMatchObject({
+      session: "ready",
+      loadFailure: null,
+    });
     expect(store.getState().data?.serverInfo.name).toBe("identity-a");
   });
 
@@ -453,14 +562,47 @@ describe("operator store load failures", () => {
     });
     fetchMock.mockResolvedValueOnce(Response.json({ error: "unauthorized" }, { status: 401 }));
     await store.boot();
-    expect(store.getState()).toMatchObject({ session: "gated", loadFailure: null });
+    expect(store.getState()).toMatchObject({
+      session: "gated",
+      loadFailure: null,
+    });
     expect(store.getState().gate?.message).toContain("Clerk session wasn't accepted");
+  });
+});
+
+describe("operator admission gate", () => {
+  it("gates on a refused contract before any operator data is requested", async () => {
+    const { store, fetchMock, configMock, paths } = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
+    configMock.mockResolvedValueOnce(Response.json({ error: "unauthorized" }, { status: 401 }));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "gated", role: null, contract: null });
+    expect(store.getState().gate?.message).toContain("Clerk session wasn't accepted");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(paths).toEqual([CONFIG]);
+  });
+
+  it("INV-4: the contract's private 404 is signed in without access, and asks for nothing else", async () => {
+    const { store, fetchMock, configMock, paths, windowListeners } = await loadStore({
+      id: "sess_a",
+      getToken: async () => "token-a",
+    });
+    configMock.mockImplementation(async () => Response.json({ error: "Not found" }, { status: 404 }));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "denied", role: null, contract: null, data: null });
+    // No passive recovery: a viewer without access has nothing to retry.
+    windowListeners.get("focus")?.();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(paths).toEqual([CONFIG]);
   });
 });
 
 describe("managed token secret lifetime", () => {
   it("drops an issued secret when the requesting identity changes", async () => {
-    const { store, fetchMock, changeSession } = await loadStore({ id: "a", getToken: async () => "a" });
+    const { store, fetchMock, changeSession } = await loadStore({
+      id: "a",
+      getToken: async () => "a",
+    });
     fetchMock.mockResolvedValueOnce(Response.json(uiData("a")));
     await store.boot();
     const slow = deferred<Response>();
@@ -472,7 +614,10 @@ describe("managed token secret lifetime", () => {
     fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
     changeSession({ id: "b", getToken: async () => "b" });
     slow.resolve(
-      Response.json({ token: "cta_disposable-secret", agent: { name: "desktop", state: "issued", issuedAt: NOW } }),
+      Response.json({
+        token: "cta_disposable-secret",
+        agent: { name: "desktop", state: "issued", issuedAt: NOW },
+      }),
     );
     await pending;
     expect(store.getState().createdToken).toBeNull();
@@ -482,7 +627,11 @@ describe("managed token secret lifetime", () => {
 
 describe("operator collection ordering", () => {
   const none = (name: string) => ({ name, state: "none" as const });
-  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW });
+  const issued = (name: string) => ({
+    name,
+    state: "issued" as const,
+    issuedAt: NOW,
+  });
   const row = (name: string, createdAt = "", revokedAt?: string) => ({
     id: name,
     name,
@@ -492,7 +641,12 @@ describe("operator collection ordering", () => {
   });
 
   it("loads agent slots and keeps an issuance when an earlier list finishes later", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const loaded = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
     const old = deferred<Response>();
     fetchMock.mockReturnValueOnce(old.promise);
     const listing = store.loadAccessTokens();
@@ -507,14 +661,23 @@ describe("operator collection ordering", () => {
   });
 
   it("keeps a local revoke when a pending list captured the issued slot earlier", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const loaded = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("simon"), none("ci")] }));
     await store.loadAccessTokens();
     const old = deferred<Response>();
     fetchMock.mockReturnValueOnce(old.promise);
     const listing = store.loadAccessTokens();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const revoked = { name: "simon", state: "revoked" as const, revokedAt: "2026-10-01T00:00:00Z" };
+    const revoked = {
+      name: "simon",
+      state: "revoked" as const,
+      revokedAt: "2026-10-01T00:00:00Z",
+    };
     fetchMock.mockResolvedValueOnce(Response.json({ agent: revoked }));
     await store.revokeAgentToken("simon");
     expect(fetchMock).toHaveBeenLastCalledWith(
@@ -527,7 +690,9 @@ describe("operator collection ordering", () => {
   });
 
   it("sends the listed slot revision as expect, then the one each mutation returns", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
     const listed = "listedRevision00000000";
     const afterRotate = "rotatedRevision0000000";
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ ...issued("simon"), revision: listed }] }));
@@ -546,7 +711,12 @@ describe("operator collection ordering", () => {
   });
 
   it("refuses an issuance response for another agent and reveals nothing", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const loaded = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon")] }));
     await store.loadAccessTokens();
     fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_misrouted", agent: issued("ci") }));
@@ -559,8 +729,17 @@ describe("operator collection ordering", () => {
 
 describe("operator recovery races", () => {
   it.each(["disconnect", "remove"])("reloads connector state after a partially applied %s fails", async (action) => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
-    const connected = { id: "svc", status: "ok", tools: [{ name: "read" }], toolCount: 1 };
+    const { store, fetchMock, declare } = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
+    declare(["svc"]);
+    const connected = {
+      id: "svc",
+      status: "ok",
+      tools: [{ name: "read" }],
+      toolCount: 1,
+    };
     fetchMock.mockImplementation(async (path: string) =>
       path === "/ui/data"
         ? Response.json({ ...uiData("operator"), connectors: [connected] })
@@ -573,7 +752,12 @@ describe("operator recovery races", () => {
     // how the operator learns that a failed click still disconnected it.
     fetchMock.mockImplementation(async (path: string) =>
       path.startsWith("/ui/connectors/")
-        ? Response.json({ ...connected, status: "auth_required", tools: [], toolCount: 0 })
+        ? Response.json({
+            ...connected,
+            status: "auth_required",
+            tools: [],
+            toolCount: 0,
+          })
         : Response.json({ problem: "storage_failed" }, { status: 500 }),
     );
     if (action === "disconnect") await store.disconnectOAuth("svc");
@@ -584,7 +768,10 @@ describe("operator recovery races", () => {
   });
 
   it("keeps the latest operator reload when two retries overlap", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
     fetchMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 500 }));
     await store.boot();
     const old = deferred<Response>();
@@ -603,16 +790,27 @@ describe("operator recovery races", () => {
 
 describe("operator unreadable collections", () => {
   it("keeps the operator retry available when /ui/data returns JSON null", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
     fetchMock.mockResolvedValueOnce(Response.json(null));
     await store.boot();
-    expect(store.getState()).toMatchObject({ session: "ready", loadFailure: "server" });
+    expect(store.getState()).toMatchObject({
+      session: "ready",
+      loadFailure: "server",
+    });
   });
 
   it.each(["truncated JSON", "null", "{}"])(
     "reports an unreadable token collection instead of no tokens: %s",
     async (body) => {
-      const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+      const loaded = await loadStore({
+        id: "session",
+        getToken: async () => "token",
+      });
+      const { store, fetchMock } = loaded;
+      await bootMaintainer(loaded);
       fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
       await store.loadAccessTokens();
       expect(store.getState().tokenPhase).toBe("error");
@@ -627,7 +825,10 @@ describe("operator unreadable collections", () => {
 
 describe("activity collection recovery", () => {
   it.each(["truncated JSON", "null", "{}"])("offers retry for an unreadable activity page: %s", async (body) => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
     fetchMock.mockResolvedValueOnce(Response.json(uiData("operator")));
     await store.boot();
     fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
@@ -641,18 +842,36 @@ describe("activity collection recovery", () => {
   });
 
   it("drops an older pagination response after a collection reset", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
     fetchMock.mockResolvedValueOnce(Response.json(uiData("operator")));
     await store.boot();
-    fetchMock.mockResolvedValueOnce(Response.json({ events: [{ connectorId: "initial" }], nextCursor: "page-two" }));
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        events: [{ connectorId: "initial" }],
+        nextCursor: "page-two",
+      }),
+    );
     await store.loadActivity(true);
     const old = deferred<Response>();
     fetchMock.mockReturnValueOnce(old.promise);
     const pagination = store.loadActivity(false);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    fetchMock.mockResolvedValueOnce(Response.json({ events: [{ connectorId: "fresh" }], nextCursor: "fresh-cursor" }));
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        events: [{ connectorId: "fresh" }],
+        nextCursor: "fresh-cursor",
+      }),
+    );
     await store.loadActivity(true);
-    old.resolve(Response.json({ events: [{ connectorId: "old-page-two" }], nextCursor: "old-cursor" }));
+    old.resolve(
+      Response.json({
+        events: [{ connectorId: "old-page-two" }],
+        nextCursor: "old-cursor",
+      }),
+    );
     await pagination;
     expect(store.getState().activityEvents).toEqual([{ connectorId: "fresh" }]);
     expect(store.getState().activityCursor).toBe("fresh-cursor");
@@ -708,21 +927,29 @@ describe("operator recovery bounds and snapshot ordering", () => {
   async function pollingStore() {
     const loaded = await loadStore({ id: "a", getToken: async () => "a" });
     const { store, fetchMock, configMock } = loaded;
-    const connector = { id: "svc", status: "auth_required", oauth: true, tools: [], toolCount: 0 };
+    const connector = {
+      id: "svc",
+      status: "auth_required",
+      oauth: true,
+      tools: [],
+      toolCount: 0,
+    };
     const other = { ...connector, id: "other", status: "ok" };
-    const contract = (rows = [connector, other]) => ({
-      schemaVersion: 1,
-      config: { connectors: rows.map(({ id }) => ({ id })), classification: {} },
-      you: { permissions: { connectors: [] } },
-      live: { connectors: rows.map((row) => ({ ...row, catalogAgeMs: null, lastCall: null })) },
-    });
+    const contract = (rows = [connector, other]) =>
+      v2(
+        rows.map(({ id }) => ({ id })),
+        rows.map((row) => ({ ...row, catalogAgeMs: null, lastCall: null })),
+      );
     configMock.mockImplementation(async () => Response.json(contract()));
     fetchMock.mockImplementation(async (path: string) =>
       Response.json(
         path === "/ui/data"
           ? { ...uiData("operator"), connectors: [connector, other] }
           : path.startsWith("/ui/oauth/")
-            ? { state: "auth_required", authorizationUrl: "https://provider.test/consent" }
+            ? {
+                state: "auth_required",
+                authorizationUrl: "https://provider.test/consent",
+              }
             : path.endsWith("/other")
               ? other
               : connector,
@@ -809,7 +1036,12 @@ describe("operator recovery bounds and snapshot ordering", () => {
     const start = store.startOAuth("svc", "continue");
     await vi.advanceTimersByTimeAsync(0);
     store.stopOAuthPolling("svc");
-    pending.resolve(Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" }));
+    pending.resolve(
+      Response.json({
+        state: "auth_required",
+        authorizationUrl: "https://provider.test/consent",
+      }),
+    );
     await start;
     await vi.advanceTimersByTimeAsync(0);
     fetchMock.mockClear();
@@ -925,12 +1157,7 @@ describe("operator recovery bounds and snapshot ordering", () => {
           .mockResolvedValue("token"),
       });
       const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
-      const contract = {
-        schemaVersion: 1,
-        config: { connectors: [{ id: "svc", title: "fresh" }] },
-        you: { permissions: { connectors: [] } },
-        live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
-      };
+      const contract = v2([{ id: "svc", title: "fresh" }], [{ ...connector, catalogAgeMs: null, lastCall: null }]);
       const signals: AbortSignal[] = [];
       const response = async (kind: string, value: object, init: RequestInit) => {
         signals.push(init.signal!);
@@ -957,7 +1184,7 @@ describe("operator recovery bounds and snapshot ordering", () => {
       windowListeners.get("focus")?.();
       await vi.advanceTimersByTimeAsync(1000);
       expect(store.getState().contractPhase).toBe("ready");
-      expect(store.getState().contract?.config.connectors[0]?.title).toBe("fresh");
+      expect(store.getState().contract?.config?.connectors[0]?.title).toBe("fresh");
       expect(store.getState().data?.connectors[0]?.status).toBe("ok");
       await vi.advanceTimersByTimeAsync(100_000);
       expect(signals.every((signal) => !signal.aborted)).toBe(true);
@@ -969,7 +1196,10 @@ describe("operator recovery bounds and snapshot ordering", () => {
 
   it("INV-4 INV-10: bounds stalled session-token acquisition and fences its late continuation", async () => {
     const token = vi.fn(async () => "token");
-    const { store, fetchMock, windowListeners } = await loadStore({ id: "a", getToken: token });
+    const { store, fetchMock, windowListeners } = await loadStore({
+      id: "a",
+      getToken: token,
+    });
     vi.useFakeTimers();
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
     await store.boot();
@@ -999,12 +1229,7 @@ describe("operator recovery bounds and snapshot ordering", () => {
       );
       vi.useFakeTimers();
       const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
-      const contract = {
-        schemaVersion: 1,
-        config: { connectors: [{ id: "svc" }] },
-        you: { permissions: { connectors: [] } },
-        live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
-      };
+      const contract = v2([{ id: "svc" }], [{ ...connector, catalogAgeMs: null, lastCall: null }]);
       const pending = deferred<Response>();
       const signals: AbortSignal[] = [];
       const stuck = (init: RequestInit, value: object) => {
@@ -1014,10 +1239,12 @@ describe("operator recovery bounds and snapshot ordering", () => {
         vi.spyOn(response, "json").mockReturnValue(new Promise(() => {}));
         return Promise.resolve(response);
       };
+      // The contract is the admission gate, so the first, failed admission is
+      // its read; the passive retry then stalls at the stage under test.
+      configMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
       configMock.mockImplementation(async (_path, init) =>
         stalled.startsWith("config") ? stuck(init, contract) : Response.json(contract),
       );
-      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
       fetchMock.mockImplementation(async (path: string, init: RequestInit) => {
         if (path === "/ui/data")
           return stalled === "summary"
@@ -1033,13 +1260,15 @@ describe("operator recovery bounds and snapshot ordering", () => {
       }
       expect(signals).toHaveLength(1);
       expect(signals[0]?.aborted).toBe(false);
-      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(2);
+      // A stalled contract stops admission before any `/ui/data` read.
+      const admittedBeforeData = stalled.startsWith("config");
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(admittedBeforeData ? 0 : 1);
       await vi.advanceTimersByTimeAsync(300);
       expect(signals[0]?.aborted).toBe(false);
       expect(store.getState().recoveryPending).toBe(false);
-      expect(stalled === "summary" ? store.getState().session : store.getState().contractPhase).toBe(
-        stalled === "summary" ? "gated" : "error",
-      );
+      // Without data, Access returns to its gate; with it, the snapshot errs.
+      const noData = stalled === "summary" || admittedBeforeData;
+      expect(noData ? store.getState().session : store.getState().contractPhase).toBe(noData ? "gated" : "error");
       // Timers and focus coalesce onto the pending read even after its guard
       // releases. They cannot abort it or start another request of any kind.
       await vi.advanceTimersByTimeAsync(100_000);
@@ -1058,8 +1287,9 @@ describe("operator recovery bounds and snapshot ordering", () => {
       pending.resolve(Response.json({ ...uiData("stale"), ...contract, ...connector }));
       await vi.advanceTimersByTimeAsync(60_000);
       expect(store.getState().data?.serverInfo.name).toBe("recovered");
-      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(3);
-      expect(configMock).toHaveBeenCalledTimes(stalled === "summary" ? 1 : 2);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(admittedBeforeData ? 1 : 2);
+      // Boot, the stalled retry and the explicit Retry each start with the contract.
+      expect(configMock).toHaveBeenCalledTimes(3);
     },
   );
 
@@ -1076,15 +1306,17 @@ describe("operator recovery bounds and snapshot ordering", () => {
         signals.push(init.signal!);
         return new Promise<Response>(() => {});
       };
-      configMock.mockImplementation(stuck);
-      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      // Admission starts with the contract: its first read fails, and the
+      // passive retry stalls at the contract or, past it, at `/ui/data`.
+      configMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      configMock.mockImplementation(stalled === "config" ? stuck : async () => contract("maintainer"));
       fetchMock.mockImplementation(stalled === "summary" ? stuck : async () => Response.json(uiData("operator")));
       await store.boot();
       await vi.advanceTimersByTimeAsync(100_000);
       expect(signals).toHaveLength(1);
       expect(signals[0]?.aborted).toBe(false);
       expect(store.getState().recoveryPending).toBe(false);
-      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(stalled === "summary" ? 1 : 0);
       windowListeners.get("focus")?.();
       await vi.advanceTimersByTimeAsync(160);
       await vi.advanceTimersByTimeAsync(100_000);
@@ -1106,8 +1338,10 @@ describe("operator recovery bounds and snapshot ordering", () => {
         signal = init.signal!;
         return new Promise<Response>(() => {});
       };
-      configMock.mockImplementation(stuck);
-      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      // Admission starts with the contract: its first read fails, and the
+      // passive retry stalls at the contract or, past it, at `/ui/data`.
+      configMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      configMock.mockImplementation(stalled === "config" ? stuck : async () => contract("maintainer"));
       fetchMock.mockImplementation(stalled === "summary" ? stuck : async () => Response.json(uiData("operator")));
       await store.boot();
       await vi.advanceTimersByTimeAsync(2000);
@@ -1118,8 +1352,9 @@ describe("operator recovery bounds and snapshot ordering", () => {
       await vi.advanceTimersByTimeAsync(100_000);
       windowListeners.get("focus")?.();
       await vi.advanceTimersByTimeAsync(200);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(configMock).toHaveBeenCalledTimes(stalled === "summary" ? 0 : 1);
+      // The failed boot read and the cancelled retry, and nothing after sign-out.
+      expect(fetchMock).toHaveBeenCalledTimes(stalled === "summary" ? 1 : 0);
+      expect(configMock).toHaveBeenCalledTimes(2);
       expect(store.getState().data).toBeNull();
       expect(store.getState().contract).toBeNull();
     },
@@ -1145,14 +1380,7 @@ describe("operator recovery bounds and snapshot ordering", () => {
       else if (action === "unmount") store.stopConnectorReads("svc");
       else store.signOut();
       expect(signal?.aborted).toBe(true);
-      pending.resolve(
-        Response.json({
-          schemaVersion: 1,
-          config: { connectors: [] },
-          you: { permissions: { connectors: [] } },
-          live: { connectors: [] },
-        }),
-      );
+      pending.resolve(Response.json(v2([], [])));
       await vi.advanceTimersByTimeAsync(0);
       expect(store.getState().contract).toBeNull();
       expect(store.getState().recoveryPending).toBe(false);
@@ -1169,21 +1397,26 @@ describe("operator recovery bounds and snapshot ordering", () => {
       );
       vi.useFakeTimers();
       const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
-      const contract = {
-        schemaVersion: 1,
-        config: { connectors: [{ id: "svc" }] },
-        you: { permissions: { connectors: [] } },
-        live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
+      const contract = v2([{ id: "svc" }], [{ ...connector, catalogAgeMs: null, lastCall: null }]);
+      const pendingAuth = {
+        ...connector,
+        status: "auth_required",
+        oauth: true,
       };
-      const pendingAuth = { ...connector, status: "auth_required", oauth: true };
       const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+      // The first admission fails at its contract read; the recovery's
+      // contract and detail reads are both slow, one slower than the other.
+      configMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
       configMock.mockImplementation(async () => {
         await delay(delayed === "config" ? 7000 : 5000);
         return Response.json(contract);
       });
-      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
       fetchMock.mockImplementation(async (path: string) => {
-        if (path === "/ui/data") return Response.json({ ...uiData("recovered"), connectors: [pendingAuth] });
+        if (path === "/ui/data")
+          return Response.json({
+            ...uiData("recovered"),
+            connectors: [pendingAuth],
+          });
         await delay(delayed === "detail" ? 7000 : 5000);
         return Response.json(connector);
       });
@@ -1203,71 +1436,74 @@ describe("operator recovery bounds and snapshot ordering", () => {
       expect(store.getState().contractPhase).toBe("ready");
       expect(store.getState().contract?.live.connectors[0]?.status).toBe("ok");
       expect(store.getState().data?.connectors[0]?.status).toBe("ok");
-      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(1);
       expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/connectors/svc")).toHaveLength(1);
-      expect(configMock).toHaveBeenCalledTimes(1);
+      // The failed boot read, then one recovery whose contract the details reuse.
+      expect(configMock).toHaveBeenCalledTimes(2);
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      expect(configMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(configMock).toHaveBeenCalledTimes(2);
     },
   );
 
-  it.each(["retry", "sign-out"])(
-    "INV-4: preserves %s while passive catalog/auth recovery is in flight",
-    async (action) => {
-      const { store, fetchMock, configMock } = await loadStore(
-        { id: "unused", getToken: async () => "unused" },
-        { kind: "cloudflare-access" },
-      );
-      vi.useFakeTimers();
-      const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
-      const contract = (title: string) => ({
-        schemaVersion: 1,
-        config: { connectors: [{ id: "svc", title }] },
-        you: { permissions: { connectors: [] } },
-        live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
-      });
-      const oldConfig = deferred<Response>();
-      const oldDetail = deferred<Response>();
-      configMock.mockReturnValueOnce(oldConfig.promise);
-      configMock.mockImplementation(async () => Response.json(contract("newer")));
-      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+  // Admission reads the contract first and the details reuse it, so the
+  // recovery never has both in flight: each is held in turn.
+  it.each([
+    ["retry", "config"],
+    ["retry", "detail"],
+    ["sign-out", "config"],
+    ["sign-out", "detail"],
+  ] as const)("INV-4: preserves %s while the passive recovery's %s read is in flight", async (action, held) => {
+    const { store, fetchMock, configMock } = await loadStore(
+      { id: "unused", getToken: async () => "unused" },
+      { kind: "cloudflare-access" },
+    );
+    vi.useFakeTimers();
+    const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
+    const contract = (title: string) =>
+      v2([{ id: "svc", title }], [{ ...connector, catalogAgeMs: null, lastCall: null }]);
+    const oldConfig = deferred<Response>();
+    const oldDetail = deferred<Response>();
+    configMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+    if (held === "config") configMock.mockReturnValueOnce(oldConfig.promise);
+    else configMock.mockResolvedValueOnce(Response.json(contract("recovering")));
+    configMock.mockImplementation(async () => Response.json(contract("newer")));
+    fetchMock.mockImplementation(async (path: string) =>
+      path === "/ui/data" ? Response.json({ ...uiData("operator"), connectors: [connector] }) : oldDetail.promise,
+    );
+    await store.boot();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(configMock).toHaveBeenCalledTimes(2);
+    const heldSignal =
+      held === "config"
+        ? configMock.mock.calls[1]?.[1].signal
+        : fetchMock.mock.calls.find(([path]) => path === "/ui/connectors/svc")?.[1].signal;
+    expect(heldSignal?.aborted).toBe(false);
+    if (action === "retry") {
       fetchMock.mockImplementation(async (path: string) =>
-        path === "/ui/data" ? Response.json({ ...uiData("operator"), connectors: [connector] }) : oldDetail.promise,
+        Response.json(path === "/ui/data" ? { ...uiData("operator"), connectors: [connector] } : connector),
       );
-      await store.boot();
-      await vi.advanceTimersByTimeAsync(2000);
-      expect(configMock).toHaveBeenCalledTimes(1);
-      const configSignal = configMock.mock.calls[0]?.[1].signal;
-      const detailSignal = fetchMock.mock.calls.find(([path]) => path === "/ui/connectors/svc")?.[1].signal;
-      expect(configSignal?.aborted).toBe(false);
-      expect(detailSignal?.aborted).toBe(false);
-      if (action === "retry") {
-        fetchMock.mockImplementation(async (path: string) =>
-          Response.json(path === "/ui/data" ? { ...uiData("operator"), connectors: [connector] } : connector),
-        );
-        await store.retryLoad();
-        expect(store.getState().contract?.config.connectors[0]?.title).toBe("newer");
-      } else {
-        store.signOut();
-      }
-      expect(configSignal?.aborted).toBe(true);
-      expect(detailSignal?.aborted).toBe(true);
-      oldConfig.resolve(Response.json(contract("stale")));
-      oldDetail.resolve(Response.json({ ...connector, status: "auth_required" }));
-      await vi.advanceTimersByTimeAsync(60_000);
-      if (action === "retry") {
-        expect(store.getState().contract?.config.connectors[0]?.title).toBe("newer");
-        expect(store.getState().data?.connectors[0]?.status).toBe("ok");
-      } else {
-        expect(store.getState().session).toBe("gated");
-        expect(store.getState().data).toBeNull();
-        expect(store.getState().contract).toBeNull();
-      }
-      expect(configMock).toHaveBeenCalledTimes(action === "retry" ? 2 : 1);
-      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(action === "retry" ? 3 : 2);
-    },
-  );
+      await store.retryLoad();
+      expect(store.getState().contract?.config?.connectors[0]?.title).toBe("newer");
+    } else {
+      store.signOut();
+    }
+    expect(heldSignal?.aborted).toBe(true);
+    oldConfig.resolve(Response.json(contract("stale")));
+    oldDetail.resolve(Response.json({ ...connector, status: "auth_required" }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    if (action === "retry") {
+      expect(store.getState().contract?.config?.connectors[0]?.title).toBe("newer");
+      expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+    } else {
+      expect(store.getState().session).toBe("gated");
+      expect(store.getState().data).toBeNull();
+      expect(store.getState().contract).toBeNull();
+    }
+    expect(configMock).toHaveBeenCalledTimes(action === "retry" ? 3 : 2);
+    const summaries = (held === "config" ? 0 : 1) + (action === "retry" ? 1 : 0);
+    expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(summaries);
+  });
 
   it("INV-4: bounds gated Access retries and resumes admission checks on focus", async () => {
     const { store, fetchMock, windowListeners } = await loadStore(
@@ -1291,8 +1527,18 @@ describe("operator recovery bounds and snapshot ordering", () => {
   });
 
   it("INV-10: polls status for a bounded OAuth window without replaying authorization", async () => {
-    const { store, fetchMock } = await loadStore({ id: "a", getToken: async () => "a" });
-    const connector = { id: "svc", status: "auth_required", oauth: true, tools: [], toolCount: 0 };
+    const { store, fetchMock, declare } = await loadStore({
+      id: "a",
+      getToken: async () => "a",
+    });
+    declare(["svc"]);
+    const connector = {
+      id: "svc",
+      status: "auth_required",
+      oauth: true,
+      tools: [],
+      toolCount: 0,
+    };
     fetchMock.mockImplementation(async (path: string) =>
       Response.json(path === "/ui/data" ? { ...uiData("operator"), connectors: [connector] } : connector),
     );
@@ -1302,7 +1548,10 @@ describe("operator recovery bounds and snapshot ordering", () => {
     fetchMock.mockImplementation(async (path: string) =>
       Response.json(
         path.startsWith("/ui/oauth/")
-          ? { state: "auth_required", authorizationUrl: "https://provider.test/consent" }
+          ? {
+              state: "auth_required",
+              authorizationUrl: "https://provider.test/consent",
+            }
           : connector,
       ),
     );
@@ -1318,7 +1567,10 @@ describe("operator recovery bounds and snapshot ordering", () => {
   });
 
   it("INV-4: a newer catalog cycle fences a timed-out summary without aborting it", async () => {
-    const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
+    const { store, fetchMock, configMock } = await loadStore({
+      id: "a",
+      getToken: async () => "a",
+    });
     vi.useFakeTimers();
     fetchMock.mockResolvedValue(Response.json(uiData("operator")));
     await store.boot();
@@ -1335,19 +1587,31 @@ describe("operator recovery bounds and snapshot ordering", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getState().data?.serverInfo.name).toBe("operator");
     expect(store.getState().contractPhase).toBe("ready");
-    expect(configMock).toHaveBeenCalledTimes(2);
+    // Boot, the timed-out Retry's admission, and the newer catalog cycle.
+    expect(configMock).toHaveBeenCalledTimes(3);
   });
 
   it("INV-4 INV-10: publishes one catalog/auth revision and drops a late older refresh", async () => {
-    const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
-    const old = { id: "svc", status: "auth_required", problem: "oauth_required", oauth: true, tools: [], toolCount: 0 };
-    const live = { id: "svc", status: "ok", tools: [], catalogAgeMs: null, lastCall: null };
-    const contract = (row: object) => ({
-      schemaVersion: 1,
-      config: { connectors: [{ id: "svc" }] },
-      you: { permissions: { connectors: [] } },
-      live: { connectors: [row] },
+    const { store, fetchMock, configMock } = await loadStore({
+      id: "a",
+      getToken: async () => "a",
     });
+    const old = {
+      id: "svc",
+      status: "auth_required",
+      problem: "oauth_required",
+      oauth: true,
+      tools: [],
+      toolCount: 0,
+    };
+    const live = {
+      id: "svc",
+      status: "ok",
+      tools: [],
+      catalogAgeMs: null,
+      lastCall: null,
+    };
+    const contract = (row: object) => v2([{ id: "svc" }], [row as LiveConnector]);
     configMock.mockImplementation(async () => Response.json(contract(old)));
     fetchMock.mockImplementation(async (path: string) =>
       Response.json(path === "/ui/data" ? { ...uiData("operator"), connectors: [old] } : old),
@@ -1380,5 +1644,213 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(store.getState().data?.connectors[0]?.status).toBe("ok");
     expect(seen).not.toContain("ok/auth_required");
     expect(seen).not.toContain("auth_required/ok");
+  });
+});
+
+describe("operator role changes", () => {
+  const PRIVILEGED = ["/ui/data", "/ui/connectors/", "/ui/api/activity", "/ui/access-tokens"];
+  const privileged = (paths: string[]) => paths.filter((path) => PRIVILEGED.some((prefix) => path.startsWith(prefix)));
+
+  /** A maintainer with a connector waiting on OAuth, activity and tokens all loaded. */
+  async function maintainerWithState() {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    loaded.declare(["github"]);
+    const waiting = { id: "github", status: "auth_required", oauth: true, tools: [], toolCount: 0 };
+    loaded.fetchMock.mockImplementation(async (path: string) => {
+      if (path === "/ui/data") return Response.json({ ...uiData("maintainer data"), connectors: [waiting] });
+      if (path.startsWith("/ui/connectors/")) return Response.json(waiting);
+      if (path.startsWith("/ui/api/activity")) return Response.json({ events: [{ connectorId: "maintainer event" }] });
+      if (path === "/ui/access-tokens")
+        return Response.json({ agents: [{ name: "maintainer token", state: "issued", issuedAt: NOW }] });
+      return Response.json({}, { status: 404 });
+    });
+    await loaded.store.boot();
+    await vi.waitFor(() => expect(loaded.store.getState().data?.connectors[0]?.status).toBe("auth_required"));
+    await loaded.store.loadActivity(true);
+    await loaded.store.loadAccessTokens();
+    expect(loaded.store.getState()).toMatchObject({ role: "maintainer", activityPhase: "ready", tokenPhase: "ready" });
+    return loaded;
+  }
+
+  /** Every way a member's page could still ask for maintainer data. */
+  async function tryPrivilegedReads(loaded: Awaited<ReturnType<typeof loadStore>>) {
+    // A focus return re-reads connectors waiting on OAuth, after its debounce.
+    loaded.windowListeners.get("focus")?.();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await loaded.store.refreshConnector("github");
+    await loaded.store.loadActivity(true);
+    await loaded.store.loadAccessTokens();
+    await loaded.store.rotateAgentToken("maintainer token");
+  }
+
+  it.each([
+    ["503", () => Response.json({ error: "unavailable" }, { status: 503 })],
+    ["network error", () => Promise.reject(new TypeError("Failed to fetch"))],
+  ] as const)(
+    "INV-4: maintainer, then a %s on refresh, then member drops every maintainer fact and request",
+    async (_name, failure) => {
+      const loaded = await maintainerWithState();
+      const { store, configMock, paths } = loaded;
+      configMock.mockImplementationOnce(failure as () => Promise<Response>);
+      await store.loadOperatorContract();
+      // The failure leaves no contract to read a role from, but the store remembers it.
+      expect(store.getState()).toMatchObject({ contract: null, contractPhase: "error", role: "maintainer" });
+
+      // The demotion is the deployment's, so every read after it says member.
+      configMock.mockImplementation(async () => contract("member"));
+      const generation = store.getState().generation;
+      await store.retryLoad();
+      // The reset admits the viewer again from the top; wait for that answer.
+      await vi.waitFor(() => expect(store.getState()).toMatchObject({ session: "ready", role: "member" }));
+      const member = store.getState();
+      expect(member.generation).toBeGreaterThan(generation);
+      expect(member).toMatchObject({
+        session: "ready",
+        role: "member",
+        data: null,
+        tokens: [],
+        activityEvents: [],
+        activityPhase: "idle",
+        tokenPhase: "idle",
+        connectorFailures: {},
+      });
+      expect(member.contract?.role).toBe("member");
+      expect(JSON.stringify(member)).not.toMatch(/maintainer (data|event|token)/);
+
+      paths.length = 0;
+      await tryPrivilegedReads(loaded);
+      expect(privileged(paths)).toEqual([]);
+    },
+  );
+
+  it("INV-4: a member promoted to maintainer loads maintainer data fresh", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, configMock, paths } = loaded;
+    configMock.mockResolvedValueOnce(contract("member"));
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("promoted data")));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "ready", role: "member", data: null });
+    expect(paths).toEqual([CONFIG]);
+    // Nothing maintainer-only goes out while the viewer is a member.
+    await tryPrivilegedReads(loaded);
+    expect(privileged(paths)).toEqual([]);
+
+    const generation = store.getState().generation;
+    await store.loadOperatorContract();
+    await vi.waitFor(() => expect(store.getState().data?.serverInfo.name).toBe("promoted data"));
+    expect(store.getState()).toMatchObject({ session: "ready", role: "maintainer" });
+    expect(store.getState().contract?.role).toBe("maintainer");
+    expect(store.getState().generation).toBeGreaterThan(generation);
+    // One contract read for the promotion, then the maintainer's data.
+    expect(paths.slice(-2)).toEqual([CONFIG, "/ui/data"]);
+  });
+});
+
+describe("operator privileged requests", () => {
+  it("INV-4: withholds a token read whose contract failed while its session token was read", async () => {
+    // The first token lookup after boot is held; every other one answers at once.
+    let held: ReturnType<typeof deferred<string>> | null = null;
+    const loaded = await loadStore({
+      id: "session",
+      getToken: () => {
+        const hold = held;
+        held = null;
+        return hold ? hold.promise : Promise.resolve("token");
+      },
+    });
+    const { store, fetchMock, configMock, paths } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockImplementation(async () =>
+      Response.json({ agents: [{ name: "maintainer token", state: "issued", issuedAt: NOW }] }),
+    );
+
+    const token = deferred<string>();
+    held = token;
+    const listing = store.loadAccessTokens();
+    expect(held).toBeNull();
+    // A refresh answers 503 while the token list waits on its session token.
+    configMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
+    await store.loadOperatorContract();
+    expect(store.getState()).toMatchObject({ contract: null, contractPhase: "error" });
+
+    token.resolve("token");
+    await listing;
+    expect(paths.filter((path) => path.startsWith("/ui/access-tokens"))).toEqual([]);
+    expect(store.getState().tokens).toEqual([]);
+    expect(store.getState().tokenPhase).toBe("error");
+  });
+});
+
+describe("operator connection writes", () => {
+  const writes = (paths: string[]) =>
+    paths.filter((path) => path.startsWith("/ui/credentials/") || path.startsWith("/ui/oauth/"));
+
+  it.each(["credential save", "OAuth connect"] as const)(
+    "INV-4: withholds the %s whose contract failed while its session token was read",
+    async (kind) => {
+      // The first token lookup after boot is held; every other one answers at once.
+      let held: ReturnType<typeof deferred<string>> | null = null;
+      const loaded = await loadStore({
+        id: "session",
+        getToken: () => {
+          const hold = held;
+          held = null;
+          return hold ? hold.promise : Promise.resolve("token");
+        },
+      });
+      const { store, fetchMock, configMock, paths } = loaded;
+      loaded.declare(["svc"]);
+      await bootMaintainer(loaded);
+      fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+
+      const token = deferred<string>();
+      held = token;
+      const write =
+        kind === "credential save"
+          ? store.saveCredential("svc", { value: "typed" })
+          : store.startOAuth("svc", "continue");
+      expect(held).toBeNull();
+      // A refresh answers 503 while the write waits on its session token.
+      configMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
+      await store.loadOperatorContract();
+      expect(store.getState()).toMatchObject({ contract: null, contractPhase: "error", role: "maintainer" });
+
+      token.resolve("token");
+      await write;
+      expect(writes(paths)).toEqual([]);
+      // Not sent, and the row says so.
+      const notice = kind === "credential save" ? store.getState().credentialNotice : store.getState().oauthNotice;
+      expect(notice?.tone).toBe("error");
+    },
+  );
+
+  it("INV-4: sends a maintainer's write on a connector the contract shows, and nothing else", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, paths } = loaded;
+    loaded.declare(["svc"]);
+    await bootMaintainer(loaded);
+    fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+    await store.saveCredential("svc", { value: "typed" });
+    await store.saveCredential("unlisted", { value: "typed" });
+    expect(writes(paths)).toEqual(["/ui/credentials/svc"]);
+    expect(store.getState().credentialNotice?.tone).toBe("error");
+  });
+
+  it("INV-4: a member writes only to their own personal connectors, with the actions manage names", async () => {
+    const { store, fetchMock, configMock, paths } = await loadStore({ id: "session", getToken: async () => "token" });
+    configMock.mockImplementation(async () => contract("member"));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "ready", role: "member" });
+    fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+    // Personal, and the action is in `manage.actions`: sent.
+    await store.startOAuth("slack", "continue");
+    await store.saveCredential("notion", { values: { token: "typed" } });
+    // Calendar may only disconnect; GitHub is shared; nothing else is listed.
+    await store.startOAuth("calendar", "continue");
+    await store.saveCredential("github", { value: "typed" });
+    await store.disconnectOAuth("drive");
+    expect(writes(paths)).toEqual(["/ui/oauth/slack?mode=continue", "/ui/credentials/notion"]);
+    expect(store.getState().oauthNotice?.tone).toBe("error");
+    expect(store.getState().credentialNotice?.tone).toBe("error");
   });
 });

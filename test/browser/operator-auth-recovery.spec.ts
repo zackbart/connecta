@@ -6,6 +6,7 @@ import { createTestConnecta } from "../helpers.js";
 import { cloudflareAccessAuth } from "../../src/auth/cloudflare-access.js";
 import { CredentialVault, encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
+import { contractV2 } from "../fixtures/operator-contract-v2-bridge.js";
 
 let server: Server;
 let origin: string;
@@ -46,8 +47,15 @@ test.beforeAll(async () => {
           : {}),
       },
     );
-    outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-    outgoing.end(Buffer.from(await response.arrayBuffer()));
+    // Until P6b of #837 serves contract v2, bridge the real v1 answer (test-only).
+    const body =
+      url.pathname === "/ui/api/config" && response.ok
+        ? Buffer.from(JSON.stringify(contractV2(await response.json())))
+        : Buffer.from(await response.arrayBuffer());
+    const headers = Object.fromEntries(response.headers);
+    delete headers["content-length"];
+    outgoing.writeHead(response.status, headers);
+    outgoing.end(body);
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -169,8 +177,12 @@ for (const delayed of ["config", "detail"] as const) {
     await page.clock.pauseAt(start);
     // Delay successful production-route responses on the browser's clock.
     // The other half also overlaps returns, and detail can outlast config.
+    // Admission reads the contract first, so the boot's own contract read,
+    // which precedes the refused summary, is not delayed.
+    let configReads = 0;
     await page.route("**/ui/**", async (route) => {
       const path = new URL(route.request().url()).pathname;
+      if (path === "/ui/api/config" && ++configReads === 1) return route.continue();
       const delay =
         path === "/ui/api/config"
           ? delayed === "config"
@@ -197,10 +209,10 @@ for (const delayed of ["config", "detail"] as const) {
     expect((await refused).status()).toBe(503);
     await expect(page.locator("#gate")).toBeVisible();
     await page.clock.runFor(2000);
-    await expect.poll(() => reads.filter((path) => path === "/ui/api/config").length).toBe(1);
-    // Wait for both response-delay timers before advancing the browser clock.
-    await expect(page.locator("html")).toHaveAttribute("data-delayed-reads", "3");
-    await expect(page.getByText("Loading configuration…", { exact: true })).toBeVisible();
+    await expect.poll(() => reads.filter((path) => path === "/ui/api/config").length).toBe(2);
+    // The recovery's contract read is delayed first; its details follow it.
+    await expect(page.locator("html")).toHaveAttribute("data-delayed-reads", "1");
+    await expect(page.locator("#gate")).toBeVisible();
     for (let i = 0; i < 11; i++) {
       await page.evaluate("window.dispatchEvent(new Event('focus'))");
       await page.clock.runFor(2100);
@@ -208,7 +220,8 @@ for (const delayed of ["config", "detail"] as const) {
     await expect(page.locator("#connectorView .conn-head")).toContainText("Connected");
     await expect(page.getByRole("button", { name: "Reconnect CRM", exact: true })).toBeVisible();
     expect(reads.filter((path) => path === "/ui/data")).toHaveLength(2);
-    expect(reads.filter((path) => path === "/ui/api/config")).toHaveLength(1);
+    // The boot's read and the recovery's, whose contract the details reuse.
+    expect(reads.filter((path) => path === "/ui/api/config")).toHaveLength(2);
     expect(reads.filter((path) => path === "/ui/connectors/oauth")).toHaveLength(1);
     expect(reads.filter((path) => path === "/ui/connectors/key")).toHaveLength(1);
     expect(reads.filter((path) => path.startsWith("/ui/oauth/"))).toHaveLength(0);
@@ -273,7 +286,9 @@ for (const stalled of ["summary", "config"] as const) {
       const start = new Date("2026-01-01T00:00:00Z");
       await page.clock.install({ time: start });
       await page.clock.pauseAt(start);
-      // Stall one read without honoring abort. Subsequent reads use real routes.
+      // Stall one read of the passive recovery without honoring abort; other
+      // reads use real routes. Admission reads the contract first, so the
+      // recovery's contract read is the second, and its summary the second.
       // Record the signal to verify physical cancellation as well as UI fencing.
       await page.addInitScript(`(() => {
         const target = ${JSON.stringify(stalled)};
@@ -287,7 +302,7 @@ for (const stalled of ["summary", "config"] as const) {
           if (path === "/ui/api/config") root.dataset.configReads = String(++configReads);
           if (
             (target === "summary" && path === "/ui/data" && summaryReads === 2) ||
-            (target === "config" && path === "/ui/api/config" && configReads === 1)
+            (target === "config" && path === "/ui/api/config" && configReads === 2)
           ) {
             root.dataset.stalledRead = "true";
             root.dataset.stalledAborted = String(init?.signal?.aborted);
@@ -310,17 +325,19 @@ for (const stalled of ["summary", "config"] as const) {
       await expect(page.locator("html")).toHaveAttribute("data-stalled-read", "true");
       await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
       await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
-      if (stalled === "config") await expect(page.getByText("Loading configuration…", { exact: true })).toBeVisible();
+      // Either stall leaves Access without an identity: the gate stays up.
+      await expect(page.locator("#gate")).toBeVisible();
+      const summaries = (n: number) => String(stalled === "summary" ? n : n - 1);
       if (action === "deadline") {
         for (let i = 0; i < 7; i++) {
           await page.evaluate("window.dispatchEvent(new Event('focus'))");
           await page.clock.runFor(2100);
         }
-        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "2");
+        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", summaries(2));
         await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
         await page.clock.runFor(300);
         await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
-        if (stalled === "config") await expect(page.getByText("Configuration couldn't be loaded")).toBeVisible();
+        await expect(page.locator("#gate")).toContainText("Cloudflare Access identity is unavailable");
         await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
         // The timed-out request still owns passive reads. Neither the retry
         // timer nor repeated returns may start a duplicate while it is pending.
@@ -328,21 +345,22 @@ for (const stalled of ["summary", "config"] as const) {
           await page.evaluate("window.dispatchEvent(new Event('focus'))");
           await page.clock.runFor(20_000);
         }
-        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "2");
-        expect(await page.locator("html").getAttribute("data-config-reads")).toBe(stalled === "summary" ? null : "1");
+        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", summaries(2));
+        await expect(page.locator("html")).toHaveAttribute("data-config-reads", "2");
         await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
       }
       if (action === "sign-out") {
-        await page.getByRole("button", { name: "Sign out", exact: stalled === "config" }).click();
+        await page.getByRole("button", { name: "Sign out of Cloudflare Access", exact: true }).click();
         await page.clock.runFor(100_000);
         await expect(page.locator("#gate")).toBeVisible();
-        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "2");
+        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", summaries(2));
       } else {
         await page.getByRole("button", { name: "Retry", exact: true }).click();
         await expect(page.getByRole("button", { name: "Reconnect CRM", exact: true })).toBeVisible();
         await page.clock.runFor(100_000);
-        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "3");
-        await expect(page.locator("html")).toHaveAttribute("data-config-reads", stalled === "summary" ? "1" : "2");
+        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", summaries(3));
+        // Boot, the stalled recovery and the Retry each read the contract first.
+        await expect(page.locator("html")).toHaveAttribute("data-config-reads", "3");
       }
       await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "true");
       expect(reads.filter((path) => path.startsWith("/ui/oauth/"))).toHaveLength(0);

@@ -1,28 +1,81 @@
-import { useRef, useState } from "react";
-import { endpointGroups } from "../endpoints.js";
+import { useRef, useState, type RefObject } from "react";
+import { endpointRows, runsAsLabel, type EndpointGroup, type EndpointRow } from "../endpoints.js";
 import { connectorStatusLabel, connectorStatusTone, driftState, type OperatorState } from "../view.js";
 import { clientServerName, clientSetupCommands } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
 import { Badge, CopyButton, StateBlock } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
-import { ContractState } from "./contract-state.js";
+import { ContractState, maintainerContract, useCloseOnRecovery } from "./contract-state.js";
 
-type Endpoint = {
+/** What the client setup drawer needs: a path, its absolute URL, and the name a client files it under. */
+export interface SetupTarget {
   label: string;
   path: string;
   url: string;
-  readOnly: boolean;
-  groups: ReturnType<typeof endpointGroups>;
   name: string;
-};
-type Group = Endpoint["groups"][number];
+}
 
-function EndpointLine({ url, label }: { url: string; label: string }) {
+export function EndpointLine({ url, label, kind }: { url: string; label: string; kind?: "agents" }) {
   return (
-    <div className="endpoint">
+    <div className={kind ? "endpoint endpoint-agent" : "endpoint"}>
+      {kind ? <span className="endpoint-kind">Agents</span> : null}
       <code>{url}</code>
-      <CopyButton value={url} label="Copy URL" icon ariaLabel={`Copy URL for ${label}`} />
+      <CopyButton
+        value={url}
+        label="Copy URL"
+        icon
+        ariaLabel={kind ? `Copy agent URL for ${label}` : `Copy URL for ${label}`}
+      />
     </div>
+  );
+}
+
+/** Absolute URL for an endpoint path, on the deployment's own origin. */
+export function endpointUrl(path: string): string {
+  return new URL(path, mcpUrl).href;
+}
+
+export function ClientSetupDialog({
+  target,
+  onClose,
+  returnFocus,
+}: {
+  target: SetupTarget | null;
+  onClose: () => void;
+  returnFocus: RefObject<HTMLElement | null>;
+}) {
+  return (
+    <Dialog
+      drawer
+      returnFocusTo={returnFocus}
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title="Client setup"
+      description="Connect your MCP client to this endpoint."
+    >
+      {target ? (
+        <section className="setup-list">
+          <h3>{target.path}</h3>
+          <EndpointLine url={target.url} label={target.label} />
+          {clientSetupCommands(target.name, target.url).map((command) => (
+            <div className="setup-item" key={command.id} data-setup={command.id}>
+              <div className="setup-head">
+                <span>{command.label}</span>
+                <CopyButton
+                  value={command.text}
+                  label="Copy"
+                  ariaLabel={`Copy ${command.label} setup for ${target.label}`}
+                />
+              </div>
+              <pre className="setup-code">{command.text}</pre>
+            </div>
+          ))}
+        </section>
+      ) : null}
+      <p className="meta">No token is included. Use your deployment's inbound sign-in or an issued client token.</p>
+    </Dialog>
   );
 }
 
@@ -30,7 +83,7 @@ function EndpointLine({ url, label }: { url: string; label: string }) {
  * Connector health lives on Connectors. Here a connector that is not fine
  * gets a dot and a link to its Connection tab; a healthy one gets neither.
  */
-function ConnectorName({ group, state }: { group: Group; state: OperatorState }) {
+function ConnectorName({ group, state }: { group: EndpointGroup; state: OperatorState }) {
   const { config, live } = group;
   const local = state.connectorFailures[config.id];
   const drift = driftState(state.data?.connectors.find((c) => c.id === config.id)?.catalogDrift) === "warning";
@@ -52,8 +105,8 @@ function ConnectorName({ group, state }: { group: Group; state: OperatorState })
   );
 }
 
-function EndpointTools({ endpoint, state }: { endpoint: Endpoint; state: OperatorState }) {
-  if (!endpoint.groups.length) return <StateBlock>No connectors are visible on this endpoint.</StateBlock>;
+function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: OperatorState }) {
+  if (!endpoint.groups.length) return <StateBlock>No connectors are granted on this endpoint.</StateBlock>;
   return (
     <table className="endpoint-breakdown" aria-label={`Tools on ${endpoint.path}`}>
       <thead>
@@ -69,7 +122,9 @@ function EndpointTools({ endpoint, state }: { endpoint: Endpoint; state: Operato
             <td>
               <ConnectorName group={group} state={state} />
             </td>
-            <td className="endpoint-runs-as">{group.config.authScope === "personal" ? "Personal" : "Shared"}</td>
+            <td className="endpoint-runs-as">
+              {group.runsAs ? runsAsLabel(group.runsAs) : group.config.authScope === "personal" ? "Personal" : "Shared"}
+            </td>
             <td>
               {group.tools.length ? (
                 <ul className="endpoint-tools">
@@ -92,30 +147,13 @@ function EndpointTools({ endpoint, state }: { endpoint: Endpoint; state: Operato
 }
 
 export function EndpointsPage({ state }: { state: OperatorState }) {
-  const [setup, setSetup] = useState<Endpoint | null>(null);
+  const [setup, setSetup] = useState<SetupTarget | null>(null);
+  useCloseOnRecovery(state, () => setSetup(null));
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const returnFocus = useRef<HTMLElement | null>(null);
-  const contract = state.contract;
-  const endpoints: Endpoint[] = contract
-    ? [
-        {
-          label: "Default",
-          path: "/mcp",
-          url: mcpUrl,
-          readOnly: contract.you.readOnly,
-          groups: endpointGroups(contract, contract.you.grants, contract.you.readOnly),
-          name: clientServerName(contract.config.server.name),
-        },
-        ...contract.you.pools.map((pool) => ({
-          label: pool.name,
-          path: pool.path,
-          url: new URL(pool.path, mcpUrl).href,
-          readOnly: pool.readOnly,
-          groups: endpointGroups(contract, pool.grants, pool.readOnly, pool.name),
-          name: clientServerName(contract.config.server.name, pool.name),
-        })),
-      ]
-    : [];
+  const contract = maintainerContract(state);
+  const endpoints = contract ? endpointRows(contract) : [];
+  const serverName = contract?.config?.server.name;
   const toggle = (path: string) =>
     setOpen((current) => {
       const next = new Set(current);
@@ -148,6 +186,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
           {endpoints.map((endpoint, index) => {
             const expanded = open.has(endpoint.path);
             const panel = `endpoint-tools-${index}`;
+            const url = endpointUrl(endpoint.path);
             return (
               <section
                 className={expanded ? "endpoint-entry open" : "endpoint-entry"}
@@ -168,11 +207,14 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                       <code>{endpoint.path}</code>
                       <span className="meta">{endpoint.label}</span>
                     </button>
-                    <EndpointLine url={endpoint.url} label={endpoint.label} />
+                    <EndpointLine url={url} label={endpoint.label} />
+                    {endpoint.agentPath ? (
+                      <EndpointLine url={endpointUrl(endpoint.agentPath)} label={endpoint.label} kind="agents" />
+                    ) : null}
                   </div>
                   <span className="endpoint-count">
                     <span className="visually-hidden">Tools: </span>
-                    {endpoint.groups.reduce((n, g) => n + g.tools.length, 0)}
+                    {endpoint.toolCount}
                   </span>
                   <Badge tone={endpoint.readOnly ? "accent" : "neutral"}>
                     {endpoint.readOnly ? "read-only" : "rw"}
@@ -182,7 +224,12 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                     className="endpoint-setup"
                     onClick={(event) => {
                       returnFocus.current = event.currentTarget;
-                      setSetup(endpoint);
+                      setSetup({
+                        label: endpoint.label,
+                        path: endpoint.path,
+                        url,
+                        name: clientServerName(serverName, endpoint.pool ?? undefined),
+                      });
                     }}
                     aria-label={`Client setup for ${endpoint.label}`}
                   >
@@ -198,37 +245,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
           })}
         </div>
       )}
-      <Dialog
-        drawer
-        returnFocusTo={returnFocus}
-        open={setup !== null}
-        onOpenChange={(open) => {
-          if (!open) setSetup(null);
-        }}
-        title="Client setup"
-        description="Connect your MCP client to this endpoint."
-      >
-        {setup ? (
-          <section className="setup-list">
-            <h3>{setup.path}</h3>
-            <EndpointLine url={setup.url} label={setup.label} />
-            {clientSetupCommands(setup.name, setup.url).map((command) => (
-              <div className="setup-item" key={command.id} data-setup={command.id}>
-                <div className="setup-head">
-                  <span>{command.label}</span>
-                  <CopyButton
-                    value={command.text}
-                    label="Copy"
-                    ariaLabel={`Copy ${command.label} setup for ${setup.label}`}
-                  />
-                </div>
-                <pre className="setup-code">{command.text}</pre>
-              </div>
-            ))}
-          </section>
-        ) : null}
-        <p className="meta">No token is included. Use your deployment's inbound sign-in or an issued client token.</p>
-      </Dialog>
+      <ClientSetupDialog target={setup} onClose={() => setSetup(null)} returnFocus={returnFocus} />
     </section>
   );
 }
