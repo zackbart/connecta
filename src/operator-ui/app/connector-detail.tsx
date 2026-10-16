@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { OperatorState } from "../view.js";
-import { activityReadable, connectorStatusLabel, connectorStatusTone } from "../view.js";
+import { activityReadable } from "../view.js";
 import { Pill, pillStatus, StateBlock } from "./parts.js";
 import { Button, Card, Tabs } from "./primitives.js";
 import { Icon } from "./icons.js";
