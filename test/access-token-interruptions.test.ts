@@ -58,6 +58,18 @@ function predictableSecret(): string {
   );
 }
 
+/** Wrap storage so every call is counted, and calls on matching keys can be held. */
+function counted(base: KVStorage, hold?: (operation: Operation, key: string) => Promise<void> | undefined) {
+  const calls: string[] = [];
+  const storage = hooked(base, {
+    before: async (operation, key) => {
+      calls.push(`${operation} ${key}`);
+      await hold?.(operation, key);
+    },
+  });
+  return { storage, calls };
+}
+
 /** A promise the test resolves, and one that resolves when code reaches a point. */
 function latch() {
   let open!: () => void;
@@ -137,43 +149,6 @@ describe("cancelled rotations", () => {
     // An operator rotates again to recover.
     vi.restoreAllMocks();
     expect(await admits(seed, (await seed.rotate("simon")).token)).toBe(true);
-  });
-
-  it("INV-7: an abort while the previous record's collection is stalled revokes the slot at once", async () => {
-    const base = memoryStorage();
-    const seed = new AccessTokenManager(base, { agents: ["simon"] });
-    const previous = await seed.rotate("simon");
-    const previousKey = `${RECORDS}${(await slotOf(base))!.tokenId}`;
-    const stalled = latch();
-    const stall = latch();
-    const controller = new AbortController();
-    const storage = hooked(base, {
-      before: async (operation, key) => {
-        if (operation === "get" && key === previousKey) {
-          stalled.open();
-          await stall.opened;
-        }
-      },
-    });
-    const secret = predictableSecret();
-    try {
-      const rotation = new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon", "operator", {
-        signal: controller.signal,
-      });
-      const outcome = rotation.then(
-        () => "delivered",
-        (error: { code?: string }) => error.code,
-      );
-      await stalled.opened;
-      controller.abort();
-      // The stall is still holding: nothing waits on it.
-      expect(await outcome).toBe("aborted");
-      expect(await admits(seed, secret)).toBe(false);
-      expect(await admits(seed, previous.token)).toBe(false);
-      expect((await slotOf(base))?.state).toBe("revoked");
-    } finally {
-      stall.open();
-    }
   });
 
   it("INV-7: a transient read failure while revoking after the commit resolves or reports the outcome unknown", async () => {
@@ -284,7 +259,7 @@ describe("cancelled revocations", () => {
     const signal = AbortSignal.abort();
     for (const operation of [
       () => manager.rotate("simon", "operator", { signal }),
-      () => manager.revoke("simon", "operator", { signal }),
+      () => manager.revoke("simon", { signal }),
       () => manager.adopt(fixture.unbound.accessToken.id, "legacy", { signal }),
     ]) {
       await expect(operation()).rejects.toMatchObject({ code: "aborted" });
@@ -305,7 +280,7 @@ describe("cancelled revocations", () => {
       },
     });
     await expect(
-      new AccessTokenManager(storage, { agents: ["simon"] }).revoke("simon", "operator", {
+      new AccessTokenManager(storage, { agents: ["simon"] }).revoke("simon", {
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ code: "aborted" });
@@ -315,7 +290,7 @@ describe("cancelled revocations", () => {
 });
 
 describe("garbage the slot does not name", () => {
-  it("INV-4: a lost commit answer and failed collection leave the previous token inert and the new one delivered", async () => {
+  it("INV-4: a lost commit answer is read back, and the previous token's surviving lookup and record are inert", async () => {
     const base = memoryStorage();
     const seed = new AccessTokenManager(base, { agents: ["simon"] });
     const previous = await seed.rotate("simon");
@@ -461,5 +436,160 @@ describe("interrupted adoption", () => {
       { state: "issued" },
     );
     expect(await admits(manager, unbound.token)).toBe(true);
+  });
+});
+
+describe("the reconciliation deadline", () => {
+  it("INV-7: a stalled read after the commit reports outcome_unknown by the deadline and starts nothing after it", async () => {
+    const base = memoryStorage();
+    const seed = new AccessTokenManager(base, { agents: ["simon"] });
+    await seed.rotate("simon");
+    const controller = new AbortController();
+    const stall = latch();
+    let committed = false;
+    const { storage, calls } = counted(base, (operation, key) => {
+      if (operation === "compareAndSet" && key === SLOT) {
+        committed = true;
+        controller.abort();
+        return undefined;
+      }
+      return committed && key === SLOT ? stall.opened : undefined;
+    });
+    try {
+      const started = Date.now();
+      await expect(
+        new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon", "operator", {
+          signal: controller.signal,
+          deadline: Date.now() + 300,
+        }),
+      ).rejects.toMatchObject({ code: "outcome_unknown" });
+      expect(Date.now() - started).toBeLessThan(1_500);
+      const settled = calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(calls.length).toBe(settled);
+    } finally {
+      stall.open();
+    }
+  });
+
+  it("INV-7: a stalled adoption lookup step reports outcome_unknown by the deadline, and a rerun completes it", async () => {
+    const base = await legacyStorage();
+    const digest = JSON.parse(
+      fixture.records[`${RECORDS}${fixture.unbound.accessToken.id}` as keyof typeof fixture.records],
+    ).tokenHash;
+    const stall = latch();
+    const { storage, calls } = counted(base, (operation, key) =>
+      key === `${LOOKUPS}${digest}` && calls.some((call) => call === "compareAndSet access-token:v1:agent:legacy")
+        ? stall.opened
+        : undefined,
+    );
+    try {
+      const started = Date.now();
+      await expect(
+        new AccessTokenManager(storage, { agents: ["legacy"] }).adopt(fixture.unbound.accessToken.id, "legacy", {
+          deadline: Date.now() + 300,
+        }),
+      ).rejects.toMatchObject({ code: "outcome_unknown" });
+      expect(Date.now() - started).toBeLessThan(1_500);
+      const settled = calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(calls.length).toBe(settled);
+    } finally {
+      stall.open();
+    }
+    const manager = new AccessTokenManager(base, { agents: ["legacy"] });
+    await expect(manager.adopt(fixture.unbound.accessToken.id, "legacy")).resolves.toMatchObject({ state: "issued" });
+    expect(await admits(manager, fixture.unbound.token)).toBe(true);
+  });
+
+  it("INV-7: an already aborted signal performs no storage call at all", async () => {
+    const base = await legacyStorage();
+    await new AccessTokenManager(base, { agents: ["simon"] }).rotate("simon");
+    const { storage, calls } = counted(base);
+    const manager = new AccessTokenManager(storage, { agents: ["simon", "legacy"] });
+    const signal = AbortSignal.abort();
+    for (const operation of [
+      () => manager.rotate("simon", "operator", { signal }),
+      () => manager.revoke("simon", { signal }),
+      () => manager.adopt(fixture.unbound.accessToken.id, "legacy", { signal }),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({ code: "aborted" });
+    }
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("no request-path deletion", () => {
+  it("INV-4: rotate, revoke and adopt never delete a lookup or record they did not just write", async () => {
+    const base = await legacyStorage();
+    const removed: string[] = [];
+    const storage: KVStorage = {
+      ...base,
+      delete: async (key) => {
+        removed.push(key);
+        return base.delete(key);
+      },
+      compareAndSet: async (key, expected, next, options) => {
+        if (next === null) removed.push(key);
+        return base.compareAndSet(key, expected, next, options);
+      },
+    };
+    const manager = new AccessTokenManager(storage, { agents: ["simon", "legacy"] });
+    const lookups = async () => new Set(await base.list(LOOKUPS));
+    for (const operation of [
+      () => manager.rotate("simon"),
+      () => manager.rotate("simon"),
+      () => manager.revoke("simon"),
+      () => manager.adopt(fixture.unbound.accessToken.id, "legacy"),
+      () => manager.rotate("legacy"),
+      () => manager.revoke("legacy"),
+    ]) {
+      const before = await lookups();
+      await operation();
+      const after = await lookups();
+      for (const key of before) expect(after.has(key), key).toBe(true);
+    }
+    expect(removed).toEqual([]);
+  });
+
+  it("INV-4: a rotation of the losing agent cannot delete the lookup the winning adoption took", async () => {
+    const base = await legacyStorage();
+    const agents = { agents: ["winner", "loser"] };
+    const loserSlot = "access-token:v1:agent:loser";
+    const beforeCommit = latch();
+    const afterCommit = latch();
+    const loserCommitted = latch();
+    const loserStorage = hooked(base, {
+      before: async (operation, key) => {
+        if (operation === "compareAndSet" && key === loserSlot) await beforeCommit.opened;
+      },
+      after: async (operation, key) => {
+        if (operation === "compareAndSet" && key === loserSlot) {
+          loserCommitted.open();
+          await afterCommit.opened;
+        }
+      },
+    });
+    // The loser passes its checks and waits at its commit.
+    const loser = new AccessTokenManager(loserStorage, agents).adopt(fixture.unbound.accessToken.id, "loser").then(
+      () => "adopted",
+      (error: { code?: string }) => error.code,
+    );
+    await expect.poll(async () => (await base.list(RECORDS)).length).toBe(4);
+    // The winner adopts the same token completely and takes the lookup.
+    await expect(
+      new AccessTokenManager(base, agents).adopt(fixture.unbound.accessToken.id, "winner"),
+    ).resolves.toMatchObject({ state: "issued" });
+    // The loser commits its slot, then a rotation and a revocation of it run
+    // before it finishes.
+    beforeCommit.open();
+    await loserCommitted.opened;
+    const manager = new AccessTokenManager(base, agents);
+    await manager.rotate("loser");
+    await manager.revoke("loser");
+    afterCommit.open();
+    expect(await loser).toBe("conflict");
+    const authz = await manager.auth.authorize(request(fixture.unbound.token), BASE);
+    expect(authz).toMatchObject({ ok: true, agent: "winner" });
   });
 });

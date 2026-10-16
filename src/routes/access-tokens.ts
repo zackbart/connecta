@@ -45,7 +45,7 @@ export async function routeAccessTokens(context: RouteContext, manager: AccessTo
       return privateJson(await manager.rotate(name, operator, { signal }));
     }
     if (name && request.method === "DELETE") {
-      return privateJson({ agent: await manager.revoke(name, operator, { signal }) });
+      return privateJson({ agent: await manager.revoke(name, { signal }) });
     }
     return privateJson({ error: "method not allowed" }, { status: 405 });
   } catch (error) {

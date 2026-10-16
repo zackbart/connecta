@@ -317,7 +317,7 @@ describe("deployment shapes", () => {
       const { token: rotated } = await manager.rotate("local-machine", "local-provisioning");
       expect((await initialize(token)).status).toBe(401);
       expect((await initialize(rotated)).status).toBe(200);
-      await manager.revoke("local-machine", "local-provisioning");
+      await manager.revoke("local-machine");
       expect((await initialize(rotated)).status).toBe(401);
     } finally {
       await app.close();

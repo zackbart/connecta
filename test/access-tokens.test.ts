@@ -253,7 +253,8 @@ describe("rotation and revocation", () => {
     const second = await manager.rotate("simon");
     expect(await admits(manager, first.token)).toBe(false);
     expect(await admits(manager, second.token)).toBe(true);
-    expect(await storage.list("access-token:v1:lookup:")).toHaveLength(1);
+    // The previous lookup stays behind, inert: the slot no longer names it.
+    expect(await storage.list("access-token:v1:lookup:")).toHaveLength(2);
   });
 
   it("INV-4: of concurrent rotations exactly one returns a secret, and it is the only live one", async () => {
@@ -274,13 +275,14 @@ describe("rotation and revocation", () => {
     const winner = (won[0] as PromiseFulfilledResult<{ token: string }>).value.token;
     expect(await admits(seed, winner)).toBe(true);
     expect(await admits(seed, previous.token)).toBe(false);
-    expect(await base.list("access-token:v1:lookup:")).toHaveLength(1);
+    // The previous token and the winner; each loser removed its uncommitted pair.
+    expect(await base.list("access-token:v1:lookup:")).toHaveLength(2);
   });
 
   it("INV-4: a revocation racing a rotation leaves no live secret", async () => {
     const base = memoryStorage();
     const seed = new AccessTokenManager(base, { agents: ["simon"] });
-    await seed.rotate("simon");
+    const first = await seed.rotate("simon");
     const storage = barrierStorage(base, "access-token:v1:agent:simon", 2);
     const [rotated, revoked] = await Promise.allSettled([
       new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon"),
@@ -288,11 +290,12 @@ describe("rotation and revocation", () => {
     ]);
     expect(revoked).toMatchObject({ status: "fulfilled", value: { state: "revoked" } });
     if (rotated.status === "fulfilled") expect(await admits(seed, rotated.value.token)).toBe(false);
-    expect(await base.list("access-token:v1:lookup:")).toEqual([]);
+    // Every lookup that survives is inert: no secret admits.
+    expect(await admits(seed, first.token)).toBe(false);
     expect(await seed.list()).toEqual([{ name: "simon", state: "revoked", revokedAt: expect.any(String) }]);
   });
 
-  it("INV-4: revocation commits on the slot first and only then collects the record and lookup", async () => {
+  it("INV-4: revocation is one slot commit and deletes nothing", async () => {
     const base = memoryStorage();
     const manager = new AccessTokenManager(base, { agents: ["simon"] });
     const { token } = await manager.rotate("simon");
@@ -309,9 +312,11 @@ describe("rotation and revocation", () => {
       },
     };
     await new AccessTokenManager(storage, { agents: ["simon"] }).revoke("simon");
-    expect(order).toEqual(["swap agent", "swap lookup", "delete record"]);
+    expect(order).toEqual(["swap agent"]);
     expect(await admits(manager, token)).toBe(false);
-    expect(await base.list("access-token:v1:")).toEqual(["access-token:v1:agent:simon"]);
+    // Nothing is deleted: the record and lookup stay behind, inert.
+    expect(await base.list("access-token:v1:lookup:")).toHaveLength(1);
+    expect(await base.list("access-token:v1:record:")).toHaveLength(1);
   });
 
   it("INV-4: an interrupted rotation never leaves a live secret nobody holds", async () => {

@@ -149,20 +149,35 @@ outcome depends on cleanup or on undoing a write.
   returns a secret; the others publish nothing and fail with a conflict (409
   on the route). An unanswered commit is read back, never assumed or replayed.
   If the request has ended once the commit is decided, the secret cannot be
-  delivered, so the slot moves forward to `revoked` by a compare-and-set
-  retried a bounded number of times; if even that cannot be settled, the call
-  fails with "rotation outcome unknown; rotate again" (503 on the route), never
-  success. An operator then rotates again.
+  delivered, so the slot moves forward to `revoked` by compare-and-set; if that
+  cannot be settled, the call fails with "rotation outcome unknown; rotate
+  again" (503 on the route), never success. An operator then rotates again.
 - **Revoke** reads the slot, checks the signal, and compare-and-sets it to
   `revoked`. An abort before that commit changes nothing.
-- **Garbage collection.** After the response is decided, the previous or
-  revoked record and its lookup are deleted, best effort, bounded by a short
-  timeout and awaited inside the request. A failed or stalled collection
-  leaves only inert data; nothing waits on it before the commit or the abort
-  check, and none is started after the request has ended.
+- **Nothing is deleted on the request path.** Rotate, revoke, and adopt never
+  delete or compare-and-set away a lookup or record, except the record and
+  lookup the same call just wrote while they are known to be uncommitted, each
+  removed by one conditional delete. Previous, revoked, and superseded records
+  and lookups stay behind, inert, because no slot names them. Storage therefore
+  grows by one small record (and, for rotation, one lookup) per rotation or
+  adoption, bounded by the number of agents times their rotations. An operator
+  maintenance sweep for this inert data is follow-up work.
+- **One reconciliation deadline.** Everything after a commit (reading back an
+  unanswered commit, revoking an undeliverable rotation, completing an
+  adoption's lookup step) runs against one wall-clock deadline set at the
+  commit: 2 seconds, or the request's own `deadline` option if sooner. Each
+  storage call is raced against it and none starts after it; at the deadline
+  the call reports `outcome_unknown`. An operation still in flight then is
+  abandoned rather than cancelled, which is safe: it can only be a read; the
+  revoke compare-and-set from `issued` naming one record to `revoked`, which
+  can only stop a token and fails if the slot changed; or the adoption
+  compare-and-set of a lookup from the legacy record to the new one, which
+  fails if anyone else moved it. If an abandoned revoke never lands, the
+  undelivered rotation secret may keep admitting, but it never left the server:
+  a liveness problem reported as `outcome_unknown`, never a credential exposure.
 
 The routes pass the request's `AbortSignal` to `rotate`, `revoke`, and `adopt`
-(`{ signal }`). Authorization caches no token, and D1 and SQLite are strongly
+(`{ signal }`); a signal already aborted performs no storage call at all. Authorization caches no token, and D1 and SQLite are strongly
 consistent; admitted requests are not recalled. Management writes require an
 exact same-origin Origin; responses are private and non-cacheable.
 
