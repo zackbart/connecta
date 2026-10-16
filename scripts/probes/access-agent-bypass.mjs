@@ -6,9 +6,9 @@
 // applications are only counted and compared, never changed.
 // Requires `cf` authenticated for Access application, policy, service-token,
 // and Workers script writes. Every cf call names its auth profile explicitly
-// (--profile, default onemany); Wrangler is used only to build the Worker for
-// `cf deploy` and needs no login.
-// Usage: node scripts/probes/access-agent-bypass.mjs [--profile <name>] [output.json]
+// (--profile, required, with no default); Wrangler is used only to build the
+// Worker for `cf deploy` and needs no login.
+// Usage: node scripts/probes/access-agent-bypass.mjs --profile <name> [output.json]
 //        node scripts/probes/access-agent-bypass.mjs --self-test
 import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, readFile, rm, mkdir } from "node:fs/promises";
@@ -773,9 +773,12 @@ async function teardown(account, { name, state, workerId, beforeIds, inventory }
 // The live probe.
 // ---------------------------------------------------------------------------
 async function probe(argv) {
+  // No default: the probe creates and deletes resources in whichever account
+  // the profile names, so the caller always says which one.
   const profileFlag = argv.indexOf("--profile");
-  const profile = profileFlag === -1 ? "onemany" : argv.splice(profileFlag, 2)[1];
-  if (!profile) throw new ProbeError("--profile needs a value");
+  if (profileFlag === -1) throw new ProbeError("--profile <name> is required: name the cf auth profile to probe with");
+  const profile = argv.splice(profileFlag, 2)[1];
+  if (!profile || profile.startsWith("--")) throw new ProbeError("--profile needs a value");
   const output = resolve(argv[0] ?? join(root, "eval/results/access-agent-bypass.json"));
   // cf deploy builds through Wrangler and requires 4.136.0 or newer, newer than
   // the repository's pinned devDependency, so the probe project installs its own.
@@ -944,7 +947,7 @@ export default {
 
   const PATHS = [
     "/agent/x",
-    "/agent/simon-zack",
+    "/agent/assistant-alice",
     "/mcp",
     "/",
     "/agent",
@@ -1132,7 +1135,7 @@ export default {
       "path bypass active",
       [
         { path: "/agent/x", expect: reachesWorker("path") },
-        { path: "/agent/simon-zack", expect: reachesWorker("path") },
+        { path: "/agent/assistant-alice", expect: reachesWorker("path") },
         { path: "/mcp", expect: denied },
         { path: "/", expect: denied },
         { path: "/mcp", credential: "service-token", expect: reachesWorker("worker-level") },

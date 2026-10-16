@@ -16,7 +16,7 @@ records the work still needed; a goal is not a claim that it has shipped.
    write, and tells the host truthfully. Approval belongs to the host. Each
    endpoint answers one question, set in deployment code: can it write.
 4. **Configuration is code.** Deployment source defines connectors,
-   identities, pools, and grants. The operator UI shows configuration and
+   maintainers, agents, and pools with their members. The operator UI shows configuration and
    manages auth material, never capability.
 5. **One core, two runtimes.** A Web-API core runs on Node and Cloudflare
    Workers, with one storage shape per platform: one D1 database on Workers,
@@ -41,7 +41,8 @@ The full Node run checks the executed test tree, including runtime skips.
 - **INV-1: Fail-closed classification.** Missing, false, or contradictory
   read annotations classify as writes unless deployment config or a current
   provider review supplies a verdict. Stale reviewed schemas fail closed.
-- **INV-2: Writes respect the endpoint.** A `readOnly` endpoint omits write
+- **INV-2: Writes respect the endpoint.** Each endpoint (plain `/mcp`, and a
+  pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write
   tools from search and describe and refuses every write call on every path
   before validation or dispatch; guides may still name them. A writable endpoint sends writes only through
   `call_destructive_tool` and programs, and annotates `execute_code` as a
@@ -49,8 +50,9 @@ The full Node run checks the executed test tree, including runtime skips.
 - **INV-3: Generated code mints nothing.** No connectors, grants, downstream
   subject choice, client-dereferenceable URIs, or credentials. Enforcement
   lives below the sandbox.
-- **INV-4: No request widens its own scope.** Identity, grants, and pool
-  limits come from admitted auth and deployment code, never arguments.
+- **INV-4: No request widens its own scope.** Identity, maintainers, pool
+  membership, pool tools, and pool owners come from admitted auth and
+  deployment code, never arguments.
 - **INV-5: Credentials stay home.** Encrypt stored downstream credentials,
   partition them by connector and owner, and render them nowhere.
 - **INV-6: Payload-free records.** Activity, logs, and status carry no

@@ -92,7 +92,7 @@ export default defineConfig((env: Env) => {
     // Machine clients are agents declared here by name, each with one cta_
     // token. An Access-authenticated operator issues, rotates, and revokes it
     // in the operator UI; removing a name stops its token on the next request.
-    agents: ["ci-client"],
+    agents: ["ci"],
     // Always installed over the same D1 storage. An agent with no issued token
     // admits nothing.
     accessTokens: accessTokens(storage),
@@ -105,8 +105,10 @@ export default defineConfig((env: Env) => {
       .filter(Boolean),
     // Everyone else uses a pool that lists them, which serves exactly its
     // tools: people at /mcp/<name>, agents at /agent/<name>. Members are
-    // Access user ids or "agent:<name>".
-    pools: { ci: { tools: ["echo"], members: ["agent:ci-client"] } },
+    // Access user ids or "agent:<name>". The starter pool is the agent's base
+    // pool (shared connectors, no owner), named after the agent as the agent
+    // pool layout requires.
+    pools: { ci: { tools: ["echo"], members: ["agent:ci"] } },
     // Connectors that declare a `credential` slot become editable by a
     // maintainer (shared) or by the member it belongs to (personal),
     // encrypted with this key before anything reaches D1. A saved replacement

@@ -25,7 +25,7 @@ warning, and npm 12 does not block the script. A later esbuild version needs a
 new explicit review and approval; do not replace the pinned entry with a broad
 package-name approval.
 
-Point an agent's MCP client at `http://localhost:8787/agent/local`, the agent
+Point an agent's MCP client at `http://localhost:8787/agent/local-machine`, the agent
 endpoint of the pool that lists `agent:local-machine`, with
 `Authorization: Bearer <returned-cta-token>`. Agents use only `/agent/<pool>`:
 `/mcp` and `/mcp/<pool>` are for people and refuse `cta_` tokens, and plain
@@ -294,6 +294,7 @@ Upgrading from v0.23 does not require rotating managed `cta_…` tokens. Import
 `accessTokens: true` with `accessTokens: accessTokens(storage)`, and keep the
 same persistent storage namespace. From 0.33 `maintainers` and pool `members`
 replace `identity.connectorAccess` and every `grant`, and maintainers replace
-the four `identity` management permissions; delete them. From 0.33 a stored token admits only once it is bound to a
+the four `identity` management permissions; delete them and the `identity`
+section, and follow the package's `documentation/migration-0.33.md`. From 0.33 a stored token admits only once it is bound to a
 declared agent: follow "Tokens issued before agents" above. See the package's
 `documentation/auth.md` for the migration and storage requirements.

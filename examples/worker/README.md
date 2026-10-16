@@ -279,7 +279,7 @@ See [inbound identity](../../documentation/auth.md#principals-visibility-and-ope
 ### Machine tokens
 
 Machine clients are agents declared by name in `agents` in
-`src/connecta.config.ts`; this example declares `ci-client`. Each agent has one
+`src/connecta.config.ts`; this example declares `ci`. Each agent has one
 `cta_` token held by `accessTokens(storage)` over `CONNECTA_DB`, with no new
 binding. An agent with no issued token admits nothing. A human authenticated
 through Access can still sign in and issue the first token. Open
@@ -311,8 +311,8 @@ deployment's D1 binding can use the published API against that same storage:
 import { AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
 import { d1Storage } from "@zackbart/connecta/d1";
 
-const manager = new AccessTokenManager(d1Storage(env.CONNECTA_DB), { agents: ["ci-client"] });
-const { token } = await manager.rotate("ci-client", "trusted-provisioning");
+const manager = new AccessTokenManager(d1Storage(env.CONNECTA_DB), { agents: ["ci"] });
+const { token } = await manager.rotate("ci", "trusted-provisioning");
 // Deliver token once to the client's secret store, outside logs and source control.
 ```
 
@@ -320,7 +320,7 @@ Provision only through trusted operator tooling; do not expose this code as a
 public route or rotate a token at startup. Tokens issued before agents survive a
 state migration into this same D1 namespace but stop admitting until trusted
 tooling binds each machine's token once with
-`manager.adopt(tokenId, "ci-client")`, which keeps its secret working. Human-bound
+`manager.adopt(tokenId, "ci")`, which keeps its secret working. Human-bound
 tokens cannot be adopted; issue the agent a new token instead. Keep
 `accessTokens(storage)` configured over the same storage.
 
@@ -364,7 +364,7 @@ agent's `cta_` bearer to `/agent/<pool>`, issued as described in
 enabled, and every signed-in maintainer manages agent tokens.
 Keep maintainers, pools, and their members in deployment code. An agent reaches
 only `/agent/<pool>` for a pool that lists it (the example's `ci` pool lists
-`agent:ci-client`); `/mcp` and `/mcp/<pool>` refuse its token.
+`agent:ci`); `/mcp` and `/mcp/<pool>` refuse its token.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.CONNECTA_DB) })`,
 with `activityHistory` from `@zackbart/connecta/activity` and `d1ActivityStore`
@@ -501,7 +501,7 @@ then `wrangler login` and check the prepared deployment with a dry run.
 1. Back up KV with a bulk export including values and expiration metadata.
    Export D1 with `wrangler d1 export <db> --remote --output before-cutover.sql`.
    Store backups securely and preserve the exact credential encryption key,
-   including One&Many's `CONNECTA_CREDENTIALS_KEY`.
+   whatever secret name the deployment stores it under.
 2. Block traffic using maintenance mode or turn the route off. Stop cron,
    queue consumers, scheduled jobs, and every other KV/D1 writer. Drain all
    in-flight requests, including OAuth callbacks and token refreshes.

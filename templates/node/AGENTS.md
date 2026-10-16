@@ -29,10 +29,20 @@ This repository is deployment configuration, not a copy of Connecta itself.
   from before agents once with `npm run adopt-token -- <token-id> <agent>`.
   Plain `/mcp` serves `maintainers` only; other people reach `/mcp/<pool>` and
   agents `/agent/<pool>` for a pool listing them in `members` (`npm run doctor`
-  checks `/agent/local`). Human endpoints refuse `cta_` tokens. `CONNECTA_TOKEN` is only for clients and doctor; never add a configured
+  checks `/agent/local-machine`). Human endpoints refuse `cta_` tokens. `CONNECTA_TOKEN` is only for clients and doctor; never add a configured
   static bearer or an open startup mode.
   All state, activity included, lives in the one SQLite file `CONNECTA_DATABASE`
   names, through `@zackbart/connecta/sqlite`.
+- Organize agent pools by connecta's agent pool layout:
+  `node_modules/@zackbart/connecta/documentation/auth.md#organizing-an-agents-pools`
+  ([online](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#organizing-an-agents-pools)).
+  Each agent keeps one Connecta connection whose client picks the pool per
+  turn: base pool `<agent>` (shared connectors, no `owner`) outside a
+  one-on-one, and `<agent>-<user>` (the base plus that user's own connector
+  ids, `owner` set to their Workspace address) only with that user. Never list
+  another person in a `<agent>-<user>` pool: its per-user connectors act as
+  that user for every member. Never add a second Connecta connection or mount
+  downstream tools directly.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
   `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand
