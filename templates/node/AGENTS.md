@@ -42,13 +42,19 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
 - Organize agent pools by connecta's agent pool layout:
   `node_modules/@zackbart/connecta/documentation/auth.md#organizing-an-agents-pools`
   ([online](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#organizing-an-agents-pools)).
-  Each agent keeps one Connecta connection whose client picks the pool per
-  turn: base pool `<agent>` (shared connectors, no `owner`) outside a
-  one-on-one, and `<agent>-<user>` (the base plus that user's own connector
-  ids, `owner` set to their Workspace address) only with that user. Never list
-  another person in a `<agent>-<user>` pool: its per-user connectors act as
-  that user for every member. Never add a second Connecta connection or mount
-  downstream tools directly.
+  Each agent keeps one Connecta connection whose harness, never the model,
+  picks the pool per turn. Tiers are nested pools of shared connectors with
+  no `owner`, each spreading the tool list below. Recommended names are
+  `<agent>` for the lowest and `<agent>-<tier>` above it; any named pool,
+  including an existing `team` or `leadership` pool, may be a tier if all its
+  human members are cleared for it. A chat gets the most capable tier everyone
+  present is cleared for, and the lowest when anyone present is unknown.
+  `<agent>-<user>` (that user's highest tier plus their own connector ids,
+  `owner` set to their Workspace address) is used only in a one-on-one with
+  that user. List only cleared people in a tier, and never another person in
+  a `<agent>-<user>` pool: its per-user connectors act as that user for every
+  member. Never add a second Connecta connection or mount downstream tools
+  directly.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
   `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand
