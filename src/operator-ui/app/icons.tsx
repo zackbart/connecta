@@ -64,6 +64,7 @@ const PATHS = {
   ),
   check: <path d="M20 6 9 17l-5-5" />,
   back: <path d="m15 18-6-6 6-6" />,
+  chevron: <path d="m9 18 6-6-6-6" />,
   page: (
     <>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
@@ -86,6 +87,29 @@ const PATHS = {
       <path d="M12 8V4.5M9.5 13.5v1M14.5 13.5v1" />
     </>
   ),
+  activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
+  shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
+  box: (
+    <>
+      <path d="M21 8 12 3 3 8v8l9 5 9-5V8z" />
+      <path d="m3 8 9 5 9-5M12 13v8" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="9.5" />
+      <path d="M2.5 12h19M12 2.5a14.5 14.5 0 0 1 0 19M12 2.5a14.5 14.5 0 0 0 0 19" />
+    </>
+  ),
+  users: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6" />
+    </>
+  ),
+  book: <path d="M4 19.5V5a2 2 0 0 1 2-2h14v15H6.5a2.5 2.5 0 0 0 0 5H20" />,
+  minus: <path d="M5 12h14" />,
+  cloud: <path d="M17.5 19H8a6 6 0 1 1 1.3-11.9A7 7 0 0 1 22 11.5 4 4 0 0 1 17.5 19z" />,
 } satisfies Record<string, ReactNode>;
 
 type IconName = keyof typeof PATHS;

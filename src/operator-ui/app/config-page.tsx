@@ -1,59 +1,62 @@
 import type { OperatorState } from "../view.js";
-import { Badge } from "./parts.js";
-import { Card } from "./primitives.js";
+import { configSummary } from "../config-summary.js";
+import { accessChips } from "../endpoints.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
-import { rootAccessSentence } from "../endpoints.js";
-import { SnapshotTree } from "./snapshot.js";
+import {
+  DefaultLimits,
+  FactChips,
+  FeatureTiles,
+  OverrideChips,
+  SignInTiles,
+  StatTiles,
+  TileSection,
+} from "./config-tiles.js";
+import { Icon } from "./icons.js";
 
 export function SettingsPage({ state }: { state: OperatorState }) {
   const contract = maintainerContract(state);
+  const summary = contract?.config ? configSummary(contract.config, contract.configSources ?? {}) : null;
   return (
     <section id="settingsView">
       <div className="page-heading">
-        <div>
+        <div className="settings-title">
           <h1 id="settingsHeading" tabIndex={-1}>
             Settings
           </h1>
-          <p className="meta">Read-only snapshot, defined in code.</p>
+          <span className="code-tag">
+            <Icon name="lock" size={12} />
+            Defined in code
+          </span>
         </div>
       </div>
-      {!contract?.config || !contract.root ? (
+      {!summary || !contract?.root ? (
         <ContractState state={state} />
       ) : (
-        <>
-          <Card
-            className="section"
-            aria-labelledby="inboundHeading"
-            titleId="inboundHeading"
-            title="Inbound auth"
-            description={rootAccessSentence(contract.root)}
-          >
-            <ul className="list-rows">
-              {contract.config.auth.map((provider, index) => (
-                <li className="attention-row" key={`${provider.kind}-${index}`}>
-                  <span>{provider.kind}</span>
-                  <Badge>{provider.interactive ? "Interactive" : "Machine"}</Badge>
-                </li>
-              ))}
-            </ul>
-          </Card>
-          <Card
-            className="section"
-            aria-labelledby="snapshotHeading"
-            titleId="snapshotHeading"
-            title="Configuration"
-            actions={
-              <div className="facts-row source-legend">
-                <Badge>config</Badge>
-                <span className="meta">Set in deployment code</span>
-                <Badge>default</Badge>
-                <span className="meta">Built-in default</span>
-              </div>
-            }
-          >
-            <SnapshotTree value={contract.config} sources={contract.configSources ?? undefined} />
-          </Card>
-        </>
+        <div className="settings-board">
+          <TileSection id="deploymentHeading" title="Deployment">
+            <FactChips facts={summary.deployment} />
+          </TileSection>
+          <TileSection id="signInHeading" title="Sign-in">
+            <SignInTiles tiles={summary.signIn} maintainers={accessChips(contract.root.maintainers)} />
+          </TileSection>
+          <TileSection id="featuresHeading" title="Features">
+            <FeatureTiles tiles={summary.features} />
+          </TileSection>
+          <TileSection id="limitsHeading" title="Limits">
+            <StatTiles tiles={summary.limits} label="Limits" />
+            <DefaultLimits groups={summary.defaults} />
+          </TileSection>
+          {summary.overrides.length ? (
+            <TileSection id="overridesHeading" title="Overrides">
+              <OverrideChips overrides={summary.overrides} />
+            </TileSection>
+          ) : null}
+          {summary.other.length ? (
+            <TileSection id="otherHeading" title="Other">
+              <StatTiles tiles={summary.other} compact label="Other settings" />
+            </TileSection>
+          ) : null}
+        </div>
       )}
     </section>
   );

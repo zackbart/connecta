@@ -191,7 +191,7 @@ async function ready(page: Page, name: string, state: VisualState) {
               : name === "connectors"
                 ? "#connectorLedgerHeading"
                 : name === "settings"
-                  ? ".snapshot-tree"
+                  ? ".stat-grid"
                   : ".conn-head",
         )
         .first(),
@@ -249,7 +249,7 @@ function variantPath(variant: VisualVariant): string {
   if (variant.startsWith("drift-")) return "/connectors/github#connection";
   if (variant === "legacy-activity") return "/activity";
   if (variant === "schema" || variant.startsWith("tools-")) return "/connectors/github#tools";
-  if (variant === "config-provenance") return "/settings";
+  if (variant === "narrow-settings") return "/settings";
   if (variant === "connectors-matrix" || variant === "matrix-popover" || variant === "narrow-matrix")
     return "/connectors?view=matrix";
   if (variant === "token-secret") return "/tokens";
@@ -307,12 +307,8 @@ for (const variant of VISUAL_VARIANTS)
           } else if (variant.startsWith("tools-")) {
             await page.getByLabel("Tool classification").selectOption(variant === "tools-read" ? "read" : "write");
             await page.getByLabel("Filter tools", { exact: true }).fill("github.");
-          } else if (variant === "config-provenance") {
-            await page
-              .locator("summary")
-              .filter({ hasText: /^calls$/ })
-              .click();
-            await expect(page.locator('code[title="config.limits.calls.maxResultBytes"]')).toBeVisible();
+          } else if (variant === "narrow-settings") {
+            await expect(page.locator('[data-config-path="config.limits.calls.maxResultBytes"]')).toBeVisible();
           } else if (variant === "legacy-activity") await expect(page.locator("#activityList")).toBeVisible();
           else if (variant.startsWith("drift-")) await expect(page.locator("#drift-github")).toBeVisible();
           else if (variant.startsWith("oauth-"))

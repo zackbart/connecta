@@ -349,7 +349,7 @@ test("INV-4: an unknown role shows its loading or error state with no maintainer
   await expect(page.getByText("Configuration couldn't be loaded", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   await expect(navLinks(page)).toHaveCount(0);
-  await expect(page.locator("#inboundHeading, .snapshot-tree")).toHaveCount(0);
+  await expect(page.locator("#signInHeading, .stat-grid")).toHaveCount(0);
   await page.getByRole("button", { name: "Search" }).click();
   await page.getByPlaceholder("Search pages, connectors, tools…").fill("settings");
   await expect(page.getByText("No matches", { exact: true })).toBeVisible();
@@ -373,7 +373,14 @@ test("Settings names who may use plain /mcp from root.maintainers, by label or i
   };
   await install(page, contract, maintainer.data);
   await page.goto(VISUAL_ORIGIN + "/settings");
-  await expect(page.locator("#inboundHeading ~ p.meta")).toHaveText("Only maintainers can use /mcp: zack, user_maria.");
+  const maintainers = page
+    .locator("section[aria-labelledby=signInHeading]")
+    .getByRole("list", { name: "Maintainers", exact: true });
+  await expect(maintainers.locator("li > .visually-hidden")).toHaveText(["zack", "user_maria"]);
+  await expect(maintainers.getByRole("listitem", { name: "user_maria", exact: true })).toHaveAttribute(
+    "title",
+    "user_maria",
+  );
   await noCsp(page);
 });
 

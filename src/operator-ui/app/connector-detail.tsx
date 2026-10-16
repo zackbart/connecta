@@ -1,12 +1,13 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { OperatorState } from "../view.js";
-import { activityReadable, connectorSourceLabel, connectorVerdict, driftState, formatDate } from "../view.js";
+import { activityReadable, connectorVerdict, driftState, formatDate } from "../view.js";
 import { Pill, pillStatus, StateBlock, SummaryRow } from "./parts.js";
 import { Button, Card, Tabs } from "./primitives.js";
 import { Icon } from "./icons.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
-import { SnapshotTree } from "./snapshot.js";
+import { BadgeRow, StatTiles } from "./config-tiles.js";
+import { connectorSummary, type ConnectorSummary } from "../config-summary.js";
 import { Catalog } from "./catalog.js";
 import { ConnectorAuth, ConnectorDiagnostics } from "./connections.js";
 import { ActivityPage } from "./activity.js";
@@ -107,17 +108,10 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
                         <StateBlock busy>Diagnostics are loading.</StateBlock>
                       )}
                     </Card>
-                    <Card
-                      aria-label="Connector configuration"
-                      title="Configuration"
-                      description={`Source: ${connectorSourceLabel(config.source)}. Defined in deployment code.`}
-                    >
-                      <SnapshotTree
-                        value={config}
-                        path={`config.connectors.${id}`}
-                        sources={contract.configSources ?? undefined}
-                      />
-                    </Card>
+                    <ConnectorConfigCard
+                      summary={connectorSummary(config, contract.configSources ?? {})}
+                      name={config.title ?? id}
+                    />
                   </div>
                 ),
               },
@@ -135,5 +129,16 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
         </>
       )}
     </section>
+  );
+}
+
+/** What the connector is and how it signs in, as badges, and its limits as tiles. Defined in code; nothing here edits it. */
+function ConnectorConfigCard({ summary, name }: { summary: ConnectorSummary; name: string }) {
+  return (
+    <Card aria-label="Connector configuration" title="Configuration" className="connector-config">
+      <BadgeRow badges={summary.badges} label={`${name} setup`} />
+      {summary.auth.length ? <BadgeRow badges={summary.auth} label={`${name} auth`} /> : null}
+      <StatTiles tiles={summary.tiles} compact label={`${name} settings`} />
+    </Card>
   );
 }

@@ -677,7 +677,11 @@ export function sqlActivityStore(driver: SqlDriver, kind: SqlKind, options: SqlA
     }
   });
   return {
-    describe: () => ({ kind, retentionDays }),
+    describe: () => ({
+      kind,
+      retentionDays,
+      optionSources: { retentionDays: options.retentionDays === undefined ? "default" : "config" },
+    }),
     async record(event) {
       await ensure();
       const occurredAtMs = Date.parse(event.occurredAt);

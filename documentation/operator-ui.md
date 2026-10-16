@@ -129,9 +129,52 @@ pool member sees the [member page](#use-the-member-page) on every path, with
 no tabs. Connector
 detail has Tools, Connection, and Activity tabs. Connection combines
 authentication (including the OAuth client mechanism), catalog diagnostics,
-one fix prompt beside each problem it reports, and the connector snapshot with its source. Settings combines inbound-auth facts with the
-configuration snapshot and labels values as default or configured. Deployment code owns connectors, grants, pools, and classification;
-the UI changes only authorized authentication material.
+one fix prompt beside each problem it reports, and a Configuration card. Its
+first badge row names the connector's kind (Remote MCP, HTTP API or Custom),
+provider, auth scope (Shared account or Per person), endpoint host and usage
+guide. Its auth row names the mode (OAuth, Headers, Request token, No auth, or
+the credential slot's label) and then draws each auth fact as a compact mono
+badge: credential field names when there are several, the credential header and
+scheme, static header names, the OAuth scope, each API origin as
+`→ api.crm.example`, authorization and token endpoints, the client metadata
+host, the token-endpoint auth method, Client secret, PKCE, extra authorization
+parameter names and token-request header names. Tiles follow for its result
+cap, call admission rules and transport settings. A connector key the card does
+not draw becomes a tile labelled from its name.
+
+Settings reads the configuration snapshot as tiles, with a "Defined in code" tag
+beside the title and no editing controls. Deployment is a row of fact chips:
+name and server version together (`Production · v1`), mode (Writes allowed or
+Read-only), connecta version, public URL, allowed origins, sandbox, storage,
+activity store, deployment ID, website, icon count and `deploymentInfo` key
+names. Storage that is memory because the deployment configured none reads
+"Memory · default" as a warning chip: on Node a restart loses everything it
+held. Sign-in has one tile per inbound auth provider in the order they are
+tried, with its mark and whether it admits people or machines; the agent-token
+tile carries a count chip ("3 agents"). One Maintainers tile follows with an
+avatar stack of the `/mcp` maintainers, or muted "None" when none are configured.
+With no auth providers, an Open tile precedes the Maintainers tile. Features shows
+the vault (with "Seals OAuth" when it seals OAuth tokens), activity, agent-token
+and any other module, on or off. Limits shows each limit as a value over a short
+label: durations in their largest whole unit, sizes in decimal KB or MB with the
+exact byte count as a tooltip, counts with separators, a null bound as
+"No limit", and booleans as On or Off. The tool timeout, when
+`calls.defaultTimeoutMs` is null, shows the host-call timeout it falls back to,
+as a default. The headline limits (tool timeout, result cap, program timeout,
+catalog refresh, activity retention, calls and writes per program, concurrent
+requests) and any other limit set in code draw large. The remaining defaults sit
+behind one disclosure labelled with their count ("17 defaults") that opens into
+Discovery, Results, Programs and Requests cards, each a list of value and label.
+A value set in code (by `configSources`) has an accent dot and the hidden text
+"set in code"; a default reads muted with the hidden text "default". Activity
+retention reads as set only when the activity store reports its own
+`optionSources.retentionDays` as `"config"`; the shipped D1 and SQLite stores
+do. Overrides lists each classification override as the tool address and its
+verdict. A snapshot key Settings does not map appears under Other as a tile
+labelled from its key name, so nothing in the snapshot is hidden; such a tile
+is marked set only when the snapshot value itself carries `source: "config"`.
+An empty section is not drawn. Deployment code owns connectors, grants, pools,
+and classification; the UI changes only authorized authentication material.
 
 Tokens has one row per agent declared in code, in `GET /ui/access-tokens`
 order: its pools, a state badge (No token, Issued or Revoked), the issue or
@@ -457,6 +500,13 @@ and [overview.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui
 covered by `test/operator-connection-map.test.ts` and
 `test/operator-overview.test.ts`; `src/operator-ui/styles/overview.css` holds
 the page's styles.
+
+`src/operator-ui/config-summary.ts` maps the snapshot and its provenance to
+those tiles: one table of limit labels, the formatters, and the walk that turns
+an unmapped key into an Other tile. `app/config-tiles.tsx` draws them, and
+`test/operator-config-summary.test.ts` checks formatting, provenance, unknown
+keys, an empty deployment, and that a real deployment's snapshot leaves no key
+unmapped.
 
 The contract type is [contract.ts](https://github.com/zackbart/connecta/blob/main/src/operator-ui/contract.ts).
 [UI routes](https://github.com/zackbart/connecta/blob/main/src/routes/ui.ts) and

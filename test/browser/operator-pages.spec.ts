@@ -252,17 +252,14 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
 test("Config provenance recognizes explicit defaults and the access model", async ({ page }) => {
   await session(page);
   await page.goto(origin + "/settings");
-  await page
-    .locator("summary")
-    .filter({ hasText: /^calls$/ })
-    .click();
-  const explicit = page
-    .locator(".snapshot-value")
-    .filter({ has: page.locator('code[title="config.limits.calls.maxResultBytes"]') });
-  await expect(explicit).toContainText("config");
-  const defaulted = page
-    .locator(".snapshot-value")
-    .filter({ has: page.locator('code[title="config.limits.calls.defaultTimeoutMs"]') });
+  // A value set in code carries the set mark, even when it equals the default.
+  const explicit = page.locator('[data-config-path="config.limits.calls.maxResultBytes"]');
+  await expect(explicit).toHaveClass(/\bset\b/);
+  await expect(explicit.locator(".set-dot")).toHaveCount(1);
+  await expect(explicit).toContainText("set in code");
+  const defaulted = page.locator('[data-config-path="config.limits.calls.defaultTimeoutMs"]');
+  await expect(defaulted).not.toHaveClass(/\bset\b/);
+  await expect(defaulted.locator(".set-dot")).toHaveCount(0);
   await expect(defaulted).toContainText("default");
   const contract = await page.request.get(origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
   const facts = (await contract.json()) as OperatorUiContract;
@@ -274,6 +271,38 @@ test("Config provenance recognizes explicit defaults and the access model", asyn
   expect(JSON.stringify(facts)).not.toContain(RAW_ERROR);
   await clean(page);
 });
+
+for (const hasMaintainers of [true, false]) {
+  test(`Settings keeps the Maintainers tile without auth providers (${hasMaintainers ? "configured" : "none"})`, async ({
+    page,
+  }) => {
+    await session(page);
+    await page.route("**/ui/api/config", async (route) => {
+      const response = await route.fetch();
+      const contract = (await response.json()) as OperatorUiContract;
+      if (!contract.config || !contract.root) throw new Error("Expected a maintainer contract");
+      contract.config.auth = [];
+      if (!hasMaintainers) contract.root.maintainers = [];
+      await route.fulfill({ json: contract });
+    });
+    await page.goto(origin + "/settings");
+    const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
+    await expect(signIn.locator(".identity-grid > li")).toHaveCount(2);
+    await expect(signIn.getByText("Open", { exact: true })).toBeVisible();
+    await expect(signIn.getByText("No sign-in", { exact: true })).toBeVisible();
+    const maintainers = signIn.locator('[data-sign-in="maintainers"]');
+    await expect(maintainers.getByText("Maintainers", { exact: true })).toBeVisible();
+    await expect(maintainers.getByText("/mcp", { exact: true })).toBeVisible();
+    if (hasMaintainers) {
+      await expect(maintainers.getByRole("list", { name: "Maintainers", exact: true })).toContainText("pages-user");
+      await expect(maintainers.getByText("None", { exact: true })).toHaveCount(0);
+    } else {
+      await expect(maintainers.getByText("None", { exact: true })).toBeVisible();
+      await expect(maintainers.locator(".avatar-stack")).toHaveCount(0);
+    }
+    await clean(page);
+  });
+}
 
 test("connector tabs are keyboard friendly and preserve the selected tab on reload", async ({ page }) => {
   await session(page);
