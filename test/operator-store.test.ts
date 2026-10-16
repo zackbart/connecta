@@ -2777,3 +2777,32 @@ describe("token confirmations live in the row", () => {
     expect(store.getState().createdToken).toBeNull();
   });
 });
+
+describe("round 8: the member authorization return keeps its own throttle", () => {
+  it("two returns within 2 s send one config read while an authorization is outstanding", async () => {
+    const loaded = await loadStore({ id: "m", getToken: async () => "m" });
+    const { store, fetchMock, configMock, windowListeners } = loaded;
+    const body = structuredClone(OPERATOR_V2_MEMBER) as typeof OPERATOR_V2_MEMBER & Record<string, unknown>;
+    body.connectors.find((c) => c.id === "slack")!.connection = { state: "auth_required", problem: "oauth_required" };
+    configMock.mockImplementation(async () => Response.json(structuredClone(body)));
+    await store.boot();
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(Response.json({ authorizationUrl: "https://auth.example.test/authorize" }));
+    await store.startOAuth("slack", "continue");
+    // Let the poll window pass, so only the return check is left.
+    await vi.advanceTimersByTimeAsync(35_000);
+    configMock.mockClear();
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(200);
+    // The first return's read succeeds, which resets the shared recovery state.
+    expect(configMock).toHaveBeenCalledTimes(1);
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(configMock).toHaveBeenCalledTimes(1);
+    // After the interval a return checks again.
+    await vi.advanceTimersByTimeAsync(2_000);
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(configMock).toHaveBeenCalledTimes(2);
+  });
+});

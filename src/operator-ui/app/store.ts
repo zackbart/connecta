@@ -615,6 +615,12 @@ function memberConnected(contract: OperatorUiContractV2): Partial<OperatorState>
  * member disconnects it, or `MEMBER_AUTHORIZATION_WINDOW_MS` passes.
  */
 const memberAuthorizations = new Map<string, number>();
+/**
+ * When a return last re-read a member's contract for an authorization. Kept
+ * apart from `lastReturnPass`, which a successful read resets with the rest
+ * of recovery: two returns 200 ms apart would otherwise both read.
+ */
+let lastAuthorizationReturn = -Infinity;
 const MEMBER_AUTHORIZATION_WINDOW_MS = 10 * 60_000;
 
 /** Whether any member authorization is still worth checking on return. */
@@ -1473,8 +1479,8 @@ function recheckAuthorization(): void {
   if (member) {
     if (state.oauthBusy || (!awaitingAuthorization.size && !memberAuthorizationPending())) return;
     const now = Date.now();
-    if (now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
-    lastReturnPass = now;
+    if (now - lastAuthorizationReturn < RETURN_MIN_INTERVAL_MS) return;
+    lastAuthorizationReturn = now;
     void loadOperatorContract();
     return;
   }
@@ -1743,6 +1749,7 @@ let confirmedAgents = new Set<string>();
 function forgetSlotFence(): void {
   tokenConfirmChecked = null;
   memberAuthorizations.clear();
+  lastAuthorizationReturn = -Infinity;
   slotGeneration.clear();
   unresolvedAt.clear();
   slotsInFlight.clear();
