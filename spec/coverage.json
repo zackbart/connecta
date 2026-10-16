@@ -438,7 +438,7 @@
         },
         {
           "file": "test/skills-extension.test.ts",
-          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only grants"
+          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only pools"
         },
         {
           "file": "test/skills-extension.test.ts",
@@ -863,7 +863,7 @@
         },
         {
           "file": "test/skills-extension.test.ts",
-          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only grants"
+          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only pools"
         },
         {
           "file": "test/skills-extension.test.ts",
