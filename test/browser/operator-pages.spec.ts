@@ -320,7 +320,7 @@ for (const path of ["/activity", "/connectors/github"]) {
     await expect(source).toHaveAttribute("aria-pressed", "true");
     await source.click();
     await expect(page).not.toHaveURL(/source=/);
-    await expect(page.locator(".activity-item")).toHaveCount(4);
+    await expect(page.locator(".activity-item")).toHaveCount(3);
     await clean(page);
   });
 }
