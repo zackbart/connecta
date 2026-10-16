@@ -62,7 +62,9 @@ fallback without CSS anchors, and the absence of `style` attributes, agent URLs 
 received body checked with `expectMemberViewWithholds`, `/ui/data` answering 404
 and never requested, no maintainer fact rendered, no maintainer request sent),
 the 401 sign-in and 404 no-access gates on `/ui/api/config` with no maintainer
-navigation, payload sentinels, CSP, and the refusal of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
+navigation, the shared recovery banner on Tokens and Activity through a failed
+refresh that stalls past its deadline (one focusable Retry, no maintainer
+request until Retry succeeds), payload sentinels, CSP, and the refusal of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
 `test/operator-store.test.ts` serves `/ui/api/config` from its own mock, so
 each test's data and detail answers stay separate, and covers role changes: a
 maintainer demoted after a failed refresh keeps no maintainer state and sends

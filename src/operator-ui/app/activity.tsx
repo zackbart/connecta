@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   activityDetail,
   activityReadable,
+  contractRecovering,
   activityOutcomeBadge,
   activityOutcomeClass,
   activitySummary,
@@ -88,7 +89,9 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
     void go({ to: location.pathname, search, hash: location.hash });
   };
   const data = state.data;
-  const enabled = activityReadable(state);
+  // While the shell's recovery banner is up, the last loaded history stays on
+  // screen, stale, rather than claiming Activity is unavailable.
+  const enabled = activityReadable(state) || contractRecovering(state);
   const loading = state.activityPhase === "loading";
   const visible = filterActivity(
     state.activityEvents.filter(

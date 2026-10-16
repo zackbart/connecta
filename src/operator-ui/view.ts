@@ -479,6 +479,16 @@ export function displayRole(state: Pick<OperatorState, "contract" | "role" | "da
 }
 
 /**
+ * A confirmed maintainer's page is mounted without a contract behind it: a
+ * refresh failed, or its read ran past the deadline. The shell shows one
+ * recovery banner with Retry above whichever page is open, and that page is
+ * stale until a contract confirms the role again.
+ */
+export function contractRecovering(state: Pick<OperatorState, "contract" | "role" | "data">): boolean {
+  return !state.contract && displayRole(state) === "maintainer";
+}
+
+/**
  * Whether Activity is open to this viewer: maintainers only, on a deployment
  * that records history. Members always read "forbidden".
  */

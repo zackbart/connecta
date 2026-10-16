@@ -11,6 +11,7 @@ import {
   activityReadable,
   canonicalOperatorPath,
   checkingCopy,
+  contractRecovering,
   displayRole,
   gateCopy,
   noAccessCopy,
@@ -239,6 +240,29 @@ function RolePending({ state }: { state: OperatorState }) {
   );
 }
 
+/**
+ * One recovery affordance for every maintainer page that stays mounted while
+ * its contract is missing. The page below is inert and dimmed: it shows what
+ * was last loaded, and nothing maintainer-only is sent until a contract
+ * confirms the role again.
+ */
+function RecoveryBanner({ state }: { state: OperatorState }) {
+  const failed = state.contractPhase === "error" || state.loadFailure !== null;
+  return (
+    <section id="recoveryBanner" className="recovery-banner" role="alert" aria-labelledby="recoveryTitle">
+      <div>
+        <p id="recoveryTitle" className="state-title">
+          {failed ? "Configuration couldn't be loaded" : "Reloading configuration…"}
+        </p>
+        <p className="meta">This page shows what was last loaded and can't change until the configuration reloads.</p>
+      </div>
+      <Button id="recoveryRetry" onClick={() => void retryLoad()}>
+        Retry
+      </Button>
+    </section>
+  );
+}
+
 function CurrentPage({ state }: { state: OperatorState }) {
   const role = displayRole(state);
   // Every other page is built from maintainer facts a member never receives.
@@ -285,10 +309,14 @@ function OperatorApp() {
   // Focus what is actually on screen. While gated the page views are not
   // rendered at all, so a request for a page heading lands on the gate's own h1
   // — the only visible heading — rather than dropping focus to <body>.
+  const recovering = ready && contractRecovering(state);
   useEffect(() => {
     if (!state.pendingFocus && !state.focusIfLost) return;
     if (state.pendingFocus) {
-      document.getElementById(state.pendingFocus)?.focus();
+      const target = document.getElementById(state.pendingFocus);
+      // A heading on the stale page waits until the page is live again.
+      if (target?.closest("[inert]")) return;
+      target?.focus();
     } else if (state.focusIfLost) {
       // Only when the control that had focus is gone or disabled; otherwise the
       // notice's live region speaks and the operator stays where they are.
@@ -298,12 +326,17 @@ function OperatorApp() {
       if (lost) document.getElementById(state.focusIfLost)?.focus();
     }
     focusHandled();
-  }, [state.pendingFocus, state.focusIfLost]);
+  }, [state.pendingFocus, state.focusIfLost, recovering]);
 
+  // The banner is a sibling, so the page under it stays mounted: unmounting
+  // it would cancel the very reads recovery is waiting on.
   return ready ? (
-    <div id="app">
-      <CurrentPage state={state} />
-    </div>
+    <>
+      {recovering ? <RecoveryBanner state={state} /> : null}
+      <div id="app" inert={recovering} className={recovering ? "stale" : undefined}>
+        <CurrentPage state={state} />
+      </div>
+    </>
   ) : state.session === "denied" ? (
     <NoAccess />
   ) : (

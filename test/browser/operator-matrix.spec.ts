@@ -63,9 +63,11 @@ const answered = (value: unknown): value is Answer =>
  * the page asked for. `data` may be a refusal too: P6b makes `/ui/data`
  * maintainer-only, answering a member with the private 404.
  */
-async function install(page: Page, contract: unknown, data: UiData | Answer) {
+async function install(page: Page, contract: unknown, data: UiData | Answer, clock: "fixed" | "controlled" = "fixed") {
   const requested: string[] = [];
-  await page.clock.setFixedTime(new Date(VISUAL_NOW));
+  // A controlled clock lets a test step through recovery timers and deadlines.
+  if (clock === "controlled") await page.clock.install({ time: new Date(VISUAL_NOW) });
+  else await page.clock.setFixedTime(new Date(VISUAL_NOW));
   await page.addInitScript(`localStorage.setItem("connecta:token", ${JSON.stringify(VISUAL_TOKEN)});
     window.__csp = []; document.addEventListener("securitypolicyviolation", event => window.__csp.push(event.effectiveDirective));`);
   await page.route(`${VISUAL_ORIGIN}/**`, async (route) => {
@@ -489,3 +491,72 @@ test("without CSS anchors, a cell's tools open in flow under the row, unclipped,
   await expect(panel).toHaveCount(0);
   await noCsp(page);
 });
+
+for (const [path, heading] of [
+  ["/tokens", "Tokens"],
+  ["/activity", "Activity"],
+] as const) {
+  test(`INV-4: ${heading} keeps one Retry through a failed refresh that stalls past its deadline`, async ({ page }) => {
+    // One connector in error, so a focus return refreshes the catalog.
+    const contract = structuredClone(maintainer.contract) as OperatorUiContractV2;
+    contract.live.connectors = contract.live.connectors.map((c) => (c.id === "slack" ? { ...c, status: "error" } : c));
+    const data = structuredClone(maintainer.data);
+    data.connectors = data.connectors.map((c) => (c.id === "slack" ? { ...c, status: "error" } : c));
+    await install(page, contract, data, "controlled");
+    let config: "ok" | "fail" | "stall" = "ok";
+    let watched: string[] = [];
+    await page.route(`${VISUAL_ORIGIN}/ui/**`, async (route) => {
+      const url = new URL(route.request().url());
+      watched.push(url.pathname);
+      if (url.pathname === "/ui/api/config") {
+        if (config === "fail") return route.fulfill({ status: 503, json: { error: "unavailable" } });
+        // A read that never answers: recovery has to give up on it.
+        if (config === "stall") return;
+        return route.fulfill({ json: contract });
+      }
+      if (url.pathname === "/ui/access-tokens")
+        return route.fulfill({ json: { agents: [{ name: "simon-ada", state: "issued", issuedAt: VISUAL_NOW }] } });
+      return route.fallback();
+    });
+    await page.goto(VISUAL_ORIGIN + path);
+    const content =
+      path === "/tokens"
+        ? page.getByRole("heading", { name: "simon-ada", exact: true })
+        : page.getByText("No connector tool calls recorded yet.", { exact: true });
+    await expect(content).toBeVisible();
+    const banner = page.locator("#recoveryBanner");
+    await expect(banner).toHaveCount(0);
+
+    // The refresh fails: one banner with Retry, and the page under it is stale.
+    config = "fail";
+    await page.evaluate("window.dispatchEvent(new Event('focus'))");
+    await page.clock.runFor(300);
+    await expect(banner).toContainText("Configuration couldn't be loaded");
+    const retry = banner.getByRole("button", { name: "Retry", exact: true });
+    await expect(retry).toBeVisible();
+    await expect(page.locator("#app")).toHaveAttribute("inert", "");
+    await expect(content).toBeAttached();
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(1);
+
+    // The passive retry stalls, and the deadline passes: Retry is still there.
+    config = "stall";
+    watched = [];
+    await page.clock.runFor(2100);
+    await expect.poll(() => watched.filter((p) => p === "/ui/api/config").length).toBe(1);
+    await page.clock.runFor(16_000);
+    await expect(banner).toContainText("Configuration couldn't be loaded");
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    // Nothing maintainer-only went out while no contract confirmed the role.
+    expect(maintainerOnly(watched)).toEqual([]);
+
+    // A successful Retry restores the live page and its heading takes focus.
+    config = "ok";
+    await retry.click();
+    await expect(banner).toHaveCount(0);
+    await expect(page.locator("#app")).not.toHaveAttribute("inert");
+    await expect(content).toBeVisible();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeFocused();
+    await noCsp(page);
+  });
+}

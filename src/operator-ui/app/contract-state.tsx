@@ -1,5 +1,5 @@
 import type { OperatorUiContractV2 } from "../contract.js";
-import type { OperatorState } from "../view.js";
+import { contractRecovering, type OperatorState } from "../view.js";
 import { LoadFailure, StateBlock } from "./parts.js";
 import { retryLoad } from "./store.js";
 
@@ -13,6 +13,8 @@ export function maintainerContract(state: OperatorState): OperatorUiContractV2 |
 }
 
 export function ContractState({ state }: { state: OperatorState }) {
+  // The shell's recovery banner owns Retry while a mounted page is stale.
+  if (contractRecovering(state)) return <StateBlock>Waiting for the configuration to load again.</StateBlock>;
   if (state.loadFailure) return <LoadFailure state={state} />;
   return (
     <StateBlock

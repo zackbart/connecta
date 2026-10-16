@@ -1554,6 +1554,26 @@ select {
 
 /* Connector × endpoint matrix. A cell is "all", a count, or a dash; a
    read-only endpoint tints its whole column. */
+/* One Retry for a maintainer page whose configuration failed to reload. */
+.recovery-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+.recovery-banner p {
+  margin: 0;
+}
+/* The page under the banner shows what was last loaded, and nothing more. */
+#app.stale {
+  opacity: 0.55;
+}
 .matrix-legend {
   display: flex;
   justify-content: flex-end;

@@ -56,8 +56,9 @@ details, activity and tokens are requested only after the contract says
 `maintainer`, and every such read checks the role again when it is sent, focus
 returns included. Until a role is confirmed, the page shows its loading or
 error state and no navigation. The store keeps the last confirmed role through
-a failed refresh: a maintainer's page stays mounted on its own retry state,
-sending nothing maintainer-only until a contract confirms the role again, and
+a failed refresh: a maintainer's page stays mounted, inert and dimmed, under
+one shell banner with Retry, whichever page it is, and sends nothing
+maintainer-only until a contract confirms the role again, and
 an answer with a different role clears everything read under the old one and
 admits the viewer again. A
 pool member sees one page on every path, until UI-3 of
