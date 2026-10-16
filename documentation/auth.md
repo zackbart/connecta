@@ -788,17 +788,20 @@ section holds the complete rules.
    join results across connections. The agent's one `cta_` token works on
    every pool that lists it.
 2. **Tiers.** An agent's tiers are named pools ordered from least to most
-   capable. The base pool `<agent>`, served at `/agent/<agent>`, is the lowest
-   tier; each higher tier is `<agent>-<tier>` (`assistant-team`,
-   `assistant-leads`). An agent with one tier has only the base. Tiers never
+   capable. Recommended names are `<agent>` for the lowest tier and
+   `<agent>-<tier>` for higher tiers (`assistant-team`, `assistant-leads`).
+   A tier may be any named pool, including an existing team pool such as
+   `team` or `leadership`, as long as its human members are all cleared for
+   it (rule 10). An agent with one tier uses it as the lowest. Tiers never
    hold per-user connectors and never set an `owner`.
 3. **Personal pool `<agent>-<user>`.** `/agent/<agent>-<user>` serves pool
    `<agent>-<user>`: the highest tier that user is cleared for, plus that
    user's own connectors. Use it only in a one-on-one with that user.
    `<user>` is a short, stable handle you choose (`alice`), never a provider
-   id, principal id, or address. Handles and tier names share the `<agent>-`
-   prefix, so no handle may equal a tier name. Pool names match
-   `[a-z0-9_-]+`.
+   id, principal id, or address. When using the recommended `<agent>-<tier>`
+   names, no user handle may equal a tier suffix: their pool names would
+   collide. With any naming scheme, keep personal pool names distinct from
+   tier pool names. Pool names match `[a-z0-9_-]+`.
 4. **Nest by spreading tool lists.** Define each tier's `tools` once, as a
    constant that spreads the tier below it, and spread a user's highest tier
    into their personal pool's `tools`. A change to a tier then reaches every
@@ -819,10 +822,11 @@ section holds the complete rules.
    choosing the account.
 7. **Where each connector goes.** A shared connector (the deployment's
    account, including a fixed-subject Workspace connector) goes in the lowest
-   tier everyone who may use it is cleared for, and so reaches every tier
-   above. Per-user connectors (`notes_alice`) go only in personal pools, and
-   so do the Workspace connectors with a mapping `subject` that the agent
-   uses; rule 10 covers listing them in a tier for its people.
+   tier whose entire audience is authorized to use the connector, and so
+   reaches every tier above. For example, billing restricted to leads goes
+   in the leads tier. Per-user connectors (`notes_alice`) go only in personal
+   pools, and so do the Workspace connectors with a mapping `subject` that
+   the agent uses; rule 10 covers listing them in a tier for its people.
 8. **Changes stay in config.** Adding an account for a user adds its
    connector and lists it in that user's pool `tools`. Adding a user adds one
    `<agent>-<user>` pool. Adding a tier adds one pool and one constant, and
@@ -862,11 +866,12 @@ lists it, so clearance is enforced nowhere but the harness.
 - Choose again on every turn. Someone joining a chat lowers its tier from the
   next turn.
 
-**The lowest tier.** The base `<agent>` is the fallback, so make it safe in
-front of anyone who can reach the agent. Where unknown people can, make it a
-guest tier: `readOnly: true`, with exact `connector.tool` addresses for the
-reads guests may use. A new downstream tool then never appears there, and no
-write runs. The tier above spreads the guest list and adds whole connectors.
+**The lowest tier.** The first pool in the harness's tier list is the
+fallback (recommended name: `<agent>`), so make it safe in front of anyone
+who can reach the agent. Where unknown people can, make it a guest tier:
+`readOnly: true`, with exact `connector.tool` addresses for the reads guests
+may use. A new downstream tool then never appears there, and no write runs.
+The tier above spreads the guest list and adds whole connectors.
 
 ```ts
 import type { GoogleWorkspaceOptions } from "@zackbart/connecta/providers/gmail";
@@ -940,16 +945,19 @@ function poolFor(turn: { isDirect: boolean; verifiedParticipants?: string[] }) {
   const present = turn.verifiedParticipants;
   if (!present?.length) return tiers[0];
   const known = present.map((id) => people[id]);
-  if (turn.isDirect && known[0]?.handle) return `assistant-${known[0].handle}`;
+  if (turn.isDirect && present.length === 1 && known[0]?.handle) {
+    return `assistant-${known[0].handle}`;
+  }
   return tiers[Math.min(...known.map((person) => person?.tier ?? 0))];
 }
 const url = `https://connecta.example.com/agent/${poolFor(turn)}`;
 ```
 
 A chat with Alice and Bob gets `assistant-team`; add an unknown guest and it
-gets `assistant`. Rule 9 is why each personal pool lists only the agent:
-people act as themselves only through a Workspace mapping, and a shared-auth
-connector such as `notes_alice` acts as Alice for whoever the pool admits.
+gets `assistant`, even if the platform marks the chat as direct. Rule 9 is
+why each personal pool lists only the agent: people act as themselves only
+through a Workspace mapping, and a shared-auth connector such as
+`notes_alice` acts as Alice for whoever the pool admits.
 Rule 10 is why `assistant-team` may list Alice and Bob: it holds only
 connectors that every member may use on the deployment's account.
 

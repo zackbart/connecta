@@ -19,9 +19,10 @@ To add one:
 3. Add the id (all its tools) or exact `id.tool` addresses to the intended
    pools' `tools`. Maintainers at plain `/mcp` already see the whole catalog.
    Follow [the agent pool layout](./auth.md#organizing-an-agents-pools) for an
-   agent: a shared connector goes in the tool list of the lowest tier
-   everyone who may use it is cleared for; per-user connectors and Workspace
-   connectors with a mapping `subject` go only in personal pools.
+   agent: a shared connector goes in the tool list of the lowest tier whose
+   entire audience is authorized to use it (billing restricted to leads goes
+   in the leads tier); per-user connectors and Workspace connectors with a
+   mapping `subject` go only in personal pools.
 4. Run the deployment's `npm run typecheck` (Worker copies: `tsc --noEmit`),
    restart Node or redeploy the Worker, and
    [connect its credential](./auth.md#connect-a-shared-credential) if needed.
