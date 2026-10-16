@@ -53,8 +53,9 @@ integrations. Each [provider folder](https://github.com/zackbart/connecta/tree/m
 contains its scoped guide, options, tests, fixtures, and review data. Prefer
 that guide to general assumptions about a service's API. Google Workspace
 providers require administrator-managed domain-wide delegation and a deployment
-mapping from admitted identity to the downstream account; a request must not
-choose its own account. Gmail never sends mail, and Drive never permanently
+mapping from admitted identity to the downstream account; an agent acts as its
+pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
+A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
 
 Wispr Flow uses OAuth only through `wisprFlow()` from

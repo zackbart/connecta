@@ -87,6 +87,7 @@ const config: ConnectaConfigDescription = {
         { kind: "agent", name: "simon-ada" },
       ],
       readOnly: false,
+      owner: "ada@workspace.example",
     },
     {
       name: "support",
@@ -97,6 +98,7 @@ const config: ConnectaConfigDescription = {
         { kind: "agent", name: "triage" },
       ],
       readOnly: true,
+      owner: "support@workspace.example",
     },
     {
       name: "team",
@@ -107,6 +109,7 @@ const config: ConnectaConfigDescription = {
         { kind: "human", namespace: CLERK, id: "user_lin" },
       ],
       readOnly: false,
+      owner: null,
     },
   ],
   modules: {

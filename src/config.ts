@@ -35,6 +35,7 @@ import type { AccessTokensModule, ActivityModule, OperatorSurface } from "./modu
 import { memoryStorage } from "./storage/memory.js";
 import type { Connector, Executor, InboundAuth, KVStorage, Logger } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
+import { isWorkspaceAddress } from "./workspace-address.js";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -268,6 +269,20 @@ const pool = {
     (path) =>
       `${path} is required: list who may open this pool, as principal ids, { namespace, id }, or "agent:<name>".`,
   ),
+  /**
+   * The Google Workspace address agents in this pool act as, on a Workspace
+   * connector whose `subject` is a mapping function. Humans always act as
+   * themselves through that mapping, and a fixed `subject` address applies to
+   * everyone. Without an owner, an agent's Workspace calls fail
+   * `auth_required`.
+   */
+  owner: opaque<string>({
+    check: (value, path) => {
+      if (typeof value !== "string" || !isWorkspaceAddress(value.trim())) {
+        throw new ConfigError(`${path} must be a Google Workspace email address.`);
+      }
+    },
+  }),
 };
 
 const icon = {

@@ -115,6 +115,7 @@ function resolvePools(
         access,
         readOnly: pool.readOnly ?? readOnly,
         members: Object.freeze(resolveMembers(pool.members, path, members)),
+        ...(pool.owner !== undefined ? { owner: pool.owner.trim() } : {}),
       }),
     );
   }

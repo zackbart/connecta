@@ -8,8 +8,9 @@
 // - maintained providers that act *as* the caller downstream — Google
 //   Workspace through domain-wide delegation (`src/providers/_shared/google/`) — which
 //   hand the identity to a deployment-config function that names the
-//   downstream subject (PRINCIPLES.md INV-3, #678). The
-//   provider never decides whose account to open; config does, from this.
+//   downstream subject (PRINCIPLES.md INV-3, #678), or, for an agent, use the
+//   admitted pool's configured owner (decisions/0006). The provider never
+//   decides whose account to open; config does, from this.
 //
 // Core sets it from the authorization that admitted the request, on the scoped
 // registry view that request receives, and `api()` hands handlers that same
@@ -30,8 +31,14 @@ export interface ConnectorCaller {
    * with or without a subject, a Connecta-issued access token.
    */
   authenticated: boolean;
-  /** The `/mcp/<pool>` the call arrived on, when it was a pool. */
+  /** The pool the call arrived through, when it was a pool. */
   pool?: string;
+  /**
+   * That pool's configured `owner`, the Workspace address an agent acts as
+   * (decisions/0006). Core copies it from the admitted pool's config; no
+   * request can set it, and humans never act as it.
+   */
+  poolOwner?: string;
 }
 
 const callers = new WeakMap<ConnectorContext, ConnectorCaller>();

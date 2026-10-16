@@ -72,7 +72,12 @@ export function describeConfigSources(
     else if (group === "classification") source = provided(raw.classification);
     else if (group === "pools")
       // An inherited value comes from wherever the deployment's came from.
-      source = field === "readOnly" ? provided(raw.pools?.[key!]?.readOnly ?? raw.readOnly) : provided(raw.pools);
+      source =
+        field === "readOnly"
+          ? provided(raw.pools?.[key!]?.readOnly ?? raw.readOnly)
+          : field === "owner"
+            ? provided(raw.pools?.[key!]?.owner)
+            : provided(raw.pools);
     else if (group === "modules") {
       source = provided(
         key === "ui" ? raw.ui : key === "vault" ? raw.vault : key === "activity" ? raw.activity : raw.accessTokens,

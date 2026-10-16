@@ -134,7 +134,13 @@ export function secretBearingDeployment() {
       }),
       activity: activityHistory({ store: activityStore, deploymentId: "production" }),
       readOnly: false,
-      pools: { support: { tools: ["static_api"], members: ["agent:release-bot", "user_support"] } },
+      pools: {
+        support: {
+          tools: ["static_api"],
+          members: ["agent:release-bot", "user_support"],
+          owner: " support@workspace.example ",
+        },
+      },
       serverInfo: {
         websiteUrl: `https://about.example/connecta?k=${SECRETS.websiteQuery}`,
         icons: [{ src: `data:image/svg+xml,${SECRETS.iconData}` }],

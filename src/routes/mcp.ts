@@ -754,6 +754,7 @@ export function createMcpRoute(opts: ServerOptions): {
           // the operator log is where the reason lives.
           let access: ConnectorAccess = { connectorIds: "all" };
           let readOnly = opts.config.readOnly;
+          let poolOwner: string | undefined;
           if (poolName === undefined) {
             if (!admitsMaintainer(opts, authz)) {
               logFailure(
@@ -777,6 +778,7 @@ export function createMcpRoute(opts: ServerOptions): {
             }
             access = pool.access;
             readOnly = pool.readOnly;
+            poolOwner = pool.owner;
           }
           let scopedRegistry: RegistryView;
           try {
@@ -847,6 +849,7 @@ export function createMcpRoute(opts: ServerOptions): {
                 // anonymous actor; only a provider's `ok` is an authentication.
                 authenticated: opts.config.auth.length > 0,
                 ...(poolName !== undefined ? { pool: poolName } : {}),
+                ...(poolOwner !== undefined ? { poolOwner } : {}),
               },
             });
           } catch {
