@@ -4,6 +4,7 @@ import type { Notice, OperatorPage, OperatorState, Tone } from "../view.js";
 import { loadFailureCopy, PAGE_META } from "../view.js";
 import { fixPrompt, type FixPromptKind } from "../fix-prompts.js";
 import { productName } from "./config.js";
+import { Icon } from "./icons.js";
 import { navigate, retryLoad } from "./store.js";
 
 /** The handful of shapes every page repeats: notices, links, copy, and nothing-here. */
@@ -80,9 +81,75 @@ function FixPromptPreview({ kind, connectorId }: { kind: FixPromptKind; connecto
   );
 }
 
-/** A status word with a tone. The page's one piece of decoration. */
+/** A short tag: a mode, a classification, where a value came from. */
 export function Badge({ tone = "neutral", children }: { tone?: Tone; children: ReactNode }) {
-  return <span className={tone === "neutral" ? "badge" : `badge ${tone}`}>{children}</span>;
+  return <span className={tone === "neutral" ? "badge tag" : `badge tag ${tone}`}>{children}</span>;
+}
+
+/** How something is doing, in four words a glance can read. */
+type PillStatus = "healthy" | "attention" | "error" | "neutral" | "info";
+
+const PILL_TONE: Record<PillStatus, string> = {
+  healthy: "ok",
+  attention: "warn",
+  error: "danger",
+  neutral: "",
+  info: "accent",
+};
+
+/** The status a tone from the view model reads as. */
+export function pillStatus(tone: Tone): PillStatus {
+  return tone === "ok"
+    ? "healthy"
+    : tone === "warn"
+      ? "attention"
+      : tone === "danger"
+        ? "error"
+        : tone === "accent"
+          ? "info"
+          : "neutral";
+}
+
+/** A status with its dot. The word carries the meaning; the color repeats it. */
+export function Pill({ status = "neutral", children }: { status?: PillStatus; children: ReactNode }) {
+  const tone = PILL_TONE[status];
+  return (
+    <span className={tone ? `badge pill ${tone}` : "badge pill"}>
+      <span className="pill-dot" aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
+/**
+ * A message the reader has to act on or know: a problem (red) or a notice
+ * (amber). The caller's attributes land on the box, so data hooks stay.
+ */
+export function Callout({
+  tone = "problem",
+  children,
+  ...props
+}: { tone?: "problem" | "notice"; children: ReactNode } & Record<`data-${string}`, string | undefined>) {
+  return (
+    <div className={tone === "notice" ? "msg callout warn" : "msg callout"} {...props}>
+      <Icon name="alert" />
+      <p>{children}</p>
+    </div>
+  );
+}
+
+/** Label and value pairs read across one line, wrapping on a narrow screen. */
+export function SummaryRow({ items, className }: { items: { label: string; value: ReactNode }[]; className?: string }) {
+  return (
+    <dl className={className ? `summary-row ${className}` : "summary-row"}>
+      {items.map((item) => (
+        <div key={item.label}>
+          <dt>{item.label}</dt>
+          <dd>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 /**
@@ -97,19 +164,29 @@ export function StateBlock({
   tone = "neutral",
   action,
   id,
+  busy,
 }: {
   title?: string;
   children?: ReactNode;
   tone?: "neutral" | "error";
   action?: { label: string; onClick: () => void; id?: string };
   id?: string;
+  /** Still loading: a spinner beside the words, not instead of them. */
+  busy?: boolean;
 }) {
   return (
     <div
-      className={tone === "error" ? "state-block error" : "state-block"}
+      className={tone === "error" ? "state-block error" : busy ? "state-block busy" : "state-block"}
       role={tone === "error" ? "alert" : "status"}
       {...(id ? { id } : {})}
     >
+      {tone === "error" ? (
+        <span className="state-mark">
+          <Icon name="alert" size={20} />
+        </span>
+      ) : busy ? (
+        <span className="spinner" aria-hidden="true" />
+      ) : null}
       {title ? <p className="state-title">{title}</p> : null}
       {children ? <p className="state-copy">{children}</p> : null}
       {action ? (
@@ -250,7 +327,7 @@ export function PageLink({
 export function CopyButton({
   value,
   label,
-  className = "btn quiet copy-btn",
+  className = "btn sm copy-btn",
   ariaLabel,
   id,
   icon,
@@ -273,7 +350,7 @@ export function CopyButton({
   const text = status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : label;
   return (
     <button
-      className={icon ? `${className} icon` : className}
+      className={icon ? `${className} quiet icon` : className}
       type="button"
       {...(id ? { id } : {})}
       {...(icon ? { title: text } : {})}
@@ -301,21 +378,5 @@ export function CopyButton({
 }
 
 function CopyIcon({ done }: { done: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-      {done ? (
-        <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      ) : (
-        <>
-          <rect x="5.25" y="5.25" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-          <path
-            d="M10.75 3.25v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.3"
-          />
-        </>
-      )}
-    </svg>
-  );
+  return <Icon name={done ? "check" : "copy"} size={15} />;
 }

@@ -52,7 +52,7 @@ describe("operator assets on both runtimes", () => {
     expect(response.headers.get("allow")).toBe("GET, HEAD");
   });
 
-  it("keeps the open shell small and hosts Geist Sans and Mono in its hashed stylesheet", () => {
+  it("keeps the open shell small and hosts Hanken Grotesk and JetBrains Mono in its hashed stylesheet", () => {
     const html = renderUiHtml();
     expect(html.length).toBeLessThan(5000);
     expect(html).toContain(OPERATOR_UI_SCRIPT_PATH);
@@ -67,8 +67,8 @@ describe("operator assets on both runtimes", () => {
     expect(fonts).toHaveLength(2);
     for (const font of fonts) expect(css).toContain(font);
     const notices = Object.entries(OPERATOR_UI_ASSETS).find(([path]) => path.endsWith(".txt"))![1].body;
-    expect(notices).toContain("@fontsource-variable/geist");
-    expect(notices).toContain("@fontsource-variable/geist-mono");
+    expect(notices).toContain("@fontsource-variable/hanken-grotesk");
+    expect(notices).toContain("@fontsource-variable/jetbrains-mono");
     expect(notices).toContain("SIL OPEN FONT LICENSE");
     // The complete package-to-license mapping is checked in operator-notices.node.test.ts.
     const sections = notices.split("\n\n----------------------------------------\n\n");

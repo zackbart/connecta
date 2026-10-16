@@ -505,7 +505,7 @@ test("INV-4: queued focus and later passive returns cannot restore data during d
 test("keeps the shell open and loads private data only after authentication", async ({ page }) => {
   await page.goto(origin + "/");
 
-  await expect(page.getByRole("heading", { name: "Endpoints" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page.getByText("CRM")).toHaveCount(0);
   expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(0);
 
@@ -1050,7 +1050,9 @@ test("stays signed in with a retry when operator data fails, and gates only on 4
   await expect(failure).toContainText("Couldn't reach Connecta");
   await expect(failure).not.toContainText("boom");
   await expect(page.locator("#gate")).toHaveCount(0);
+  await page.getByRole("button", { name: "Account", exact: true }).click();
   await expect(page.getByRole("button", { name: "Change token" })).toBeVisible();
+  await page.keyboard.press("Escape");
 
   answer = "network";
   await failure.getByRole("button", { name: "Retry" }).click();
@@ -1242,6 +1244,7 @@ test("closes the opened tab when the identity changes mid-request", async ({ pag
   await crm.getByRole("button", { name: "Connect CRM" }).click();
   const tab = await popup;
 
+  await page.getByRole("button", { name: "Account", exact: true }).click();
   await page.getByRole("button", { name: "Change token" }).click();
   await expect(page.locator("#gate")).toBeVisible();
   release();

@@ -387,7 +387,7 @@ test("INV-6: Endpoints and command search ignore payload and raw error sentinels
   await page.locator(".endpoint-entry").first().locator(".endpoint-toggle").click();
   await page.getByRole("button", { name: "Search" }).click();
   await page.getByPlaceholder("Search pages, connectors, tools…").fill(sentinel);
-  await expect(page.getByText("No matching pages, connectors, tools or actions.")).toBeVisible();
+  await expect(page.getByText("No matches", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   expect(await page.content()).not.toContain(sentinel);
   await clean(page);

@@ -5,6 +5,7 @@ import { machineAuth } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resolveBranding } from "../src/ui.js";
 import { droppedThemeTokens, renderPage, resolveTheme, themeCss } from "../src/branding.js";
+import { PAGE_FONTS } from "../src/page-styles.js";
 import type { ConnectaBranding, ConnectaTheme, Logger } from "../src/types.js";
 import { calcApi, makeDeployment } from "./fixtures/http.js";
 
@@ -122,11 +123,11 @@ describe("the shared page layout", () => {
   it("sets data-scheme only for a pinned scheme, with a matching theme color", () => {
     const system = renderPage(undefined, layout);
     expect(system).toContain('<html lang="en">');
-    expect(system).toContain('<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">');
-    expect(system).toContain('<meta name="theme-color" content="#151a21" media="(prefers-color-scheme: dark)">');
+    expect(system).toContain('<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">');
+    expect(system).toContain('<meta name="theme-color" content="#12110f" media="(prefers-color-scheme: dark)">');
     const dark = renderPage({ theme: { colorScheme: "dark" } }, layout);
     expect(dark).toContain('<html lang="en" data-scheme="dark">');
-    expect(dark).toContain('<meta name="theme-color" content="#151a21">');
+    expect(dark).toContain('<meta name="theme-color" content="#12110f">');
     expect(dark).not.toContain("prefers-color-scheme: light");
     const configured = renderPage({ themeColor: "#101010", theme: { colorScheme: "dark" } }, layout);
     expect(configured).toContain('<meta name="theme-color" content="#101010">');
@@ -157,6 +158,40 @@ describe("the shared page layout", () => {
       { ...layout, iconOrigin: "https://main.example" },
     );
     expect(absolute).toContain('href="https://cdn.acme.example/i.svg"');
+  });
+
+  it("declares the operator fonts only when the UI is mounted, at the paths it serves", async () => {
+    expect(renderPage(undefined, { ...layout, uiMounted: false })).not.toContain("@font-face");
+    // Root-relative even on a page rendered for another host: the page's own
+    // origin serves the font, so no cross-origin font request is made.
+    const page = renderPage(undefined, { ...layout, iconOrigin: "https://main.example" });
+    expect(page.match(/@font-face/g)).toHaveLength(PAGE_FONTS.length);
+    const deployment = makeDeployment(brandingConfig());
+    for (const font of PAGE_FONTS) {
+      expect(font.path).toMatch(/^\/ui\/assets\/[a-z0-9-]+\.woff2$/i);
+      expect(page).toContain(`src:url("${font.path}") format("woff2")`);
+      const response = await deployment.fetch(new Request(`${BASE}${font.path}`));
+      expect(response.status, font.path).toBe(200);
+      expect(response.headers.get("content-type")).toBe("font/woff2");
+    }
+  });
+
+  it("draws connecta's mark only for an unbranded deployment, or shows the served SVG favicon", () => {
+    const mark = '<span class="brand-mark" aria-hidden="true"></span>';
+    const favicon = '<img class="brand-mark" src="/favicon.svg" alt="">';
+    expect(renderPage(undefined, layout)).toContain(mark);
+    for (const branding of [
+      { productName: "Acme" },
+      { ownerName: "Acme" },
+      { favicon: { href: "/assets/acme.svg" } },
+    ] satisfies ConnectaBranding[]) {
+      const page = renderPage(branding, layout);
+      expect(page).not.toContain('class="brand-mark"');
+    }
+    const svg = { productName: "Acme", favicon: { svg: "<svg/>" } } satisfies ConnectaBranding;
+    expect(renderPage(svg, layout)).toContain(favicon);
+    // Without the UI nothing serves /favicon.svg, so there is nothing to show.
+    expect(renderPage(svg, { ...layout, uiMounted: false })).not.toContain('class="brand-mark"');
   });
 
   it("reads a configured theme color the one way resolveBranding does", () => {
@@ -203,10 +238,20 @@ describe("operator theme tokens", () => {
       colorScheme: "dark",
     });
     expect(themeCss(theme)).toBe(
-      ":root{--accent:#7C3AED;--radius:4px;--sans:Inter, system-ui, sans-serif;" +
+      ":root{--accent:#7C3AED;--custom-on-accent:#ffffff;--custom-accent-text:#a375f2;" +
+        "--radius:4px;--sans:Inter, system-ui, sans-serif;" +
         '--mono:"JetBrains Mono", monospace}',
     );
     expect(droppedThemeTokens({ accent: "#7C3AED", radius: 4 })).toEqual([]);
+  });
+
+  // A dark accent stays legible as text on the dark palette, and a light one
+  // gets dark text on its fill; the built-in accent keeps the stylesheet's mix.
+  it("derives readable text colors from a configured accent", () => {
+    expect(themeCss(resolveTheme({ accent: "#000080" }))).toContain("--custom-accent-text:#8c8cc6");
+    expect(themeCss(resolveTheme({ accent: "#000080" }))).toContain("--custom-on-accent:#ffffff");
+    expect(themeCss(resolveTheme({ accent: "#ffd400" }))).toContain("--custom-on-accent:#0f0e1f");
+    expect(themeCss(resolveTheme({ radius: 0 }))).not.toContain("--custom-");
   });
 
   // The resolver trims before reading, so the warning must too: a value that
@@ -253,7 +298,7 @@ describe("operator theme tokens", () => {
       )
     ).text();
     expect(body).toContain('<html lang="en" data-scheme="dark">');
-    expect(body).toContain(":root{--accent:#123456}</style>");
+    expect(body).toContain(":root{--accent:#123456;--custom-on-accent:#ffffff;--custom-accent-text:#7d8fa2}</style>");
   });
 
   it("leaves the html element alone when the scheme follows the OS", async () => {

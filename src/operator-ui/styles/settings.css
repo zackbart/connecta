@@ -1,0 +1,80 @@
+/*
+ * Settings, and every read-only configuration snapshot: inbound auth, then
+ * the resolved config with where each value came from.
+ */
+
+#settingsView > .section:first-of-type {
+  margin-top: 0;
+}
+#settingsView > .section {
+  margin-top: var(--space-5);
+}
+.list-rows > .attention-row:first-child {
+  padding-top: 0;
+}
+.list-rows > .attention-row:last-child {
+  padding-bottom: 0;
+}
+.source-legend {
+  font-size: var(--text-xs);
+  gap: var(--space-2);
+}
+.source-legend .meta {
+  font-size: var(--text-xs);
+  margin-right: var(--space-2);
+}
+
+.snapshot-tree {
+  display: grid;
+  font-size: var(--text-sm);
+  gap: 0;
+}
+.snapshot-tree details {
+  border-left: 1px solid var(--line);
+  margin-left: 0.25rem;
+  padding-left: var(--space-4);
+}
+.snapshot-tree > details + details,
+.snapshot-tree > .snapshot-value + details {
+  margin-top: 0.125rem;
+}
+.snapshot-tree summary {
+  border-radius: var(--radius-sm);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-2) 0;
+}
+.snapshot-tree summary:hover {
+  color: var(--link);
+}
+.snapshot-tree summary .meta {
+  font-weight: 400;
+  margin-left: var(--space-3);
+}
+.snapshot-value {
+  align-items: start;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  font-size: var(--text-sm);
+  gap: var(--space-4);
+  grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr) auto;
+  padding: 0.5625rem 0;
+}
+.snapshot-value > code {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  padding-top: 0.125rem;
+}
+.snapshot-value > span:not(.badge) {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  padding-top: 0.125rem;
+}
+
+@media (max-width: 51.25rem) {
+  .snapshot-value {
+    gap: var(--space-2);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
+  }
+}

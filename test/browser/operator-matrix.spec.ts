@@ -202,7 +202,7 @@ test("INV-4: endpoint rows show agent URLs only for agent pools and runs-as from
     "Everyone acts as support@workspace.example",
   ]);
   // Who can use each endpoint: operator-console.spec.ts covers the chips.
-  await expect(ada.getByRole("group", { name: "Who can use /mcp/ada", exact: true })).toContainText("agent:simon-ada");
+  await expect(ada.getByRole("group", { name: "Who can use /mcp/ada", exact: true })).toContainText("Agent simon-ada");
   await noCsp(page);
 });
 
@@ -352,7 +352,7 @@ test("INV-4: an unknown role shows its loading or error state with no maintainer
   await expect(page.locator("#inboundHeading, .snapshot-tree")).toHaveCount(0);
   await page.getByRole("button", { name: "Search" }).click();
   await page.getByPlaceholder("Search pages, connectors, tools…").fill("settings");
-  await expect(page.getByText("No matching pages, connectors, tools or actions.")).toBeVisible();
+  await expect(page.getByText("No matches", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   // The retry resolves the role: a member, who still never asks for maintainer data.
   fail = false;

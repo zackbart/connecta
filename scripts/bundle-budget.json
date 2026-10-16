@@ -11,6 +11,7 @@
     "operator-ui/assets adds a blocking scheme initializer (#854), 184 B raw and 157 B gzip, that applies the saved color scheme before first paint. With that work moved out of the main bundle and the token storage guarded against private browsing, assets net +111 B gzip (240,164 B to 240,275 B) and the ./ui entry +145 B (300,540 B to 300,685 B). Raw assets measure 688.4 KB against the 700,000 B cap. No cap moves.",
     "Phase 2 item 2 (#706, PR #739) remeasures the typed guest API: root 339,882 B gzip, ./worker 74,666 B, and examples/worker 649,045 B. Acorn is the Worker import router's parser and also checks that a guest program is one expression before splicing; syntax-aware parsing prevents imports from reaching private runner modules. The named ESM parse import is already used, and Acorn exports no smaller parse-only entry. Esbuild attribution confirms Acorn is absent from the root graph; root growth over main is the typed guest outcomes, diagnostics, and runtime hardening. These entries use the measured baseline + 60,000 B policy.",
     "Initial measured hosted-MCP wrapper baseline, with the existing 60,000-byte provider headroom policy.",
+    "The calm operator UI foundation (#867) swaps Geist Sans and Mono (29,400 B and 23,128 B woff2) for Hanken Grotesk and JetBrains Mono (34,704 B and 40,404 B), the variable Latin files the redesign specifies, and splits the stylesheet per area with the new tokens and shared components. Raw assets measure 722,611 B, of which the fonts are +22,580 B and the CSS, icons and shell the rest; gzip measures 265,879 B, inside its cap. maxRaw moves from 700,000 B to 740,000 B to hold the two typefaces; gzip caps do not move. Its review round (drawn or favicon brand mark, palette icons, accent-derived text colors) remeasures at 726.4 KB raw and 266,815 B gzip; no cap moves.",
     "./providers/basecamp starts at 131,228 B gzip, measured where it was introduced: a remoteMcp() wrapper like ./providers/revenuecat, so the same shape and the same baseline + 60,000 B policy.",
     "./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. The cap uses the baseline + 60,000 B policy.",
@@ -167,7 +168,7 @@
     "operator-ui/assets": {
       "baselineGzip": 218702,
       "maxGzip": 278702,
-      "maxRaw": 700000
+      "maxRaw": 740000
     }
   }
 }

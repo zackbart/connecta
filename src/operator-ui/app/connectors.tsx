@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { OperatorConnectorOverlay } from "../contract.js";
 import { formatDate, type OperatorState } from "../view.js";
 import { StateBlock } from "./parts.js";
-import { Button, DataTable, Input } from "./primitives.js";
+import { Button, DataTable, Input, SegmentedControl } from "./primitives.js";
 import { ConnectorStatus } from "./problems.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
 import { ConnectorMatrix } from "./matrix.js";
@@ -68,16 +68,12 @@ const columns = (state: OperatorState): ColumnDef<Row>[] => [
 type View = "list" | "matrix";
 
 /** List or Matrix, kept in the query string so a matrix link opens on the matrix. */
+const VIEWS = [
+  { value: "list", label: "List" },
+  { value: "matrix", label: "Matrix" },
+] as const;
 function ViewToggle({ view, onChange }: { view: View; onChange: (view: View) => void }) {
-  return (
-    <div className="segmented" role="group" aria-label="Connector view">
-      {(["list", "matrix"] as const).map((value) => (
-        <button key={value} type="button" aria-pressed={view === value} onClick={() => onChange(value)}>
-          {value === "list" ? "List" : "Matrix"}
-        </button>
-      ))}
-    </div>
-  );
+  return <SegmentedControl label="Connector view" value={view} options={VIEWS} onChange={onChange} />;
 }
 
 export function ConnectorsPage({ state }: { state: OperatorState }) {

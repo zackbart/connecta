@@ -1,6 +1,6 @@
 import type { OperatorConnectorOverlay } from "../contract.js";
 import { connectorStatusLabel, connectorStatusTone, driftState, type OperatorState } from "../view.js";
-import { Badge } from "./parts.js";
+import { Pill, pillStatus } from "./parts.js";
 import { navigate } from "./store.js";
 
 /**
@@ -33,10 +33,10 @@ export function ConnectorStatus({
   const href = `/connectors/${encodeURIComponent(id)}#connection`;
   return (
     <div className="inline-problems">
-      <Badge tone={tone}>{label}</Badge>
+      <Pill status={pillStatus(tone)}>{label}</Pill>
       {action ? (
         <a
-          className="btn quiet problem-action"
+          className="btn sm problem-action"
           href={href}
           aria-label={`${action} ${name}`}
           onClick={(event) => {

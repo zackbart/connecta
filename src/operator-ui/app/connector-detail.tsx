@@ -8,8 +8,9 @@ import {
   connectorStatusTone,
   formatDate,
 } from "../view.js";
-import { Badge, StateBlock } from "./parts.js";
-import { Button, Tabs } from "./primitives.js";
+import { Pill, pillStatus, StateBlock, SummaryRow } from "./parts.js";
+import { Button, Card, Tabs } from "./primitives.js";
+import { Icon } from "./icons.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
 import { SnapshotTree } from "./snapshot.js";
 import { Catalog } from "./catalog.js";
@@ -33,7 +34,8 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
   if (auth && !auth.permissions?.manageSharedAuth && !auth.permissions?.connectPersonal) delete auth.credential;
   return (
     <section id="connectorView">
-      <a href="/connectors" className="meta">
+      <a href="/connectors" className="back-link">
+        <Icon name="back" size={14} />
         All connectors
       </a>
       <div className="page-heading">
@@ -52,9 +54,9 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
         <>
           <div className="facts-row conn-head">
             <code>{id}</code>
-            <Badge tone={state.connectorFailures[id] ? "warn" : connectorStatusTone(live.status)}>
+            <Pill status={pillStatus(state.connectorFailures[id] ? "warn" : connectorStatusTone(live.status))}>
               {state.connectorFailures[id] ? "Couldn't load" : connectorStatusLabel(live.status, live.problem)}
-            </Badge>
+            </Pill>
             <span className="meta">{config.authScope === "personal" ? "Personal" : "Shared"} auth</span>
             <span className="meta">{live.tools.length} tools</span>
           </div>
@@ -76,45 +78,48 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
                 label: "Connection",
                 content: (
                   <div className="collection connection-sections">
-                    <section id={`auth-${id}`} tabIndex={-1} aria-label="Authentication">
-                      <h2>Authentication</h2>
+                    <Card id={`auth-${id}`} tabIndex={-1} aria-label="Authentication" title="Authentication">
                       {auth ? (
                         <ConnectorAuth connector={auth} state={state} />
                       ) : (
-                        <StateBlock>Authentication details are loading.</StateBlock>
+                        <StateBlock busy>Authentication details are loading.</StateBlock>
                       )}
-                    </section>
-                    <section aria-label="Diagnostics">
-                      <h2>Diagnostics</h2>
-                      <div className="facts-row">
-                        <span>
-                          Catalog age:{" "}
-                          {live.catalogAgeMs === null
-                            ? "Not observed"
-                            : `${Math.round(live.catalogAgeMs / 1000)} seconds`}
-                        </span>
-                        <span>
-                          Last call:{" "}
-                          {live.lastCall
-                            ? `${formatDate(live.lastCall.at)} · ${live.lastCall.outcome}`
-                            : "Not observed"}
-                        </span>
-                      </div>
+                    </Card>
+                    <Card aria-label="Diagnostics" title="Diagnostics">
+                      <SummaryRow
+                        items={[
+                          {
+                            label: "Catalog age",
+                            value:
+                              live.catalogAgeMs === null
+                                ? "Not observed"
+                                : `${Math.round(live.catalogAgeMs / 1000)} seconds`,
+                          },
+                          {
+                            label: "Last call",
+                            value: live.lastCall
+                              ? `${formatDate(live.lastCall.at)} · ${live.lastCall.outcome}`
+                              : "Not observed",
+                          },
+                        ]}
+                      />
                       {auth ? (
                         <ConnectorDiagnostics connector={auth} />
                       ) : (
-                        <StateBlock>Diagnostics are loading.</StateBlock>
+                        <StateBlock busy>Diagnostics are loading.</StateBlock>
                       )}
-                    </section>
-                    <section aria-label="Connector configuration">
-                      <h2>Configuration</h2>
-                      <p className="meta">Source: {connectorSourceLabel(config.source)}. Defined in deployment code.</p>
+                    </Card>
+                    <Card
+                      aria-label="Connector configuration"
+                      title="Configuration"
+                      description={`Source: ${connectorSourceLabel(config.source)}. Defined in deployment code.`}
+                    >
                       <SnapshotTree
                         value={config}
                         path={`config.connectors.${id}`}
                         sources={contract.configSources ?? undefined}
                       />
-                    </section>
+                    </Card>
                   </div>
                 ),
               },

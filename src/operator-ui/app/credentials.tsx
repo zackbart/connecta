@@ -10,7 +10,7 @@ import {
   saveCredential,
   testCredential,
 } from "./store.js";
-import { ConfirmBar, FixPrompt, focusableId, NoticeLine } from "./parts.js";
+import { Callout, ConfirmBar, FixPrompt, focusableId, NoticeLine } from "./parts.js";
 
 type Credential = NonNullable<UiConnector["credential"]>;
 
@@ -169,7 +169,7 @@ export function CredentialCard({
       ) : null}
       {/* The payload's error text can name a vault failure; the page says a
           fixed sentence keyed by the problem instead. */}
-      {credential.error ? <p className="msg">{credentialProblemCopy(credential.problem)}</p> : null}
+      {credential.error ? <Callout>{credentialProblemCopy(credential.problem)}</Callout> : null}
       {credential.error && credential.problem ? (
         <FixPrompt kind={credential.problem} connectorId={connector.id} name={connector.title || connector.id} />
       ) : null}

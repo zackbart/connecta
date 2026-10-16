@@ -1,4 +1,4 @@
-import { PAGE_CSS, TOKENS_CSS } from "./page-styles.js";
+import { PAGE_CSS, PAGE_FONTS, TOKENS_CSS } from "./page-styles.js";
 import { htmlSecurityHeaders } from "./html-security.js";
 import type { ConnectaBranding, ConnectaTheme, UiAuthConfig } from "./types.js";
 /** Connecta's default monochrome "C" mark. */
@@ -39,6 +39,7 @@ interface ResolvedBranding {
 }
 
 const DEFAULT_FAVICON_HREF = "/favicon.svg";
+const DEFAULT_PRODUCT_NAME = "Connecta";
 
 /**
  * Branding arrives from operator config, which is untyped at a JS call site, so
@@ -51,7 +52,7 @@ function trimmedString(value: unknown): string | undefined {
 }
 
 export function resolveBranding(branding?: ConnectaBranding): ResolvedBranding {
-  const productName = trimmedString(branding?.productName) ?? "Connecta";
+  const productName = trimmedString(branding?.productName) ?? DEFAULT_PRODUCT_NAME;
   const ownerName = trimmedString(branding?.ownerName);
   // Operator branding URLs become masthead/callback hrefs, so a non-http(s)
   // scheme (javascript:, data:) is dropped the same as an unset URL — the
@@ -166,6 +167,51 @@ export function droppedThemeTokens(theme?: ConnectaTheme): string[] {
   return dropped.map((token) => `theme.${token}`);
 }
 
+function rgbOf(hex: string): [number, number, number] {
+  const digits = hex.slice(1);
+  // `#rgb` and `#rgba` double each digit; alpha never affects contrast here.
+  const short = digits.length <= 4;
+  const pairs = [0, 1, 2].map((i) => (short ? digits[i]!.repeat(2) : digits.slice(i * 2, i * 2 + 2)));
+  return pairs.map((pair) => parseInt(pair, 16)) as [number, number, number];
+}
+
+function luminance([r, g, b]: [number, number, number]): number {
+  const channel = (value: number) => {
+    const c = value / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function contrast(a: [number, number, number], b: [number, number, number]): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const hexOf = (rgb: number[]) => `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, "0")).join("")}`;
+
+/** The dark palette's lightest surface that carries accent text (`--hover`). */
+const DARK_TEXT_GROUND: [number, number, number] = [0x24, 0x22, 0x1e];
+
+/**
+ * A configured accent's two derived colors. Text on its fill is white or
+ * near-black, whichever reads better; accent text on dark surfaces mixes the
+ * accent with white until it reaches 4.5:1, starting from the built-in
+ * accent's 80% so a light accent keeps its color.
+ */
+function accentTokens(accent: string): { onAccent: string; darkText: string } {
+  const rgb = rgbOf(accent);
+  const ink: [number, number, number] = [0x0f, 0x0e, 0x1f];
+  const onAccent = contrast(rgb, [255, 255, 255]) >= contrast(rgb, ink) ? "#ffffff" : hexOf(ink);
+  let darkText = hexOf(rgb.map((c) => c * 0.8 + 255 * 0.2));
+  for (let share = 0.8; share >= 0; share -= 0.05) {
+    const mixed = rgb.map((c) => c * share + 255 * (1 - share)) as [number, number, number];
+    darkText = hexOf(mixed);
+    if (contrast(mixed, DARK_TEXT_GROUND) >= 4.5) break;
+  }
+  return { onAccent, darkText };
+}
+
 /**
  * The resolved theme as a `:root` block, or "" when a deployment configured
  * nothing. It is emitted after the stylesheet so it overrides the defaults.
@@ -173,8 +219,10 @@ export function droppedThemeTokens(theme?: ConnectaTheme): string[] {
  * anything that would need escaping is dropped rather than rewritten.
  */
 export function themeCss(theme: ResolvedTheme): string {
+  const derived = theme.accent ? accentTokens(theme.accent) : undefined;
   const declarations = [
     theme.accent ? `--accent:${theme.accent}` : "",
+    derived ? `--custom-on-accent:${derived.onAccent};--custom-accent-text:${derived.darkText}` : "",
     theme.radius !== undefined ? `--radius:${theme.radius}` : "",
     theme.fontFamily ? `--sans:${theme.fontFamily}` : "",
     theme.monoFamily ? `--mono:${theme.monoFamily}` : "",
@@ -197,11 +245,11 @@ export function escapeHtml(value: string): string {
 }
 
 /**
- * The masthead's `--surface` in each palette, for the browser chrome a
+ * The top bar's `--bg` in each palette, for the browser chrome a
  * `theme-color` paints. A configured `themeColor` wins; without one a dark
  * page should not sit under a white status bar.
  */
-const SURFACE = { light: "#ffffff", dark: "#151a21" } as const;
+const SURFACE = { light: "#f6f4ef", dark: "#12110f" } as const;
 
 /** The operator's own `themeColor`, read the one way both callers read it. */
 function configuredThemeColor(branding: ConnectaBranding | undefined): string | undefined {
@@ -280,6 +328,7 @@ export function renderPage(branding: ConnectaBranding | undefined, layout: PageL
     : label("brand", brand.productName, brand.productUrl);
   const product = brand.ownerName ? label("product", brand.productName, brand.productUrl) : "";
   const customIcon = brand.faviconHref !== DEFAULT_FAVICON_HREF;
+  const mark = brandMarkHtml(brandMark(branding, layout.uiMounted));
   // `isSafeIconHref` already limited a relative href to one leading slash, so
   // resolving it can only land on `iconOrigin` itself.
   const iconHref = (href: string) =>
@@ -293,7 +342,16 @@ export function renderPage(branding: ConnectaBranding | undefined, layout: PageL
   const skip = layout.skipTo
     ? `<a class="skip-link" href="#${escapeHtml(layout.skipTo.id)}">${escapeHtml(layout.skipTo.label)}</a>\n`
     : "";
-  const styles = (layout.styles ?? TOKENS_CSS + PAGE_CSS) + (layout.extraStyles ?? "");
+  // The operator bundle declares its own fonts. Other pages link the same
+  // files only where the UI module serves them, root-relative so the page's
+  // own origin serves them; elsewhere the stacks fall back to system fonts.
+  const fonts = layout.uiMounted
+    ? PAGE_FONTS.map(
+        (font) =>
+          `@font-face{font-family:"${font.family}";font-style:normal;font-weight:${font.weight};font-display:swap;src:url("${font.path}") format("woff2")}`,
+      ).join("")
+    : "";
+  const styles = (layout.styles ?? fonts + TOKENS_CSS + PAGE_CSS) + (layout.extraStyles ?? "");
   return `<!doctype html>
 <html lang="en"${schemeAttribute(brand.theme)}>
 <head>
@@ -310,13 +368,37 @@ ${layout.head ?? ""}
 ${skip}<header class="masthead shell">
   <div class="masthead-inner">
     <div class="mast-nav">
-      ${owner}${product ? `\n      ${product}` : ""}
+      ${mark}${owner}${product ? `\n      ${product}` : ""}
     </div>${layout.mastheadEnd ? `\n    ${layout.mastheadEnd}` : ""}
   </div>
 </header>
 ${layout.body}${layout.tail ? `\n${layout.tail}` : ""}
 </body>
 </html>`;
+}
+
+/**
+ * The mark beside the brand name. Connecta's drawn "C" belongs to an
+ * unbranded deployment only; a deployment that serves its own SVG favicon
+ * shows that; any other branding shows its name alone.
+ */
+export type BrandMark = "connecta" | "favicon" | "none";
+
+export function brandMark(branding: ConnectaBranding | undefined, uiMounted: boolean): BrandMark {
+  if (uiMounted && trimmedString(branding?.favicon?.svg)) return "favicon";
+  const brand = resolveBranding(branding);
+  const unbranded =
+    brand.productName === DEFAULT_PRODUCT_NAME &&
+    !brand.ownerName &&
+    brand.faviconHref === DEFAULT_FAVICON_HREF &&
+    !branding?.favicon?.svg;
+  return unbranded ? "connecta" : "none";
+}
+
+function brandMarkHtml(mark: BrandMark): string {
+  if (mark === "connecta") return '<span class="brand-mark" aria-hidden="true"></span>';
+  if (mark === "favicon") return `<img class="brand-mark" src="${DEFAULT_FAVICON_HREF}" alt="">`;
+  return "";
 }
 
 /**

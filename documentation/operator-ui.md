@@ -25,10 +25,10 @@ explicit optional import and stays outside the root package import graph.
 
 Endpoints, Connectors, Activity, Tokens, and Settings are the maintainer's
 pages. Endpoints is the default page at `/`: one row for `/mcp` and each pool,
-with a copyable URL, who can use it, tool count, endpoint mode, and client
-setup. Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
+with a copyable URL, who can use it, tool count, a read-only pill on a
+read-only endpoint, and client setup. Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
 elsewhere: a person by label, or by raw id when the label is null, beside their
-initials, and an agent as `agent:<name>` with a token mark. A row shows four
+initials, and an agent by its bare name beside an agent mark. A row shows four
 and a "+N more" button that reveals the rest. A pool with
 agent members also shows its agent URL, muted. Expanding a row lists each
 connector on that endpoint with what it runs as and its tools, marking write
@@ -113,9 +113,9 @@ interactive credential or token management authority.
 With `operatorUi()` enabled, sign in at the deployment's public URL using
 Clerk (Node) or Cloudflare Access (Workers). A person listed in a pool's
 `members` can open the page without becoming a maintainer. The page, **Your
-connections**, has no tabs; its top bar shows branding, the signed-in account
-(Clerk's primary email, when there is one) and Sign out or Change token. It
-lists:
+connections**, has no tabs; its top bar shows branding and an **Account**
+button that opens the signed-in account (Clerk's primary email, when there is
+one) with Sign out or Change token. It lists:
 
 - **Your endpoints**: each admitted `/mcp/<pool>` URL with a copy button and
   **Client setup**. For example, Bob in pool `team` copies
@@ -275,7 +275,7 @@ existing doctor authentication environment variables; it runs no diagnostic
 program, follows no redirects, and prints no raw HTTP failure body.
 
 The operator shell uses React, TanStack Router/Query/Table, Radix, cmdk and
-Tailwind v4. Geist Sans, Geist Mono, CSS, JavaScript and dependency notices are hashed assets
+Tailwind v4. Hanken Grotesk, JetBrains Mono, CSS, JavaScript and dependency notices are hashed assets
 under `/ui/assets/*`, served identically with immutable cache headers on Node
 and Workers. HTML contains only mount points and escaped inert configuration;
 it remains uncached. Ahead of the stylesheet, every operator page (sign-in
@@ -366,11 +366,16 @@ id and typed actor when available, otherwise a fresh id and system actor. No
 names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
-The top bar shows deployment branding and a name breadcrumb, then Search (the
-command palette), Appearance, and the session action (Change token or Sign out)
-at one quiet size; a member's top bar has only branding, the account and the
-session action. The tab row lists Endpoints, Connectors, Activity,
-Tokens, and Settings. Activity and Tokens keep their permission gates; a gated
+The top bar is one row: the mark, deployment branding and the deployment name, the
+section links (Endpoints, Connectors, Activity, Tokens, and Settings), then
+Search (the command palette, also ⌘K or Ctrl+K), Appearance, and **Account**,
+which opens the signed-in account and the session action (Change token or Sign
+out). The mark is connecta's drawn "C" only when no product name, owner or
+favicon is configured; with `branding.favicon.svg` it is that SVG; otherwise
+there is none. The sign-in gate shows the same mark above "Sign in". Below
+820 px wide the section links move to a second row that scrolls sideways and
+keeps the current section in view, and Search shrinks to its icon. A member's top bar has only branding
+and Account. Activity and Tokens keep their permission gates; a gated
 viewer sees no operator navigation. The command palette searches visible pages,
 connectors and tools, opening connector results on Tools. `/access` redirects
 to `/`, `/tools` to `/connectors`, and `/config` to `/settings` in the browser

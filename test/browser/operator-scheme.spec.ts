@@ -10,8 +10,8 @@ import { VISUAL_ORIGIN, VISUAL_TOKEN } from "../fixtures/operator-visual.js";
 // blocking scheme initializer alone. HTML and assets come from a real
 // deployment, so its production CSP applies.
 
-const LIGHT_BG = "rgb(250, 250, 250)";
-const DARK_BG = "rgb(10, 10, 10)";
+const LIGHT_BG = "rgb(246, 244, 239)";
+const DARK_BG = "rgb(18, 17, 15)";
 
 let app: ReturnType<typeof createTestConnecta>;
 let pinnedApp: ReturnType<typeof createTestConnecta>;

@@ -29,7 +29,7 @@ export {
   type UiData,
 } from "./operator-ui/model.js";
 
-import { escapeHtml, isSafeHttpsUrl, renderPage, resolveBranding } from "./branding.js";
+import { brandMark, escapeHtml, isSafeHttpsUrl, renderPage, resolveBranding } from "./branding.js";
 export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
 export type OperatorPage = import("./operator-ui/view.js").OperatorPage;
 
@@ -211,6 +211,7 @@ export function renderUiHtml(
       schemePinned: brand.theme.colorScheme !== "system",
       titleSuffix: brand.pageTitle,
       productName: brand.productName,
+      brandMark: brandMark(branding, true),
       productDescription: brand.description,
       productOperatorLabel: brand.productName + " operator",
     })}</script><script defer src="${OPERATOR_UI_SCRIPT_PATH}"></script>`,

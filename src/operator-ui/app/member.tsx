@@ -10,7 +10,7 @@ import { safeHttpHref, type Notice, type OperatorState } from "../view.js";
 import { clientServerName } from "../setup-commands.js";
 import { productName } from "./config.js";
 import { CredentialForm } from "./credentials.js";
-import { Badge, ConfirmBar, focusableId, NoticeLine, StateBlock } from "./parts.js";
+import { ConfirmBar, focusableId, NoticeLine, Pill, pillStatus, StateBlock } from "./parts.js";
 import { Button } from "./primitives.js";
 import { ClientSetupDialog, EndpointLine, endpointUrl, type SetupTarget } from "./endpoints.js";
 import { useCloseOnRecovery } from "./contract-state.js";
@@ -92,7 +92,7 @@ function AccountRow({ account, state }: { account: MemberAccount; state: Operato
             {toolCountLabel(account.toolCount)} · {account.summary}
           </p>
         </div>
-        {account.badge ? <Badge tone={account.badge.tone}>{account.badge.label}</Badge> : null}
+        {account.badge ? <Pill status={pillStatus(account.badge.tone)}>{account.badge.label}</Pill> : null}
         <div className="account-actions">
           {blocked ? (
             <a className="btn primary" href={blocked} target="_blank" rel="noopener noreferrer">
@@ -199,7 +199,7 @@ export function MemberPage({ state }: { state: OperatorState }) {
               : "Retry to load your endpoints and accounts."}
           </StateBlock>
         ) : (
-          <StateBlock>Loading your connections…</StateBlock>
+          <StateBlock busy>Loading your connections…</StateBlock>
         )}
       </section>
     );
@@ -220,6 +220,7 @@ export function MemberPage({ state }: { state: OperatorState }) {
                 <li className="member-endpoint" key={endpoint.pool} aria-label={endpoint.path}>
                   <EndpointLine url={url} label={endpoint.pool} />
                   <Button
+                    size="sm"
                     className="endpoint-setup"
                     onClick={(event) => {
                       returnFocus.current = event.currentTarget;

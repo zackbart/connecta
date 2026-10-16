@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./query.js";
-import { ShellControls } from "./shell.js";
+import { AccountMenu, ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
-import { useEffect, useSyncExternalStore, useState } from "react";
+import { useEffect, useRef, useSyncExternalStore, useState } from "react";
 import {
   activityAllowed,
   activityReadable,
@@ -22,7 +22,7 @@ import {
   type OperatorPage,
   type OperatorState,
 } from "../view.js";
-import { auth, productDescription, productName, titleSuffix } from "./config.js";
+import { auth, brandMark, productDescription, productName, titleSuffix } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
 import { SettingsPage } from "./config-page.js";
 import { EndpointsPage } from "./endpoints.js";
@@ -32,6 +32,7 @@ import { ConnectorDetailPage } from "./connector-detail.js";
 import { MemberPage } from "./member.js";
 import { ContractState } from "./contract-state.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
+import { Icon } from "./icons.js";
 import {
   boot,
   closeForRecovery,
@@ -80,12 +81,7 @@ function visiblePages(state: OperatorState): OperatorPage[] {
 
 function DeploymentName({ state }: { state: OperatorState }) {
   const name = state.contract?.role === "maintainer" ? state.contract.config?.server.name : undefined;
-  return name ? (
-    <span className="deployment-name">
-      <span aria-hidden="true">/</span>
-      {name}
-    </span>
-  ) : null;
+  return name ? <span className="deployment-name">{name}</span> : null;
 }
 
 /** The signed-in account, where the sign-in exposes one: Clerk's primary email. */
@@ -98,29 +94,54 @@ function accountLabel(): string | null {
 function SessionAction() {
   return auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
     <Button variant="quiet" className="session-action" onClick={signOut}>
+      <Icon name="logout" size={15} />
       Sign out
     </Button>
   ) : (
     <Button variant="quiet" className="session-action" onClick={forgetBearer}>
+      <Icon name="key" size={15} />
       Change token
     </Button>
   );
 }
 
+/** The top bar's account control, with the session action inside it. */
+function Account({ role }: { role: "maintainer" | "member" }) {
+  const account = accountLabel();
+  const how =
+    auth.kind === "clerk" ? "team sign-in" : auth.kind === "cloudflare-access" ? "Cloudflare Access" : "a bearer token";
+  return (
+    <AccountMenu account={account} role={`${role === "member" ? "Member" : "Maintainer"}, signed in with ${how}`}>
+      <SessionAction />
+    </AccountMenu>
+  );
+}
+
 function OperatorNav() {
   const state = useOperatorState();
+  const nav = useRef<HTMLElement | null>(null);
+  // On a narrow screen the sections scroll sideways; keep the current one in
+  // view after every route change, without moving the page itself.
+  useEffect(() => {
+    const row = nav.current;
+    const link = row?.querySelector('[aria-current="page"]');
+    if (!row || !link || row.scrollWidth <= row.clientWidth) return;
+    const bounds = row.getBoundingClientRect();
+    const current = link.getBoundingClientRect();
+    const inset = parseFloat(getComputedStyle(row).paddingLeft) || 0;
+    if (current.left < bounds.left + inset) row.scrollLeft += current.left - bounds.left - inset;
+    else if (current.right > bounds.right - inset) row.scrollLeft += current.right - bounds.right + inset;
+  }, [state.page, state.session]);
   // A member's top bar is branding, their account and the way out: no tabs,
   // no search over pages they cannot open.
   // The last confirmed role, not the contract on screen: a failed refresh
   // clears the contract, and a member's chrome must not fall back to the
   // maintainer's while it does.
   if (state.session === "ready" && state.role === "member") {
-    const account = accountLabel();
     return (
       <div className="mast-actions">
         <div className="session-actions member-session" aria-label="Session actions">
-          {account ? <span className="account-label">{account}</span> : null}
-          <SessionAction />
+          <Account role="member" />
         </div>
       </div>
     );
@@ -129,7 +150,7 @@ function OperatorNav() {
   return (
     <div className="mast-actions">
       <DeploymentName state={state} />
-      <nav className="page-nav" aria-label="Operator pages">
+      <nav className="page-nav" aria-label="Operator pages" ref={nav}>
         {(state.session === "ready" ? visiblePages(state) : []).map((page) => (
           <PageLink
             key={page}
@@ -145,33 +166,42 @@ function OperatorNav() {
         {/* Unmounted, not just hidden, outside a ready session: its ⌘K
             listener must not open a palette over the sign-in gate. */}
         {state.session === "ready" ? <ShellControls state={state} pages={visiblePages(state)} /> : null}
-        <SessionAction />
+        <Account role="maintainer" />
       </div>
     </div>
   );
 }
 
+/** The top bar's mark, larger: the same rule decides whether there is one. */
+function GateMark() {
+  if (brandMark === "connecta") return <span className="brand-mark gate-mark" aria-hidden="true" />;
+  if (brandMark === "favicon") return <img className="brand-mark gate-mark" src="/favicon.svg" alt="" />;
+  return null;
+}
+
 /**
- * The page before the session is known, laid out as the page it guards: the
- * same heading, the same description, the same column. Signing in swaps the
- * form for the content without moving anything above it.
+ * The page before the session is known: the mark, "Sign in", and the way in
+ * on one card. While the session is checked the card shows the same busy
+ * block a signed-in page shows while it loads.
  */
 function Gate({ state }: { state: OperatorState }) {
   const [token, setToken] = useState("");
   const signedIn = auth.kind === "clerk" && Boolean(window.Clerk?.user);
   const loading = state.session === "loading";
   return (
-    <section id="gate" className="gate lead" aria-busy={loading ? "true" : "false"}>
+    <section id="gate" className="gate" aria-busy={loading ? "true" : "false"}>
+      <GateMark />
       <h1 id="gateHeading" tabIndex={-1}>
-        {PAGE_META[state.page].label}
+        Sign in
       </h1>
-      <div className="lead-copy">
-        <p>{pageDescription(state.page, productDescription)}</p>
+      <div className="gate-card">
         {/* While the session is checked, the same block the signed-in page
               shows while it loads, so the words and the shape do not change
               when the check passes. */}
         {loading ? (
-          <StateBlock id="gateCopy">{checkingCopy()}</StateBlock>
+          <StateBlock id="gateCopy" busy>
+            {checkingCopy()}
+          </StateBlock>
         ) : (
           <p id="gateCopy" className="meta">
             {gateCopy(auth.kind, signedIn)}
@@ -236,12 +266,15 @@ function Gate({ state }: { state: OperatorState }) {
  */
 function NoAccess() {
   return (
-    <section id="noAccess" className="gate lead">
+    <section id="noAccess" className="gate">
+      <span className="gate-mark locked" aria-hidden="true">
+        <Icon name="lock" size={22} />
+      </span>
       <h1 id="gateHeading" tabIndex={-1}>
         No access
       </h1>
-      <div className="lead-copy">
-        <p>{noAccessCopy(auth.kind, productName)}</p>
+      <div className="gate-card">
+        <p className="meta">{noAccessCopy(auth.kind, productName)}</p>
         <div className="actions">
           {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
             <Button onClick={signOut}>Sign out</Button>
@@ -257,14 +290,16 @@ function NoAccess() {
 /** Signed in, role not yet known: the page's name and its loading or error state. */
 function RolePending({ state }: { state: OperatorState }) {
   return (
-    <section id="rolePending" className="lead">
-      <h1 id={`${state.page}Heading`} tabIndex={-1}>
-        {PAGE_META[state.page].label}
-      </h1>
-      <div className="lead-copy">
-        <p>{pageDescription(state.page, productDescription)}</p>
-        <ContractState state={state} />
+    <section id="rolePending">
+      <div className="page-heading">
+        <div>
+          <h1 id={`${state.page}Heading`} tabIndex={-1}>
+            {PAGE_META[state.page].label}
+          </h1>
+          <p className="meta">{pageDescription(state.page, productDescription)}</p>
+        </div>
       </div>
+      <ContractState state={state} />
     </section>
   );
 }
@@ -279,13 +314,17 @@ function RecoveryBanner({ state }: { state: OperatorState }) {
   const failed = state.contractPhase === "error" || state.loadFailure !== null;
   return (
     <section id="recoveryBanner" className="recovery-banner" role="alert" aria-labelledby="recoveryTitle">
+      <span className="recovery-mark" aria-hidden="true">
+        <Icon name="alert" />
+      </span>
       <div>
         <p id="recoveryTitle" className="state-title">
           {failed ? "Configuration couldn't be loaded" : "Reloading configuration…"}
         </p>
         <p className="meta">This page shows what was last loaded and can't change until the configuration reloads.</p>
       </div>
-      <Button id="recoveryRetry" onClick={() => void retryLoad()}>
+      <Button id="recoveryRetry" size="sm" onClick={() => void retryLoad()}>
+        <Icon name="refresh" size={14} />
         Retry
       </Button>
     </section>

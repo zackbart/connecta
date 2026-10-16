@@ -1,9 +1,20 @@
 import { Fragment, useRef } from "react";
 import { agentRows, lastSeenLabel, slotBadge, slotSince, type AgentRow } from "../agents.js";
 import { accessTokenUnavailableCopy, contractRecovering, formatDate, type OperatorState } from "../view.js";
-import { Badge, ConfirmBar, CopyButton, Empty, focusableId, NoticeLine, StateBlock, Unavailable } from "./parts.js";
+import {
+  ConfirmBar,
+  CopyButton,
+  Empty,
+  focusableId,
+  NoticeLine,
+  Pill,
+  pillStatus,
+  StateBlock,
+  Unavailable,
+} from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
 import { useCloseOnRecovery } from "./contract-state.js";
+import { Icon } from "./icons.js";
 import {
   cancelTokenAction,
   confirmTokenAction,
@@ -90,8 +101,10 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
     <tr data-agent={row.name} className={row.slot.state === "revoked" ? "revoked" : undefined}>
       <th scope="row">
         <span className="agent-name">
-          <span className="agent-mark" aria-hidden="true" />
-          <span className="mono">{row.name}</span>
+          <span className="agent-mark" aria-hidden="true">
+            <Icon name="agent" size={12} />
+          </span>
+          <span>{row.name}</span>
         </span>
       </th>
       <td>
@@ -108,7 +121,7 @@ function SlotRow({ row, busy }: { row: AgentRow; busy: boolean }) {
         )}
       </td>
       <td>
-        <Badge tone={badge.tone}>{badge.label}</Badge>
+        <Pill status={pillStatus(badge.tone)}>{badge.label}</Pill>
       </td>
       <td className="meta">{slotSince(row.slot, formatDate)}</td>
       <td className="meta">{lastSeenLabel(row.lastSeenAt, formatDate)}</td>
@@ -188,7 +201,7 @@ export function TokensPage({ state }: { state: OperatorState }) {
       ) : (
         <div id="tokenList" aria-busy={state.tokenPhase === "loading" ? "true" : "false"}>
           {state.tokenPhase === "loading" ? (
-            <Empty>Loading access tokens…</Empty>
+            <StateBlock busy>Loading access tokens…</StateBlock>
           ) : state.tokenPhase === "error" ? (
             <StateBlock
               tone="error"

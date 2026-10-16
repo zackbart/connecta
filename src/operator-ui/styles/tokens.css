@@ -1,0 +1,80 @@
+/*
+ * The Tokens page: one row per agent declared in code, its token's state,
+ * and the dialog that shows a new secret once. (Design tokens live in
+ * ../tokens.css.)
+ */
+
+.data-table.token-table th[scope="row"] {
+  background: none;
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+}
+.data-table.token-table tr:last-child th {
+  border-bottom: 0;
+}
+.data-table.token-table tr.revoked th[scope="row"] {
+  color: var(--text-3);
+}
+.data-table.token-table tbody tr:hover > th {
+  background: var(--surface-2);
+}
+.token-table td,
+.token-table th[scope="row"] {
+  vertical-align: middle;
+}
+.token-table td:last-child {
+  text-align: right;
+}
+.agent-name {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.agent-pools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.token-actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.375rem;
+  justify-content: flex-end;
+}
+.token-actions .btn {
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  min-height: 1.875rem;
+  padding: 0.25rem 0.6875rem;
+}
+.data-table.token-table .token-confirm-row td {
+  background: var(--surface-2);
+  text-align: left;
+}
+.token-confirm-row .confirm {
+  margin: 0;
+}
+.token-unavailable {
+  font-size: var(--text-xs);
+}
+.token-secret-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+.token-secret {
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: block;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  padding: 0.75rem 0.875rem;
+  user-select: all;
+}
+.token-secret-panel .actions {
+  margin: 0;
+}
+.token-secret-panel > .meta {
+  font-size: var(--text-xs);
+  margin: 0;
+}
