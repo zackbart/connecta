@@ -80,10 +80,6 @@ export async function startNodeDeployment(
       eval: { tools: ids, members: ["agent:eval-machine"] },
       ...(taskPools as Record<string, { tools: string[]; members: string[]; readOnly?: boolean }> | undefined),
     },
-    identity: {
-      credentialAdministration: () => "all",
-      personalConnection: () => "all",
-    },
     publicUrl: origin,
     executor: observed.executor,
     vault,

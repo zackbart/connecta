@@ -911,7 +911,7 @@ anything, so SDK hook order cannot mix servers or cross a reset.
 ## Management permissions
 
 Management follows `maintainers` and pool `members` (#837,
-[decisions/0006](../decisions/0006-pools-are-the-access-model.md)); no
+[decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)); no
 resolver configures it. The former `identity.credentialAdministration`,
 `identity.personalConnection`, `identity.accessTokenManagement`, and
 `identity.activityAccess` each fail construction naming their replacement.
