@@ -103,8 +103,50 @@ maintainer issues the first token, rotates it, or revokes it; `AccessTokenManage
 the same `rotate(name)` and `revoke(name)` to trusted provisioning, and the
 Node template wraps rotation as `npm run --silent rotate-token -- <agent>`.
 Secrets carry 256 random bits and are returned once, on issue or rotate; only
-SHA-256 digests persist. Listing returns `{ name, state, issuedAt?, revokedAt? }`
-per declared agent, never a secret, digest, or prefix.
+SHA-256 digests persist. Listing returns `{ name, state, issuedAt?, revokedAt?,
+revision }` per declared agent, never a secret, digest, or prefix.
+
+**Revisions and `expect`.** A slot's `revision` is opaque: 22 base64url
+characters, the first 128 bits of a domain-separated SHA-256 of the agent name
+and the raw stored slot (`none` hashes the absent slot). Every commit stores a
+new slot value, since an issued slot names a fresh record id and a revoked one
+carries a random `revocationId` generated once per revoking call, so the
+revision changes on every issue, rotate, revoke, and adopt and on nothing
+else. The stored slot holds a record id or revocation id and times, never a
+secret or digest, and those ids leave only hashed. The token
+routes return it on every slot: `GET /ui/access-tokens` lists it, and issue,
+rotate, and revoke return the new slot's. Operator contract v2's
+`OperatorAgent.token.revision` carries the same value.
+
+The token routes require the revision the caller decided from:
+
+| Route                                            | `expect`                                                                                          |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `POST /ui/access-tokens/<agent>` (issue, rotate) | JSON body `{ "expect": "<revision>" }`, `Content-Type: application/json`                          |
+| `DELETE /ui/access-tokens/<agent>` (revoke)      | the same body, or `?expect=<revision>` for a client that cannot send a body with DELETE; not both |
+
+A missing or malformed `expect` is 400; a body that is not JSON is 415 and one
+over 1,024 characters is 413. They are checked after authorization and before
+the operation. If the slot's current revision differs, the route answers 409
+`{ "error": "…", "code": "slot_changed" }` before minting a secret or writing
+anything; reload the list and decide again. The check is part of the commit,
+not only the read: the slot's compare-and-set compares against exactly the raw
+slot whose revision matched, so a change that lands between the read and the
+commit refuses with `slot_changed` too, and this call publishes nothing. A
+revocation under `expect` never revokes a token issued after its read. A call
+decides that its own write landed only by an id no other call can produce: a
+rotation or adoption by the fresh record id its slot names, a revocation by its
+`revocationId`. Under `expect`, a compare-and-set that answers "not committed"
+is `slot_changed` at once, so of two conditional revocations of one slot,
+even within one millisecond, exactly one succeeds; an unanswered one is read
+back and succeeds only if the slot carries its own `revocationId`. Issuing
+from a `none`-era revision over a slot that now exists, or rotating over
+someone else's fresh rotation, therefore cannot happen. `aborted` (499) and
+`outcome_unknown` (503) are unchanged. `AccessTokenManager.rotate(name,
+issuedBy, { expect })`, `revoke(name, { expect })`, and `adopt(tokenId, name,
+{ expect })` take the same optional precondition and refuse with an
+`AccessTokenError` whose `code` is `slot_changed`; without `expect` they behave
+as before, which is what the template scripts use.
 
 **Admission.** A `cta_` token admits only while its record is bound to an agent
 currently declared in code and that agent's slot names it. Every other case
@@ -145,8 +187,8 @@ outcome depends on cleanup or on undoing a write.
   `issued` with the new record. That is the commit: from it the new secret
   admits and the previous one refuses, so after `rotate` returns the old secret
   fails on its next request. Of concurrent rotations exactly one commits and
-  returns a secret; the others publish nothing and fail with a conflict (409
-  on the route). An unanswered commit is read back, never assumed or replayed.
+  returns a secret; the others publish nothing and fail with `slot_changed`
+  under `expect` (always, on the route) or a conflict without it. An unanswered commit is read back, never assumed or replayed.
   If the request has ended once the commit is decided, the secret cannot be
   delivered, so the slot moves forward to `revoked` by compare-and-set; if that
   cannot be settled, the call fails with `outcome_unknown` (503 on the
@@ -154,7 +196,9 @@ outcome depends on cleanup or on undoing a write.
   may show the slot as `issued` although no secret was returned; that secret
   cannot be recovered, so rotate again to get a replacement.
 - **Revoke** reads the slot, checks the signal, and compare-and-sets it to
-  `revoked`. An abort before that commit changes nothing.
+  `revoked`. An abort before that commit changes nothing. Without `expect`, a
+  slot that changed before the commit is revoked as it now stands; with it,
+  the revocation refuses with `slot_changed`.
 - **Nothing is deleted on the request path.** Rotate, revoke, and adopt never
   delete or compare-and-set away a lookup or record, except the record and
   lookup the same call just wrote while they are known to be uncommitted, each

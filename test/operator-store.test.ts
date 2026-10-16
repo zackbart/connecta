@@ -526,6 +526,25 @@ describe("operator collection ordering", () => {
     expect(store.getState().tokens).toEqual([row("simon", "", revoked.revokedAt), row("ci")]);
   });
 
+  it("sends the listed slot revision as expect, then the one each mutation returns", async () => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const listed = "listedRevision00000000";
+    const afterRotate = "rotatedRevision0000000";
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [{ ...issued("simon"), revision: listed }] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ token: "secret", agent: { ...issued("simon"), revision: afterRotate } }),
+    );
+    await store.rotateAgentToken("simon");
+    const body = (call: number) => JSON.parse(String((fetchMock.mock.calls[call]![1] as RequestInit).body));
+    expect(body(1)).toEqual({ expect: listed });
+    const revoked = { name: "simon", state: "revoked" as const, revokedAt: NOW, revision: "revokedRevision0000000" };
+    fetchMock.mockResolvedValueOnce(Response.json({ agent: revoked }));
+    await store.revokeAgentToken("simon");
+    expect(body(2)).toEqual({ expect: afterRotate });
+    expect(store.getState().tokens).toEqual([{ ...row("simon", "", NOW), revision: revoked.revision }]);
+  });
+
   it("refuses an issuance response for another agent and reveals nothing", async () => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon")] }));

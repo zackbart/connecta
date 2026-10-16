@@ -7,6 +7,8 @@ import fixture from "./fixtures/access-tokens-v023.json";
 import type { KVStorage } from "../src/types.js";
 
 const BASE = "https://connecta.test";
+/** Any slot revision: opaque, 22 base64url characters. */
+const REVISION = expect.stringMatching(/^[A-Za-z0-9_-]{22}$/u);
 const SLOT = "access-token:v1:agent:simon";
 const LOOKUPS = "access-token:v1:lookup:";
 const RECORDS = "access-token:v1:record:";
@@ -145,7 +147,9 @@ describe("cancelled rotations", () => {
     ).rejects.toMatchObject({ code: "aborted" });
     expect(await admits(seed, previous.token)).toBe(false);
     expect(await admits(seed, secret)).toBe(false);
-    expect(await seed.list()).toEqual([{ name: "simon", state: "revoked", revokedAt: expect.any(String) }]);
+    expect(await seed.list()).toEqual([
+      { name: "simon", state: "revoked", revokedAt: expect.any(String), revision: REVISION },
+    ]);
     // An operator rotates again to recover.
     vi.restoreAllMocks();
     expect(await admits(seed, (await seed.rotate("simon")).token)).toBe(true);
@@ -224,7 +228,8 @@ describe("cancelled rotations", () => {
       const response = app.fetch(
         new Request(`${BASE}/ui/access-tokens/simon`, {
           method: "POST",
-          headers: { Authorization: "Bearer clerk-operator", Origin: BASE },
+          headers: { Authorization: "Bearer clerk-operator", Origin: BASE, "Content-Type": "application/json" },
+          body: JSON.stringify({ expect: previous.agent.revision }),
           signal: controller.signal,
         }),
       );
@@ -239,7 +244,9 @@ describe("cancelled rotations", () => {
       await expect.poll(async () => (await base.list(LOOKUPS)).length).toBe(1);
       expect(await admits(seed, previous.token)).toBe(true);
       expect(await admits(seed, secret)).toBe(false);
-      expect(await seed.list()).toEqual([{ name: "simon", state: "issued", issuedAt: expect.any(String) }]);
+      expect(await seed.list()).toEqual([
+        { name: "simon", state: "issued", issuedAt: expect.any(String), revision: REVISION },
+      ]);
     } finally {
       gate.open();
       await app.close();

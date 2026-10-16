@@ -321,8 +321,13 @@ describe("management collapses to maintainers", () => {
       expect((await flow.send(user, "/ui/access-tokens/bot", { method: "POST" })).status, user).toBe(status);
       expect((await flow.send(user, "/ui/access-tokens/bot", { method: "DELETE" })).status, user).toBe(status);
     }
-    expect((await flow.send("alice", "/ui/access-tokens")).status).toBe(200);
-    const rotated = await flow.send("alice", "/ui/access-tokens/bot", { method: "POST" });
+    const listed = await flow.send("alice", "/ui/access-tokens");
+    expect(listed.status).toBe(200);
+    const { agents } = (await listed.json()) as { agents: Array<{ name: string; revision: string }> };
+    const rotated = await flow.send("alice", "/ui/access-tokens/bot", {
+      method: "POST",
+      body: JSON.stringify({ expect: agents.find((agent) => agent.name === "bot")?.revision }),
+    });
     expect(rotated.status).toBe(200);
   });
 
