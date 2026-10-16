@@ -4,35 +4,25 @@ import { Button, Dialog, Tabs } from "./primitives.js";
 import { PAGE_META, type OperatorPage, type OperatorState } from "../view.js";
 import { navigate } from "./store.js";
 import { useCloseOnRecovery } from "./contract-state.js";
+import { schemePinned } from "./config.js";
+import { SCHEME_KEY } from "./scheme.js";
 
-const THEME_KEY = "connecta:scheme";
 type Scheme = "light" | "dark" | "system";
 /**
- * The deployment's own pin, read once when the bundle loads, before the
- * viewer's saved choice is applied to the same attribute. The controls mount
- * only in a ready session, later, and must still tell the two apart.
+ * The saved scheme is already on the element: `scheme-init.ts` applies it
+ * before first paint. A deployment's pin, also on the element, comes from the
+ * server, so the shell config tells the two apart.
  */
-const DEPLOYMENT_PINNED = Boolean(document.documentElement.dataset.scheme);
 function readScheme(): Scheme {
-  const pinned = document.documentElement.dataset.scheme;
-  if (pinned === "light" || pinned === "dark") return pinned;
+  const current = document.documentElement.dataset.scheme;
+  if (schemePinned && (current === "light" || current === "dark")) return current;
   try {
-    const stored = localStorage.getItem(THEME_KEY);
+    const stored = localStorage.getItem(SCHEME_KEY);
     if (stored === "light" || stored === "dark") return stored;
   } catch {
     /* private browsing */
   }
   return "system";
-}
-/**
- * Apply the viewer's saved scheme at startup. It holds on the sign-in gate,
- * while the session is checked, and on the member page, none of which mount
- * the Appearance control.
- */
-export function applySavedScheme(): void {
-  if (DEPLOYMENT_PINNED) return;
-  const scheme = readScheme();
-  if (scheme !== "system") document.documentElement.dataset.scheme = scheme;
 }
 
 export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: OperatorState }) {
@@ -52,13 +42,13 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
     activeDialogs.current = { command: commandOpen, appearance: appearanceOpen };
   }, [commandOpen, appearanceOpen]);
   const [scheme, setScheme] = useState<Scheme>(readScheme);
-  const pinned = DEPLOYMENT_PINNED;
+  const pinned = schemePinned;
   useEffect(() => {
     if (scheme === "system") delete document.documentElement.dataset.scheme;
     else document.documentElement.dataset.scheme = scheme;
     if (!pinned) {
       try {
-        localStorage.setItem(THEME_KEY, scheme);
+        localStorage.setItem(SCHEME_KEY, scheme);
       } catch {
         /* private browsing */
       }

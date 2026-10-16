@@ -13,7 +13,12 @@ import {
   type UiProblem,
   type UiToolSafety,
 } from "./operator-ui/model.js";
-import { OPERATOR_UI_STYLE_PATH, OPERATOR_UI_SCRIPT_PATH, OPERATOR_UI_NOTICES_PATH } from "./operator-ui/generated.js";
+import {
+  OPERATOR_UI_STYLE_PATH,
+  OPERATOR_UI_SCHEME_PATH,
+  OPERATOR_UI_SCRIPT_PATH,
+  OPERATOR_UI_NOTICES_PATH,
+} from "./operator-ui/generated.js";
 import type { RegistryView } from "./registry.js";
 import type { ConnectaBranding, ConnectaTheme, Connector, ConnectorStatus, ToolDef, UiAuthConfig } from "./types.js";
 
@@ -174,13 +179,15 @@ export function renderUiHtml(
 
   // The shared layout owns the head, scheme, theme, and masthead; the shell
   // adds its own bundle (which already imports the shared tokens), the nav
-  // mount, and the app.
+  // mount, and the app. The scheme initializer blocks, ahead of the
+  // stylesheet, so a saved color scheme holds from the first paint.
   return renderPage(branding, {
     title: operatorPageTitle(page, brand.pageTitle),
     uiMounted: true,
     operatorShell: true,
     styles: "",
     head:
+      `<script src="${OPERATOR_UI_SCHEME_PATH}"></script>` +
       `<link rel="stylesheet" href="${OPERATOR_UI_STYLE_PATH}"><link rel="license" href="${OPERATOR_UI_NOTICES_PATH}">` +
       clerkScript,
     skipTo: { id: "operatorContent", label: "Skip to operator page" },
@@ -201,6 +208,7 @@ export function renderUiHtml(
       auth,
       mcpUrl,
       initialPage: page,
+      schemePinned: brand.theme.colorScheme !== "system",
       titleSuffix: brand.pageTitle,
       productName: brand.productName,
       productDescription: brand.description,

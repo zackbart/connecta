@@ -1,5 +1,6 @@
 import { responseCacheKeys } from "../src/storage/keys.js";
 import {
+  OPERATOR_UI_SCHEME_PATH as SCHEME_PATH,
   OPERATOR_UI_SCRIPT_PATH as SCRIPT_PATH,
   OPERATOR_UI_STYLE_PATH as STYLE_PATH,
   OPERATOR_UI_ASSETS,
@@ -210,13 +211,15 @@ describe("status UI", () => {
     const c = makeDeployment(uiDeploymentConfig());
     const shell = await (await c.fetch(new Request(`${BASE}/`))).text();
     const callback = await (await c.fetch(new Request(`${BASE}/oauth/callback/unknown?code=test`))).text();
-    // One head and masthead, byte for byte, up to each page's own title and
-    // stylesheet: the shell's bundle carries the same tokens the callback does.
+    // One head and masthead, byte for byte, up to each page's own title,
+    // stylesheet and the shell's scheme initializer: the shell's bundle carries
+    // the same tokens the callback does.
     const head = (page: string) =>
       page
         .replace(/<title>[^<]*<\/title>/, "")
         .replace(/<style>[\s\S]*?<\/style>/, "")
         .replace(/<link[^>]*href="\/ui\/assets\/[^>]*>\n?/g, "")
+        .replace(/<script src="\/ui\/assets\/[^"]*"><\/script>/, "")
         .replace('<body class="operator-shell">', "<body>")
         .replace(/<a class="skip-link"[^>]*>[^<]*<\/a>\n/, "")
         .replace(/\s*<div id="operatorNav"><\/div>/, "")
@@ -278,7 +281,24 @@ describe("status UI", () => {
     );
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(scriptSrcs(await res.text())).toEqual([SCRIPT_PATH]);
+    const body = await res.text();
+    expect(scriptSrcs(body)).toEqual([SCHEME_PATH, SCRIPT_PATH]);
+    // The scheme initializer blocks in <head>, ahead of the stylesheet, so a
+    // saved scheme holds from the first paint (#854).
+    const head = body.slice(0, body.indexOf("</head>"));
+    expect(head).toContain(`<script src="${SCHEME_PATH}"></script>`);
+    expect(head.indexOf(SCHEME_PATH)).toBeLessThan(head.indexOf(STYLE_PATH));
+  });
+
+  it("tells the bundle whether the deployment pinned the color scheme", () => {
+    const config = (html: string) =>
+      JSON.parse(/<script id="operatorConfig" type="application\/json">([\s\S]*?)<\/script>/.exec(html)![1]!);
+    const unpinned = renderUiHtml();
+    expect(unpinned).not.toContain("data-scheme");
+    expect(config(unpinned).schemePinned).toBe(false);
+    const pinned = renderUiHtml(undefined, "/mcp", { theme: { colorScheme: "dark" } });
+    expect(pinned).toContain('<html lang="en" data-scheme="dark">');
+    expect(config(pinned).schemePinned).toBe(true);
   });
 
   it("scopes Clerk CAPTCHA, images and workers to pages with a validated loader", async () => {
@@ -322,7 +342,7 @@ describe("status UI", () => {
       // The shell still renders — a rejected loader origin drops the loader, it
       // does not fail the page.
       expect(res.status).toBe(200);
-      expect(scriptSrcs(body)).toEqual([SCRIPT_PATH]);
+      expect(scriptSrcs(body)).toEqual([SCHEME_PATH, SCRIPT_PATH]);
       expect(body).not.toContain("clerk.browser.js");
       // Nor may it reach the page through the inline AUTH object.
       expect(body).not.toContain(frontendApiUrl);
@@ -339,6 +359,7 @@ describe("status UI", () => {
     });
     const body = await (await c.fetch(new Request(`${BASE}/`))).text();
     expect(scriptSrcs(body)).toEqual([
+      SCHEME_PATH,
       "https://clerk.example.com/npm/@clerk/clerk-js@6/dist/clerk.browser.js",
       SCRIPT_PATH,
     ]);
@@ -419,7 +440,7 @@ describe("status UI", () => {
     expect(JSON.parse(json!).mcpUrl).toBe(value);
     expect(json).not.toContain("<");
     expect(html).not.toContain("nonce=");
-    expect(scriptSrcs(html)).toEqual([SCRIPT_PATH]);
+    expect(scriptSrcs(html)).toEqual([SCHEME_PATH, SCRIPT_PATH]);
   });
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
