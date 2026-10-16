@@ -3,6 +3,7 @@ import { accessTokens } from "../src/access-tokens.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { api } from "../src/connectors/api.js";
+import { callerOf } from "../src/connector-caller.js";
 import { agentEndpointPool, isAgentPath } from "../src/routes/agent-path.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
@@ -382,6 +383,39 @@ describe("agent endpoint admission", () => {
     }
     expect(await searchTextWithContext(c, "/agent/team", bot, ctx)).toContain("wiki.read");
     expect(getIdentity).not.toHaveBeenCalled();
+    await c.close();
+  });
+
+  it("INV-4: attaches the admitted pool to the connector caller at /agent/<pool> as at /mcp/<pool>", async () => {
+    const storage = memoryStorage();
+    const c = deployment({
+      storage,
+      connectors: [
+        api("who", {
+          tools: [
+            {
+              name: "am_i",
+              description: "Report the caller",
+              annotations: { readOnlyHint: true },
+              handler: (_args, ctx) => {
+                const caller = callerOf(ctx);
+                return { pool: caller?.pool ?? null, agent: caller?.identity.agent ?? null };
+              },
+            },
+          ],
+        }),
+      ],
+      pools: { team: { tools: ["who"], members: ["bob", "agent:bot"] } },
+    });
+    const bot = await issueAgentToken(storage, "bot");
+    const ask = async (path: string, token: string) =>
+      JSON.parse(
+        (await rpc(c, path, token, "call_tool", { address: "who.am_i", args: {} })).result.content[0].text.split(
+          "\n",
+        )[0],
+      );
+    expect(await ask("/agent/team", bot)).toEqual({ pool: "team", agent: "bot" });
+    expect(await ask("/mcp/team", "bob")).toEqual({ pool: "team", agent: null });
     await c.close();
   });
 

@@ -901,6 +901,8 @@ export function createMcpRoute(opts: ServerOptions): {
                 // `authorize` admits an open deployment's every request as the
                 // anonymous actor; only a provider's `ok` is an authentication.
                 authenticated: opts.config.auth.length > 0,
+                // Both pool endpoints build the caller here from the same
+                // admitted scope, so an agent at /agent/<pool> carries the owner.
                 ...(poolName !== undefined ? { pool: poolName } : {}),
                 ...(poolOwner !== undefined ? { poolOwner } : {}),
               },
