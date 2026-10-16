@@ -1299,6 +1299,27 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/ui/oauth/"))).toHaveLength(1);
   });
 
+  it("INV-4: a newer catalog cycle fences a timed-out summary without aborting it", async () => {
+    const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValue(Response.json(uiData("operator")));
+    await store.boot();
+    const pending = deferred<Response>();
+    fetchMock.mockReturnValueOnce(pending.promise);
+    const retry = store.retryLoad();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await retry;
+    const signal = fetchMock.mock.calls[1]?.[1].signal;
+    expect(signal?.aborted).toBe(false);
+    await store.loadOperatorContract();
+    expect(signal?.aborted).toBe(false);
+    pending.resolve(Response.json(uiData("stale")));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().data?.serverInfo.name).toBe("operator");
+    expect(store.getState().contractPhase).toBe("ready");
+    expect(configMock).toHaveBeenCalledTimes(2);
+  });
+
   it("INV-4 INV-10: publishes one catalog/auth revision and drops a late older refresh", async () => {
     const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
     const old = { id: "svc", status: "auth_required", problem: "oauth_required", oauth: true, tools: [], toolCount: 0 };

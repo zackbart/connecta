@@ -131,7 +131,8 @@ coalesce onto the pending cycle, including after its deadline; they never start
 duplicate summary, token, config, detail or body reads. The passive retry schedule
 stays bounded and does not reset its budget on a deadline. Retry remains available
 during recovery configuration loading and supersedes and aborts the old cycle;
-identity changes, navigation and connector-page unmount also cancel it. Failed reads retry after
+identity changes, navigation and connector-page unmount also cancel it. Navigation
+that cancels pending data schedules a bounded reread for the destination. Failed reads retry after
 2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
 those four automatic retries, a focus return can request one more read after
 the eight-second backoff, without replenishing the automatic budget. Retry

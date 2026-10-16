@@ -734,6 +734,9 @@ test("shows connections and usable controls while one provider is still loading"
   release();
   await expect(slow.getByText("Loading authentication details…")).toHaveCount(0);
   await expect(slow.getByRole("button", { name: "Refresh Hosted proxy" })).toBeEnabled();
+  // Navigation cancels the old view's pending read, then bounded recovery
+  // must fetch again so that the destination's auth details can still land.
+  expect(requests.filter((request) => request.path === "/ui/data").length).toBeGreaterThan(1);
 });
 
 test("acknowledges a credential save before its refreshed details arrive", async ({ page }) => {

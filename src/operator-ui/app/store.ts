@@ -292,6 +292,11 @@ export function loadOperatorContract(): Promise<void> {
 
 async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?: AbortSignal): Promise<void> {
   if (signedOut) return;
+  // A scoped OAuth cycle supersedes general publication without cancelling
+  // the older transport or letting its deadline overwrite the newer state.
+  if (recoveryRead && recoveryRead.controller.signal !== pollSignal) releaseRecoveryRead();
+  // A new catalog cycle also supersedes any summary that has not landed yet.
+  ++dataRevision;
   const identityCurrent = fence();
   const revision = ++snapshotRevision;
   const current = () => identityCurrent() && revision === snapshotRevision && !pollSignal?.aborted;
@@ -437,7 +442,11 @@ async function mutate(options: {
   reload?: string | undefined;
 }): Promise<void> {
   const current = fence();
-  if (options.reload) ++snapshotRevision;
+  if (options.reload) {
+    ++snapshotRevision;
+    ++dataRevision;
+    releaseRecoveryRead();
+  }
   set(options.busy);
   try {
     const payload = await options.request(current);
@@ -478,7 +487,9 @@ export function routeChanged(path: string): void {
   if (path !== currentPath) {
     currentPath = path;
     ++navigationRevision;
+    const pendingRead = recoveryRead !== undefined;
     cancelRecoveryRead();
+    if (pendingRead) scheduleRecovery();
     for (const id of awaitingAuthorization.keys()) {
       if (path !== `/connectors/${encodeURIComponent(id)}`) stopOAuthPolling(id);
     }
@@ -930,6 +941,14 @@ let recoveryRead: RecoveryRead | undefined;
 // cancellation if this identity or view goes away before their transport lands.
 const recoveryReads = new Set<RecoveryRead>();
 
+function releaseRecoveryRead(): void {
+  if (!recoveryRead) return;
+  clearTimeout(recoveryRead.timer);
+  recoveryRead.finish();
+  recoveryRead = undefined;
+  set({ recoveryPending: false });
+}
+
 function cancelRecoveryRead(): void {
   if (recoveryReads.size === 0) return;
   recoveryRead = undefined;
@@ -952,10 +971,7 @@ function cancelRecoveryRead(): void {
  * its result, so no deadline can discard healthy data.
  */
 function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, exposeRetry = false): Promise<void> {
-  if (recoveryRead) {
-    clearTimeout(recoveryRead.timer);
-    recoveryRead.finish();
-  }
+  releaseRecoveryRead();
   const current = fence();
   const controller = new AbortController();
   let finish!: () => void;
@@ -1002,6 +1018,7 @@ function resetRecovery(cancelRead = true): void {
   recoveryAttempt = 0;
   recoveryNotBefore = 0;
   if (cancelRead) cancelRecoveryRead();
+  else releaseRecoveryRead();
   lastReturnPass = -Infinity;
 }
 
@@ -1254,7 +1271,7 @@ export function refreshConnector(id: string, quiet = false): Promise<void> {
       },
       connectorFailures: withoutKey(state.connectorFailures, id),
     });
-  return refreshSnapshot(quiet);
+  return guardedRecoveryRead((signal) => refreshSnapshot(quiet, undefined, signal));
 }
 
 /* Access tokens ----------------------------------------------------------- */
