@@ -257,20 +257,25 @@ describe("operator store identity wiring", () => {
     fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
     await store.boot();
 
-    // identity-a asks for its access tokens and the answer is slow.
+    // identity-a asks for its activity and the answer is slow. The request is
+    // on the wire, past its token lookup, before anything else happens.
     const slow = deferred<Response>();
     fetchMock.mockImplementationOnce(() => slow.promise);
     const inFlight = store.loadActivity(true);
+    await vi.waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/^\/ui\/api\/activity\?/), expect.anything()),
+    );
 
-    // identity-b arrives first, and its own load never settles here.
+    // identity-b arrives while it is in flight, and its own load never settles here.
     configMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
     changeSession({ id: "sess_b", getToken: async () => "token-b" });
 
     slow.resolve(Response.json({ events: [{ connectorId: "identity-a client" }] }));
     await inFlight;
 
-    // The fence, not a race: identity-a's tokens never land on identity-b's
+    // The fence, not a race: identity-a's events never land on identity-b's
     // screen, and the collection stays idle so the new identity refetches.
+    expect(store.getState()).toMatchObject({ activityEvents: [], activityPhase: "idle", activityNotice: null });
     expect(JSON.stringify(store.getState())).not.toContain("identity-a client");
   });
 
@@ -784,5 +789,40 @@ describe("operator role changes", () => {
     expect(store.getState().generation).toBeGreaterThan(generation);
     // One contract read for the promotion, then the maintainer's data.
     expect(paths.slice(-2)).toEqual([CONFIG, "/ui/data"]);
+  });
+});
+
+describe("operator privileged requests", () => {
+  it("INV-4: withholds a token read whose contract failed while its session token was read", async () => {
+    // The first token lookup after boot is held; every other one answers at once.
+    let held: ReturnType<typeof deferred<string>> | null = null;
+    const loaded = await loadStore({
+      id: "session",
+      getToken: () => {
+        const hold = held;
+        held = null;
+        return hold ? hold.promise : Promise.resolve("token");
+      },
+    });
+    const { store, fetchMock, configMock, paths } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockImplementation(async () =>
+      Response.json({ agents: [{ name: "maintainer token", state: "issued", issuedAt: NOW }] }),
+    );
+
+    const token = deferred<string>();
+    held = token;
+    const listing = store.loadAccessTokens();
+    expect(held).toBeNull();
+    // A refresh answers 503 while the token list waits on its session token.
+    configMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
+    await store.loadOperatorContract();
+    expect(store.getState()).toMatchObject({ contract: null, contractPhase: "error" });
+
+    token.resolve("token");
+    await listing;
+    expect(paths.filter((path) => path.startsWith("/ui/access-tokens"))).toEqual([]);
+    expect(store.getState().tokens).toEqual([]);
+    expect(store.getState().tokenPhase).toBe("error");
   });
 });

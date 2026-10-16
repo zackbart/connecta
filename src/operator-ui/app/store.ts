@@ -173,6 +173,22 @@ function factsOf(error: unknown): RequestFailureFacts {
   return error instanceof RequestFailure ? error : { kind: "refused" };
 }
 
+/** Routes only a maintainer may call; a member's page never sends them. */
+const MAINTAINER_ONLY = ["/ui/data", "/ui/connectors/", "/ui/api/activity", "/ui/access-tokens"];
+
+/**
+ * The last step before an operator request reaches the network. A
+ * maintainer-only route is withheld (null) unless a maintainer is confirmed
+ * right now: checked here, after every await its caller made, because a
+ * contract refresh can fail or change the role while a session token is
+ * being read. Callers treat null as a request that was never sent.
+ */
+function send(path: string, init: RequestInit): Promise<Response> | null {
+  const privileged = MAINTAINER_ONLY.some((route) => path === route || path.startsWith(route));
+  if (privileged && !maintainerNow()) return null;
+  return fetch(path, init);
+}
+
 async function operatorRequest(
   path: string,
   method: "DELETE" | "GET" | "POST" | "PUT",
@@ -187,14 +203,17 @@ async function operatorRequest(
   }
   if (!current()) throw new RequestFailure("session");
   if (!token && auth.kind !== "cloudflare-access") throw new RequestFailure("session");
+  const sent = send(path, {
+    method,
+    headers: requestHeaders(token, Boolean(body)),
+    credentials: "same-origin",
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  // Withheld: this viewer is not a confirmed maintainer any more.
+  if (!sent) throw new RequestFailure("forbidden");
   let res: Response;
   try {
-    res = await fetch(path, {
-      method,
-      headers: requestHeaders(token, Boolean(body)),
-      credentials: "same-origin",
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
+    res = await sent;
   } catch {
     throw new RequestFailure("network");
   }
@@ -248,13 +267,12 @@ async function loadData(): Promise<void> {
   }
   if (!current()) return;
   if (!token && auth.kind !== "cloudflare-access") return gate(null);
+  // Withheld: the role became unknown or changed; its own state says so.
+  const sent = send("/ui/data", { headers: requestHeaders(token), credentials: "same-origin" });
+  if (!sent) return;
   let res: Response;
   try {
-    res = await fetch("/ui/data", {
-      signal,
-      headers: requestHeaders(token),
-      credentials: "same-origin",
-    });
+    res = await sent;
   } catch {
     if (!current()) return;
     return unreachable("network");
@@ -1116,18 +1134,16 @@ async function readConnector(
   }
 }
 
-async function fetchConnector(
-  id: string,
-  token: string | null | undefined,
-  signal: AbortSignal,
-): Promise<DetailOutcome> {
+async function fetchConnector(id: string, token: string | null | undefined): Promise<DetailOutcome> {
+  const sent = send(`/ui/connectors/${encodeURIComponent(id)}`, {
+    headers: requestHeaders(token),
+    credentials: "same-origin",
+  });
+  // Withheld: callers recheck the role before landing anything.
+  if (!sent) return { kind: "local", failure: "session" };
   let response: Response;
   try {
-    response = await fetch(`/ui/connectors/${encodeURIComponent(id)}`, {
-      signal,
-      headers: requestHeaders(token),
-      credentials: "same-origin",
-    });
+    response = await sent;
   } catch {
     return { kind: "local", failure: "network" };
   }
@@ -1237,7 +1253,7 @@ async function loadConnectorDetails(
       const revision = (detailRevisions.get(connector.id) ?? 0) + 1;
       detailRevisions.set(connector.id, revision);
       const outcome = await readConnector(connector.id, token);
-      if (!current() || generation !== detailGeneration || !state.data) return;
+      if (!current() || generation !== detailGeneration || !state.data || !maintainerNow()) return;
       if (detailRevisions.get(connector.id) !== revision) continue;
       applyDetail(connector.id, outcome);
     }
@@ -1275,7 +1291,7 @@ export async function refreshConnector(id: string, quiet = false): Promise<void>
   }
   if (!current() || !maintainerNow()) return;
   const outcome = await readConnector(id, token);
-  if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
+  if (!current() || !state.data || detailRevisions.get(id) !== revision || !maintainerNow()) return;
   // A passive read only reports good news: a transient failure on a focus
   // check is not a reason to repaint an auth-needed row as broken.
   if (quiet && outcome.kind !== "detail") return;

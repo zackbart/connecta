@@ -77,7 +77,7 @@ async function install(page: Page, contract: unknown, data: UiData | Answer) {
       return route.fulfill({ json: data.connectors.find((c) => c.id === path.split("/").pop()) });
     if (path === "/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/ui/api/activity") return route.fulfill({ json: { events: [] } });
-    if (path === "/ui/access-tokens") return route.fulfill({ json: { accessTokens: [] } });
+    if (path === "/ui/access-tokens") return route.fulfill({ json: { agents: [] } });
     const response = await app.fetch(new Request(route.request().url(), { headers: route.request().headers() }));
     return route.fulfill({
       status: response.status,
