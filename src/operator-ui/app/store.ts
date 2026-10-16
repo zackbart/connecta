@@ -1,4 +1,4 @@
-import type { OperatorUiContractV2 } from "../contract.js";
+import type { OperatorRole, OperatorUiContractV2 } from "../contract.js";
 import { queryClient } from "./query.js";
 import { isCancelledError } from "@tanstack/react-query";
 import type { UiConnector, UiData } from "../model.js";
@@ -108,17 +108,33 @@ export function navHint(): { activity: boolean } {
   }
 }
 
-function gate(notice: Notice | null = null): void {
-  cancelRecoveryRead();
+function gate(notice: Notice | null = null, session: OperatorState["session"] = "gated"): void {
   queryClient.clear();
   forgetNav();
-  stopOAuthPolling();
-  clearTimeout(returnTimer);
-  returnTimer = undefined;
-  clearTimeout(recoveryTimer);
-  recoveryTimer = undefined;
-  state = resetIdentity(state, notice);
+  awaitingAuthorization.clear();
+  state = { ...resetIdentity(state, notice), session };
   for (const listener of listeners) listener();
+}
+
+/**
+ * The session's own refusal, in the words of the sign-in in use. A bearer
+ * token the deployment refused is forgotten, so the gate asks for another.
+ */
+function refuseSession(status: number): void {
+  if (auth.kind === "clerk") {
+    return gate(
+      failure(
+        status === 403
+          ? `This Clerk account can't open ${productName}'s operator pages.`
+          : "Your Clerk session wasn't accepted. Sign out, then sign in again.",
+      ),
+    );
+  }
+  if (auth.kind === "cloudflare-access") {
+    return gate(failure("Cloudflare Access let this browser in, but this identity isn't an operator here."));
+  }
+  localStorage.removeItem(TOKEN_KEY);
+  gate(failure("That token wasn't accepted. Paste a valid operator token."));
 }
 
 interface OperatorResponse {
@@ -212,9 +228,12 @@ function unreachable(loadFailure: "server" | "network"): void {
 
 let dataRevision = 0;
 
-/** Fetch `/ui/data`. The only route that decides gated versus signed in. */
-async function loadData(signal: AbortSignal): Promise<void> {
-  if (signedOut) return;
+/**
+ * Fetch `/ui/data`, maintainers only: the contract has already said who this
+ * is, and a member never asks for it.
+ */
+async function loadData(): Promise<void> {
+  if (state.contract?.role !== "maintainer") return;
   const identityCurrent = fence();
   const revision = ++dataRevision;
   ++snapshotRevision;
@@ -241,24 +260,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
     return unreachable("network");
   }
   if (!current()) return;
-  if (res.status === 401 || res.status === 403) {
-    if (auth.kind === "clerk") {
-      gate(
-        failure(
-          res.status === 403
-            ? `This Clerk account can't open ${productName}'s operator pages.`
-            : "Your Clerk session wasn't accepted. Sign out, then sign in again.",
-        ),
-      );
-      return scheduleRecovery();
-    }
-    if (auth.kind === "cloudflare-access") {
-      gate(failure("Cloudflare Access did not accept this identity for operator pages. Retry to check again."));
-      return scheduleRecovery();
-    }
-    localStorage.removeItem(TOKEN_KEY);
-    return gate(failure("That token wasn't accepted. Paste a valid operator token."));
-  }
+  if (res.status === 401 || res.status === 403) return refuseSession(res.status);
   if (!res.ok) return unreachable("server");
   let data: UiData;
   try {
@@ -297,135 +299,100 @@ function isContractV2(value: OperatorUiContractV2 | null): value is OperatorUiCo
   return value.role === "member" || (Boolean(value.config) && Boolean(value.root));
 }
 
-/** The typed read model uses the same token and identity fence as mutations. */
+type ContractOutcome =
+  | { kind: "contract"; contract: OperatorUiContractV2 }
+  | { kind: "session"; status: number }
+  | { kind: "denied" }
+  | { kind: "network" }
+  | { kind: "refused" };
+
+async function fetchContract(token: string | null | undefined, signal: AbortSignal): Promise<ContractOutcome> {
+  let response: Response;
+  try {
+    response = await fetch("/ui/api/config", { headers: requestHeaders(token), credentials: "same-origin", signal });
+  } catch {
+    return { kind: "network" };
+  }
+  if (response.status === 401 || response.status === 403) return { kind: "session", status: response.status };
+  // The private 404: signed in, but neither a maintainer nor a pool member.
+  if (response.status === 404) return { kind: "denied" };
+  if (!response.ok) return { kind: "refused" };
+  try {
+    const value = (await response.json()) as OperatorUiContractV2;
+    return isContractV2(value) ? { kind: "contract", contract: value } : { kind: "refused" };
+  } catch {
+    return { kind: "refused" };
+  }
+}
+
+/**
+ * `GET /ui/api/config` is the one gate, for both roles: 401 is signed out,
+ * the private 404 is signed in without access, and 200 says who this viewer
+ * is. Resolves to that role, or null when the page has nothing to build on.
+ * Nothing maintainer-only is requested until it resolves "maintainer".
+ */
 let contractRevision = 0;
-export async function loadOperatorContract(): Promise<void> {
+export async function loadOperatorContract(): Promise<OperatorRole | null> {
   const identityCurrent = fence();
-  const revision = ++snapshotRevision;
-  const current = () => identityCurrent() && revision === snapshotRevision && !pollSignal?.aborted;
-  const data = state.data;
-  if (!data) return;
-  if (!quiet) set({ contractPhase: "loading" });
+  const revision = ++contractRevision;
+  const current = () => identityCurrent() && revision === contractRevision;
+  set({ contractPhase: "loading" });
   let token;
   try {
     token = await sessionToken();
   } catch {
-    if (!current()) return;
-    gate(failure("Your sign-in session couldn't be read. Retry to check again."));
-    if (!connectorId) scheduleRecovery();
-    return;
+    if (current()) gate(failure("Your sign-in session couldn't be read. Sign in again."));
+    return null;
   }
-  if (!current()) return;
-  const outcomes = new Map<string, DetailOutcome>();
-  let loadedContract: OperatorUiContract | null | undefined;
-  const publish = () => {
-    if (!current() || loadedContract === undefined) return;
-    if (connectorId && loadedContract && !outcomes.has(connectorId)) return;
-    // Publish each completed connector with its matching catalog facts. A slow
-    // provider leaves other rows usable; pending rows retain their last pair.
-    const refreshed =
-      loadedContract && connectorId ? mergeConnectorContract(loadedContract, connectorId) : loadedContract;
-    const contract = refreshed
-      ? {
-          ...refreshed,
-          live: {
-            ...refreshed.live,
-            connectors: refreshed.live.connectors.map((live) =>
-              outcomes.has(live.id)
-                ? live
-                : (state.contract?.live.connectors.find((previous) => previous.id === live.id) ?? live),
-            ),
-          },
-        }
-      : null;
-    set({
-      ...detailsPatch(outcomes, quiet && !connectorId, contract),
-      contract,
-      contractPhase: contract ? "ready" : "error",
-    });
-    if (connectorId) {
-      const outcome = outcomes.get(connectorId);
-      if (
-        !contract ||
-        outcome?.kind !== "detail" ||
-        outcome.detail.status === "error" ||
-        contract.live.connectors.find((row) => row.id === connectorId)?.status === "error"
-      )
-        stopOAuthPolling(connectorId);
-    }
-  };
-  const connectors = data.connectors.filter((connector) => !connectorId || connector.id === connectorId);
-  let next = 0;
-  const worker = async () => {
-    while (next < connectors.length && current()) {
-      const connector = connectors[next++]!;
-      const outcome = await readConnector(connector.id, token, revision, pollSignal);
-      if (current()) {
-        outcomes.set(connector.id, outcome);
-        publish();
-      }
-    }
-  };
-  const contractRead = queryClient
-    .fetchQuery({
+  if (!current()) return null;
+  if (!token && auth.kind !== "cloudflare-access") {
+    gate(null);
+    return null;
+  }
+  let outcome: ContractOutcome;
+  try {
+    outcome = await queryClient.fetchQuery({
       queryKey: ["operator-config", state.generation, revision],
-      queryFn: async ({ signal }) => {
-        const response = await fetch(
-          connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
-          {
-            headers: requestHeaders(token),
-            credentials: "same-origin",
-            signal: pollSignal ? AbortSignal.any([signal, pollSignal]) : signal,
-          },
-        );
-        if (response.status === 401 || response.status === 403) throw new RequestFailure("session");
-        if (!response.ok) throw new RequestFailure("refused");
-        const value = (await response.json()) as OperatorUiContractV2;
-        if (!isContractV2(value)) throw new RequestFailure("refused");
-        return value;
-      },
-    })
-    .then(
-      (contract) => ({ contract, error: undefined }),
-      (error: unknown) => ({ contract: undefined, error }),
-    )
-    .then((result) => {
-      if (!current()) return;
-      if (result.error instanceof RequestFailure && result.error.kind === "session") {
-        gate(failure("Your session cannot read this configuration. Retry to check again."));
-        if (!connectorId) scheduleRecovery();
-      } else {
-        loadedContract = result.contract ?? null;
-        publish();
-      }
+      queryFn: ({ signal }) => fetchContract(token, signal),
     });
-  await Promise.all([contractRead, ...Array.from({ length: Math.min(4, connectors.length) }, worker)]);
-  if (!current()) return;
-  // OAuth recovery has its own cap and cancellation. Never turn a failed poll
-  // into a deployment-wide retry through the general recovery backoff.
-  if (connectorId) return;
-  const needsRecovery =
-    !loadedContract ||
-    Object.keys(state.connectorFailures).length > 0 ||
-    [...outcomes.values()].some(
-      (outcome) => outcome.kind !== "detail" || outcome.detail.credential?.problem === "credential_unreadable",
-    );
-  if (needsRecovery) scheduleRecovery();
-  else resetRecovery(false);
-}
-
-/** A scoped poll replaces one live row; all unrelated contract facts stay put. */
-function mergeConnectorContract(next: OperatorUiContract, id: string): OperatorUiContract | null {
-  const previous = state.contract;
-  const live = next.live.connectors.find((connector) => connector.id === id);
-  if (!previous || !live) return null;
-  return {
-    ...previous,
-    live: {
-      ...previous.live,
-      connectors: previous.live.connectors.map((connector) => (connector.id === id ? live : connector)),
-    },
-  };
+  } catch {
+    // Clearing an identity's cache cancels the query; the fence drops it.
+    outcome = { kind: "network" };
+  }
+  if (!current()) return null;
+  if (outcome.kind === "session") {
+    refuseSession(outcome.status);
+    return null;
+  }
+  if (outcome.kind === "denied") {
+    gate(null, "denied");
+    return null;
+  }
+  if (outcome.kind !== "contract") {
+    // No role to render by: the page offers a retry and nothing privileged.
+    set({
+      session: "ready",
+      contract: null,
+      contractPhase: "error",
+      loadFailure: outcome.kind === "network" ? "network" : null,
+    });
+    return null;
+  }
+  const { contract } = outcome;
+  // A role that changed under a refresh is a different viewer: start over,
+  // so nothing read for the old role stays in memory or keeps refreshing.
+  if (state.contract && state.contract.role !== contract.role) {
+    gate(null, "loading");
+    void loadCurrent();
+    return null;
+  }
+  // A maintainer's page waits for `/ui/data` too; a member's is ready now.
+  set({
+    contract,
+    contractPhase: "ready",
+    ...(contract.role === "member" ? { session: "ready" as const, loadFailure: null } : {}),
+  });
+  return contract.role;
 }
 
 /**
@@ -523,7 +490,8 @@ export function signInWithBearer(value: string): void {
   localStorage.setItem(TOKEN_KEY, value);
   const current = fence();
   void loadCurrent().then(() => {
-    if (current() && state.session === "ready") set({ pendingFocus: `${state.page}Heading` });
+    if (state.session === "ready") set({ pendingFocus: `${state.page}Heading` });
+    else if (state.session === "denied") set({ pendingFocus: "gateHeading" });
   });
 }
 
@@ -850,8 +818,8 @@ export async function loadActivity(reset: boolean): Promise<void> {
 }
 
 /** Load what the current page shows, deciding gated or ready on the way. */
-function loadCurrent(exposeRetry = false): Promise<void> {
-  return guardedRecoveryRead(loadData, exposeRetry);
+async function loadCurrent(): Promise<void> {
+  if ((await loadOperatorContract()) === "maintainer") await loadData();
 }
 
 /**

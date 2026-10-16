@@ -2,6 +2,7 @@ import type {
   OperatorConnectorOverlay,
   OperatorConnectorPoolCell,
   OperatorGrant,
+  OperatorRootEndpoint,
   OperatorRunsAs,
   OperatorTool,
   OperatorUiContractV2,
@@ -195,4 +196,12 @@ export function connectorRunsAs(contract: OperatorUiContractV2, connectorId: str
     if (cell) return cell.runsAs;
   }
   return null;
+}
+
+/** Who may use plain /mcp, for Settings: each maintainer by label, else by raw id. */
+export function rootAccessSentence(root: OperatorRootEndpoint): string {
+  const names = root.maintainers.map((member) => (member.kind === "human" ? (member.label ?? member.id) : member.name));
+  return names.length
+    ? `Only maintainers can use ${root.path}: ${names.join(", ")}.`
+    : `Only maintainers can use ${root.path}, and none are listed.`;
 }

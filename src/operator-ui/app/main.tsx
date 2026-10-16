@@ -7,10 +7,12 @@ import { ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import {
+  activityAllowed,
   activityReadable,
   canonicalOperatorPath,
   checkingCopy,
   gateCopy,
+  noAccessCopy,
   pageDescription,
   PAGE_META,
   OPERATOR_PAGES,
@@ -18,7 +20,7 @@ import {
   type OperatorPage,
   type OperatorState,
 } from "../view.js";
-import { auth, productDescription, titleSuffix } from "./config.js";
+import { auth, productDescription, productName, titleSuffix } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
 import { SettingsPage } from "./config-page.js";
 import { EndpointsPage } from "./endpoints.js";
@@ -26,6 +28,7 @@ import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
 import { MemberPage } from "./member.js";
+import { ContractState } from "./contract-state.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import {
   boot,
@@ -54,15 +57,21 @@ function useOperatorState(): OperatorState {
   return useSyncExternalStore(subscribe, getState);
 }
 
-/** Pages an identity may actually open. Hidden is the honest state for the rest. */
+/**
+ * Pages an identity may actually open. Hidden is the honest state for the
+ * rest, and for every page while the contract has not said who this is.
+ */
 function visiblePages(state: OperatorState): OperatorPage[] {
-  const hint = state.data ? null : navHint();
+  const role = operatorRole(state);
   // A member has one page until UI-3: their own endpoints.
-  if (operatorRole(state) === "member") return ["endpoints"];
+  if (role === "member") return ["endpoints"];
+  if (role !== "maintainer") return [];
+  // Before `/ui/data` answers, or when it cannot, the tab's last answer keeps
+  // the nav's shape; the contract still has to allow Activity.
+  const activity = state.data ? activityReadable(state) : navHint().activity && activityAllowed(state);
   return OPERATOR_PAGES.filter((page) => {
-    if (page === "activity" && state.contract) return activityReadable(state);
     if (page === "tokens") return state.data?.accessTokenManagement === "available";
-    if (page === "activity") return hint ? hint.activity : Boolean(state.data?.activityEnabled);
+    if (page === "activity") return activity;
     return true;
   });
 }
@@ -190,9 +199,50 @@ function Gate({ state }: { state: OperatorState }) {
   );
 }
 
+/**
+ * Signed in as someone who is neither a maintainer nor a pool member. Calm,
+ * not an error: there is nothing to retry, only someone to ask.
+ */
+function NoAccess() {
+  return (
+    <section id="noAccess" className="gate lead">
+      <h1 id="gateHeading" tabIndex={-1}>
+        No access
+      </h1>
+      <div className="lead-copy">
+        <p>{noAccessCopy(auth.kind, productName)}</p>
+        <div className="actions">
+          {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
+            <Button onClick={signOut}>Sign out</Button>
+          ) : (
+            <Button onClick={forgetBearer}>Change token</Button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Signed in, role not yet known: the page's name and its loading or error state. */
+function RolePending({ state }: { state: OperatorState }) {
+  return (
+    <section id="rolePending" className="lead">
+      <h1 id={`${state.page}Heading`} tabIndex={-1}>
+        {PAGE_META[state.page].label}
+      </h1>
+      <div className="lead-copy">
+        <p>{pageDescription(state.page, productDescription)}</p>
+        <ContractState state={state} />
+      </div>
+    </section>
+  );
+}
+
 function CurrentPage({ state }: { state: OperatorState }) {
+  const role = operatorRole(state);
   // Every other page is built from maintainer facts a member never receives.
-  if (operatorRole(state) === "member") return <MemberPage state={state} />;
+  if (role === "member") return <MemberPage state={state} />;
+  if (role !== "maintainer") return <RolePending state={state} />;
   if (state.page === "settings") return <SettingsPage state={state} />;
   if (state.page === "connector") return <ConnectorDetailPage state={state} />;
   if (state.page === "connections") return <ConnectorsPage state={state} />;
@@ -254,6 +304,8 @@ function OperatorApp() {
     <div id="app">
       <CurrentPage state={state} />
     </div>
+  ) : state.session === "denied" ? (
+    <NoAccess />
   ) : (
     <Gate state={state} />
   );

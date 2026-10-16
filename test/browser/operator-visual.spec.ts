@@ -126,6 +126,7 @@ async function installFixture(
 
 async function ready(page: Page, name: string, state: VisualState) {
   if (state === "loading") {
+    // A held contract is the session check itself: no role, so no page chrome.
     await expect(
       page
         .getByText(
@@ -133,7 +134,7 @@ async function ready(page: Page, name: string, state: VisualState) {
             ? "Loading activity…"
             : name === "tokens"
               ? "Loading access tokens…"
-              : "Loading configuration…",
+              : "Checking your session…",
           { exact: true },
         )
         .first(),

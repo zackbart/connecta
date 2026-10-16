@@ -27,8 +27,11 @@ pages. Endpoints is the default page at `/`: one row for `/mcp` and each pool,
 with a copyable URL, tool count, endpoint mode, and client setup. A pool with
 agent members also shows its agent URL, muted. Expanding a row lists each
 connector on that endpoint with what it runs as and its tools, marking write
-tools. The runs-as label comes from that endpoint's matrix cell: "Shared · saved
-<date>" (or "not saved"), "Personal · N of M connected", "Workspace · people:
+tools. The runs-as label comes from that endpoint's matrix cell. A shared connector
+names its credential's source: "Shared · saved <date>" (vault), "Shared ·
+connected <date>" (OAuth), "Shared · not configured", "Shared · set in
+deployment", or "Shared · no credential needed"; a vault or OAuth cell without a
+date omits it. The others read "Personal · N of M connected", "Workspace · people:
 self · agents: <owner>" (or "none"), or "Everyone acts as <subject>" for a
 fixed-subject Workspace connector. Connector health is not repeated per
 endpoint: a connector that needs attention gets a status dot linking to its
@@ -42,7 +45,15 @@ switches to a table of connectors by endpoint, `/mcp` first: each cell reads
 column summarizes the `/mcp` cell, else the first pool's. A cell with tools is
 a button named like "GitHub on /mcp/support: 1 tool, read-only"; Enter, Space or
 a click opens a popover listing exactly that cell's tool names, write tools
-marked, with the cell's runs-as. Escape or Tab returns focus to the cell. A
+marked, with the cell's runs-as. Escape or Tab returns focus to the cell. The
+popover opens below its cell, or above when the viewport has more room there,
+with a capped height that scrolls; the stylesheet positions it, and the page
+sets no inline styles. `GET /ui/api/config` is the browser's one gate: a 401
+shows sign-in, the private 404 shows a "No access" page naming who to ask, with
+Sign out or Change token, and a 200 renders by `role`. `/ui/data`, connector
+details, activity and tokens are requested only after the contract says
+`maintainer`. Until a role is known, the page shows its loading or error state
+and no navigation. A
 pool member sees one page on every path, until UI-3 of
 [#834](https://github.com/zackbart/connecta/issues/834): their pools with each
 URL and client setup, and the Endpoints tab alone. Connector
@@ -66,12 +77,12 @@ interactive credential or token management authority.
 `GET /ui/api/config`, owned by `operatorUi()`, returns `OperatorUiContract`
 from `connecta/ui`. `src/operator-ui/contract.ts` is also the browser's type
 source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, and `you`.
-`config` is the construction-time `describeConfig()` snapshot, including
-`maintainers` and each pool's `members`; only maintainers receive it. v1 alone
-adds `config.hasGrant`, true whenever inbound auth is configured, because
-`maintainers` then gate plain `/mcp`; Settings displays that fact.
-`describeConfig()` itself no longer has `hasGrant`. Pool tools are the pool's
-declared tools, never intersected.
+`config` is the construction-time `describeConfig()` snapshot, filtered to
+visible connectors, granted tools, classification overrides, and admitted
+pools. `config.hasGrant` reports whether deployment code configures a grant for
+plain `/mcp`. Settings does not read it: under contract v2 it lists who may use
+plain `/mcp` from `root.maintainers`, by label or raw id.
+Pool tools are the intersection with the caller's identity grants.
 `configSources` labels each serialized leaf as `default` or `config`, based on
 option presence rather than equality with the default. Factory descriptions carry
 relative `optionSources` paths so resolved module and transport defaults retain

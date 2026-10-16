@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import type { OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
 import { createTestConnecta } from "../helpers.js";
@@ -43,17 +43,27 @@ test.afterAll(async () => {
   await app.close();
 });
 
-const memberData: UiData = {
-  serverInfo: { name: "Production", version: "1" },
-  connectaVersion: "0.29.0",
-  connectors: [],
-  activityEnabled: false,
-  credentialManagement: "requires_operator",
-  oauthManagement: false,
-};
+// P6b: `/ui/data` is maintainer-only, so a member gets the private 404.
+const PRIVATE_404: Answer = { status: 404, json: { error: "Not found" } };
+const MAINTAINER_ONLY = ["/ui/data", "/ui/connectors/", "/ui/api/activity", "/ui/access-tokens"];
+const maintainerOnly = (requested: string[]) =>
+  requested.filter((path) => MAINTAINER_ONLY.some((prefix) => path.startsWith(prefix)));
 
-/** Serve one contract body and record every operator API path the page asked for. */
-async function install(page: Page, contract: unknown, data: UiData) {
+/** A JSON answer with its status, for routes that refuse. */
+interface Answer {
+  status: number;
+  json: unknown;
+  headers?: Record<string, string>;
+}
+const answered = (value: unknown): value is Answer =>
+  typeof value === "object" && value !== null && "status" in value && "json" in value;
+
+/**
+ * Serve one contract body (or a refusal) and record every operator API path
+ * the page asked for. `data` may be a refusal too: P6b makes `/ui/data`
+ * maintainer-only, answering a member with the private 404.
+ */
+async function install(page: Page, contract: unknown, data: UiData | Answer) {
   const requested: string[] = [];
   await page.clock.setFixedTime(new Date(VISUAL_NOW));
   await page.addInitScript(`localStorage.setItem("connecta:token", ${JSON.stringify(VISUAL_TOKEN)});
@@ -61,9 +71,9 @@ async function install(page: Page, contract: unknown, data: UiData) {
   await page.route(`${VISUAL_ORIGIN}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith("/ui/") && !path.startsWith("/ui/assets/")) requested.push(path);
-    if (path === "/ui/api/config") return route.fulfill({ json: contract });
-    if (path === "/ui/data") return route.fulfill({ json: data });
-    if (path.startsWith("/ui/connectors/"))
+    if (path === "/ui/api/config") return route.fulfill(answered(contract) ? contract : { json: contract });
+    if (path === "/ui/data") return route.fulfill(answered(data) ? data : { json: data });
+    if (path.startsWith("/ui/connectors/") && !answered(data))
       return route.fulfill({ json: data.connectors.find((c) => c.id === path.split("/").pop()) });
     if (path === "/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/ui/api/activity") return route.fulfill({ json: { events: [] } });
@@ -81,6 +91,9 @@ async function install(page: Page, contract: unknown, data: UiData) {
 async function noCsp(page: Page) {
   expect(await page.evaluate("window.__csp")).toEqual([]);
 }
+
+/** The operator navigation's links, empty when it renders none. */
+const navLinks = (page: Page) => page.getByRole("navigation", { name: "Operator pages" }).getByRole("link");
 
 test("INV-2: the matrix is a real table with scoped headers, named cells and runs-as labels", async ({ page }) => {
   await install(page, maintainer.contract, maintainer.data);
@@ -194,7 +207,7 @@ test("INV-4: endpoint rows show agent URLs only for agent pools and runs-as from
 });
 
 test("INV-4 INV-6: a member sees only their endpoints and client setup on every path", async ({ page }) => {
-  const requested = await install(page, OPERATOR_V2_MEMBER, memberData);
+  const requested = await install(page, OPERATOR_V2_MEMBER, PRIVATE_404);
   const served = page.waitForResponse((response) => new URL(response.url()).pathname === "/ui/api/config");
   await page.goto(VISUAL_ORIGIN + "/");
   // The body the page received withholds every maintainer fact.
@@ -225,7 +238,9 @@ test("INV-4 INV-6: a member sees only their endpoints and client setup on every 
   await page.getByPlaceholder("Search pages, connectors, tools…").fill("github");
   await expect(page.getByText("No matching pages, connectors, tools or actions.")).toBeVisible();
   await page.keyboard.press("Escape");
-  expect(requested.filter((path) => path === "/ui/api/activity" || path === "/ui/access-tokens")).toEqual([]);
+  // The contract alone admits a member: nothing maintainer-only is ever asked for.
+  expect(requested.filter((path) => path === "/ui/api/config").length).toBeGreaterThan(0);
+  expect(maintainerOnly(requested)).toEqual([]);
   const body = page.locator("body");
   for (const fact of [
     "GitHub",
@@ -277,5 +292,149 @@ test("the store refuses a v1 contract instead of rendering it", async ({ page })
   await page.goto(VISUAL_ORIGIN + "/");
   await expect(page.getByText("Configuration couldn't be loaded", { exact: true })).toBeVisible();
   await expect(page.locator(".endpoint-table")).toHaveCount(0);
+  await noCsp(page);
+});
+
+test("INV-4: a 401 on the contract is signed out: the sign-in gate, and nothing maintainer-only", async ({ page }) => {
+  const requested = await install(
+    page,
+    { status: 401, json: { error: "unauthorized" }, headers: { "WWW-Authenticate": 'Bearer realm="connecta"' } },
+    PRIVATE_404,
+  );
+  await page.goto(VISUAL_ORIGIN + "/settings");
+  await expect(page.locator("#gate")).toBeVisible();
+  await expect(page.locator("#err")).toHaveText("That token wasn't accepted. Paste a valid operator token.");
+  await expect(page.getByLabel("Bearer token")).toBeVisible();
+  await expect(navLinks(page)).toHaveCount(0);
+  expect(maintainerOnly(requested)).toEqual([]);
+  await noCsp(page);
+});
+
+test("INV-4: the contract's private 404 is signed in without access: a calm page and a way out", async ({ page }) => {
+  const requested = await install(page, PRIVATE_404, PRIVATE_404);
+  await page.goto(VISUAL_ORIGIN + "/connectors?view=matrix");
+  const denied = page.locator("#noAccess");
+  await expect(denied.getByRole("heading", { name: "No access", exact: true })).toBeVisible();
+  await expect(denied).toContainText("Ask a maintainer of this deployment to add you to an endpoint");
+  await expect(page.locator("#gate")).toHaveCount(0);
+  await expect(page.locator("#app")).toHaveCount(0);
+  await expect(navLinks(page)).toHaveCount(0);
+  expect(maintainerOnly(requested)).toEqual([]);
+  await noCsp(page);
+  // Change token returns to the token form.
+  await denied.getByRole("button", { name: "Change token", exact: true }).click();
+  await expect(page.getByLabel("Bearer token")).toBeFocused();
+});
+
+test("INV-4: an unknown role shows its loading or error state with no maintainer navigation", async ({ page }) => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let fail = true;
+  const requested: string[] = [];
+  await page.clock.setFixedTime(new Date(VISUAL_NOW));
+  await page.addInitScript(`localStorage.setItem("connecta:token", ${JSON.stringify(VISUAL_TOKEN)});`);
+  await page.route(`${VISUAL_ORIGIN}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.startsWith("/ui/") && !path.startsWith("/ui/assets/")) requested.push(path);
+    if (path === "/ui/api/config") {
+      await held;
+      return route.fulfill(fail ? { status: 503, json: { error: "down" } } : { json: OPERATOR_V2_MEMBER });
+    }
+    if (path === "/ui/data" || path.startsWith("/ui/connectors/")) return route.fulfill(PRIVATE_404);
+    if (path === "/health") return route.fulfill({ json: { status: "ok" } });
+    const response = await app.fetch(new Request(route.request().url(), { headers: route.request().headers() }));
+    return route.fulfill({
+      status: response.status,
+      headers: Object.fromEntries(response.headers),
+      body: Buffer.from(await response.arrayBuffer()),
+    });
+  });
+  await page.goto(VISUAL_ORIGIN + "/settings");
+  // Loading: the session check, and no page links.
+  await expect(page.getByText("Checking your session…", { exact: true })).toBeVisible();
+  await expect(navLinks(page)).toHaveCount(0);
+  release();
+  // Failed: the page's own heading, a retry, and still nothing privileged.
+  await expect(page.getByText("Configuration couldn't be loaded", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  await expect(navLinks(page)).toHaveCount(0);
+  await expect(page.locator("#inboundHeading, .snapshot-tree")).toHaveCount(0);
+  await page.getByRole("button", { name: "Search" }).click();
+  await page.getByPlaceholder("Search pages, connectors, tools…").fill("settings");
+  await expect(page.getByText("No matching pages, connectors, tools or actions.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  // The retry resolves the role: a member, who still never asks for maintainer data.
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Your endpoints", exact: true })).toBeVisible();
+  await expect(navLinks(page)).toHaveText(["Endpoints"]);
+  expect(maintainerOnly(requested)).toEqual([]);
+});
+
+test("Settings names who may use plain /mcp from root.maintainers, by label or id", async ({ page }) => {
+  const contract = structuredClone(maintainer.contract) as OperatorUiContractV2;
+  contract.root = {
+    ...contract.root!,
+    maintainers: [
+      { kind: "human", namespace: "https://clerk.example.test", id: "user_zack", label: "zack" },
+      { kind: "human", namespace: "https://clerk.example.test", id: "user_maria", label: null },
+    ],
+  };
+  await install(page, contract, maintainer.data);
+  await page.goto(VISUAL_ORIGIN + "/settings");
+  await expect(page.locator("#inboundHeading ~ p.meta")).toHaveText("Only maintainers can use /mcp: zack, user_maria.");
+  await noCsp(page);
+});
+
+test("the matrix popover flips above at a short viewport, scrolls within its cap, and sets no inline style", async ({
+  page,
+}) => {
+  await install(page, maintainer.contract, maintainer.data);
+  await page.setViewportSize({ width: 1280, height: 400 });
+  await page.goto(VISUAL_ORIGIN + "/connectors?view=matrix");
+  await expect(page.getByRole("table", { name: "Connectors by endpoint", exact: true })).toBeVisible();
+  const fits = async (name: string) => {
+    const box = (await page.getByRole("dialog", { name, exact: true }).boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(400);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(1280);
+    return box;
+  };
+  /** Scroll so the cell's top edge sits `y` pixels down the viewport. */
+  const scrollCellTo = async (cell: Locator, y: number) => {
+    await cell.scrollIntoViewIfNeeded();
+    await page.evaluate(`window.scrollBy(0, ${(await cell.boundingBox())!.y - y})`);
+    // The page's end can stop the scroll a few pixels short.
+    expect(Math.abs((await cell.boundingBox())!.y - y)).toBeLessThan(8);
+  };
+  // Gmail's cell sits near the bottom of a 400px viewport: there is no room below.
+  const gmail = page.getByRole("button", { name: "Gmail on /mcp/ada: all tools", exact: true });
+  await scrollCellTo(gmail, 340);
+  await gmail.click();
+  const popover = page.getByRole("dialog", { name: "Gmail on /mcp/ada", exact: true });
+  await expect(popover).toHaveAttribute("data-placement", "above");
+  const above = await fits("Gmail on /mcp/ada");
+  expect(above.y + above.height).toBeLessThanOrEqual((await gmail.boundingBox())!.y);
+  // The height cap holds the larger side; anything longer scrolls inside.
+  expect(await page.evaluate('getComputedStyle(document.querySelector(".matrix-popover")).overflowY')).toBe("auto");
+  expect(above.height).toBeLessThanOrEqual(400 / 2);
+  await page.keyboard.press("Escape");
+  // With room below, it opens below (clear of the sticky top bar, which a click would scroll away from).
+  const github = page.getByRole("button", { name: "GitHub on /mcp: all tools", exact: true });
+  await scrollCellTo(github, 150);
+  await github.click();
+  await expect(page.getByRole("dialog", { name: "GitHub on /mcp", exact: true })).toHaveAttribute(
+    "data-placement",
+    "below",
+  );
+  await fits("GitHub on /mcp");
+  // Positioned by the stylesheet alone: no element in the matrix carries a style attribute.
+  expect(await page.evaluate('document.querySelectorAll(".matrix-table[style], .matrix-table [style]").length')).toBe(
+    0,
+  );
+  expect(await page.locator("[role=dialog][style], .matrix-popover[style]").count()).toBe(0);
   await noCsp(page);
 });

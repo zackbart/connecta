@@ -5,7 +5,7 @@ import { clientServerName, clientSetupCommands } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
 import { Badge, CopyButton, StateBlock } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
-import { ContractState } from "./contract-state.js";
+import { ContractState, maintainerContract } from "./contract-state.js";
 
 /** What the client setup drawer needs: a path, its absolute URL, and the name a client files it under. */
 export interface SetupTarget {
@@ -150,7 +150,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
   const [setup, setSetup] = useState<SetupTarget | null>(null);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const returnFocus = useRef<HTMLElement | null>(null);
-  const contract = state.contract;
+  const contract = maintainerContract(state);
   const endpoints = contract ? endpointRows(contract) : [];
   const serverName = contract?.config?.server.name;
   const toggle = (path: string) =>

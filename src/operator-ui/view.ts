@@ -64,6 +64,20 @@ export function pageDescription(page: OperatorPage, productDescription: string):
   return productDescription;
 }
 
+/**
+ * Signed in, but neither a maintainer nor a member of any endpoint: who to
+ * ask, and that this is not an error to retry.
+ */
+export function noAccessCopy(kind: string, productName: string): string {
+  const who =
+    kind === "clerk"
+      ? "This account is signed in"
+      : kind === "cloudflare-access"
+        ? "Cloudflare Access signed you in"
+        : "This token is valid";
+  return `${who}, but it isn't a maintainer or a member of any endpoint on ${productName}. Ask a maintainer of this deployment to add you to an endpoint, then reload.`;
+}
+
 /** What the gate says while the session is checked, page by page. */
 export function checkingCopy(): string {
   return "Checking your session…";
@@ -377,8 +391,12 @@ export interface OperatorState {
    * the fence that keeps one identity's data off another identity's screen.
    */
   generation: number;
-  /** `loading` until the first /ui/data answer decides gated or ready. */
-  session: "loading" | "gated" | "ready";
+  /**
+   * `loading` until `/ui/api/config` answers (and, for a maintainer,
+   * `/ui/data` too). `denied` is signed in as someone who is neither a
+   * maintainer nor a pool member.
+   */
+  session: "loading" | "gated" | "ready" | "denied";
   gate: Notice | null;
   /** True while a signed-in operator's /ui/data is in flight. */
   refreshing: boolean;
@@ -446,9 +464,13 @@ export function operatorRole(state: Pick<OperatorState, "contract">): OperatorRo
  * that records history. Members always read "forbidden".
  */
 export function activityReadable(state: Pick<OperatorState, "contract" | "data">): boolean {
+  return Boolean(state.data?.activityEnabled) && activityAllowed(state);
+}
+
+/** The contract's half of `activityReadable`: a maintainer, on a deployment that records. */
+export function activityAllowed(state: Pick<OperatorState, "contract">): boolean {
   const contract = state.contract;
   return (
-    Boolean(state.data?.activityEnabled) &&
     contract?.role === "maintainer" &&
     contract.live.activity !== "forbidden" &&
     contract.live.activity !== "unconfigured"

@@ -10,7 +10,7 @@ import {
 } from "../view.js";
 import { Badge, StateBlock } from "./parts.js";
 import { Button, Tabs } from "./primitives.js";
-import { ContractState } from "./contract-state.js";
+import { ContractState, maintainerContract } from "./contract-state.js";
 import { SnapshotTree } from "./snapshot.js";
 import { Catalog } from "./catalog.js";
 import { ConnectorAuth, ConnectorDiagnostics } from "./connections.js";
@@ -24,7 +24,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
   const id = location.pathname.split("/").pop() ?? "";
   useEffect(() => () => stopConnectorReads(id), [id]);
   const tab = TABS.includes(location.hash) ? location.hash : "tools";
-  const contract = state.contract;
+  const contract = maintainerContract(state);
   const config = contract?.config?.connectors.find((c) => c.id === id);
   const live = contract?.live.connectors.find((c) => c.id === id);
   // Auth permissions come from the connector's own /ui/data detail.

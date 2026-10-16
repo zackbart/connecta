@@ -57,10 +57,12 @@ classification/result size/client facts, and a catalog-change event.
 
 `test/browser/operator-matrix.spec.ts` serves the frozen v2 fixtures to the
 real shell. It covers the matrix's table semantics, cell names and runs-as
-labels, popover keyboard behavior, agent URLs on Endpoints, the member page
-(its received body checked with `expectMemberViewWithholds`, no maintainer fact
-rendered, no maintainer request sent), payload sentinels, CSP, and the refusal
-of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
+labels, popover keyboard behavior, placement at a short viewport and the
+absence of `style` attributes, agent URLs on Endpoints, the member page (its
+received body checked with `expectMemberViewWithholds`, `/ui/data` answering 404
+and never requested, no maintainer fact rendered, no maintainer request sent),
+the 401 sign-in and 404 no-access gates on `/ui/api/config` with no maintainer
+navigation, payload sentinels, CSP, and the refusal of a v1 body. `test/operator-endpoints.test.ts` covers the view model.
 
 Screenshots cover presentation. Keep unit and server tests for INV-6 sentinels,
 secret disclosure, auth and grant boundaries, CSRF, identity fences, cancellation,

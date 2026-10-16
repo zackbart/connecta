@@ -6,7 +6,7 @@ import { formatDate, type OperatorState } from "../view.js";
 import { StateBlock } from "./parts.js";
 import { Button, DataTable, Input } from "./primitives.js";
 import { ConnectorStatus } from "./problems.js";
-import { ContractState } from "./contract-state.js";
+import { ContractState, maintainerContract } from "./contract-state.js";
 import { ConnectorMatrix } from "./matrix.js";
 import { loadOperatorContract, navigate } from "./store.js";
 
@@ -92,7 +92,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
       hash: location.hash,
       replace: true,
     });
-  const contract = state.contract?.role === "maintainer" ? state.contract : null;
+  const contract = maintainerContract(state);
   const rows: Row[] =
     contract?.config?.connectors.flatMap((config) => {
       const live = contract.live.connectors.find((c) => c.id === config.id);
