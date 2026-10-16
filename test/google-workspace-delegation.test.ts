@@ -769,7 +769,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         ),
       );
       expect(human.status).toBe(401);
-      await human.body?.cancel();
+      expect(await human.text()).toContain("host_auth_required");
       expect(tokenCalls).toEqual([]);
       expect((await callOver(connecta, assistant, "assistant-alice")).isError).toBeFalsy();
       expect((await callOver(connecta, assistant, "assistant-bob")).isError).toBeFalsy();
