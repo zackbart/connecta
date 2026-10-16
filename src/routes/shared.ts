@@ -202,22 +202,10 @@ export async function authorize(
   if (interactiveOnly && machineCredential) {
     return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
   }
-  if (auth.length === 0 && !interactiveOnly && !explicit) {
-    const actor = { kind: "anonymous" } as const;
-    const identity: AuthenticatedIdentity = { actor, interactive: false };
-    return { ok: true, actor, identity };
-  }
-  let recognized: InboundAuth | undefined;
-  try {
-    recognized = recognizedProvider(
-      request,
-      machineCredential ? auth.filter((provider) => provider.kind === "access_token") : auth,
-      runtimeContext,
-    );
-  } catch {
-    return { ok: false, response: privateJson({ error: "credential recognition failed" }, { status: 403 }) };
-  }
-  if (machineCredential && !recognized) {
+  // Every caller of this function is a human route. Agents reach pools only at
+  // `/agent/<pool>` (#837), so a `cta_` token refuses here without consulting
+  // token storage, and never falls back to a cookie, session, or Access context.
+  if (machineCredential) {
     return {
       ok: false,
       response: await providerChallenge(
@@ -234,27 +222,37 @@ export async function authorize(
       ),
     };
   }
+  if (auth.length === 0 && !interactiveOnly && !explicit) {
+    const actor = { kind: "anonymous" } as const;
+    const identity: AuthenticatedIdentity = { actor, interactive: false };
+    return { ok: true, actor, identity };
+  }
+  // The built-in agent adapter answers only agent endpoints. A deployment
+  // whose only provider is that adapter still refuses here, never opens.
+  const humanAuth = auth.filter((provider) => !assertsAgents(provider));
+  let recognized: InboundAuth | undefined;
+  try {
+    recognized = recognizedProvider(request, humanAuth, runtimeContext);
+  } catch {
+    return { ok: false, response: privateJson({ error: "credential recognition failed" }, { status: 403 }) };
+  }
   if (interactiveOnly && recognized && !recognized.interactiveOperator) {
     return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
   }
   let lastResponse: Response | null = null;
-  const eligible = auth.filter(
+  const eligible = humanAuth.filter(
     (provider) =>
       (!interactiveOnly || provider.interactiveOperator) &&
-      (!explicit || machineCredential || provider.kind !== "access_token" || !provider.recognizesCredential),
+      (!explicit || provider.kind !== "access_token" || !provider.recognizesCredential),
   );
   // A header owns one verdict even for adapters without a recognition hook.
   const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
   for (const provider of candidates) {
     const result = await provider.authorize(request, baseUrl, runtimeContext);
-    // Only the built-in access-token adapter asserts an agent, and an agent is
-    // never a person. Any other `agent` claim refuses like an unknown token.
+    // Only the built-in access-token adapter asserts an agent, and it never
+    // answers here. Any `agent` claim refuses like an unknown token.
     const agent = result.ok ? result.agent : undefined;
-    if (
-      result.ok &&
-      agent !== undefined &&
-      (!assertsAgents(provider) || !isAgentName(agent) || result.userId !== undefined || result.principal !== undefined)
-    ) {
+    if (result.ok && agent !== undefined) {
       lastResponse = privateJson(
         { error: "unauthorized" },
         {
@@ -324,6 +322,51 @@ export async function authorize(
   };
 }
 
+/** The machine-only challenge: Bearer, with no authorization server to discover. */
+function agentChallenge(): { ok: false; response: Response } {
+  return {
+    ok: false,
+    response: privateJson({ error: "unauthorized" }, { status: 401, headers: { "WWW-Authenticate": "Bearer" } }),
+  };
+}
+
+/**
+ * Admission at an agent endpoint, `/agent/<pool>` (#837). Only the built-in
+ * `cta_` adapter is consulted: Clerk and Access never run, cookies and Clerk
+ * handshake parameters are stripped, and the runtime context, which carries
+ * Access's `ctx.access` even on a bypassed path, is never passed. Anything but
+ * an admitted declared agent gets the machine-only challenge.
+ */
+export async function authorizeAgent(
+  request: Request,
+  baseUrl: string,
+  auth: readonly InboundAuth[],
+): Promise<Awaited<ReturnType<typeof authorize>>> {
+  const provider = auth.find(assertsAgents);
+  if (!provider || !isMachineCredential(request)) return agentChallenge();
+  let result: Awaited<ReturnType<InboundAuth["authorize"]>>;
+  try {
+    result = await provider.authorize(authorizationRequest(request), baseUrl, undefined);
+  } catch {
+    return agentChallenge();
+  }
+  if (!result.ok) {
+    void result.response.body?.cancel().catch(() => {});
+    return agentChallenge();
+  }
+  const { agent } = result;
+  if (!isAgentName(agent) || result.userId !== undefined || result.principal !== undefined) return agentChallenge();
+  const namespace = activityActorNamespace(provider);
+  const subject = { namespace: namespace ?? `connecta:auth:${provider.kind}`, id: result.subjectId ?? agent };
+  const actor: ActivityActor = { kind: provider.kind, id: agent, ...(namespace ? { namespace } : {}) };
+  return {
+    ok: true,
+    actor,
+    identity: { actor, subject, agent, interactive: false },
+    subjectKey: await identityStorageKey(subject),
+  };
+}
+
 /** Human routes reject machine credentials before any verification or storage I/O. */
 export async function authorizeUiIdentity(
   request: Request,
@@ -378,14 +421,29 @@ export function admitsMaintainer(opts: ServerOptions, authz: AuthorizedIdentity)
   return opts.config.auth.length === 0 || isMaintainer(opts.maintainers, authz.identity);
 }
 
-/** The declared pool `/mcp/<name>` serves to this identity, or undefined for the same 404. */
+/**
+ * The declared pool `/mcp/<name>` serves to this person, or undefined for the
+ * same 404. An agent is never admitted here, even when listed (#837).
+ */
 export function memberPool(
   opts: ServerOptions,
   name: string,
   identity: Readonly<AuthenticatedIdentity>,
 ): ResolvedPool | undefined {
+  if (identity.agent !== undefined) return undefined;
   const pool = opts.pools.get(name);
   return pool?.members.some((member) => isMember(member, identity)) ? pool : undefined;
+}
+
+/** The declared pool `/agent/<name>` serves to this agent, or undefined for the same 404. */
+export function agentPool(
+  opts: ServerOptions,
+  name: string,
+  identity: Readonly<AuthenticatedIdentity>,
+): ResolvedPool | undefined {
+  if (identity.agent === undefined) return undefined;
+  const pool = opts.pools.get(name);
+  return pool?.members.some((member) => member.kind === "agent" && isMember(member, identity)) ? pool : undefined;
 }
 
 /**

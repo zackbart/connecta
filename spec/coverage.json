@@ -163,7 +163,7 @@
       "id": "authorization",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
-      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource and owns its protected-resource challenge with scopes. Cloudflare Access is supported for humans on direct Worker invocations through edge-validated application AUD and ctx.access; Node uses Clerk. Machines are agents declared in code, each with one stored cta_ token that rotates with immediate cutover; static bearer is removed. Downstream auth and auth elicitation follow-ups remain in #707. Maintainers listed in code alone reach plain /mcp and the operator routes after auth; each named pool admits only its static members and serves exactly its tools. Protected-resource metadata stays public for credential-free OAuth discovery.",
+      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource and owns its protected-resource challenge with scopes. Cloudflare Access is supported for humans on direct Worker invocations through edge-validated application AUD and ctx.access; Node uses Clerk. Machines are agents declared in code, each with one stored cta_ token that rotates with immediate cutover; static bearer is removed. Downstream auth and auth elicitation follow-ups remain in #707. Maintainers listed in code alone reach plain /mcp and the operator routes after auth; each named pool admits only its static members and serves exactly its tools, people at /mcp/<pool> and agents at /agent/<pool>. Agent endpoints accept only cta_ tokens, ignore Access context, answer a machine-only Bearer challenge, and publish no protected-resource metadata; every other spelling of the agent namespace is refused before auth, and human endpoints refuse cta_. Protected-resource metadata stays public for credential-free OAuth discovery.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -196,6 +196,18 @@
         {
           "file": "test/identity-scope.test.ts",
           "title": "INV-4: refuses non-maintainers on every operator route with the private 404"
+        },
+        {
+          "file": "test/agent-endpoints.test.ts",
+          "title": "INV-4: answers every refused row of the P0 normalization table with the pool 404 before auth"
+        },
+        {
+          "file": "test/agent-endpoints.test.ts",
+          "title": "INV-4: challenges a missing or unknown agent credential with machine-only Bearer and no metadata"
+        },
+        {
+          "file": "test/agent-endpoints.test.ts",
+          "title": "INV-4: refuses cta_ at /mcp, /mcp/<pool>, and operator routes without reading token storage"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

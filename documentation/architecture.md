@@ -90,6 +90,7 @@ top to bottom.
 | 0     | MCP Origin check                                          | A disallowed `Origin` on `/mcp*` is a fixed 403 before redirects, admission, auth, or preflight — costing no permit and no auth lookup. Originless requests are admitted.                                                                                                            |
 | 0     | HTTPS upgrade                                             | 308 to an HTTPS `publicUrl`, with path and query _assigned_ onto it rather than resolved against it, so a `//host` pathname cannot replace the origin. `/health` is exempt: a loopback probe must not need public DNS.                                                               |
 | 0     | Cloudflare Access (Worker, when enabled)                  | Edge admission ahead of this table; an admitted invocation carries trusted identity in `ctx.access`.                                                                                                                                                                                 |
+| 1     | Agent namespace, any path starting `/agent` once decoded  | First, so no path Access bypasses reaches a human route. Exactly `/agent/<pool>`: admission, then the `cta_` adapter alone, then pool membership; every other spelling is the pool 404 before admission or auth. See [agent endpoints](./auth.md#agent-endpoints).                   |
 | 1     | `/oauth/client-metadata/<connectorId>`                    | Public GET-only CIMD for configured self-hosted OAuth connectors; fixed `publicUrl`, no auth or storage.                                                                                                                                                                             |
 | 1     | Mounted UI routes                                         | Before wildcard OPTIONS, so mutation routes refuse preflight rather than inheriting MCP CORS. No UI module, no routes.                                                                                                                                                               |
 | 1     | `/connect/<connectorId>`, `/oauth/callback/<connectorId>` | GET-only browser OAuth routes, before wildcard OPTIONS. Both verify the initiating user and management permission, independent of the UI.                                                                                                                                            |
@@ -121,18 +122,21 @@ An admitted non-preflight `/mcp` request then takes five steps in
    unauthenticated flood costs a permit rather than a Clerk lookup, and held
    until the response _body_ completes, the caller leaves, or its configured
    lifetime ends, not until the handler returns.
-2. **Authorize.** Machine tokens precede interactive providers. A provider's
+2. **Authorize.** `/agent/<pool>` consults only the built-in `cta_` adapter
+   (`authorizeAgent`), never with the runtime context that carries
+   `ctx.access`. Human endpoints refuse a `cta_` token before recognition or
+   storage, and never ask the `cta_` adapter. A provider's
    synchronous credential recognition selects the sole verifier for an explicit
-   credential; a refusal never falls back to another identity. Human routes
-   reject machine credentials without verification. With no recognized
+   credential; a refusal never falls back to another identity. With no recognized
    credential, configured providers are tried in order. A 401 takes its
    challenge from the actual protected-resource metadata owner. No providers
    means open development and warns at construction.
 3. **Admit to the endpoint.** Plain `/mcp` admits a principal listed in
    `maintainers` (or, with no inbound auth, the anonymous caller) and serves the
-   whole catalog. `/mcp/<pool>` admits the pool's static `members`, matched by
-   principal or by `identity.agent`, and serves exactly the pool's tools
-   (`src/membership.ts`, `admitsMaintainer` and `memberPool` in
+   whole catalog. `/mcp/<pool>` admits the pool's human `members`, matched by
+   principal, and `/agent/<pool>` its agent members, matched by
+   `identity.agent`; both serve exactly the pool's tools
+   (`src/membership.ts`, `admitsMaintainer`, `memberPool`, and `agentPool` in
    `src/routes/shared.ts`). Nothing intersects or widens either view; every
    refusal is one 404 naming no pool.
    The endpoint's `readOnly` is the pool's own value, else the deployment's;
@@ -455,6 +459,9 @@ route must keep that property. It should accept exactly
 refuse an empty segment, a trailing slash, any extra segment, `%`, uppercase
 variants, and a leading `//`, all with the same 404. It must ignore
 `ctx.access` entirely, since a bypassed request still carries an AUD.
+[Agent endpoints](./auth.md#agent-endpoints) implement exactly this in
+`src/routes/agent-path.ts`, and `test/agent-endpoints.test.ts` replays every
+row of the table above.
 
 To configure the bypass, keep the Worker-level application described in
 [Cloudflare Access on Workers](./auth.md#cloudflare-access-on-workers). Then,

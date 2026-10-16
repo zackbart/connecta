@@ -88,10 +88,10 @@ export default defineConfig((env: Env) => {
           .map((id) => id.trim())
           .filter(Boolean)
       : [],
-    // Each pool serves exactly its tools at /mcp/<name> to its members: Clerk
-    // user ids, or "agent:<name>" for a declared agent. A member connects their
-    // own account on the pool's personal connectors. `npm run doctor` checks
-    // this one with the local-machine token.
+    // Each pool serves exactly its tools to its members: Clerk user ids at
+    // /mcp/<name>, and "agent:<name>" for a declared agent at /agent/<name>.
+    // A member connects their own account on the pool's personal connectors.
+    // `npm run doctor` checks /agent/local with the local-machine token.
     pools: { local: { tools: ["time"], members: ["agent:local-machine"] } },
     // Machine clients are agents declared here by name, each with one cta_
     // token. Issue or rotate one locally with

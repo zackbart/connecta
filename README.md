@@ -117,7 +117,9 @@ to manage its credentials.
 
 People sign in through Clerk on Node or Cloudflare Access on Workers. Machine
 clients are agents you name in deployment code, each with one token issued by
-your Connecta deployment. A deployment can serve
+your Connecta deployment. Agents connect through their own address for each
+pool, separate from the one people use, so an agent sends only its token, even
+behind Cloudflare Access. A deployment can serve
 several people within one tenant, each with the access you assign.
 
 ## A place to see your connections

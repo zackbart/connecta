@@ -3,7 +3,7 @@ import { AccessTokenError, accessTokens, AccessTokenManager } from "../src/acces
 import { CredentialVault } from "../src/credentials.js";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { authorize } from "../src/routes/shared.js";
+import { authorize, authorizeAgent } from "../src/routes/shared.js";
 import { createTestConnecta } from "./helpers.js";
 import { calcApi, fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import fixture from "./fixtures/access-tokens-v023.json";
@@ -425,7 +425,7 @@ describe("tokens issued before agents", () => {
     const unknown = await refusal(await manager.auth.authorize(request("cta_" + "x".repeat(43)), BASE));
     for (const entry of [fixture.bound, fixture.unbound, fixture.revoked]) {
       expect(await refusal(await manager.auth.authorize(request(entry.token), BASE))).toEqual(unknown);
-      const authz = await authorize(request(entry.token), BASE, [manager.auth]);
+      const authz = await authorizeAgent(request(entry.token, "/agent/pool"), BASE, [manager.auth]);
       expect(authz.ok).toBe(false);
     }
     expect(await storage.list("access-token:")).toEqual(Object.keys(fixture.records).sort());
@@ -448,7 +448,7 @@ describe("tokens issued before agents", () => {
       state: "issued",
       issuedAt: fixture.unbound.accessToken.createdAt,
     });
-    const authz = await authorize(request(fixture.unbound.token), BASE, [manager.auth]);
+    const authz = await authorizeAgent(request(fixture.unbound.token, "/agent/pool"), BASE, [manager.auth]);
     expect(authz).toMatchObject({ ok: true, identity: { agent: "legacy" } });
     expect(await storage.get(recordKey)).toBe(fixture.records[recordKey as keyof typeof fixture.records]);
     // Repeating the same adoption is idempotent; anything else is refused.
@@ -541,8 +541,10 @@ describe("agent identity", () => {
     const storage = memoryStorage();
     const manager = new AccessTokenManager(storage, { agents: ["simon"] });
     const { token } = await manager.rotate("simon");
-    const authz = await authorize(request(token), BASE, [manager.auth, human]);
+    const authz = await authorizeAgent(request(token, "/agent/pool"), BASE, [manager.auth, human]);
     if (!authz.ok) throw new Error("not admitted");
+    // Human endpoints refuse the same token outright.
+    expect((await authorize(request(token), BASE, [manager.auth, human])).ok).toBe(false);
     expect(authz.identity).toEqual({
       actor: { kind: "access_token", id: "simon", namespace: NAMESPACE },
       subject: { namespace: NAMESPACE, id: "agent:simon" },
@@ -578,7 +580,7 @@ describe("agent identity", () => {
     expect((await authorize(request("custom"), BASE, [plain])).ok).toBe(true);
   });
 
-  it("INV-4: pool members recognize agents by identity.agent, and an agent never opens plain /mcp", async () => {
+  it("INV-4: pool members recognize agents by identity.agent at /agent/<pool>, and an agent never opens /mcp or /mcp/<pool>", async () => {
     const storage = memoryStorage();
     const manager = new AccessTokenManager(storage, { agents: ["simon", "ci"] });
     const simon = (await manager.rotate("simon")).token;
@@ -596,28 +598,34 @@ describe("agent identity", () => {
     );
     const app = createTestConnecta(config);
     try {
-      // Interim until /agent/<pool>: an agent member reaches its pool with its cta_ token.
-      const call = (token: string, pool?: string) =>
+      const call = (token: string, options: { pool?: string; agentPool?: string } = {}) =>
         mcpRpc(
           app,
           "tools/call",
           { name: "call_tool", arguments: { address: "calc.add", args: { a: 2, b: 3 } } },
-          { token, ...(pool ? { pool } : {}) },
+          { token, ...options },
         );
-      const served = await call(simon, "desktop");
+      const served = await call(simon, { agentPool: "desktop" });
       expect(served.status).toBe(200);
       expect((await readJsonRpc(served)).result.isError).not.toBe(true);
-      // A non-member agent, the member agent at plain /mcp, and the maintainer
-      // outside the pool's members all get the one endpoint-not-found refusal.
+      // A non-member agent and the maintainer outside the pool's members get
+      // the one endpoint-not-found refusal.
       const notFound = { jsonrpc: "2.0", error: { code: -33004, message: "MCP endpoint not found." } };
       for (const response of [
-        await call(ci, "desktop"),
-        await call(simon),
-        await call(ci),
-        await call("clerk-operator", "desktop"),
+        await call(ci, { agentPool: "desktop" }),
+        await call("clerk-operator", { pool: "desktop" }),
       ]) {
         expect(response.status).toBe(404);
         expect(await readJsonRpc(response)).toMatchObject(notFound);
+      }
+      // Human endpoints refuse agent tokens, and agent endpoints refuse people.
+      for (const response of [
+        await call(simon),
+        await call(simon, { pool: "desktop" }),
+        await call(ci),
+        await call("clerk-operator", { agentPool: "desktop" }),
+      ]) {
+        expect(response.status).toBe(401);
       }
       expect((await call("clerk-operator")).status).toBe(200);
     } finally {
@@ -657,7 +665,7 @@ describe("agent identity", () => {
           app,
           "tools/call",
           { name: "call_tool", arguments: { address, args: {} } },
-          { token: credential, pool: "shared" },
+          { token: credential, ...(credential === token ? { agentPool: "shared" } : { pool: "shared" }) },
         );
       const denied = await readJsonRpc(await call("mine.read", token));
       expect(denied.result.isError).toBe(true);
@@ -667,7 +675,7 @@ describe("agent identity", () => {
           app,
           "tools/call",
           { name: "search_tools", arguments: { query: "read" } },
-          { token, pool: "shared" },
+          { token, agentPool: "shared" },
         ),
       );
       expect(JSON.stringify(search)).not.toContain("mine");
@@ -696,7 +704,7 @@ describe("agent identity", () => {
           app,
           "tools/call",
           { name: "call_tool", arguments: { address: "calc.add", args: { a: 4242, b: 1717 } } },
-          { token, pool: "desktop" },
+          { token, agentPool: "desktop" },
         ),
       );
       await expect.poll(() => recorded.length).toBeGreaterThan(0);

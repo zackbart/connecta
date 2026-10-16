@@ -745,14 +745,16 @@ try {
     return token;
   };
   const assertClosed = async (origin) => {
-    for (const token of [undefined, staticToken, `cta_${"A".repeat(43)}`]) {
-      const response = await fetch(`${origin}/mcp`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        signal: AbortSignal.timeout(5_000),
-      });
-      await response.body?.cancel();
-      if (response.status !== 401) {
-        throw new Error(`Generated deployment admitted an unprovisioned client: ${response.status}`);
+    for (const path of ["/mcp", "/agent/local"]) {
+      for (const token of [undefined, staticToken, `cta_${"A".repeat(43)}`]) {
+        const response = await fetch(`${origin}${path}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: AbortSignal.timeout(5_000),
+        });
+        await response.body?.cancel();
+        if (response.status !== 401) {
+          throw new Error(`Generated deployment admitted an unprovisioned client at ${path}: ${response.status}`);
+        }
       }
     }
   };

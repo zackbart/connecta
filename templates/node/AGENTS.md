@@ -27,9 +27,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
   Issue or rotate an agent's token with `npm run --silent rotate-token -- <agent>`
   against the same configuration and database the server uses; bind a token
   from before agents once with `npm run adopt-token -- <token-id> <agent>`.
-  Plain `/mcp` serves `maintainers` only; agents and other people reach
-  `/mcp/<pool>` for a pool listing them in `members` (`npm run doctor` checks
-  the `local` pool). `CONNECTA_TOKEN` is only for clients and doctor; never add a configured
+  Plain `/mcp` serves `maintainers` only; other people reach `/mcp/<pool>` and
+  agents `/agent/<pool>` for a pool listing them in `members` (`npm run doctor`
+  checks `/agent/local`). Human endpoints refuse `cta_` tokens. `CONNECTA_TOKEN` is only for clients and doctor; never add a configured
   static bearer or an open startup mode.
   All state, activity included, lives in the one SQLite file `CONNECTA_DATABASE`
   names, through `@zackbart/connecta/sqlite`.

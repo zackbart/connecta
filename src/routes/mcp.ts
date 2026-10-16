@@ -32,9 +32,12 @@ import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
 import { detach } from "../runtime/run.js";
 import type { Logger } from "../types.js";
+import { agentEndpointPool, isAgentPath } from "./agent-path.js";
 import {
   admitsMaintainer,
+  agentPool,
   authorize,
+  authorizeAgent,
   mayManageConnector,
   memberPool,
   type RouteContext,
@@ -552,6 +555,32 @@ function serveMcp(
   );
 }
 
+/**
+ * What an MCP path names. Plain `/mcp` and `/mcp/<pool>` are human
+ * endpoints; `/agent/<pool>` is an agent endpoint, and every other path in
+ * the agent namespace is refused before auth (#837).
+ */
+type McpEndpoint =
+  | { kind: "default" }
+  | { kind: "pool"; pool: string }
+  | { kind: "agent"; pool: string }
+  | { kind: "refused" };
+
+function mcpEndpoint(path: string): McpEndpoint | null {
+  if (isAgentPath(path)) {
+    const pool = agentEndpointPool(path);
+    return pool === undefined ? { kind: "refused" } : { kind: "agent", pool };
+  }
+  if (path === "/mcp") return { kind: "default" };
+  if (path.startsWith("/mcp/")) return { kind: "pool", pool: path.slice("/mcp/".length) };
+  return null;
+}
+
+/** Whether `path` is an MCP or agent endpoint path, valid or not. */
+function isMcpPath(path: string): boolean {
+  return mcpEndpoint(path) !== null;
+}
+
 export function createMcpRoute(opts: ServerOptions): {
   handle(context: RouteContext): Effect.Effect<Response | null, unknown>;
   rejectOrigin(request: Request): Response | null;
@@ -585,8 +614,7 @@ export function createMcpRoute(opts: ServerOptions): {
     return hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
   };
   const rejectOrigin = (request: Request): Response | null => {
-    const path = new URL(request.url).pathname;
-    if (path !== "/mcp" && !path.startsWith("/mcp/")) return null;
+    if (!isMcpPath(new URL(request.url).pathname)) return null;
     const origin = request.headers.get("Origin");
     if (origin === null || allowsOrigin(origin)) return null;
     return withMcpCors(
@@ -614,24 +642,36 @@ export function createMcpRoute(opts: ServerOptions): {
   };
 
   function routeMcp(context: RouteContext): Effect.Effect<Response | null, unknown> {
-    const { path, request, baseUrl, runtimeContext } = context;
+    const { path, request, baseUrl } = context;
     // Protected-resource metadata stays public, including when a grant is
     // configured, so a fresh OAuth client can discover how to authenticate.
-    if (path !== "/mcp" && !path.startsWith("/mcp/")) return Effect.succeed(null);
+    const endpoint = mcpEndpoint(path);
+    if (!endpoint) return Effect.succeed(null);
     // Admission, refusal bodies, SDK serialization and connector work share
     // one set. Connector contexts still receive an opaque scope, never the
     // inbound Request or its headers.
     const requestScope = {};
     const sentSecrets = sentSecretsForRequest(requestScope, sentSecretsForRequest(request));
-    const poolName = path === "/mcp" ? undefined : path.slice("/mcp/".length);
+    const poolName = endpoint.kind === "pool" || endpoint.kind === "agent" ? endpoint.pool : undefined;
+    const agentEndpoint = endpoint.kind === "agent";
+    // Access attaches `ctx.access` even to a path it bypasses; an agent
+    // endpoint never reads it, so nothing past this point receives it.
+    const runtimeContext =
+      agentEndpoint && context.runtimeContext
+        ? { waitUntil: context.runtimeContext.waitUntil.bind(context.runtimeContext) }
+        : context.runtimeContext;
     const origin = request.headers.get("Origin");
     const allowed = origin === null || allowsOrigin(origin);
     const cors = (response: Response): Response =>
       withMcpCors(response, request, configuredOrigins === "*" ? "*" : allowed ? origin : null);
+    const notFound = (): Response => cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
     // DNS-rebinding refusals cost neither a permit nor an auth lookup. This
     // local header check also guards OPTIONS before any provider metadata.
     const refusal = rejectOrigin(request);
     if (refusal) return Effect.succeed(refusal);
+    // Every other spelling in the agent namespace is the pool 404, before any
+    // admission or auth: no decoding, case folding, or slash collapsing.
+    if (endpoint.kind === "refused") return Effect.succeed(notFound());
     if (request.method === "OPTIONS") {
       return Effect.succeed(cors(new Response(null, { status: 204 })));
     }
@@ -712,8 +752,37 @@ export function createMcpRoute(opts: ServerOptions): {
         // Effect `authorize` would put Effect in the /activity bundle, which
         // shares it, to save only the lookups an abandoned authorization
         // finishes on its own.
+        // Agent endpoints consult only the `cta_` adapter; human endpoints refuse `cta_`.
+        const admit = (): ReturnType<typeof authorize> =>
+          agentEndpoint
+            ? authorizeAgent(localRequest, baseUrl, opts.config.auth)
+            : authorize(localRequest, baseUrl, opts.config.auth, runtimeContext);
+        // Plain /mcp admits maintainers and serves the whole catalog; a pool
+        // admits its members, people at /mcp/<pool> and agents at
+        // /agent/<pool>, and serves exactly its tools (INV-4).
+        const scopeFor = (
+          admitted: Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>,
+        ): { access: ConnectorAccess; readOnly: boolean; poolOwner?: string } | undefined => {
+          if (poolName === undefined) {
+            return admitsMaintainer(opts, admitted)
+              ? { access: { connectorIds: "all" }, readOnly: opts.config.readOnly }
+              : undefined;
+          }
+          const pool = agentEndpoint
+            ? agentPool(opts, poolName, admitted.identity)
+            : memberPool(opts, poolName, admitted.identity);
+          // The owner travels with the scope, so both pool endpoints set the
+          // same caller facts (#837 P5: agents act as the pool owner).
+          return pool
+            ? {
+                access: pool.access,
+                readOnly: pool.readOnly,
+                ...(pool.owner !== undefined ? { poolOwner: pool.owner } : {}),
+              }
+            : undefined;
+        };
         const handled = Effect.gen(function* () {
-          const authz = yield* Effect.promise(() => authorize(localRequest, baseUrl, opts.config.auth, runtimeContext));
+          const authz = yield* Effect.promise(admit);
           if (!authz.ok) {
             const response = authz.response;
             // Preserve the auth adapter's challenge and status. The MCP host must
@@ -747,39 +816,30 @@ export function createMcpRoute(opts: ServerOptions): {
               ),
             );
           }
-          // Plain /mcp admits maintainers and serves the whole catalog; a pool
-          // admits its members and serves exactly its tools (INV-4). A
-          // non-maintainer, a non-member, and an undeclared pool are one
+          // A non-maintainer, a non-member, and an undeclared pool are one
           // identical 404 so a credential never enumerates the other pools;
           // the operator log is where the reason lives.
-          let access: ConnectorAccess = { connectorIds: "all" };
-          let readOnly = opts.config.readOnly;
-          let poolOwner: string | undefined;
-          if (poolName === undefined) {
-            if (!admitsMaintainer(opts, authz)) {
-              logFailure(
-                opts.config.logger,
-                "MCP default endpoint request denied",
-                failureRecord({
-                  reason: authz.identity.agent !== undefined ? "agent_not_maintainer" : "not_maintainer",
-                }),
-              );
-              return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
-            }
-          } else {
-            const pool = memberPool(opts, poolName, authz.identity);
-            if (!pool) {
-              logFailure(
-                opts.config.logger,
-                "MCP pool request denied",
-                failureRecord({ reason: opts.pools.has(poolName) ? "not_pool_member" : "pool_not_declared" }),
-              );
-              return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
-            }
-            access = pool.access;
-            readOnly = pool.readOnly;
-            poolOwner = pool.owner;
+          const scope = scopeFor(authz);
+          if (!scope) {
+            logFailure(
+              opts.config.logger,
+              poolName === undefined
+                ? "MCP default endpoint request denied"
+                : agentEndpoint
+                  ? "MCP agent endpoint request denied"
+                  : "MCP pool request denied",
+              failureRecord({
+                reason:
+                  poolName === undefined
+                    ? "not_maintainer"
+                    : opts.pools.has(poolName)
+                      ? "not_pool_member"
+                      : "pool_not_declared",
+              }),
+            );
+            return notFound();
           }
+          const { access, readOnly, poolOwner } = scope;
           let scopedRegistry: RegistryView;
           try {
             scopedRegistry = opts.registry.scoped({
@@ -791,7 +851,7 @@ export function createMcpRoute(opts: ServerOptions): {
               origin: request.headers.get("Origin"),
               currentResultAccess: async (address, classification, signal, access) => {
                 signal?.throwIfAborted();
-                const current = await authorize(localRequest, baseUrl, opts.config.auth, runtimeContext);
+                const current = await admit();
                 if (!current.ok) {
                   await current.response.body?.cancel().catch(() => {});
                   return false;
@@ -799,16 +859,9 @@ export function createMcpRoute(opts: ServerOptions): {
                 if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
                   return false;
                 // Paging re-admits the caller at this endpoint, as a new request would.
-                let currentAccess: ConnectorAccess = { connectorIds: "all" };
-                let currentReadOnly = opts.config.readOnly;
-                if (poolName === undefined) {
-                  if (!admitsMaintainer(opts, current)) return false;
-                } else {
-                  const pool = memberPool(opts, poolName, current.identity);
-                  if (!pool) return false;
-                  currentAccess = pool.access;
-                  currentReadOnly = pool.readOnly;
-                }
+                const currentScope = scopeFor(current);
+                if (!currentScope) return false;
+                const { access: currentAccess, readOnly: currentReadOnly } = currentScope;
                 const view = opts.registry.scoped({
                   ...currentAccess,
                   ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
