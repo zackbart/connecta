@@ -236,7 +236,8 @@ that matched token record ids with `actor.id` match agent names through
 ## Origins
 
 `allowedOrigins?: readonly string[] | "*"` bounds which browsers may speak to
-the MCP endpoint. A disallowed `Origin` on `/mcp` or any `/mcp/<pool>` gets a
+the MCP endpoint. A disallowed `Origin` on `/mcp`, any `/mcp/<pool>`, or any
+path in the agent namespace gets a
 fixed 403 before HTTPS redirects, admission, auth, and CORS preflight — the
 check cannot depend on anything a caller has yet proved. The default admits the
 `publicUrl` origin plus HTTP(S) loopback at any port; a supplied list replaces
@@ -277,8 +278,8 @@ Access is read from one place, deployment code
 ([decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md)). Top-level
 `maintainers` lists the people who reach plain `/mcp`, which serves the whole
 catalog with the deployment's `readOnly`, and the operator routes. Each pool's
-`members` lists who reaches `/mcp/<pool>`, which serves exactly that pool's
-`tools`. A maintainer opens no pool implicitly; list them as a member to use
+`members` lists who reaches that pool, people at `/mcp/<pool>` and agents at
+`/agent/<pool>`, which serve exactly that pool's `tools`. A maintainer opens no pool implicitly; list them as a member to use
 one. Nothing intersects these lists with anything else, and a request never
 names its own scope.
 
