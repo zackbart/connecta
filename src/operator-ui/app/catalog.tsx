@@ -78,7 +78,7 @@ export function Catalog({ tools }: { tools: CatalogRow[] }) {
           ))}
         </ul>
       ) : (
-        <StateBlock>{tools.length ? "No tools match these filters." : "No live tools."}</StateBlock>
+        <StateBlock>{tools.length ? "No matching tools" : "No live tools."}</StateBlock>
       )}
       <Dialog
         drawer

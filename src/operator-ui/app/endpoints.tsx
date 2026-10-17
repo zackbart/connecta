@@ -313,7 +313,7 @@ function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: Oper
           </tbody>
         </table>
       ) : (
-        <StateBlock>No connectors on this endpoint.</StateBlock>
+        <StateBlock>No connectors</StateBlock>
       )}
     </>
   );

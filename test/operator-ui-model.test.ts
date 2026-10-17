@@ -412,7 +412,7 @@ describe("operator action notices", () => {
       if (notice.fix) expect(FIX_PROMPT_KINDS).toContain(notice.fix.kind);
     }
     expect(oauthDoneNotice("oauth_disconnect", { code: "oauth_revocation_failed" }).message).toContain(
-      "Disconnected locally",
+      "Disconnected here",
     );
     expect(credentialTestNotice("svc", hostile)).toMatchObject({
       tone: "error",

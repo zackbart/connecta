@@ -74,9 +74,7 @@ function FixPromptPreview({ kind, connectorId }: { kind: FixPromptKind; connecto
   return (
     <details className="fix-prompt-preview">
       <summary className="disclosure">Preview prompt</summary>
-      <p className="meta">
-        Fixed text for a coding agent working on this deployment. It carries no error details or secrets.
-      </p>
+      <p className="meta">For a coding agent. No error details or secrets.</p>
       <pre className="fix-prompt-text">{fixPrompt(kind, connectorId)}</pre>
     </details>
   );
@@ -400,12 +398,34 @@ export function MemberMark({ chip, muted }: { chip: Pick<AccessChip, "kind" | "i
 }
 
 /** A person by avatar and name, or an agent by name with an agent mark. */
-export function MemberChip({ chip, muted, children }: { chip: AccessChip; muted?: boolean; children?: ReactNode }) {
-  return (
-    <li className={`access-chip ${chip.kind}`}>
+export function MemberChip({
+  chip,
+  muted,
+  href,
+  children,
+}: {
+  chip: AccessChip;
+  muted?: boolean;
+  /** Makes the mark and name one link, as a map node is. */
+  href?: string | null;
+  children?: ReactNode;
+}) {
+  const body = (
+    <>
       <MemberMark chip={chip} muted={Boolean(muted)} />
       {chip.kind === "agent" ? <span className="visually-hidden">Agent </span> : null}
       <span className="access-chip-text">{chip.text}</span>
+    </>
+  );
+  return (
+    <li className={`access-chip ${chip.kind}`}>
+      {href ? (
+        <a className="access-chip-link" href={href} onClick={(event) => followLink(event, href)}>
+          {body}
+        </a>
+      ) : (
+        body
+      )}
       {children}
     </li>
   );

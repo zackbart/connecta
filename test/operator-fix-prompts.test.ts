@@ -274,7 +274,7 @@ describe("OAuth callback page", () => {
     expect(connected.status).toBe(200);
     const connectedBody = await connected.text();
     expect(connectedBody).toContain(`<h1>${TITLE} is connected</h1>`);
-    expect(connectedBody).toContain(`<title>${TITLE} is connected — Connecta</title>`);
+    expect(connectedBody).toContain(`<title>${TITLE} is connected · Connecta</title>`);
     expect(connectedBody).not.toContain("Details for the operator");
 
     const failed = await (

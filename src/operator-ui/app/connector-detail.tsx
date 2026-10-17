@@ -60,7 +60,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
       {!contract ? (
         <ContractState state={state} />
       ) : !config || !live ? (
-        <StateBlock title="Connector unavailable">This connector is not visible to your session.</StateBlock>
+        <StateBlock title="Connector unavailable">Not visible to you.</StateBlock>
       ) : (
         <>
           <Tabs
@@ -105,7 +105,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
                     {activityReadable(state) ? (
                       <ActivityPage state={state} connectorId={id} />
                     ) : (
-                      <StateBlock>Activity is not available to this session.</StateBlock>
+                      <StateBlock>Activity isn't available.</StateBlock>
                     )}
                   </div>
                 ),

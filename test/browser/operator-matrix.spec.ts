@@ -308,7 +308,7 @@ test("the store refuses a v1 contract instead of rendering it", async ({ page })
   const v1 = { schemaVersion: 1, config: maintainer.contract.config, live: maintainer.contract.live, you: {} };
   await install(page, v1, maintainer.data);
   await page.goto(VISUAL_ORIGIN + "/");
-  await expect(page.getByText("Configuration couldn't be loaded", { exact: true })).toBeVisible();
+  await expect(page.getByText("Couldn't load configuration", { exact: true })).toBeVisible();
   await expect(page.locator(".endpoint-table")).toHaveCount(0);
   await noCsp(page);
 });
@@ -321,7 +321,7 @@ test("INV-4: a 401 on the contract is signed out: the sign-in gate, and nothing 
   );
   await page.goto(VISUAL_ORIGIN + "/settings");
   await expect(page.locator("#gate")).toBeVisible();
-  await expect(page.locator("#err")).toHaveText("That token wasn't accepted. Paste a valid operator token.");
+  await expect(page.locator("#err")).toHaveText("Token not accepted. Paste a valid operator token.");
   await expect(page.getByLabel("Bearer token")).toBeVisible();
   await expect(navLinks(page)).toHaveCount(0);
   expect(maintainerOnly(requested)).toEqual([]);
@@ -333,7 +333,7 @@ test("INV-4: the contract's private 404 is signed in without access: a calm page
   await page.goto(VISUAL_ORIGIN + "/connectors?view=matrix");
   const denied = page.locator("#noAccess");
   await expect(denied.getByRole("heading", { name: "No access", exact: true })).toBeVisible();
-  await expect(denied).toContainText("Ask a maintainer of this deployment to add you to an endpoint");
+  await expect(denied).toContainText("Ask a maintainer to add you to an endpoint");
   await expect(page.locator("#gate")).toHaveCount(0);
   await expect(page.locator("#app")).toHaveCount(0);
   await expect(navLinks(page)).toHaveCount(0);
@@ -375,7 +375,7 @@ test("INV-4: an unknown role shows its loading or error state with no maintainer
   await expect(navLinks(page)).toHaveCount(0);
   release();
   // Failed: the page's own heading, a retry, and still nothing privileged.
-  await expect(page.getByText("Configuration couldn't be loaded", { exact: true })).toBeVisible();
+  await expect(page.getByText("Couldn't load configuration", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   await expect(navLinks(page)).toHaveCount(0);
   await expect(page.locator("#signInHeading, .stat-grid")).toHaveCount(0);
@@ -558,7 +558,7 @@ for (const [path, heading] of [
     config = "fail";
     await page.evaluate("window.dispatchEvent(new Event('focus'))");
     await page.clock.runFor(300);
-    await expect(banner).toContainText("Configuration couldn't be loaded");
+    await expect(banner).toContainText("Couldn't load configuration");
     const retry = banner.getByRole("button", { name: "Retry", exact: true });
     await expect(retry).toBeVisible();
     await expect(page.locator("#app")).toHaveAttribute("inert", "");
@@ -567,7 +567,7 @@ for (const [path, heading] of [
     if (path === "/tokens") {
       // Tokens' own Refresh and list retry give way to the banner: one Retry, no slot actions.
       await expect(page.locator("#refreshTokens")).toHaveCount(0);
-      await expect(page.getByText("Try loading access tokens again", { exact: true })).toHaveCount(0);
+      await expect(page.locator("#tokenList").getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
       // The rows sit inside the inert page: clicking them confirms nothing and sends nothing.
       let prompted = 0;
       page.on("dialog", (dialog) => {
@@ -587,7 +587,7 @@ for (const [path, heading] of [
     await page.clock.runFor(2100);
     await expect.poll(() => watched.filter((p) => p === "/ui/api/config").length).toBe(1);
     await page.clock.runFor(16_000);
-    await expect(banner).toContainText("Configuration couldn't be loaded");
+    await expect(banner).toContainText("Couldn't load configuration");
     await retry.focus();
     await expect(retry).toBeFocused();
     // Nothing maintainer-only went out while no contract confirmed the role.
@@ -628,7 +628,7 @@ test("INV-4: a failed refresh closes an open client setup drawer and hands focus
   await page.evaluate("window.dispatchEvent(new Event('focus'))");
   await page.clock.runFor(300);
   const banner = page.locator("#recoveryBanner");
-  await expect(banner).toContainText("Configuration couldn't be loaded");
+  await expect(banner).toContainText("Couldn't load configuration");
   // The drawer, its copy controls and its focus trap are gone, the page stays
   // mounted under the banner, and Retry has focus.
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -679,7 +679,7 @@ async function tokensUnderRecovery(page: Page) {
     control.failing = true;
     await page.evaluate("window.dispatchEvent(new Event('focus'))");
     await page.clock.runFor(300);
-    await expect(page.locator("#recoveryBanner")).toContainText("Configuration couldn't be loaded");
+    await expect(page.locator("#recoveryBanner")).toContainText("Couldn't load configuration");
   };
   return { control, fail };
 }

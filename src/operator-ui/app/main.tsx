@@ -320,9 +320,9 @@ function RecoveryBanner({ state }: { state: OperatorState }) {
       </span>
       <div>
         <p id="recoveryTitle" className="state-title">
-          {failed ? "Configuration couldn't be loaded" : "Reloading configuration…"}
+          {failed ? "Couldn't load configuration" : "Reloading configuration…"}
         </p>
-        <p className="meta">This page shows what was last loaded and can't change until the configuration reloads.</p>
+        <p className="meta">Showing what last loaded.</p>
       </div>
       <Button id="recoveryRetry" size="sm" onClick={() => void retryLoad()}>
         <Icon name="refresh" size={14} />
@@ -352,7 +352,7 @@ function OperatorApp() {
 
   const member = ready && state.role === "member";
   useEffect(() => {
-    document.title = `${member ? "Your connections" : PAGE_META[state.page].label} — ${titleSuffix}`;
+    document.title = `${member ? "Your connections" : PAGE_META[state.page].label} · ${titleSuffix}`;
   }, [state.page, member]);
 
   // Deferred loads: a page fetches its own collection the first time an

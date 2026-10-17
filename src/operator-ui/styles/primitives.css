@@ -53,13 +53,6 @@ input:disabled {
   flex: 1 1 14rem;
   width: auto;
 }
-.select-label {
-  align-items: center;
-  color: var(--text-2);
-  display: flex;
-  font-size: var(--text-sm);
-  gap: var(--space-2);
-}
 .actions {
   align-items: center;
   display: flex;
@@ -377,27 +370,6 @@ kbd {
   gap: var(--space-3);
   margin-top: var(--space-8);
 }
-.facts-row {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
-}
-.list-rows > li + li {
-  border-top: 1px solid var(--line);
-}
-.attention-row {
-  align-items: center;
-  color: var(--text);
-  display: flex;
-  flex-wrap: wrap;
-  font-size: var(--text-sm);
-  gap: var(--space-3);
-  justify-content: space-between;
-  padding: var(--space-3) 0;
-  text-decoration: none;
-}
 .num {
   font-variant-numeric: tabular-nums;
 }
@@ -560,22 +532,6 @@ details[open] > .disclosure::before {
 .data-table tbody tr:hover > td {
   background: var(--surface-2);
 }
-.table-name {
-  display: grid;
-  gap: 0.125rem;
-}
-.table-name > a {
-  color: var(--text);
-  font-weight: var(--weight-semibold);
-  text-decoration: none;
-}
-.table-name > a:hover {
-  color: var(--link);
-}
-.table-name > .mono {
-  color: var(--text-3);
-  font-size: var(--text-xs);
-}
 
 /* People and agents: a colored initial for a person, a token mark for an agent. */
 
@@ -600,6 +556,22 @@ details[open] > .disclosure::before {
   max-width: 100%;
   min-width: 0;
   padding: 0.0625rem 0.625rem 0.0625rem 0.125rem;
+}
+.access-chip-link {
+  align-items: center;
+  border-radius: var(--radius-pill);
+  color: inherit;
+  display: inline-flex;
+  gap: inherit;
+  min-width: 0;
+  text-decoration: none;
+}
+.access-chip-link:hover .access-chip-text {
+  text-decoration: underline;
+}
+.access-chip-link:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
 }
 .access-chip-text {
   overflow: hidden;

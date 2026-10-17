@@ -847,7 +847,7 @@ export interface ConnectaBranding {
   description?: string;
   /**
    * Browser tab title and page meta name. Defaults to
-   * `"<productName> — <ownerName>"`, or just `productName` when no owner is set.
+   * `"<productName> · <ownerName>"`, or just `productName` when no owner is set.
    */
   pageTitle?: string;
   /**

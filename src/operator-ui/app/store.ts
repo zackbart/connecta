@@ -154,17 +154,17 @@ function refuseSession(status: number): void {
       failure(
         status === 403
           ? `This Clerk account can't open ${productName}'s operator pages.`
-          : "Your Clerk session wasn't accepted. Sign out, then sign in again.",
+          : "Clerk session not accepted. Sign out and sign in again.",
       ),
     );
     return scheduleRecovery();
   }
   if (auth.kind === "cloudflare-access") {
-    gate(failure("Cloudflare Access did not accept this identity for operator pages. Retry to check again."));
+    gate(failure("Cloudflare Access didn't accept this identity. Retry."));
     return scheduleRecovery();
   }
   storeToken(null);
-  gate(failure("That token wasn't accepted. Paste a valid operator token."));
+  gate(failure("Token not accepted. Paste a valid operator token."));
 }
 
 interface OperatorResponse {
@@ -325,7 +325,7 @@ async function operatorRequest(
  */
 function unreachable(loadFailure: "server" | "network"): void {
   if (auth.kind === "cloudflare-access") {
-    gate(failure("Cloudflare Access identity is unavailable. Retry to check your session."));
+    gate(failure("Cloudflare Access identity is unavailable. Retry."));
   } else {
     set({ session: "ready", gate: null, refreshing: false, loadFailure });
   }
@@ -410,7 +410,7 @@ function resetOnRoleChange(contract: OperatorUiContractV2): boolean {
  */
 function contractUnavailable(outcome: "network" | "refused"): void {
   if (auth.kind === "cloudflare-access") {
-    gate(failure("Cloudflare Access identity is unavailable. Retry to check your session."));
+    gate(failure("Cloudflare Access identity is unavailable. Retry."));
   } else {
     set({
       session: "ready",
@@ -465,7 +465,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
     token = await sessionToken();
   } catch {
     if (!current()) return;
-    return gate(failure("Your sign-in session couldn't be read. Sign in again."));
+    return gate(failure("Couldn't read your session. Sign in again."));
   }
   if (!current()) return;
   if (!token && auth.kind !== "cloudflare-access") return gate(null);
@@ -693,7 +693,7 @@ async function refreshSnapshot(
     token = await sessionToken();
   } catch {
     if (!current()) return;
-    gate(failure("Your sign-in session couldn't be read. Retry to check again."));
+    gate(failure("Couldn't read your session. Retry."));
     if (!connectorId) scheduleRecovery();
     return;
   }
@@ -764,7 +764,7 @@ async function refreshSnapshot(
         .then((outcome) => {
           if (!current()) return;
           if (outcome.kind === "session") {
-            gate(failure("Your session cannot read this configuration. Retry to check again."));
+            gate(failure("Your session can't read this configuration. Retry."));
             if (!connectorId) scheduleRecovery();
           } else if (outcome.kind === "denied") {
             gate(null, "denied");
@@ -1420,7 +1420,7 @@ function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, expos
           : auth.kind === "cloudflare-access"
             ? {
                 session: "gated",
-                gate: failure("Cloudflare Access identity is unavailable. Retry to check your session."),
+                gate: failure("Cloudflare Access identity is unavailable. Retry."),
                 ...(member ? memberUnavailable() : {}),
               }
             : { session: "ready", gate: null, loadFailure: "network", ...(member ? memberUnavailable() : {}) }),
@@ -1536,7 +1536,7 @@ export async function boot(): Promise<void> {
   if (auth.kind === "clerk") {
     const clerk = window.Clerk;
     if (!clerk) {
-      return gate(failure("Clerk couldn't load. Check your connection and try again."));
+      return gate(failure("Clerk couldn't load. Try again."));
     }
     try {
       await clerk.load({
@@ -1560,7 +1560,7 @@ export async function boot(): Promise<void> {
         if (!signedOut) void loadCurrent();
       });
     } catch {
-      return gate(failure("Clerk couldn't start. Reload the page to try again."));
+      return gate(failure("Clerk couldn't start. Reload the page."));
     }
   }
   await loadCurrent();
@@ -1981,7 +1981,7 @@ function tokenFailure(action: SlotAction, name: string, facts: RequestFailureFac
 }
 
 /** Said when a validated result arrived after newer evidence about its slot. */
-const settledLate = (name: string) => `${name}'s token changed while this request was in flight. Refresh to check it.`;
+const settledLate = (name: string) => `${name}'s token changed during this request. Refresh to check it.`;
 
 /** Issue the agent's first token or rotate it; the previous secret stops at once. */
 export function rotateAgentToken(name: string): Promise<void> {

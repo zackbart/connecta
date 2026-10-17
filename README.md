@@ -111,8 +111,8 @@ one, your agent's host decides what to approve.
 
 Node or Docker (Clerk sign-in, SQLite) or Cloudflare Workers (Cloudflare
 Access, D1). Both serve the same agent tools. An optional operator UI shows
-connections, access, and activity; integrations and access still change only
-in deployment code.
+a connection map, endpoints, connectors, and activity; integrations and access
+still change only in deployment code.
 
 ## Getting started
 

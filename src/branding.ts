@@ -68,7 +68,7 @@ export function resolveBranding(branding?: ConnectaBranding): ResolvedBranding {
     description:
       trimmedString(branding?.description) ??
       `Manage the services this ${productName} instance makes available to agents.`,
-    pageTitle: trimmedString(branding?.pageTitle) ?? (ownerName ? `${productName} — ${ownerName}` : productName),
+    pageTitle: trimmedString(branding?.pageTitle) ?? (ownerName ? `${productName} · ${ownerName}` : productName),
     faviconHref: faviconHref && isSafeIconHref(faviconHref) ? faviconHref : DEFAULT_FAVICON_HREF,
     themeColor: configuredThemeColor(branding) ?? "#ffffff",
     theme: resolveTheme(branding?.theme),
@@ -454,13 +454,13 @@ export function notFoundResponse(
       <p class="status-label">404</p>
     </div>
     <h1>Page not found</h1>
-    <p class="status-copy">Nothing is served at this address. Check the link, or ask whoever runs ${escapeHtml(brand.productName)} for the right one.</p>
+    <p class="status-copy">Nothing is here. Check the link, or ask whoever runs ${escapeHtml(brand.productName)}.</p>
     ${home}
   </section>
 </main>`;
   return new Response(
     renderPage(opts.ui?.branding, {
-      title: `Page not found — ${brand.pageTitle}`,
+      title: `Page not found · ${brand.pageTitle}`,
       uiMounted,
       // Same bytes on either host: the icons, like the home link, come from
       // the public origin.

@@ -61,8 +61,7 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
     status: 400,
     tone: "declined",
     heading: "Authorization was declined",
-    message:
-      "Consent was declined at the provider, so nothing was stored. Start authorization again whenever you are ready.",
+    message: "Consent was declined, so nothing was stored. Start again when ready.",
     fix: {
       problem: "Consent for a downstream OAuth connector was declined at the provider, so no grant was stored.",
       steps: [
@@ -126,7 +125,7 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
     fix: {
       problem: "A provider returned an authorization code, but exchanging it for tokens failed.",
       steps: [
-        "Check the OAuth client credentials the connector uses — client id and secret in the deployment's environment — and that they belong to the same OAuth app that showed the consent screen.",
+        "Check the OAuth client id and secret the connector reads from the deployment's environment, and that they belong to the OAuth app that showed the consent screen.",
         "Check that the token endpoint and redirect URI the connector uses match the provider's registration exactly.",
         "Find the [connecta] warning for this callback in the deployment logs; it records the exchange error the page withholds.",
       ],

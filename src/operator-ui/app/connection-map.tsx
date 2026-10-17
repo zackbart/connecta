@@ -104,10 +104,18 @@ function NodeBody({ node }: { node: MapNode }) {
   );
 }
 
-/** A connector's read and write tools, level with it in the last column. */
+/** A connector's read and write tools, level with it in the last column. An unknown catalog draws a muted dash. */
 function ToolsBox({ node }: { node: MapNode }) {
-  if (!node.toolsBox || !node.tools) return null;
+  if (!node.toolsBox) return null;
   const { x, y, width, height } = node.toolsBox;
+  if (!node.tools) {
+    return (
+      <>
+        <rect className="map-box tools" x={x} y={y} width={width} height={height} rx={11} />
+        <rect className="map-unknown" x={x + 14} y={y + height / 2 - 1.5} width={16} height={3} rx={1.5} />
+      </>
+    );
+  }
   const total = node.tools.read + node.tools.write;
   const bar = width - 28;
   const read = total ? (bar * node.tools.read) / total : 0;
@@ -357,6 +365,7 @@ function MapList({ map }: { map: ConnectionMap }) {
                 <MemberChip
                   key={node.id}
                   muted={noToken}
+                  href={node.href}
                   chip={{
                     key: node.id,
                     kind: node.kind === "agent" ? "agent" : "human",

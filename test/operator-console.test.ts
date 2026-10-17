@@ -111,7 +111,7 @@ describe("agent token slots", () => {
     const rows = agentRows(maintainer(), [triage], ["triage"]);
     expect(rows.map((row) => [row.name, row.live, row.blocked])).toEqual([
       ["triage", true, "Refresh to continue"],
-      ["simon-ada", false, "Token state unavailable, refresh"],
+      ["simon-ada", false, "Token state unknown. Refresh."],
     ]);
     expect(agentRows(maintainer(), [triage])[0]!.blocked).toBeNull();
     // A slot read without a revision cannot be acted on either (P3b, #837).
@@ -144,19 +144,19 @@ describe("agent token slots", () => {
   it("INV-6: says unknown and aborted outcomes in fixed sentences, never the route's words", () => {
     const refused = (status: number) => ({ kind: "refused" as const, status, problem: "route text sentinel" });
     expect(tokenFailureNotice("rotate", "simon", refused(503), "Connecta").message).toBe(
-      "Rotation outcome unknown for simon: no secret was returned, so rotate again for a replacement.",
+      "Rotate result unknown for simon. No secret came back, so rotate again.",
     );
     expect(tokenFailureNotice("revoke", "simon", refused(503), "Connecta").message).toBe(
-      "Revocation outcome unknown for simon: revoke again to be sure its token is stopped.",
+      "Revoke result unknown for simon. Revoke again to be sure.",
     );
     expect(tokenFailureNotice("issue", "simon", refused(499), "Connecta").message).toBe(
-      "The request ended before simon's token was delivered, so no secret was returned. Refresh to check its token before trying again.",
+      "The request ended before simon's token arrived. Refresh to check its token.",
     );
-    expect(tokenFailureNotice("revoke", "simon", refused(499), "Connecta").message).toContain("revocation finished");
-    expect(tokenFailureNotice("rotate", "simon", refused(409), "Connecta").message).toContain("changed meanwhile");
+    expect(tokenFailureNotice("revoke", "simon", refused(499), "Connecta").message).toContain("revoke finished");
+    expect(tokenFailureNotice("rotate", "simon", refused(409), "Connecta").message).toContain("token changed. Reload");
     expect(
       tokenFailureNotice("rotate", "simon", { kind: "refused", status: 409, code: "slot_changed" }, "Connecta").message,
-    ).toBe("Changed since you looked, refresh.");
+    ).toBe("Changed since you looked. Refresh.");
     expect(tokenFailureNotice("rotate", "simon", { kind: "network" }, "Connecta").message).toContain(
       "Couldn't reach Connecta",
     );

@@ -70,7 +70,7 @@ describe("branding defaults", () => {
 
   it("derives a page title from product and owner", () => {
     expect(resolveBranding({ productName: "Acme MCP" }).pageTitle).toBe("Acme MCP");
-    expect(resolveBranding({ productName: "Acme MCP", ownerName: "Acme Inc" }).pageTitle).toBe("Acme MCP — Acme Inc");
+    expect(resolveBranding({ productName: "Acme MCP", ownerName: "Acme Inc" }).pageTitle).toBe("Acme MCP · Acme Inc");
   });
 
   it("lets pageTitle override the derived title", () => {
@@ -384,7 +384,7 @@ describe("branding in served pages", () => {
         new Request(`${BASE}/oauth/callback/unknown-connector`),
       )
     ).text();
-    expect(body).toContain("<title>Authorization could not be completed — Acme MCP</title>");
+    expect(body).toContain("<title>Authorization could not be completed · Acme MCP</title>");
     expect(body).toContain("Start authorization again from Acme MCP.");
     expect(body).not.toContain("Connecta");
   });

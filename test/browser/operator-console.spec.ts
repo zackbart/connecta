@@ -227,7 +227,7 @@ test.describe("agent tokens", () => {
     ]);
     const triage = table.locator('tr[data-agent="triage"]');
     await expect(triage.locator("td")).toHaveText(["support", "No token", "—", "never", "Issue"]);
-    await expect(page.getByText("Declared in code · one token each")).toBeVisible();
+    await expect(page.getByText("Declared in code")).toBeVisible();
     await expect(page.getByRole("textbox")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /create|rename|new agent/i })).toHaveCount(0);
     await noStyleAttributes(page, "#tokensView");
@@ -291,19 +291,19 @@ test.describe("agent tokens", () => {
       "an unknown rotation",
       503,
       "Rotate simon-ada's token",
-      "Rotation outcome unknown for simon-ada: no secret was returned, so rotate again for a replacement.",
+      "Rotate result unknown for simon-ada. No secret came back, so rotate again.",
     ],
     [
       "an aborted issue",
       499,
       "Issue triage's token",
-      "The request ended before triage's token was delivered, so no secret was returned. Refresh to check its token before trying again.",
+      "The request ended before triage's token arrived. Refresh to check its token.",
     ],
     [
       "an unknown revocation",
       503,
       "Revoke simon-ada's token",
-      "Revocation outcome unknown for simon-ada: revoke again to be sure its token is stopped.",
+      "Revoke result unknown for simon-ada. Revoke again to be sure.",
     ],
   ] as const) {
     test(`${label} (${status}) is a failure notice with no secret and no retry`, async ({ page }) => {
@@ -353,7 +353,7 @@ test.describe("agent token slot agreement", () => {
     await page.goto(VISUAL_ORIGIN + "/tokens");
     const simon = page.locator('tr[data-agent="simon-ada"]');
     await expect(simon.locator(".badge")).toHaveText("Issued");
-    await expect(simon).toContainText("Token state unavailable, refresh");
+    await expect(simon).toContainText("Token state unknown. Refresh.");
     for (const name of ["Rotate simon-ada's token", "Revoke simon-ada's token"]) {
       await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
       await page.getByRole("button", { name, exact: true }).click({ force: true });
@@ -411,7 +411,7 @@ test.describe("agent token slot agreement", () => {
     await page.goto(VISUAL_ORIGIN + "/tokens");
     const issue = page.getByRole("button", { name: "Issue triage's token", exact: true });
     await issue.click();
-    await expect(page.locator("#tokenNotice")).toHaveText("Changed since you looked, refresh.");
+    await expect(page.locator("#tokenNotice")).toHaveText("Changed since you looked. Refresh.");
     await expect(issue).toBeDisabled();
     await expect(issue).toHaveAccessibleDescription("Refresh to continue");
     await page.waitForTimeout(300);
@@ -437,7 +437,7 @@ test.describe("agent token slot agreement", () => {
     await page.goto(VISUAL_ORIGIN + "/tokens");
     const issue = page.getByRole("button", { name: "Issue triage's token", exact: true });
     await issue.click();
-    await expect(page.locator("#tokenNotice")).toContainText("Issue outcome unknown for triage");
+    await expect(page.locator("#tokenNotice")).toContainText("Issue result unknown for triage");
     // The first issuance may have committed: the stale Issue is off, with the reason beside it.
     await expect(issue).toBeDisabled();
     await expect(page.locator('tr[data-agent="triage"]')).toContainText("Refresh to continue");
@@ -475,9 +475,9 @@ test.describe("agent token slot agreement", () => {
       method === "GET" && path === "/ui/access-tokens" ? { status: 503, json: { error: "down" } } : undefined,
     );
     await page.goto(VISUAL_ORIGIN + "/tokens");
-    await expect(page.getByRole("button", { name: "Try loading access tokens again", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(1);
-    await expect(page.getByText(/could not be loaded|couldn't be read|couldn't be loaded/)).toHaveCount(1);
+    await expect(page.getByText(/Couldn't load tokens|couldn't be read|couldn't be loaded/)).toHaveCount(1);
     await expect(page.locator("#tokenNotice")).toBeEmpty();
     await noCsp(page);
   });
@@ -490,7 +490,7 @@ test.describe("member page", () => {
     await page.goto(VISUAL_ORIGIN + "/");
     expectMemberViewWithholds(await (await served).json(), OPERATOR_V2_MEMBER_EXPECTED);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Your connections");
-    await expect(page).toHaveTitle(/^Your connections — /);
+    await expect(page).toHaveTitle(/^Your connections · /);
     // Endpoints: each humanPath URL with copy and client setup.
     const endpoints = page.locator("#memberView .member-endpoint");
     await expect(endpoints.locator(".endpoint code")).toHaveText([
@@ -588,7 +588,7 @@ test.describe("member page", () => {
       .getByRole("group", { name: /^Disconnect your Slack account\?/ })
       .getByRole("button", { name: "Disconnect" })
       .click();
-    await expect(page.locator("#oauthNotice-slack")).toHaveText("Disconnected. Connect again whenever you are ready.");
+    await expect(page.locator("#oauthNotice-slack")).toHaveText("Disconnected.");
     expect(mutations(sent)).toEqual([
       "POST /ui/oauth/calendar?mode=continue",
       "POST /ui/oauth/slack?mode=restart",
@@ -619,7 +619,7 @@ test.describe("member page", () => {
     await expect(token).toHaveAccessibleDescription("An internal integration secret");
     // Incomplete: nothing is sent, and the row says why.
     await page.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(page.locator("#credentialNotice-notion")).toHaveText("Complete every credential field before saving.");
+    await expect(page.locator("#credentialNotice-notion")).toHaveText("Fill every field before saving.");
     await token.fill("secret_ui834_member_value");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.locator("#credentialNotice-notion")).toHaveText("Credential saved.");
@@ -705,7 +705,7 @@ test.describe("member page", () => {
       .getByRole("group", { name: /^Disconnect your Calendar account\?/ })
       .getByRole("button", { name: "Disconnect", exact: true })
       .click();
-    const failed = page.getByRole("alert").filter({ hasText: "Your connections couldn't be refreshed" });
+    const failed = page.getByRole("alert").filter({ hasText: "Couldn't refresh" });
     await expect(failed).toBeVisible();
     // The Disconnect button that had focus is gone: focus lands on the page's heading, not <body>.
     await expect(page.locator("#memberHeading")).toBeFocused();
@@ -723,7 +723,7 @@ test.describe("member page", () => {
     await page.keyboard.press("Escape");
     await page.keyboard.press("ControlOrMeta+k");
     await expect(page.getByPlaceholder("Search pages, connectors, tools…")).toHaveCount(0);
-    await expect(page).toHaveTitle(/^Your connections — /);
+    await expect(page).toHaveTitle(/^Your connections · /);
     // Retry reads the contract again and brings the page back.
     failConfig = false;
     await failed.getByRole("button", { name: "Retry", exact: true }).click();
@@ -755,7 +755,7 @@ test.describe("member page", () => {
     const tab = await popup;
     await tab.waitForURL(`${authorize}**`);
     await tab.close();
-    await expect(page.locator("#oauthNotice-calendar")).toContainText("Finish authorizing");
+    await expect(page.locator("#oauthNotice-calendar")).toContainText("Finish in the new tab");
     await page.getByRole("button", { name: "Clear Notion", exact: true }).click();
     const question = page.getByRole("group", { name: /^Clear your Notion credential\?/ });
     await expect(question).toBeVisible();
@@ -796,7 +796,7 @@ test.describe("member page", () => {
     const tab = await popup;
     await tab.waitForURL(`${authorize}**`);
     await tab.close();
-    await expect(page.locator("#oauthNotice-slack")).toContainText("Finish authorizing");
+    await expect(page.locator("#oauthNotice-slack")).toContainText("Finish in the new tab");
     // Consent takes 35 s: the poll window closes first. Then it completes.
     await page.clock.fastForward(35_000);
     current = structuredClone(current);
@@ -923,7 +923,7 @@ test("review: a delayed revoke must not permit an unconfirmed issue after a newe
     release();
     // Wait for the delayed revoke to settle before looking at the row.
     await expect(page.locator("#tokenNotice")).toHaveText(
-      "triage's token changed while this request was in flight. Refresh to check it.",
+      "triage's token changed during this request. Refresh to check it.",
     );
     // The late revoke result is not restored: the newer "issued" evidence stays, and
     // every triage action is off until a refresh. (The reproduction expected an

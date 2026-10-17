@@ -403,6 +403,9 @@
 .map-bar.write {
   fill: var(--map-write);
 }
+.map-unknown {
+  fill: var(--text-3);
+}
 
 /* The footer: the legend, or a hovered node's sentence in its place. */
 .map-foot {
@@ -528,9 +531,28 @@
   }
 }
 
+/* Narrow: two compact tiles side by side, the callers tile across both. */
 @media (max-width: 760px) {
   .overview-stats {
-    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .overview-stat:last-child {
+    grid-column: 1 / -1;
+  }
+  .overview-stat > .card-body {
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+  }
+  .overview-stat:last-child > .card-body {
+    align-items: center;
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+  .overview-stat:last-child .stat-callers {
+    justify-content: flex-end;
+  }
+  .stat-number {
+    font-size: var(--text-2xl);
   }
   .attention-item {
     align-items: flex-start;

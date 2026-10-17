@@ -55,7 +55,7 @@ export function CredentialForm({
     for (const field of fields) {
       const value = (values[field.name] ?? "").trim();
       if (!value) {
-        return refuseCredential(connector, "Complete every credential field before saving.");
+        return refuseCredential(connector, "Fill every field before saving.");
       }
       entries[field.name] = value;
     }

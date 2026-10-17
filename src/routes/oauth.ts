@@ -51,7 +51,7 @@ function html(
   const details = outcome.fixPrompt
     ? `<details class="status-details">
       <summary>Details for the operator</summary>
-      <p>If this keeps happening, send this to whoever runs ${escapeHtml(brand.productName)}. It is written for a coding agent working on the deployment and carries nothing from the provider's response.</p>
+      <p>If this keeps happening, send this to whoever runs ${escapeHtml(brand.productName)}. It is for a coding agent and holds nothing from the provider.</p>
       <pre>${escapeHtml(outcome.fixPrompt)}</pre>
     </details>`
     : "";
@@ -69,7 +69,7 @@ function html(
 </main>`;
   return new Response(
     renderPage(opts.config.ui?.branding, {
-      title: `${outcome.heading} — ${brand.pageTitle}`,
+      title: `${outcome.heading} · ${brand.pageTitle}`,
       uiMounted,
       body,
     }),

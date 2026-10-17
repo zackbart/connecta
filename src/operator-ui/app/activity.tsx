@@ -240,7 +240,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
           <StateBlock busy>Loading activity…</StateBlock>
         )
       ) : !enabled ? (
-        <Unavailable>Activity isn't available to this session.</Unavailable>
+        <Unavailable>Activity isn't available.</Unavailable>
       ) : (
         <div id="activityAvailable" className="collection">
           {scoped.length === 0 ? (

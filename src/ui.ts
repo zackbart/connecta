@@ -57,7 +57,7 @@ export function operatorPageForPath(path: string): OperatorPage | undefined {
 }
 
 export function operatorPageTitle(page: OperatorPage, configuredTitle: string): string {
-  return `${OPERATOR_PAGE_LABELS[page]} — ${configuredTitle}`;
+  return `${OPERATOR_PAGE_LABELS[page]} · ${configuredTitle}`;
 }
 
 /** Report the verdict the registry stored, independent of whether an endpoint is read-only. */
@@ -200,8 +200,8 @@ export function renderUiHtml(
     <h1>${OPERATOR_PAGE_LABELS[page]}</h1>
     <div class="lead-copy">
       <p>${escapeHtml(brand.description)}</p>
-      <noscript><p class="msg">The operator pages need JavaScript. Nothing else here
-      does — agents reach this deployment through <span class="mono">/mcp</span>.</p></noscript>
+      <noscript><p class="msg">Operator pages need JavaScript. Agents connect at
+      <span class="mono">/mcp</span>.</p></noscript>
     </div>
   </div>
 </main>

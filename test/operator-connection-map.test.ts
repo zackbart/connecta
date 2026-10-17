@@ -76,6 +76,25 @@ describe("connection map layout", () => {
     expect(node(connectionMap(maintainer()), "agent:triage").href).toBeNull();
   });
 
+  it("counts no tools for a connector whose catalog is unknown, and zero for a known empty one", () => {
+    const contract = maintainer();
+    contract.live.connectors = contract.live.connectors.map((c) =>
+      c.id === "github"
+        ? { ...c, tools: [], problem: "catalog_failed" }
+        : c.id === "gmail"
+          ? { ...c, tools: [], status: "error" }
+          : c.id === "drive"
+            ? { ...c, tools: [], status: "ok" }
+            : c,
+    );
+    const map = connectionMap(contract);
+    expect(node(map, "connector:github").tools).toBeNull();
+    expect(node(map, "connector:gmail").tools).toBeNull();
+    expect(node(map, "connector:drive").tools).toEqual({ read: 0, write: 0 });
+    // The box keeps its place in the column, so the layout does not shift.
+    expect(node(map, "connector:github").toolsBox).not.toBeNull();
+  });
+
   it("INV-2: dashes grants on read-only endpoints and dots access from agents without a working token", () => {
     const contract = maintainer();
     contract.agents[0]!.token = { state: "revoked", revokedAt: "2026-10-02T00:00:00.000Z", revision: "r" };

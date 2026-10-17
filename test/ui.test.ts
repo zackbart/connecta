@@ -101,7 +101,7 @@ describe("status UI", () => {
       expect(res.headers.get("content-type")).toContain("text/html");
       const body = await res.text();
       expect(body).toContain("<!doctype html>");
-      expect(body).toContain(`<title>${label} — Connecta</title>`);
+      expect(body).toContain(`<title>${label} · Connecta</title>`);
       expect(body).toContain(`"initialPage":"${page}"`);
       // The shell is a mount point and a no-JS fallback. Everything with a
       // state — nav, gate, and the four pages — is rendered by the bundle.
@@ -203,7 +203,7 @@ describe("status UI", () => {
     const body = await res.text();
 
     expect(res.status).toBe(400);
-    expect(body).toContain("<title>Authorization could not be completed — Connecta</title>");
+    expect(body).toContain("<title>Authorization could not be completed · Connecta</title>");
     expect(body).toContain('href="/favicon.svg"');
     expect(body).toContain('<header class="masthead shell">');
     expect(body).toContain("<h1>Authorization could not be completed</h1>");
