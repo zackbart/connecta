@@ -42,7 +42,7 @@ export interface AgentRow {
 }
 
 /** Why a row's controls are disabled when its slot is not in the live list. */
-const SLOT_UNAVAILABLE = "Token state unavailable, refresh";
+const SLOT_UNAVAILABLE = "Token state unknown. Refresh.";
 /** Why a row's controls are disabled until a fresh list read resolves its slot. */
 const SLOT_UNRESOLVED = "Refresh to continue";
 
@@ -130,33 +130,33 @@ export function tokenFailureNotice(
   facts: RequestFailureFacts,
   productName: string,
 ): Notice {
-  if (facts.kind === "session") return failure("Your session has ended. Sign in again, then retry.");
-  if (facts.kind === "forbidden") return failure("You don't have permission to manage agent tokens.");
+  if (facts.kind === "session") return failure("Session ended. Sign in again.");
+  if (facts.kind === "forbidden") return failure("You can't manage agent tokens.");
   if (facts.kind === "stale") {
-    return failure(`${name}'s token changed before the request was sent, so nothing was sent. Check it and try again.`);
+    return failure(`${name}'s token changed, so nothing was sent. Try again.`);
   }
   if (facts.kind === "network") {
-    return failure(`Couldn't reach ${productName}. Refresh to check ${name}'s token before trying again.`);
+    return failure(`Couldn't reach ${productName}. Refresh to check ${name}'s token.`);
   }
   if (facts.status === 503) {
     return failure(
       action === "revoke"
-        ? `Revocation outcome unknown for ${name}: revoke again to be sure its token is stopped.`
-        : `${action === "issue" ? "Issue" : "Rotation"} outcome unknown for ${name}: no secret was returned, so rotate again for a replacement.`,
+        ? `Revoke result unknown for ${name}. Revoke again to be sure.`
+        : `${action === "issue" ? "Issue" : "Rotate"} result unknown for ${name}. No secret came back, so rotate again.`,
     );
   }
   if (facts.status === 499) {
     return failure(
       action === "revoke"
-        ? `The request ended before ${name}'s revocation finished. Refresh to check its token before trying again.`
-        : `The request ended before ${name}'s token was delivered, so no secret was returned. Refresh to check its token before trying again.`,
+        ? `The request ended before ${name}'s revoke finished. Refresh to check its token.`
+        : `The request ended before ${name}'s token arrived. Refresh to check its token.`,
     );
   }
   // The route's compare-and-swap refused it: the slot moved after the list was read.
-  if (facts.status === 409 && facts.code === "slot_changed") return failure("Changed since you looked, refresh.");
-  if (facts.status === 409) return failure(`${name}'s token changed meanwhile. Reload and try again.`);
+  if (facts.status === 409 && facts.code === "slot_changed") return failure("Changed since you looked. Refresh.");
+  if (facts.status === 409) return failure(`${name}'s token changed. Reload and try again.`);
   if (facts.status === 404) return failure(`${name} is no longer declared in code. Reload the page.`);
   return action === "revoke"
-    ? failure(`${name}'s token could not be revoked. Reload and try again.`)
-    : failure(`A token could not be issued for ${name}. Reload and try again.`);
+    ? failure(`Couldn't revoke ${name}'s token. Reload and try again.`)
+    : failure(`Couldn't issue a token for ${name}. Reload and try again.`);
 }

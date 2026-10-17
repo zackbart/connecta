@@ -226,6 +226,11 @@ test("narrow screens read the map as a list by endpoint", async ({ page }) => {
   await expect(support.locator(".map-list-head .badge")).toHaveText("read-only");
   // Who uses it, as the same chips Endpoints draws.
   await expect(support.locator(".access-chip")).toHaveText(["LCLin Chen", "Agent triageno token"]);
+  // A caller chip opens the same page its map node does.
+  await expect(support.getByRole("link", { name: "Lin Chen", exact: true })).toHaveAttribute(
+    "href",
+    "/endpoints#mcp/support",
+  );
   // What this endpoint serves: GitHub's write tool is off on read-only support.
   await expect(support.locator(".map-list-items .map-list-note")).toHaveText(["1 tool, all read", "1 tool, all read"]);
   await expect(support.getByRole("link", { name: "Drive", exact: true })).toHaveAttribute(

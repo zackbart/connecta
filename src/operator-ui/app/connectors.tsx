@@ -212,7 +212,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
               ))}
             </ul>
           ) : (
-            <StateBlock>{rows.length ? "No connectors match this filter." : "No connectors."}</StateBlock>
+            <StateBlock>{rows.length ? "No matches" : "No connectors."}</StateBlock>
           )}
         </section>
       )}

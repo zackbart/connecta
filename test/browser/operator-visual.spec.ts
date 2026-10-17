@@ -141,7 +141,7 @@ async function ready(page: Page, name: string, state: VisualState) {
           name.includes("activity")
             ? "Loading activity…"
             : name === "tokens"
-              ? "Loading access tokens…"
+              ? "Loading tokens…"
               : "Checking your session…",
           { exact: true },
         )
@@ -153,8 +153,8 @@ async function ready(page: Page, name: string, state: VisualState) {
         name.includes("activity")
           ? "Activity couldn't be loaded"
           : name === "tokens"
-            ? "Try loading access tokens again"
-            : "Configuration couldn't be loaded",
+            ? "Couldn't load tokens."
+            : "Couldn't load configuration",
         { exact: true },
       ),
     ).toBeVisible();
@@ -170,7 +170,7 @@ async function ready(page: Page, name: string, state: VisualState) {
   } else if (name === "tokens") {
     await expect(
       state === "empty"
-        ? page.getByText("No agents declared in code.")
+        ? page.getByText("No agents")
         : page.getByRole("rowheader", { name: "claude-desktop", exact: true }),
     ).toBeVisible();
   } else {
@@ -287,7 +287,10 @@ for (const variant of VISUAL_VARIANTS)
           } else if (variant === "overview-map" || variant === "narrow-overview") {
             await expect(page.locator(variant === "overview-map" ? ".map-svg" : ".map-list")).toBeVisible();
           } else if (variant === "overview-trace") {
-            await page.locator('[data-node="person:https://clerk.example.test:user_lin"]').hover();
+            // Focus, not hover: the capture scrolls to the top, which moves the
+            // node out from under a hovering pointer and drops the highlight.
+            await page.locator('[data-node="person:https://clerk.example.test:user_lin"]').focus();
+            await expect(page.locator(".map-svg.tracing")).toBeVisible();
             await expect(page.locator("#mapTrace")).toContainText("Lin Chen reaches 5 connectors");
           } else if (variant === "connectors-matrix" || variant === "narrow-matrix") {
             await expect(page.getByRole("table", { name: "Connectors by endpoint", exact: true })).toBeVisible();

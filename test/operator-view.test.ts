@@ -80,7 +80,7 @@ describe("operator page routing and capabilities", () => {
     expect(operatorPageForPath("/activity")).toBe("activity");
     expect(operatorPageForPath("/ui")).toBeUndefined();
     expect(operatorPageForPath("/ui/data")).toBeUndefined();
-    expect(operatorPageTitle("connections", "Acme Connecta")).toBe("Connectors — Acme Connecta");
+    expect(operatorPageTitle("connections", "Acme Connecta")).toBe("Connectors · Acme Connecta");
   });
 
   it("orders credential capability states without revealing topology to bearer", () => {
@@ -291,9 +291,9 @@ describe("operator app state", () => {
   });
 
   it("names each unavailable capability without revealing topology", () => {
-    expect(credentialUnavailableCopy("no_slots")).toContain("No connectors declare operator-managed credential slots");
-    expect(credentialUnavailableCopy("vault_not_configured")).toContain("Configure a vault");
-    expect(credentialUnavailableCopy("requires_operator")).toContain("interactive user");
+    expect(credentialUnavailableCopy("no_slots")).toContain("No connector declares a credential slot");
+    expect(credentialUnavailableCopy("vault_not_configured")).toContain("No credential vault");
+    expect(credentialUnavailableCopy("requires_operator")).toContain("interactive sign-in");
   });
 });
 

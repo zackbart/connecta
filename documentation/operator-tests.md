@@ -35,7 +35,10 @@ server serializer.
 
 `test/browser/operator-visual.spec.ts` intercepts API reads and serves the real
 hashed assets and HTML with the production CSP. Loading responses wait on an
-explicit gate. Error responses use fixed HTTP failures. Screenshots use a fixed
+explicit gate. Error responses use fixed HTTP failures. The map trace focuses its
+node instead of hovering it: the capture scrolls to the top first, which would
+move the node out from under a pointer and drop the highlight, so the test waits
+for `.map-svg.tracing` before capturing. Screenshots use a fixed
 clock, UTC, en-US, locally hosted fonts, disabled animations, hidden carets,
 and a 1280 × 900 viewport. Narrow fixtures use 390 × 844. Every test waits for
 its state and fonts before capturing.
@@ -62,8 +65,8 @@ Populated Overview has a failing connector, drift, auth and credential problems
 and a tokenless agent in its attention list. Populated Endpoints shows who can use each endpoint; populated Tokens has one
 agent per slot state, with pools and last seen.
 
-Another 60 screenshots cover the Overview map on the frozen v2 maintainer, its
-hover trace for Lin, and the narrow map list; configured, mismatched, unreadable and multifield
+Another 60 screenshots cover the Overview map on the frozen v2 maintainer, one
+person's trace, and the narrow map list; configured, mismatched, unreadable and multifield
 credentials; all three OAuth client mechanisms; clean and unobserved drift;
 historical Activity; client setup; schema dialog; read/write filters; narrow
 Settings; narrow sign-in and Connection; deployment branding; `/mcp`
@@ -93,13 +96,16 @@ renders an unavailable catalog as a dashed empty ring with "?" and an unknown
 accessible name. Cell names distinguish equal grants against different live
 catalog sizes. `test/operator-endpoints.test.ts` covers those view-model cases,
 including a known empty catalog versus an unavailable one.
+`test/operator-connection-map.test.ts` also checks that a failed or unobserved
+catalog counts no tools, which the map draws as a muted dash, while a known
+empty catalog counts zero.
 `test/browser/operator-overview.spec.ts` covers the Overview on the frozen v2
 fixtures: the status pill, stat labels and numbers, map columns, dashed read-only grants and dotted
 tokenless access; attention rows with their fix links, a copied fix prompt equal
 to the catalogue's text and a failing connector sorted first; the hover
 sentence replacing the legend, and dimming; keyboard focus in column order with each node's sentence
 as its accessible name, Enter opening an endpoint's row and a connector; the
-narrow list; an empty deployment; and a member at `/` getting the member page
+narrow list, whose caller chips link where their map nodes do; an empty deployment; and a member at `/` getting the member page
 with no maintainer read, plus CSP and no `style` attributes.
 `test/browser/operator-console.spec.ts` covers UI-3: who-can-use chips by
 label, raw id and agent mark and "+N" from the keyboard; Tokens rows,

@@ -202,12 +202,10 @@ export function MemberPage({ state, account }: { state: OperatorState; account?:
         {state.contractPhase === "error" ? (
           <StateBlock
             tone="error"
-            title="Your connections couldn't be refreshed"
+            title="Couldn't refresh"
             action={{ label: "Retry", onClick: () => void retryLoad() }}
           >
-            {state.loadFailure === "network"
-              ? `Couldn't reach ${productName}. Check your connection, then retry.`
-              : "Retry to load your endpoints and accounts."}
+            {state.loadFailure === "network" ? `Couldn't reach ${productName}.` : null}
           </StateBlock>
         ) : (
           <StateBlock busy>Loading your connections…</StateBlock>

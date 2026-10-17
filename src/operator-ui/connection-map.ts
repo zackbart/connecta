@@ -30,7 +30,7 @@ export interface MapNode {
   tone: MapHealth;
   /** Endpoints only. */
   readOnly: boolean;
-  /** Connectors only: their live tools by final classification. */
+  /** Connectors only: their live tools by final classification, or null while the catalog is unknown. */
   tools: { read: number; write: number } | null;
   /** Up to two letters for a person's avatar, or a connector's monogram; empty otherwise. */
   initials: string;
@@ -386,6 +386,8 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
     const title = config.title ?? config.id;
     const read = live.tools.filter((tool) => tool.classification === "read").length;
     const scope = config.authScope === "personal" ? "personal" : "shared";
+    // A failed or unobserved catalog has no tools to count, which is not zero tools.
+    const known = live.tools.length > 0 || (live.status === "ok" && !live.problem);
     nodes.push(
       node(
         {
@@ -397,7 +399,7 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
           href: connectorHref(config.id, verdict.tone === "ok"),
           tone: verdict.tone,
           readOnly: false,
-          tools: { read, write: live.tools.length - read },
+          tools: known ? { read, write: live.tools.length - read } : null,
           initials: monogram(title),
           summary: connectorSummary(title, config.id, verdict, rows, callers),
         },

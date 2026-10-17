@@ -119,7 +119,7 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
         open={appearanceOpen}
         onOpenChange={setAppearanceOpen}
         title="Appearance"
-        description={pinned ? "This deployment sets the color scheme." : "Choose a color scheme for operator pages."}
+        description={pinned ? "Set by this deployment" : "Color scheme"}
       >
         {pinned ? (
           <p className="meta">{scheme === "dark" ? "Dark" : "Light"} mode</p>
@@ -129,9 +129,9 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
             value={scheme}
             onValueChange={(value) => setScheme(value as Scheme)}
             items={[
-              { value: "light", label: "Light", content: <p>Use light surfaces.</p> },
-              { value: "dark", label: "Dark", content: <p>Use dark surfaces.</p> },
-              { value: "system", label: "System", content: <p>Follow your device’s appearance.</p> },
+              { value: "light", label: "Light", content: <p>Light surfaces</p> },
+              { value: "dark", label: "Dark", content: <p>Dark surfaces</p> },
+              { value: "system", label: "System", content: <p>Match your device</p> },
             ]}
           />
         )}
@@ -142,7 +142,7 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
         open={commandOpen}
         onOpenChange={setCommandOpen}
         title="Search"
-        description="Search pages, connectors, tools and actions."
+        description="Pages, connectors and tools"
       >
         <Command label="Operator commands" loop>
           <div className="command-field">

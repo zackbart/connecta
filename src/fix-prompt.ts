@@ -38,7 +38,7 @@ export function renderFixPrompt(spec: FixPromptSpec, connectorId?: string): stri
       "own logs (lines prefixed [connecta]) or by reproducing the failure locally. Never put a secret in source, " +
       "a log line, or your reply: secrets belong in the deployment's environment or its credential vault.",
     "Make the smallest change that fixes it, then verify it by redeploying and refreshing the connection on the " +
-      "operator Connections page. If the fix needs something you cannot do yourself — a provider console setting, " +
-      "a secret only the operator holds — name that exact step instead.",
+      "operator Connectors page. If the fix needs a step you cannot do yourself, such as a provider console setting " +
+      "or a secret only the operator holds, name that exact step instead.",
   ].join("\n\n");
 }

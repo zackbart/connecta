@@ -420,7 +420,7 @@ describe("operator store action notices", () => {
       ),
     ).toMatchObject({
       tone: "error",
-      message: expect.stringContaining("Disconnect didn't finish."),
+      message: expect.stringContaining("Disconnect failed."),
     });
     // No window.open in this fake browser: the tab counts as blocked, and the
     // notice points at the link the row now offers.
@@ -437,7 +437,7 @@ describe("operator store action notices", () => {
       ),
     ).toEqual({
       tone: "info",
-      message: "Your browser blocked the new tab. Open the authorization page from the link here.",
+      message: "The new tab was blocked. Open the link here.",
     });
     expect(store.getState().oauthBlocked).toBe("svc");
     expect(
@@ -477,7 +477,7 @@ describe("operator store action notices", () => {
       ),
     ).toMatchObject({
       tone: "error",
-      message: expect.stringContaining("wasn't saved"),
+      message: expect.stringContaining("Not saved."),
     });
     // A failure the page words itself keeps its words: a 403 on a mutation is
     // a missing permission, answered inline, and never a trip to the gate.
@@ -488,7 +488,7 @@ describe("operator store action notices", () => {
         "credentialNotice",
       ),
     ).toMatchObject({
-      message: "You don't have permission to change this connection's authentication.",
+      message: "You can't change this connection's authentication.",
     });
     expect(store.getState().session).toBe("ready");
     expect(store.getState().credentialNoticeFor).toBe("svc");
@@ -566,7 +566,7 @@ describe("operator store load failures", () => {
       session: "gated",
       loadFailure: null,
     });
-    expect(store.getState().gate?.message).toContain("Clerk session wasn't accepted");
+    expect(store.getState().gate?.message).toContain("Clerk session not accepted");
   });
 });
 
@@ -576,7 +576,7 @@ describe("operator admission gate", () => {
     configMock.mockResolvedValueOnce(Response.json({ error: "unauthorized" }, { status: 401 }));
     await store.boot();
     expect(store.getState()).toMatchObject({ session: "gated", role: null, contract: null });
-    expect(store.getState().gate?.message).toContain("Clerk session wasn't accepted");
+    expect(store.getState().gate?.message).toContain("Clerk session not accepted");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(paths).toEqual([CONFIG]);
   });
@@ -733,9 +733,9 @@ describe("operator collection ordering", () => {
   });
 
   it.each([
-    [503, "issued", "Rotation outcome unknown for simon: no secret was returned, so rotate again for a replacement."],
-    [503, "none", "Issue outcome unknown for simon: no secret was returned, so rotate again for a replacement."],
-    [499, "issued", "The request ended before simon's token was delivered, so no secret was returned."],
+    [503, "issued", "Rotate result unknown for simon. No secret came back, so rotate again."],
+    [503, "none", "Issue result unknown for simon. No secret came back, so rotate again."],
+    [499, "issued", "The request ended before simon's token arrived."],
   ] as const)("shows a %i on %s as a failure and never retries it", async (status, slot, copy) => {
     const loaded = await loadStore({ id: "session", getToken: async () => "token" });
     const { store, fetchMock } = loaded;
@@ -796,9 +796,7 @@ describe("operator collection ordering", () => {
     await store.confirmTokenAction();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fetchMock.mock.calls.length - before).toBe(1);
-    expect(store.getState().tokenNotice?.message).toBe(
-      "Revocation outcome unknown for simon: revoke again to be sure its token is stopped.",
-    );
+    expect(store.getState().tokenNotice?.message).toBe("Revoke result unknown for simon. Revoke again to be sure.");
     expect(store.getState().tokens).toEqual([issued("simon")]);
   });
 });
@@ -1980,7 +1978,7 @@ describe("actions revalidate at dispatch", () => {
     await issuing;
     expect(sent(fetchMock, "POST")).toEqual([]);
     expect(confirm).not.toHaveBeenCalled();
-    expect(store.getState().tokenNotice?.message).toContain("changed before the request was sent");
+    expect(store.getState().tokenNotice?.message).toContain("changed, so nothing was sent");
   });
 
   it("does not rotate or revoke a confirmed slot that a reload removed before dispatch", async () => {
@@ -2283,7 +2281,7 @@ describe("token mutations compare and swap on the slot revision (P3b, #837)", ()
     await store.rotateAgentToken("simon-ada");
     expect(store.getState().tokenConfirm).toEqual({ name: "simon-ada", action: "rotate" });
     await store.confirmTokenAction();
-    expect(store.getState().tokenNotice).toEqual({ message: "Changed since you looked, refresh.", tone: "error" });
+    expect(store.getState().tokenNotice).toEqual({ message: "Changed since you looked. Refresh.", tone: "error" });
     expect(store.getState().unresolvedSlots).toEqual(["simon-ada"]);
     await store.rotateAgentToken("simon-ada");
     await store.revokeAgentToken("simon-ada");
@@ -2596,7 +2594,7 @@ describe("review round 4: one generation fence per agent slot", () => {
     expect(store.getState().tokens).toEqual([revoked]);
     expect(store.getState().unresolvedSlots).toEqual(["triage"]);
     expect(store.getState().tokenNotice?.message).toBe(
-      "triage's token changed while this request was in flight. Refresh to check it.",
+      "triage's token changed during this request. Refresh to check it.",
     );
     window.confirm = vi.fn(() => true);
     await store.rotateAgentToken("triage");
@@ -2848,7 +2846,7 @@ describe("token confirmations live in the row", () => {
     await store.loadAccessTokens();
     await store.confirmTokenAction();
     expect(writes(fetchMock)).toEqual([]);
-    expect(store.getState().tokenNotice?.message).toContain("changed before the request was sent");
+    expect(store.getState().tokenNotice?.message).toContain("changed, so nothing was sent");
     // Asked and confirmed on a settled slot: one request.
     await store.rotateAgentToken("simon-ada");
     fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_r", agent: { ...simon, issuedAt: NOW } }));

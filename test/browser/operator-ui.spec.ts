@@ -472,7 +472,7 @@ test("reports a real Clerk loader failure", async ({ page }) => {
 
   await page.goto(origin + "/clerk");
 
-  await expect(page.locator("#err")).toHaveText("Clerk couldn't load. Check your connection and try again.");
+  await expect(page.locator("#err")).toHaveText("Clerk couldn't load. Try again.");
   expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(0);
   expect(clerkLoaderRequests).toEqual(["/clerk-loader"]);
 });
@@ -522,7 +522,7 @@ test("shows clean, warning, and unobserved drift without naming a tool", async (
   for (const [title, id, state, text] of [
     ["Vaulted service", "vaulted", "clean", "Matches the reviewed manifest"],
     ["Hosted proxy", "drifted", "warning", "3 differences from the reviewed manifest"],
-    ["CRM", "oauth", "unavailable", "No catalog refresh observed yet"],
+    ["CRM", "oauth", "unavailable", "No catalog refresh yet"],
   ]) {
     await openRow(page, title!, "diagnostics");
     const panel = page.locator(`#drift-${id}`);
@@ -549,9 +549,7 @@ test("disconnects and reconnects downstream OAuth", async ({ page }) => {
   const popup = page.waitForEvent("popup");
   await row.getByRole("button", { name: "Connect CRM" }).click();
   await (await popup).close();
-  await expect(row.locator("#oauthNotice-oauth")).toHaveText(
-    "Finish authorizing in the new tab. This page updates when you come back.",
-  );
+  await expect(row.locator("#oauthNotice-oauth")).toHaveText("Finish in the new tab.");
 
   expect(
     requests
@@ -604,7 +602,7 @@ test("reports a typed revocation failure after local disconnect in the Auth tab"
     .getByRole("button", { name: "Disconnect", exact: true })
     .click();
   await expect(row.locator("#oauthNotice-oauth")).toHaveText(
-    "Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.",
+    "Disconnected here. Revoke the grant in the provider's console too.",
   );
   await expect(row.locator("[data-oauth-client]")).toHaveCount(0);
   await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
@@ -624,7 +622,7 @@ test("reloads retired OAuth state when disconnect reports an error", async ({ pa
     .getByRole("group", { name: /Disconnect CRM\?/ })
     .getByRole("button", { name: "Disconnect", exact: true })
     .click();
-  await expect(row.locator("#oauthNotice-oauth")).toContainText("Disconnect didn't finish.");
+  await expect(row.locator("#oauthNotice-oauth")).toContainText("Disconnect failed.");
   await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
   await expect(row.locator(".conn-head")).toContainText("Authorization needed");
   await expect(row.getByText("oauth.contacts", { exact: true })).toHaveCount(0);
@@ -679,7 +677,7 @@ test("keeps a rejected credential save on screen and retryable", async ({ page }
   await row.getByRole("button", { name: "Save" }).click();
   // Fixed words by status; the route's own text never reaches the page.
   await expect(row.locator("#credentialNotice-vaulted")).toHaveText(
-    "The credential wasn't saved. Try again; if it keeps failing, the deployment's log has the reason.",
+    "Not saved. Try again, or check the deployment log.",
   );
   await expect(page.locator("body")).not.toContainText("vault unavailable");
   // No dead end: the form stays open holding what was typed, so the operator
@@ -793,7 +791,7 @@ test("copies a fix prompt that carries nothing from the failure", async ({ page,
 
   const row = await openRow(page, "Hosted proxy", "diagnostics");
   // The operator sees the classified description, not the failure's text...
-  await expect(row.locator(".msg")).toContainText("Unavailable: its status check or catalog load failed");
+  await expect(row.locator(".msg")).toContainText("Unavailable. Its status check or catalog load failed");
   await expect(row).not.toContainText("sk_live_leaked_value");
   // The prompt sits beside the problem notice it answers.
   const actions = row.getByRole("region", { name: "Authentication", exact: true }).locator(".fix-prompt");
@@ -889,7 +887,7 @@ test("renders a classified description and never a connector's status message", 
   const row = await openRow(page, "Hosted proxy", "diagnostics");
   await expect(row.locator(".conn-head")).toContainText("Unavailable");
   await expect(row.locator('[data-problem="connector_unavailable"]')).toHaveText(
-    "Unavailable: its status check or catalog load failed, or did not finish in time. The deployment's log has the downstream error.",
+    "Unavailable. Its status check or catalog load failed or timed out. The deployment log has the error.",
   );
   await expect(row.locator('[data-fix-prompt="connector_unavailable"]')).toBeVisible();
   // The detail response really did carry the text; the page just never uses it.
@@ -911,7 +909,7 @@ test("renders a classified description and never a connector's status message", 
   // Nor does the filter treat it as searchable text.
   await page.getByRole("link", { name: "Connectors", exact: true }).click();
   await page.getByLabel("Filter connectors", { exact: true }).fill("sk_live_abc123");
-  await expect(page.getByText("No connectors match this filter.")).toBeVisible();
+  await expect(page.getByText("No matches")).toBeVisible();
 });
 
 test("attaches a fix prompt to a failed OAuth restart", async ({ page }) => {
@@ -997,7 +995,7 @@ test("keeps a downstream's error text out of every action notice, end to end", a
     .getByRole("group", { name: /Disconnect CRM\?/ })
     .getByRole("button", { name: "Disconnect", exact: true })
     .click();
-  await expect(crm.locator("#oauthNotice-oauth")).toContainText("Disconnect didn't finish.");
+  await expect(crm.locator("#oauthNotice-oauth")).toContainText("Disconnect failed.");
   oauthConnected = false;
   const popup = page.waitForEvent("popup");
   await crm.getByRole("button", { name: "Reconnect CRM" }).click();
@@ -1084,7 +1082,7 @@ test("stays signed in with a retry when operator data fails, and gates only on 4
   answer = "401";
   await page.reload();
   await expect(page.locator("#gate")).toBeVisible();
-  await expect(page.locator("#err")).toHaveText("That token wasn't accepted. Paste a valid operator token.");
+  await expect(page.locator("#err")).toHaveText("Token not accepted. Paste a valid operator token.");
 });
 
 test("recovers from a successful null operator-data response", async ({ page }) => {
@@ -1114,7 +1112,7 @@ test("keeps a 403 on a mutation beside its control, signed in", async ({ page })
   await row.getByRole("button", { name: "Save" }).click();
 
   await expect(row.locator("#credentialNotice-vaulted")).toHaveText(
-    "You don't have permission to change this connection's authentication.",
+    "You can't change this connection's authentication.",
   );
   await expect(page.locator("#gate")).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("not permitted");
@@ -1128,7 +1126,7 @@ test("tells a lost session and a dropped connection apart from a failing connect
   await openAuthenticated(page);
 
   const drifted = await openRow(page, "Hosted proxy", "diagnostics");
-  await expect(drifted.locator('[data-load-failure="session"]')).toContainText("Sign in again");
+  await expect(drifted.locator('[data-load-failure="session"]')).toContainText("sign in again");
   // Neither is the downstream's fault, so neither blames it or offers a fix prompt.
   await expect(drifted.locator("[data-problem], [data-fix-prompt]")).toHaveCount(0);
   const crm = await openRow(page, "CRM");
@@ -1162,9 +1160,7 @@ test("opens the authorization tab inside the click and sends it on once the rout
   await tab.waitForURL(`${origin}/connect/oauth?h=test-handoff`);
   // The provider's page gets no handle on the operator page.
   expect(await tab.evaluate("window.opener")).toBeNull();
-  await expect(crm.locator("#oauthNotice-oauth")).toHaveText(
-    "Finish authorizing in the new tab. This page updates when you come back.",
-  );
+  await expect(crm.locator("#oauthNotice-oauth")).toHaveText("Finish in the new tab.");
   expect(requests.filter((request) => request.path.startsWith("/ui/oauth/")).map((request) => request.path)).toEqual([
     "/ui/oauth/oauth?mode=continue",
   ]);
@@ -1191,7 +1187,7 @@ test("falls back to the authorization link when the browser blocks the tab", asy
   const crm = await openRow(page, "CRM");
 
   await crm.getByRole("button", { name: "Connect CRM" }).click();
-  await expect(crm.locator("#oauthNotice-oauth")).toContainText("Your browser blocked the new tab.");
+  await expect(crm.locator("#oauthNotice-oauth")).toContainText("The new tab was blocked.");
   const link = crm.getByRole("link", { name: "Open authorization page" });
   await expect(link).toHaveAttribute("href", `${origin}/connect/oauth?h=test-handoff`);
   await expect(link).toHaveAttribute("rel", "noopener noreferrer");

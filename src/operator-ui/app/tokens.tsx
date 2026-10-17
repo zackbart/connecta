@@ -74,8 +74,8 @@ function SecretDialog({ state }: { state: OperatorState }) {
 function SlotConfirm({ name, action }: { name: string; action: "rotate" | "revoke" }) {
   const copy =
     action === "rotate"
-      ? { question: `Rotate ${name}'s token? Its current token stops working immediately.`, confirm: "Rotate" }
-      : { question: `Revoke ${name}'s token? The agent will immediately lose access.`, confirm: "Revoke" };
+      ? { question: `Rotate ${name}'s token? The current one stops working now.`, confirm: "Rotate" }
+      : { question: `Revoke ${name}'s token? It loses access now.`, confirm: "Revoke" };
   return (
     <tr className="token-confirm-row">
       <td colSpan={6}>
@@ -179,7 +179,7 @@ export function TokensPage({ state }: { state: OperatorState }) {
           <h1 id="tokensHeading" tabIndex={-1}>
             Tokens
           </h1>
-          <p className="meta">Declared in code · one token each</p>
+          <p className="meta">Declared in code</p>
         </div>
         {available && !recovering ? (
           <div className="page-actions">
@@ -199,18 +199,16 @@ export function TokensPage({ state }: { state: OperatorState }) {
       ) : (
         <div id="tokenList" aria-busy={state.tokenPhase === "loading" ? "true" : "false"}>
           {state.tokenPhase === "loading" ? (
-            <StateBlock busy>Loading access tokens…</StateBlock>
+            <StateBlock busy>Loading tokens…</StateBlock>
           ) : state.tokenPhase === "error" ? (
             <StateBlock
               tone="error"
-              {...(recovering
-                ? {}
-                : { action: { label: "Try loading access tokens again", onClick: () => void loadAccessTokens() } })}
+              {...(recovering ? {} : { action: { label: "Retry", onClick: () => void loadAccessTokens() } })}
             >
-              Access tokens could not be loaded.
+              Couldn't load tokens.
             </StateBlock>
           ) : rows.length === 0 ? (
-            <Empty>No agents declared in code.</Empty>
+            <Empty>No agents</Empty>
           ) : (
             <div className="table-scroll">
               <table className="data-table token-table" aria-label="Agent tokens">

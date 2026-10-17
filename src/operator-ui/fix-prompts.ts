@@ -34,7 +34,7 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
     problem:
       "A downstream OAuth connector needs authorization: no grant is stored, or the stored grant expired or was revoked and could not be refreshed.",
     steps: [
-      "Reauthorize from the operator page (Connect account or Reconnect OAuth) or with authorize_connector; this needs no code change if the grant simply lapsed.",
+      "Reauthorize from the connector's Connection tab (Connect or Reconnect) or with authorize_connector. A lapsed grant needs no code change.",
       "If it needs reauthorizing again soon after, check that the OAuth client requests offline access or a refresh token, and that the storage holding OAuth tokens persists across restarts and is shared by every instance.",
       "If authorization cannot start at all, check the connector's OAuth client configuration and the deployment's publicUrl, which forms the /oauth/callback/<connector id> redirect URI.",
     ],

@@ -10,6 +10,7 @@ credential ownership, and grants use [Auth](./auth.md).
 | Task                                            | Read                                                                                                             |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Enable UI, vault, or history in a deployment    | [Setup](#setup), then the platform template                                                                      |
+| Find what a page shows or where a route goes    | [Pages](#pages)                                                                                                  |
 | Find a member's endpoint or set up their client | [Use the member page](#use-the-member-page)                                                                      |
 | Consume config, provenance, status, or activity | [Operator data contract](#operator-data-contract)                                                                |
 | Change a UI page or data route                  | [Source and tests](#source-and-tests), [browser verification](./operator-tests.md)                               |
@@ -23,225 +24,6 @@ and [Worker example](../examples/worker/README.md#select-optional-modules)
 own the runnable configuration, variables, and branding shape. The UI is an
 explicit optional import and stays outside the root package import graph.
 
-Overview, Endpoints, Connectors, Activity, Tokens, and Settings are the
-maintainer's pages. Overview is the default page at `/`; a member sees their
-member page there instead. It reads only the contract and `/ui/data` and has no
-controls of its own:
-
-- **Headline.** A status pill beside the heading ("2 need attention", red when
-  any connector is failing, or "All healthy"; none without connectors) and three
-  cards labeled Connectors, Endpoints, and People · Agents. Connectors shows
-  healthy of total over a bar with one segment per connector in its health
-  color; Endpoints shows the count over a bar split read-only and read-write;
-  People · Agents shows both counts over up to eight avatars and agent marks
-  (a tokenless agent's mark is hollow). A dot legend under each bar counts each
-  segment kind; the first two cards link to their pages.
-- **Needs attention.** One row per connector whose health is not ok, failing
-  ones first, then one per agent in a pool whose token is missing or revoked.
-  Each row is a title naming what is wrong and one short line: the endpoints
-  it affects ("Affects /mcp and /mcp/team"), and links to the
-  fix the Connectors list offers for the same connector (Connect, Replace key,
-  Inspect or Review on its Connection tab), or to Issue token on Tokens when
-  that page is open to the viewer. An agent's line names its agent URL
-  ("Can't connect at /agent/<pool>"). A row with a problem code, or drift,
-  also has Copy fix prompt with the fixed text from the fix-prompt catalogue; a
-  problem keeps its row and prompt when the connector's detail read also failed,
-  and its line starts "Details didn't load". With no rows it reads "All clear".
-- **Who reaches what.** The connection map, an SVG flow of callers (people in
-  the order the contract first lists them, then declared agents) to endpoints
-  (`/mcp`, then pools) to connectors in config order, with each connector's
-  read and write tool counts in a last column. A grant link takes its
-  connector's health color; grants on a read-only endpoint are dashed, and an
-  agent's link to its pool is dotted while it has no issued token. Plain `/mcp`
-  admits no agents, so no agent links to it. A read-only endpoint carries a
-  read-only chip; a read-write one carries none. The card's footer holds the
-  legend. Hovering or focusing a node dims everything off its paths and puts one
-  sentence in the legend's place, such as
-  "alice reaches 5 connectors through /mcp/support and /mcp/team: 6 tools, 1
-  write."; an agent's sentence names its `/agent/<pool>` URLs instead. The same
-  sentence is the node's accessible name. Hover and focus are tracked
-  separately, and hover wins while both are set. The map is one tab stop:
-  arrow keys move up and down a column and left and right to the nearest node
-  in the next column, and Home and End go to the first and last node. A node
-  without a page is a `group` with the same name. Clicking a node, or Enter on it, opens a connector's
-  Tools tab (Connection when it needs attention), an endpoint's row on
-  Endpoints (`/endpoints#mcp/<pool>`, which opens that row), a person's first
-  endpoint, or Tokens for an agent when that page is open. The drawing never
-  scales below 880px wide; a narrower card scrolls it sideways. At 960px and
-  below the map becomes a list with one entry per endpoint: its mode, who uses
-  it as named member chips, and its connectors with health. A deployment with no connectors shows
-  "Nothing to map yet".
-
-Endpoints, at `/endpoints`, has one row for `/mcp` and each pool,
-with its path, a read-only pill only on a read-only endpoint, a copyable URL,
-who can use it, its connectors as colored monograms (four, then "+N"), its tool
-count over a read/write bar, and a Setup button. Who can use it is
-`root.maintainers` on `/mcp` and the pool's `members` elsewhere, as an avatar
-stack: a person by their initials, an agent by an agent mark, each named on
-hover and to a screen reader by label (raw id when the label is null) or bare
-agent name. A row shows four and a "+N" button that reveals the rest. A pool
-with agent members labels its two URLs People and Agents, the agent one muted.
-Expanding a row lists everyone by name, then each connector on that endpoint
-with what it runs as and its tools, write tools amber with a pencil. Client
-setup is a drawer with the URL and a Claude Code / Codex / JSON switch over one
-snippet and its copy button; no snippet carries a token. The runs-as label
-comes from that endpoint's matrix cell. A shared connector
-names its credential's source: "Shared · saved <date>" (vault), "Shared ·
-connected <date>" (OAuth), "Shared · not configured", "Shared · set in
-deployment", or "Shared · no credential needed"; a vault or OAuth cell without a
-date omits it. The others read "Personal · N of M connected", "Workspace · people:
-self · agents: <owner>" (or "none"), or "Everyone acts as <subject>" for a
-fixed-subject Workspace connector. Connector health is not repeated per
-endpoint: a connector that needs attention gets a status dot on its monogram
-and beside its name, which links to its Connection tab. Counts intersect live tools with the pool's declared tools
-(the `/mcp` matrix cells for the root), guarded grants' live verdicts, and
-read-only mode. Connectors shows one card per connector: its title and id, one
-status pill, a Shared or Per person badge, its tool count over a read/write
-bar, and how long ago its last call was. All, Needs attention and Healthy
-filter the cards, with their counts, beside a search field. The pill, the
-Overview, an endpoint's status dot, and a connector's own page share one
-verdict: the server's problem code first (so a failed catalog reads "Catalog
-failed", never "Connected"), then a failed detail read ("Couldn't load"), then
-a non-ok status, then catalog drift. A failed detail read marks its connector
-unavailable, so `connector_unavailable` beside one reads "Couldn't load" and
-offers no fix prompt. A connector that is not fine adds one action (Connect,
-Replace key, Inspect, or Review for drift) that opens Connection and counts as
-Needs attention. A List / Matrix toggle (`?view=matrix`)
-switches to a table of connectors by endpoint, `/mcp` first. A connector's row
-header is its monogram and name, plus a status dot only when it needs fixing,
-linking to Connection and named for its fix (like "Connect Notion"). Each cell
-is a pie of how much of the connector's live catalog it grants, with "all" or a
-live tool count, or a dash for none; read-only columns are hatched. Only granted
-names still present in the live catalog count toward the share. An unavailable
-catalog shows a dashed empty ring and "?", named "unknown live tool coverage".
-A cell with grants is a button named like
-"GitHub on /mcp/support: 1 of 2 live tools, read-only" (or "all 2 tools");
-Enter, Space or a click opens a popover listing exactly that cell's tool names,
-each with a read or write pill (a write tool struck through on a read-only
-endpoint), and the cell's runs-as. Escape or Tab returns focus to the cell. The
-popover opens below its cell, or above when the viewport has more room there,
-with a capped height that scrolls; CSS anchor positioning places it, and the
-page sets no inline styles. A browser without anchor positioning gets the same
-list, with the same keys, in an expansion row under the connector. `GET /ui/api/config` is the browser's one gate: a 401
-shows sign-in, the private 404 shows a "No access" page naming who to ask, with
-Sign out or Change token, and a 200 renders by `role`. `/ui/data`, connector
-details, activity and tokens are requested only after the contract says
-`maintainer`, and every such read checks the role again when it is sent, focus
-returns included. Until a role is confirmed, the page shows its loading or
-error state and no navigation. The store keeps the last confirmed role through
-a failed refresh: a maintainer's page stays mounted, inert and dimmed, under
-one shell banner with Retry, whichever page it is, and sends nothing
-maintainer-only until a contract confirms the role again. Recovery closes the
-page's dialogs, drawers and popovers and the command palette, and moves focus
-to Retry. Credential and OAuth writes also wait for a contract that agrees
-with the confirmed role: a maintainer's for a connector it shows, a member's
-for a personal connector their contract lists with that action in `manage`;
-otherwise the write is not sent and its row says so. An
-answer with a different role clears everything read under the old one and
-admits the viewer again. A
-pool member sees the [member page](#use-the-member-page) on every path, with
-no tabs. Connector
-detail opens with its title, status pill, id, auth badge and read/write bar,
-then Tools, Connection, and Activity tabs. Tools lists each tool by its mono
-address with a Read or Write badge and annotation badges (Destructive,
-Open world), filtered by search and an All / Read / Write control; a tool opens
-its schema in a side drawer. Connection has an Authentication card (mode, the
-OAuth client mechanism, who manages it, the OAuth actions, and the credential
-card with its masked last four, field states, and Replace, Test and Remove),
-a Diagnostics card of tiles (catalog age, last call, drift counts), one fix
-prompt beside each problem it reports, and a Configuration card. Its
-first badge row names the connector's kind (Remote MCP, HTTP API or Custom),
-provider, auth scope (Shared account or Per person), endpoint host and usage
-guide. Its auth row names the mode (OAuth, Headers, Request token, No auth, or
-the credential slot's label) and then draws each auth fact as a compact mono
-badge: credential field names when there are several, the credential header and
-scheme, static header names, the OAuth scope, each API origin as
-`→ api.crm.example`, authorization and token endpoints, the client metadata
-host, the token-endpoint auth method, Client secret, PKCE, extra authorization
-parameter names and token-request header names. Tiles follow for its result
-cap, call admission rules and transport settings. A connector key the card does
-not draw becomes a tile labelled from its name.
-
-Settings reads the configuration snapshot as tiles, with a "Defined in code" tag
-beside the title and no editing controls. Deployment is a row of fact chips:
-name and server version together (`Production · v1`), mode (Writes allowed or
-Read-only), connecta version, public URL, allowed origins, sandbox, storage,
-activity store, deployment ID, website, icon count and `deploymentInfo` key
-names. Storage that is memory because the deployment configured none reads
-"Memory · default" as a warning chip: on Node a restart loses everything it
-held. Sign-in has one tile per inbound auth provider in the order they are
-tried, with its mark and whether it admits people or machines; the agent-token
-tile carries a count chip ("3 agents"). One Maintainers tile follows with an
-avatar stack of the `/mcp` maintainers, or muted "None" when none are configured.
-With no auth providers, an Open tile precedes the Maintainers tile. Features shows
-the vault (with "Seals OAuth" when it seals OAuth tokens), activity, agent-token
-and any other module, on or off. Limits shows each limit as a value over a short
-label: durations in their largest whole unit, sizes in decimal KB or MB with the
-exact byte count as a tooltip, counts with separators, a null bound as
-"No limit", and booleans as On or Off. The tool timeout, when
-`calls.defaultTimeoutMs` is null, shows the host-call timeout it falls back to,
-as a default. The headline limits (tool timeout, result cap, program timeout,
-catalog refresh, activity retention, calls and writes per program, concurrent
-requests) and any other limit set in code draw large. The remaining defaults sit
-behind one disclosure labelled with their count ("17 defaults") that opens into
-Discovery, Results, Programs and Requests cards, each a list of value and label.
-A value set in code (by `configSources`) has an accent dot and the hidden text
-"set in code"; a default reads muted with the hidden text "default". Activity
-retention reads as set only when the activity store reports its own
-`optionSources.retentionDays` as `"config"`; the shipped D1 and SQLite stores
-do. Overrides lists each classification override as the tool address and its
-verdict. A snapshot key Settings does not map appears under Other as a tile
-labelled from its key name, so nothing in the snapshot is hidden; such a tile
-is marked set only when the snapshot value itself carries `source: "config"`.
-An empty section is not drawn. Deployment code owns connectors, grants, pools,
-and classification; the UI changes only authorized authentication material.
-
-Tokens has one row per agent declared in code, in `GET /ui/access-tokens`
-order: its agent mark and name, its pools as chips, a state pill (No token,
-Issued or Revoked), the issue or revoke date, and last seen ("never" when
-null). The heading reads "Declared in code"; nothing creates or renames an
-agent. Issue (primary) appears for a slot with no token or a revoked one,
-Rotate and a quiet red Revoke for an issued one; rotate and revoke ask first
-in a row under the agent's, with focus on Cancel. On a narrow screen each row
-stacks into a small card. Every
-mutation sends `{ "expect": "<revision>" }` with the slot revision the
-operator confirmed against. A new secret opens once in a dialog with a copy
-button and "You won't see this token again."; closing it drops the secret
-from the page, and recovery never closes it. A 409 `slot_changed` reads
-"Changed since you looked, refresh"; a 503 `outcome_unknown` or 499 `aborted`
-is a failure notice and is never retried. Sending a mutation leaves the slot
-unresolved until its successful response is validated, which resolves it. Any
-other outcome, a contract whose `agents[].token` disagrees with the list
-(revision included) or drops the agent, or a failed read leaves it unresolved
-until a slot-list read that started afterwards succeeds. Until then its
-controls are off with "Refresh to continue", and each action is
-checked again immediately before it is sent. Under the recovery banner Tokens
-offers no Refresh of its own, and an open rotate or revoke question closes.
-
-Activity opens with counts for the loaded history (calls, failed, tools, and
-catalog changes), also announced in its accessible summary, and, when the loaded calls span more than a minute, a strip
-of calls over time with failures in red. Filters sit in one bar: a search box,
-an All / Failed / Succeeded control (`?outcome=failed` keeps errors and
-timeouts, `?outcome=succeeded` keeps successes and approvals), and chips for
-each connector and source that the loaded history holds (`?connector=`,
-`?source=`); pressing a pressed chip clears it. A selected connector or source
-keeps its chip even when it is the only loaded value. Other `?outcome=` values
-match the recorded outcome exactly and appear as a clearable Exact outcome chip;
-All is unpressed while one is selected. There are no select menus.
-Rows group by recorded request id, and calls of one request share a rail.
-Each call row shows one status dot, the time, the caller (a person by label or
-id beside their initials, an agent token by agent name beside an agent mark,
-anything else by its kind), the connector's monogram and the tool address, a
-write tag for write calls, the failure reason for a failed call, and duration
-and result size on the right. Opening a row lists what was recorded: result,
-how it ran, classification, exact duration and size, caller, stable caller id
-for a person, request id, client, and connecta version; a field that was not
-recorded is left out. Catalog changes are rows in the same columns with added,
-removed, and changed counts. With no history the page shows "No calls yet" and
-Refresh; a filter that matches nothing shows "No matches" and Clear filters.
-A connector's Activity tab draws the same counts, filters and rows for that
-connector, without connector chips or monograms.
-
 Install the vault for declared credential slots and activity history for
 persisted call records. Neither module grants permission to manage or read
 it: [auth](./auth.md#management-permissions) does. Interactive maintainers
@@ -250,6 +32,266 @@ pool members connect their own accounts on personal connectors in their pools.
 Token management issues, rotates, and revokes the tokens of agents declared in
 code; it never creates, renames, or binds an agent. Agent tokens never grant
 interactive credential or token management authority.
+
+## Pages
+
+The UI shows configuration and never edits it. Deployment code owns
+connectors, grants, pools, agents and classification. The UI changes only
+credentials, OAuth connections and agent tokens, through the existing routes.
+No select menu displays configuration. Copy is short labels; a failure names
+what to do next in one or two sentences and never quotes a route's or
+downstream's text.
+
+| Path               | Page                                                   | Who        |
+| ------------------ | ------------------------------------------------------ | ---------- |
+| `/`                | Overview (a member gets the member page)               | Maintainer |
+| `/endpoints`       | Endpoints; `#mcp/<pool>` opens that row                | Maintainer |
+| `/connectors`      | Connectors list; `?view=matrix` for the matrix         | Maintainer |
+| `/connectors/<id>` | Connector detail; `#tools`, `#connection`, `#activity` | Maintainer |
+| `/activity`        | Activity                                               | Maintainer |
+| `/tokens`          | Tokens, when token management is open to the viewer    | Maintainer |
+| `/settings`        | Settings                                               | Maintainer |
+
+`/access` redirects to `/endpoints`, `/tools` to `/connectors`, and `/config`
+to `/settings`, replacing the history entry. Connector hashes `#config`,
+`#auth` and `#diagnostics` redirect to `#connection` and keep query
+parameters such as signed handoffs. A pool member sees the
+[member page](#use-the-member-page) on every path.
+
+### Overview
+
+- **Status pill.** "N need attention" (red when a connector is failing) or
+  "All healthy". No pill without connectors.
+- **Stat tiles.** Connectors (healthy of total, a bar with one segment per
+  connector in its health color), Endpoints (count, a bar split read-only and
+  read-write), and People · Agents (both counts, up to eight avatars and agent
+  marks; a tokenless agent's mark is hollow). A dot legend counts each segment
+  kind; the first two tiles link to their pages. At 760px and below the tiles
+  sit two up, with People · Agents as one row across both.
+- **Needs attention.** One row per connector whose health is not ok, failing
+  first, then one per agent in a pool whose token is missing or revoked. A
+  row names the problem ("crm needs authorization"), the endpoints it
+  affects ("Affects /mcp and /mcp/team") or the agent URL it can't connect at,
+  and links to the existing fix: Connect, Replace key, Inspect or Review on
+  the connector's Connection tab, or Issue token on Tokens. A row with a
+  problem code or drift also has Copy fix prompt. A problem keeps its row and
+  prompt when the connector's detail read failed, prefixed "Details didn't
+  load". With no rows it reads "All clear".
+- **Who reaches what.** The [connection map](#connection-map).
+
+### Connection map
+
+An SVG flow of callers (people in contract order, then declared agents) to
+endpoints (`/mcp`, then pools) to connectors in config order, with a last
+column of each connector's read and write tool counts. A connector whose
+catalog is unknown (failed or not yet observed) draws a muted dash there
+instead of "0 tools".
+
+- A grant link takes its connector's health color. Grants on a read-only
+  endpoint are dashed; an agent's link to its pool is dotted while it has no
+  issued token. Plain `/mcp` admits no agents. A read-only endpoint carries a
+  read-only chip.
+- Hovering or focusing a node dims everything off its paths and replaces the
+  legend with one sentence, such as "alice reaches 2 connectors through /mcp
+  and /mcp/team: 6 tools, 1 write." The sentence is also the node's accessible
+  name. Hover wins while both are set.
+- The map is one tab stop. Arrow keys move within a column and to the nearest
+  node in the next one; Home and End go to the first and last node.
+- Click or Enter opens the node's page: a connector's Tools tab (Connection
+  when it needs attention), an endpoint's row on Endpoints, a person's first
+  endpoint, or Tokens for an agent when that page is open. A node without a
+  page is a `group`.
+- The drawing never scales below 880px; a narrower card scrolls it sideways.
+  At 960px and below it becomes a list with one entry per endpoint: its mode,
+  its callers as chips that link like map nodes, and its connectors with
+  health. With no connectors it reads "Nothing to map yet".
+
+### Endpoints
+
+One row each for `/mcp` and every pool: the path, a read-only pill on a
+read-only endpoint, a copyable URL, who can use it, its connectors as colored
+monograms (four, then "+N"), its tool count over a read and write bar, and a
+Setup button.
+
+- Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
+  elsewhere, as an avatar stack named on hover and to screen readers (label,
+  raw id when the label is null, or agent name). Four show, then a "+N"
+  button. A pool with agent members labels its two URLs People and Agents.
+- Expanding a row lists everyone by name, then each connector with what it
+  runs as and its tools, write tools amber with a pencil. Runs-as comes from
+  the endpoint's matrix cell: "Shared · saved <date>", "Shared · connected
+  <date>", "Shared · not configured", "Shared · set in deployment", "Shared ·
+  no credential needed", "Personal · N of M connected", "Workspace · people:
+  self · agents: <owner>" (or "none"), or "Everyone acts as <subject>".
+- A connector that needs attention gets a status dot on its monogram and
+  beside its name, linking to its Connection tab.
+- Setup opens a drawer with the URL and a Claude Code, Codex or JSON snippet
+  with a copy button. No snippet carries a token.
+
+Counts intersect live tools with the pool's declared tools (the `/mcp` matrix
+cells for the root), guarded grants' live verdicts, and read-only mode.
+
+### Connectors
+
+One card per connector: title and id, one status pill, a Shared or Per person
+badge, its tool count over a read and write bar, and when it was last called.
+All, Needs attention and Healthy filter the cards, with counts, beside a
+search field. A connector that is not fine adds one action (Connect, Replace
+key, Inspect, or Review for drift) that opens its Connection tab.
+
+Every view shares one verdict per connector: the server's problem code first
+(a failed catalog reads "Catalog failed", never "Connected"), then a failed
+detail read ("Couldn't load", with no fix prompt), then a non-ok status, then
+catalog drift.
+
+A List / Matrix toggle (`?view=matrix`) switches to a table of connectors by
+endpoint, `/mcp` first. A row header is the connector's monogram and name, plus
+a status dot linking to Connection when it needs fixing. Each cell is a pie of
+how much of the live catalog it grants, with "all", a count, or a dash for
+none; read-only columns are hatched. Only granted names still in the live
+catalog count. An unknown catalog shows a dashed empty ring and "?". A cell
+with grants is a button named like "GitHub on /mcp/support: 1 of 2 live
+tools, read-only"; it opens a popover of that cell's tools, each with a read
+or write pill (a write struck through on a read-only endpoint), and its
+runs-as. Escape or Tab returns focus to the cell. CSS anchor positioning
+places the popover below the cell, or above when there is more room, and the
+page sets no inline styles. Without anchor support the same list opens as a
+row under the connector.
+
+### Connector detail
+
+The title, status pill, id, auth badge and read and write bar, then three
+tabs:
+
+- **Tools.** Each tool by its mono address with a Read or Write badge and
+  annotation badges (Destructive, Open world), filtered by search and All,
+  Read and Write. A tool opens its schema in a side drawer.
+- **Connection.** An Authentication card (mode, OAuth client mechanism, who
+  manages it, OAuth actions, and the credential card with masked last four,
+  field states, and Replace, Test and Remove); a Diagnostics card of tiles
+  (catalog age, last call, drift counts) with a fix prompt beside each
+  problem; and a Configuration card. Its badges name the kind (Remote MCP,
+  HTTP API or Custom), provider, auth scope, endpoint host and usage guide.
+  The auth row names the mode and draws each auth fact as a mono badge
+  (credential fields, header and scheme, static header names, OAuth scope, API
+  origins as `→ api.crm.example`, OAuth endpoints, client metadata host,
+  token auth method, Client secret, PKCE, extra parameter and header names).
+  Tiles follow for the result cap, call admission rules and transport. Any
+  other key becomes a tile labelled from its name.
+- **Activity.** The [Activity](#activity) page for that connector, without
+  connector chips or monograms.
+
+### Settings
+
+The configuration snapshot as tiles, tagged "Defined in code", with no
+editing controls. An empty section is not drawn.
+
+- **Deployment.** Fact chips: name and version (`Production · v1`), Writes
+  allowed or Read-only, connecta version, public URL, allowed origins,
+  sandbox, storage, activity store, deployment ID, website, icon count and
+  `deploymentInfo` keys. Default memory storage reads "Memory · default" as a
+  warning: on Node a restart loses it.
+- **Sign-in.** One tile per inbound auth provider in the order they are tried,
+  with its mark and whether it admits people or machines; the agent-token
+  tile counts agents ("3 agents"). Then a Maintainers tile with the `/mcp`
+  maintainers, or "None". With no providers an Open tile comes first.
+- **Features.** Vault ("Seals OAuth" when it does), activity, agent tokens
+  and any other module, on or off.
+- **Limits.** Each limit as a value over a short label: durations in their
+  largest whole unit, sizes in decimal KB or MB with exact bytes as a
+  tooltip, counts with separators, "No limit", and On or Off. A null tool
+  timeout shows the host-call timeout it falls back to. Headline limits and
+  any limit set in code draw large. The rest sit behind one disclosure
+  ("17 defaults") with Discovery, Results, Programs and Requests groups. A
+  value set in code (by `configSources`) has an accent dot; a default reads
+  muted. Activity retention counts as set only when the activity store
+  reports `optionSources.retentionDays` as `"config"`, as the shipped D1 and
+  SQLite stores do.
+- **Overrides.** Each classification override as tool address and verdict.
+- **Other.** Any snapshot key Settings does not map, as a tile labelled from
+  its name, set only when its value carries `source: "config"`.
+
+### Tokens
+
+One row per agent declared in code, in `GET /ui/access-tokens` order: agent
+mark and name, pools as chips, a state pill (No token, Issued or Revoked), the
+issue or revoke date, and last seen ("never" when null). The heading note
+reads "Declared in code"; nothing creates or renames an agent. Narrow screens
+stack each row into a card.
+
+- Issue appears for a slot with no token or a revoked one; Rotate and a quiet
+  red Revoke for an issued one. Rotate and Revoke ask first in a row under the
+  agent, with focus on Cancel.
+- Every mutation sends `{ "expect": "<revision>" }` with the slot revision the
+  operator saw. A new secret opens once in a dialog with a copy button and
+  "You won't see this token again."; closing it drops the secret, and
+  recovery never closes it.
+- A 409 `slot_changed` reads "Changed since you looked. Refresh." A 503
+  `outcome_unknown` or 499 `aborted` is a failure notice and is never
+  retried.
+- A sent mutation leaves its slot unresolved until its successful response is
+  validated. Any other outcome, a contract whose `agents[].token` disagrees
+  with the list (revision included) or drops the agent, or a failed read
+  leaves it unresolved until a later slot-list read succeeds. Until then its
+  controls are off with "Refresh to continue", and each action is checked
+  again just before it is sent.
+- Under the recovery banner Tokens has no Refresh or list Retry of its own,
+  and an open rotate or revoke question closes.
+
+### Activity
+
+Counts for the loaded history (calls, failed, tools, catalog changes), also
+in its accessible summary, and a strip of calls over time with failures in
+red when the calls span more than a minute.
+
+- **Filters.** One bar: search, All / Failed / Succeeded (`?outcome=failed`
+  keeps errors and timeouts, `?outcome=succeeded` successes and approvals),
+  and chips for each loaded connector and source (`?connector=`, `?source=`).
+  Pressing a pressed chip clears it, and a selected value keeps its chip.
+  Another `?outcome=` value matches exactly and shows as a clearable Exact
+  outcome chip.
+- **Rows.** Grouped by recorded request id on a shared rail. Each shows a
+  status dot, time, caller (a person by label or id with initials, an agent
+  by name with its mark, anything else by kind), connector monogram and tool
+  address, a write tag, the failure reason, and duration and size. Opening a
+  row lists what was recorded: result, how it ran, classification, exact
+  duration and size, caller, stable caller id, request id, client, and
+  connecta version. Unrecorded fields are left out. Catalog changes are rows
+  with added, removed and changed counts.
+- **Empty.** "No calls yet" with Refresh, or "No matches" with Clear filters.
+
+### Navigation, gates and recovery
+
+The top bar is one row: the mark, branding and deployment name, the section
+links (Overview, Endpoints, Connectors, Activity, Tokens, Settings), then
+Search (the command palette, also ⌘K or Ctrl+K), Appearance, and Account
+(the signed-in account with Sign out or Change token). The mark is connecta's
+drawn "C" only when no product name, owner or favicon is configured; with
+`branding.favicon.svg` it is that SVG; otherwise there is none. The sign-in
+gate shows the same mark above "Sign in". Below 820px the section links move
+to a second row that scrolls sideways and keeps the current section in view,
+and Search shrinks to its icon. A member's top bar has only branding and
+Account. The command palette searches visible pages, connectors and tools,
+opening connector results on Tools.
+
+`GET /ui/api/config` is the browser's one gate: a 401 shows sign-in, the
+private 404 shows "No access" with who to ask and Sign out or Change token,
+and a 200 renders by `role`. `/ui/data`, connector details, activity and
+tokens are requested only after the contract says `maintainer`, and each read
+checks the role again when it is sent. Until a role is confirmed the page
+shows its loading or error state and no navigation. Activity and Tokens keep
+their own permission gates.
+
+The store keeps the last confirmed role through a failed refresh: a
+maintainer's page stays mounted, inert and dimmed, under one shell banner
+("Couldn't load configuration" with Retry), and sends nothing maintainer-only
+until a contract confirms the role again. Recovery closes the page's dialogs,
+drawers, popovers and the command palette, and moves focus to Retry.
+Credential and OAuth writes also wait for a contract that agrees with the
+confirmed role: a maintainer's for a connector it shows, a member's for a
+personal connector whose `manage` lists that action. Otherwise the write is
+not sent and its row says so. An answer with a different role clears
+everything read under the old one.
 
 ## Use the member page
 
@@ -511,24 +553,6 @@ id and typed actor when available, otherwise a fresh id and system actor. No
 names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
-The top bar is one row: the mark, deployment branding and the deployment name, the
-section links (Overview, Endpoints, Connectors, Activity, Tokens, and Settings), then
-Search (the command palette, also ⌘K or Ctrl+K), Appearance, and **Account**,
-which opens the signed-in account and the session action (Change token or Sign
-out). The mark is connecta's drawn "C" only when no product name, owner or
-favicon is configured; with `branding.favicon.svg` it is that SVG; otherwise
-there is none. The sign-in gate shows the same mark above "Sign in". Below
-820 px wide the section links move to a second row that scrolls sideways and
-keeps the current section in view, and Search shrinks to its icon. A member's top bar has only branding
-and Account. Activity and Tokens keep their permission gates; a gated
-viewer sees no operator navigation. The command palette searches visible pages,
-connectors and tools, opening connector results on Tools. `/access` redirects
-to `/endpoints`, `/tools` to `/connectors`, and `/config` to `/settings` in the browser
-with history replacement. Connector hashes `#config`, `#auth` and `#diagnostics`
-redirect to `#connection`, preserving query parameters such as signed handoffs.
-Token controls retain their existing permission gate.
-Configuration remains in deployment code. The UI mutates only credentials,
-OAuth connections and agent tokens through the existing routes.
 
 ## Contributor reference
 

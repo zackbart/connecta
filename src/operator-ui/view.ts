@@ -60,7 +60,7 @@ export function canonicalOperatorPath(path: string): string {
  */
 export function pageDescription(page: OperatorPage, productDescription: string): string {
   if (page === "activity") {
-    return "Every connector tool call, by who made it and how it ended. Arguments and results are never stored.";
+    return "Tool calls by caller and result. Arguments and results are not stored.";
   }
   return productDescription;
 }
@@ -71,12 +71,8 @@ export function pageDescription(page: OperatorPage, productDescription: string):
  */
 export function noAccessCopy(kind: string, productName: string): string {
   const who =
-    kind === "clerk"
-      ? "This account is signed in"
-      : kind === "cloudflare-access"
-        ? "Cloudflare Access signed you in"
-        : "This token is valid";
-  return `${who}, but it isn't a maintainer or a member of any endpoint on ${productName}. Ask a maintainer of this deployment to add you to an endpoint, then reload.`;
+    kind === "clerk" ? "This account" : kind === "cloudflare-access" ? "This Cloudflare Access identity" : "This token";
+  return `${who} has no access to ${productName}. Ask a maintainer to add you to an endpoint, then reload.`;
 }
 
 /** What the gate says while the session is checked, page by page. */
@@ -183,8 +179,8 @@ export type DownstreamAction = "oauth_disconnect" | "oauth_reconnect" | "credent
 export type RowAction = DownstreamAction | "credential_save" | "credential_remove";
 
 const REFUSED_COPY: Readonly<Record<DownstreamAction, string>> = {
-  oauth_disconnect: "Disconnect didn't finish. If the service refused it, the deployment's log has its reply.",
-  oauth_reconnect: "Authorization couldn't start. If the service refused it, the deployment's log has its reply.",
+  oauth_disconnect: "Disconnect failed. The deployment log has the reason.",
+  oauth_reconnect: "Authorization couldn't start. The deployment log has the reason.",
   credential_test: "The credential test couldn't run.",
 };
 
@@ -199,27 +195,21 @@ export function oauthDoneNotice(
 ): Notice {
   if (action === "oauth_disconnect") {
     if (answer?.code === "oauth_revocation_failed")
-      return info(
-        "Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.",
-      );
-    return info("Disconnected. Connect again whenever you are ready.");
+      return info("Disconnected here. Revoke the grant in the provider's console too.");
+    return info("Disconnected.");
   }
   if (answer?.state === "ok") return info("Connected.");
-  return info(
-    opened
-      ? "Finish authorizing in the new tab. This page updates when you come back."
-      : "Your browser blocked the new tab. Open the authorization page from the link here.",
-  );
+  return info(opened ? "Finish in the new tab." : "The new tab was blocked. Open the link here.");
 }
 
 /** A credential Test's result. `ok` is the only part of the answer it reads. */
 export function credentialTestNotice(connectorId: string, answer: { ok?: unknown } | null): Notice {
   return answer?.ok === true
     ? info("Credential is valid.")
-    : failure(
-        "Credential test failed: the service rejected the stored credential, or the test couldn't reach it. The deployment's log has the service's reply.",
-        { kind: "credential_test_failed", connectorId },
-      );
+    : failure("Credential test failed. The deployment log has the reason.", {
+        kind: "credential_test_failed",
+        connectorId,
+      });
 }
 
 /**
@@ -253,20 +243,20 @@ function credentialRefusedCopy(
   const verb = action === "credential_save" ? "saved" : "removed";
   if (status === 400 || status === 413 || status === 415) {
     return action === "credential_save"
-      ? "The credential wasn't saved: a value is empty or not in the expected format. Check it and save again."
-      : "The credential wasn't removed. Refresh the page and try again.";
+      ? "Not saved. A value is empty or in the wrong format."
+      : "Not removed. Refresh and try again.";
   }
   if (status === 404) {
-    return "This connector no longer has a credential slot. Refresh the page to see its current setup.";
+    return "This connector no longer has a credential slot. Refresh the page.";
   }
   if (status === 503) {
-    return `Credential storage isn't configured on this deployment, so nothing was ${verb}.`;
+    return `No credential storage is configured, so nothing was ${verb}.`;
   }
-  return `The credential wasn't ${verb}. Try again; if it keeps failing, the deployment's log has the reason.`;
+  return `Not ${verb}. Try again, or check the deployment log.`;
 }
 
 /** An action whose permission or target changed before it was sent. */
-export const STALE_COPY = "This changed before the request was sent, so nothing was sent. Check it and try again.";
+export const STALE_COPY = "This changed before sending, so nothing was sent. Try again.";
 
 /**
  * Every row action's failure, in one voice. The page's own failures — a
@@ -280,13 +270,13 @@ export function actionFailedNotice(
   productName: string,
 ): Notice {
   if (facts.kind === "session") {
-    return failure("Your session has ended. Sign in again, then retry.");
+    return failure("Session ended. Sign in again.");
   }
   if (facts.kind === "forbidden") {
-    return failure("You don't have permission to change this connection's authentication.");
+    return failure("You can't change this connection's authentication.");
   }
   if (facts.kind === "network") {
-    return failure(`Couldn't reach ${productName}. Check your connection and try again.`);
+    return failure(`Couldn't reach ${productName}. Try again.`);
   }
   if (facts.kind === "stale") return failure(STALE_COPY);
   if (action === "credential_save" || action === "credential_remove") {
@@ -304,10 +294,10 @@ export function actionFailedNotice(
 export type ConnectorLoadFailure = "session" | "network" | "unavailable";
 
 export function connectorLoadFailureCopy(failure: ConnectorLoadFailure, productName: string): string {
-  if (failure === "unavailable") return "Session identity is temporarily unavailable. Retry this connection.";
+  if (failure === "unavailable") return "Session identity is unavailable. Retry.";
   return failure === "session"
-    ? "Your session wasn't accepted while loading this connector. Retry to check again. Sign in again if the session keeps failing."
-    : `Couldn't reach ${productName} to load this connector. Check your connection, then refresh it.`;
+    ? "Session not accepted. Retry, or sign in again."
+    : `Couldn't reach ${productName}. Refresh to retry.`;
 }
 
 /** The signed-in page's answer when `/ui/data` could not be read. */
@@ -316,8 +306,8 @@ export function loadFailureCopy(failure: "server" | "network", productName: stri
     title: `Couldn't reach ${productName}`,
     body:
       failure === "network"
-        ? "Your browser couldn't connect. Check your connection, then retry."
-        : "The deployment answered with an error. Retry in a moment; if it keeps failing, the deployment's log has the reason.",
+        ? "Your browser couldn't connect. Retry."
+        : "The deployment returned an error. Retry, or check its log.",
   };
 }
 
@@ -328,13 +318,13 @@ export function collectionFailureCopy(
   productName: string,
 ): string {
   if (facts.kind === "network") {
-    return `Couldn't reach ${productName}. Check your connection, then retry.`;
+    return `Couldn't reach ${productName}. Retry.`;
   }
-  if (facts.kind === "session") return "Your session has ended. Sign in again to see this page.";
+  if (facts.kind === "session") return "Session ended. Sign in again.";
   if (facts.kind === "forbidden" || facts.status === 404) {
-    return "Activity isn't available to this identity.";
+    return "Activity isn't available to you.";
   }
-  return "The deployment answered with an error. Retry in a moment; if it keeps failing, the deployment's log has the reason.";
+  return "The deployment returned an error. Retry, or check its log.";
 }
 
 /** A destructive or disruptive row action waiting for a second, in-page click. */
@@ -347,18 +337,18 @@ export interface PendingConfirm {
 export function confirmCopy(action: PendingConfirm["action"], name: string): { question: string; confirm: string } {
   if (action === "oauth_disconnect") {
     return {
-      question: `Disconnect ${name}? Its stored grant and any pending authorization are removed, and its tools stop working until it is connected again.`,
+      question: `Disconnect ${name}? Its tools stop working until you connect again.`,
       confirm: "Disconnect",
     };
   }
   if (action === "oauth_restart") {
     return {
-      question: `Reconnect ${name}? Its current grant stops working until you finish authorizing in the new tab.`,
+      question: `Reconnect ${name}? It stops working until you finish in the new tab.`,
       confirm: "Reconnect",
     };
   }
   return {
-    question: `Remove ${name}'s credential? The connector stops authenticating until a replacement is added.`,
+    question: `Remove ${name}'s credential? Its tools stop working until you add a new one.`,
     confirm: "Remove",
   };
 }
@@ -372,8 +362,8 @@ type LoadPhase = "idle" | "loading" | "ready" | "error";
 
 export function accessTokenUnavailableCopy(capability?: string): string {
   return capability === undefined
-    ? "Access tokens are not configured for this deployment."
-    : "Token management requires an interactive sign-in and explicit permission.";
+    ? "Agent tokens aren't configured."
+    : "Managing tokens needs an interactive sign-in with permission.";
 }
 
 export interface OperatorState {
@@ -616,12 +606,12 @@ export function withPage(state: OperatorState, page: OperatorPage): OperatorStat
 
 export function credentialUnavailableCopy(capability?: CredentialManagementCapability): string {
   if (capability === "no_slots") {
-    return "No connectors declare operator-managed credential slots. Connector credentials remain configuration-as-code until a slot is declared.";
+    return "No connector declares a credential slot. Credentials stay in code.";
   }
   if (capability === "vault_not_configured") {
-    return "Credential storage is not configured. Configure a vault before managing connector credentials here.";
+    return "No credential vault is configured.";
   }
-  return "Credential management requires an interactive user. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
+  return "Managing credentials needs an interactive sign-in. A bearer token can only view them.";
 }
 
 /**
@@ -659,12 +649,12 @@ export function connectorStatusTone(status: string): Tone {
  */
 const PROBLEM_COPY: Readonly<Record<UiProblem, string>> = {
   connector_unavailable:
-    "Unavailable: its status check or catalog load failed, or did not finish in time. The deployment's log has the downstream error.",
-  oauth_required: "Needs OAuth authorization: no grant is stored, or the stored grant expired or was revoked.",
-  credential_required: "Needs a credential: nothing usable is stored in its credential slot.",
-  auth_required: "Needs authorization. Its secret lives in deployment configuration, not on this page.",
-  credential_mismatch: "The stored credential does not match the fields this connector declares, so it cannot be used.",
-  catalog_failed: "Connected, but its tool catalog could not be loaded, so none of its tools are served.",
+    "Unavailable. Its status check or catalog load failed or timed out. The deployment log has the error.",
+  oauth_required: "Needs OAuth authorization. No grant is stored, or it expired or was revoked.",
+  credential_required: "Needs a credential. Nothing usable is stored.",
+  auth_required: "Needs authorization. Its secret is set in deployment config, not here.",
+  credential_mismatch: "The stored credential doesn't match this connector's fields.",
+  catalog_failed: "Connected, but its catalog failed to load, so no tools are served.",
 };
 
 export function problemCopy(problem: UiProblem | undefined): string | null {
@@ -793,7 +783,7 @@ export function driftCounts(drift?: CatalogDriftReport): Array<{ key: string; la
 export function driftSummary(drift?: CatalogDriftReport): string {
   const state = driftState(drift);
   if (state === "unavailable") {
-    return "No catalog refresh observed yet in this runtime.";
+    return "No catalog refresh yet.";
   }
   const observed = formatDate(drift?.observedAt);
   const when = observed ? ` · observed ${observed}` : "";
@@ -951,7 +941,7 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   read_only_endpoint: "endpoint is read-only",
   approval_required: "needed approval",
   auth_required: "needed authorization",
-  result_too_large: "result too large to return inline",
+  result_too_large: "result too large",
   timeout: "timed out",
 };
 
@@ -986,20 +976,18 @@ export function activityDetail(event: UiActivityEvent): string {
 export function credentialProblemCopy(problem: string | undefined): string {
   if (problem === "credential_mismatch") return PROBLEM_COPY.credential_mismatch;
   if (problem === "credential_unreadable") {
-    return "Credential status is unavailable. Retry the status check before replacing or removing the credential.";
+    return "Credential status is unavailable. Retry before replacing or removing it.";
   }
-  return "The stored credential can't be used. Replace it, or remove it and add a new one.";
+  return "The stored credential can't be used. Replace it.";
 }
 
 /** Gate copy for each browser-auth shape, so the sign-in state is never a blank page. */
 export function gateCopy(kind: string, signedIn: boolean): string {
   if (kind === "cloudflare-access") {
-    return "Checking Cloudflare Access identity failed. Retry to check whether this browser can open operator pages.";
+    return "Couldn't check your Cloudflare Access identity. Retry.";
   }
   if (kind !== "clerk") {
-    return "Paste an operator bearer token.";
+    return "Paste an operator token.";
   }
-  return signedIn
-    ? "Signed in with Clerk, but this account cannot open deployment-wide operator pages."
-    : "Sign in with Clerk to open this operator page.";
+  return signedIn ? "This Clerk account can't open operator pages." : "Sign in with Clerk.";
 }
