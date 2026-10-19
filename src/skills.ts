@@ -104,7 +104,10 @@ export function connectorSkillName(connectorId: string): string {
 export function connectorGuide(connector: Connector): string | undefined {
   const guide = connector.usageGuide;
   const content = typeof guide === "string" ? guide : guide?.content;
-  return content && content.trim() !== "" ? content : undefined;
+  if (!content || content.trim() === "") return undefined;
+  return connector.readOnly === true
+    ? `Read-only connection: only read-classified tools are available. Write calls are refused, including tools named in this guide.\n\n${content}`
+    : content;
 }
 
 /** Discovery budget for one connector-guide summary, including an ellipsis. */
@@ -317,7 +320,9 @@ export function connectorGuideSummary(connector: Connector): string | undefined 
         // normalization here so direct Connector callers see the same text.
         boundedSummary(connector.usageGuide.summary ?? "")
       : undefined;
-  return configured ?? summarizeGuide(connector, guide);
+  const original = typeof connector.usageGuide === "string" ? connector.usageGuide : connector.usageGuide?.content;
+  const summary = configured ?? summarizeGuide(connector, original ?? guide);
+  return connector.readOnly === true ? boundedSummary(`Read-only. ${summary}`) : summary;
 }
 
 /** Whether correct use always depends on conventions outside the tool schema. */

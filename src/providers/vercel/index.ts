@@ -35,6 +35,8 @@ interface VercelCommonOptions {
   callAdmission?: ConnectorCallAdmissionPolicy;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
 }
 
 /**
@@ -258,7 +260,7 @@ ${scope}${key}${shared}${instructionsSection(instructions)}`;
 }
 
 const COMMON = {
-  ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
+  ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly"),
   callAdmission: CALL_ADMISSION,
 };
 

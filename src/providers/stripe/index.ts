@@ -25,6 +25,8 @@ interface StripeCommonOptions {
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
 }
 
 /**
@@ -236,7 +238,7 @@ ${copy.warning}${connect}${key}${shared}${key_limits}${copy.rate}${key_tail}
 ${instructionsSection(instructions)}`;
 }
 
-const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes");
+const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 
 /** The closed options stripe() accepts, selected by `auth.type`; see `assertKnownOptions`. */
 const STRIPE_OPTIONS = variants(["auth", "type"], {

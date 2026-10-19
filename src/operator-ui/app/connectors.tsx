@@ -68,7 +68,7 @@ export function sinceLabel(iso: string, now = Date.now()): string {
   return new Date(at).toLocaleDateString(undefined, { dateStyle: "medium" });
 }
 
-type Row = OperatorConnectorOverlay & { title: string; authScope: string; description?: string };
+type Row = OperatorConnectorOverlay & { title: string; authScope: string; readOnly?: boolean; description?: string };
 
 function ConnectorCard({ row, state }: { row: Row; state: OperatorState }) {
   const health = verdictFor(row.id, row, state);
@@ -83,6 +83,7 @@ function ConnectorCard({ row, state }: { row: Row; state: OperatorState }) {
           <span className="connector-card-sub">
             <code>{row.id}</code>
             <AuthScopeBadge scope={row.authScope} />
+            {row.readOnly ? <Pill status="info">Read-only</Pill> : null}
           </span>
         </div>
         <Pill status={pillStatus(health.tone)}>{health.label}</Pill>
@@ -143,6 +144,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
               ...live,
               title: config.title ?? config.id,
               authScope: config.authScope,
+              readOnly: config.readOnly === true,
               ...(config.description ? { description: config.description } : {}),
             },
           ]

@@ -224,6 +224,8 @@ export interface CcbOptions {
   callAdmission?: ConnectorCallAdmissionPolicy;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
 }
 
 type JsonRecord = Record<string, any>;
@@ -1987,6 +1989,7 @@ const CCB_OPTIONS = optionsOf<CcbOptions>()({
     "subdomain",
     "defaultPerPage",
     "maxResultBytes",
+    "readOnly",
   ),
   callAdmission: CALL_ADMISSION,
 });

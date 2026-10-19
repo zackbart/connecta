@@ -807,6 +807,37 @@ describe("pools serve exactly their tools", () => {
     await c.close();
   });
 
+  it.each([false, true])(
+    "INV-2 INV-4: connector readOnly applies to maintainers and pools with deployment readOnly %s",
+    async (readOnly) => {
+      let writes = 0;
+      const connectors = teamConnectors(() => writes++);
+      connectors[0]!.readOnly = true;
+      const c = deployment({
+        connectors,
+        readOnly,
+        pools: {
+          writers: { tools: ["notes"], readOnly: false, members: ["alice"] },
+          readers: { tools: ["notes"], readOnly: true, members: ["alice"] },
+        },
+      });
+      try {
+        for (const path of ["/mcp", "/mcp/writers", "/mcp/readers"]) {
+          const search = await searchText(c, path, "alice");
+          expect(search).toContain("notes.search");
+          expect(search).not.toContain("notes.delete");
+          for (const name of ["call_tool", "call_destructive_tool"]) {
+            const result = await rpc(c, path, "alice", name, { address: "notes.delete", args: {} });
+            expect(JSON.stringify(result)).toContain("read_only_endpoint");
+          }
+        }
+        expect(writes).toBe(0);
+      } finally {
+        await c.close();
+      }
+    },
+  );
+
   it("INV-2: a readOnly pool refuses writes while the maintainer's writable /mcp does not", async () => {
     const deleted = { count: 0 };
     const c = deployment({

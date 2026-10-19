@@ -7,7 +7,7 @@
 
 import { array, keys, optionsOf, strings, variants } from "../config-schema.js";
 import type { ConnectorCredentialConfig, ConnectorCredentialFieldConfig, ConnectorUsageGuide } from "../types.js";
-export { CALL_ADMISSION, PROVIDER_COMMON } from "../provider.js";
+export { READ_ONLY, CALL_ADMISSION, PROVIDER_COMMON } from "../provider.js";
 import type { RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import type { RemoteMcpAuth } from "./remote-mcp.js";
 

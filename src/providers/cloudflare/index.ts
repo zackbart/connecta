@@ -38,6 +38,8 @@ interface CloudflareCommonOptions {
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
 }
 
 /** Cloudflare's hosted MCP server (`search` and `execute`) over OAuth. */
@@ -208,7 +210,7 @@ function keyUsageGuide(
 REST with ${scheme}. Connector purpose: ${options.purpose}${auth === "globalApiKey" ? global_warning.trimEnd() : ""}${pin}${defaultLine}${key}${shared}${key_tail}${instructionsSection(options.instructions)}`;
 }
 
-const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes");
+const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 const KEY_COMMON = keys("accountId", "zoneId", "baseUrl", "maxConcurrency");
 const PIN = optionsOf<CloudflarePin>()(keys("accountIds", "zoneIds"));
 

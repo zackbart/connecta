@@ -104,7 +104,8 @@ has the full layout.
 ## Reads and writes
 
 Every endpoint is writable or read-only, and you choose explicitly. A
-read-only endpoint hides write tools and refuses every write. On a writable
+read-only endpoint hides write tools and refuses every write. You can also make
+one connection read-only across all endpoints. On a writable
 one, your agent's host decides what to approve.
 
 ## Where it runs

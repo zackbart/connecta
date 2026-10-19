@@ -35,7 +35,7 @@ is annotated `readOnlyHint: true, destructiveHint: false` on a read-only
 endpoint, and `readOnlyHint: false, destructiveHint: true` on a writable one.
 Approval belongs to the client. A read-only endpoint keeps all six tools, omits
 write tools from `search_tools` results and describe, and refuses every write
-call; `readOnly` never changes connector visibility or read grants. Guides
+call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
 `resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
 advertise `outputSchema`. The two direct-call tools omit it because their default
@@ -533,7 +533,7 @@ cap and a 32 KiB program bridge ceiling, with UTF-8 alignment and forward progre
 returning pages unchanged can hit the program result cap. The admitted subject
 and principal, endpoint/pool, request origin, connector, and tool bindings must
 match. The host rechecks current access and whether the endpoint is read-only
-before returning each page; a read-only endpoint cannot read a write stash.
+before returning each page; a read-only endpoint or connector cannot read a write stash.
 Caller arguments select no partition. A read-only endpoint never runs a write,
 so every write result it could page came from a writable endpoint.
 

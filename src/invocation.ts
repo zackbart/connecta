@@ -653,11 +653,16 @@ export class InvocationService {
               reconciliationRequired: true as const,
             };
           }
-          const refusal = writeRefusal(target.definition.classification, context.source, context.readOnly);
+          const connectorReadOnly = target.connector.readOnly === true;
+          const refusal = writeRefusal(
+            target.definition.classification,
+            context.source,
+            context.readOnly || connectorReadOnly,
+          );
           if (refusal === "read_only_endpoint") {
             return framingError(
               "read_only_endpoint",
-              `Tool "${canonicalAddress}" is a write, and this endpoint is read-only. Nothing here can send it.`,
+              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. Nothing here can send it.`,
             );
           }
           if (refusal === "destructive_tool_requires_approval") {

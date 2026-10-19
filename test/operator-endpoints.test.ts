@@ -57,6 +57,14 @@ describe("endpoint rows from contract v2", () => {
     expect(addresses(contract, "/mcp/support")).toEqual(["github.read"]);
   });
 
+  it("INV-2: connector readOnly removes writes from writable endpoint tool counts", () => {
+    const contract = maintainer();
+    contract.config!.connectors.find((connector) => connector.id === "slack")!.readOnly = true;
+    expect(addresses(contract, "/mcp")).toContain("slack.search");
+    expect(addresses(contract, "/mcp")).not.toContain("slack.post");
+    expect(addresses(contract, "/mcp/team")).not.toContain("slack.post");
+  });
+
   it("takes each connector's runs-as from the matching matrix cell, with null meaning /mcp", () => {
     const rows = endpointRows(maintainer());
     const runsAs = (path: string, id: string) =>

@@ -148,6 +148,7 @@ An admitted non-preflight `/mcp` request then takes five steps in
    (`src/membership.ts`, `admitsMaintainer`, `memberPool`, and `agentPool` in
    `src/routes/shared.ts`). Nothing intersects or widens either view; every
    refusal is one 404 naming no pool.
+   Connector `readOnly` is enforced by catalog discovery and invocation before dispatch: effective read-only is endpoint OR connector, including on plain `/mcp`. Maintained provider construction carries the policy through the shared factory.
    The endpoint's `readOnly` is the pool's own value, else the deployment's;
    plain `/mcp` uses the deployment's. It travels to the meta-tools and the
    program as one boolean that drops writes from `CatalogService` search and
@@ -158,7 +159,7 @@ An admitted non-preflight `/mcp` request then takes five steps in
    narrower slice, and the subject and principal keys. Personal connectors use
    the principal partition and result paging the subject partition with principal,
    endpoint/pool, origin, connector, and tool bindings. Paging re-admits the
-   caller at its endpoint and rechecks the endpoint's `readOnly`; no caller parameter selects a partition (`test/identity-scope.test.ts`).
+   caller at its endpoint and rechecks endpoint OR connector `readOnly`; no caller parameter selects a partition (`test/identity-scope.test.ts`).
 5. **Serve.** Refuse `?toolkit=` with a 404 — the toolkits are gone
    ([#178](https://github.com/zackbart/connecta/issues/178)) but their URLs were
    handed out, and retiring a scoping boundary into fail-open is worse than any

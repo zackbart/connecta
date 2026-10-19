@@ -57,6 +57,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
 }
 
 interface WorldOptions {
+  connectorReadOnly?: boolean;
   inputSchema?: JsonSchema;
   readOnly?: boolean;
   maxWrites?: number;
@@ -85,6 +86,7 @@ function world(options: WorldOptions = {}) {
   };
   const tracker: Connector = {
     id: "tracker",
+    ...(options.connectorReadOnly !== undefined ? { readOnly: options.connectorReadOnly } : {}),
     kind: "api",
     description: "Writes issues",
     async listTools() {
@@ -285,6 +287,20 @@ describe("a program's write", () => {
       expect(w.events.map((event) => event.attempts)).toEqual([1, 1]);
       expect(JSON.stringify(w.events)).not.toContain(PRIVATE_MARKER);
     });
+  it("INV-1 INV-2: connector readOnly refuses program writes and unclassified tools on a writable endpoint", async () => {
+    const w = world({ connectorReadOnly: true, readOnly: false });
+    expect(value(await w.run(closeOne)).error).toMatchObject({ code: "read_only_endpoint", retryable: false });
+    const result = await w.run(async (connecta) => {
+      try {
+        await connecta.call!("tracker.post", {});
+      } catch (error) {
+        return (error as { code: string }).code;
+      }
+    });
+    expect(value(result).result).toBe("read_only_endpoint");
+    expect(w.writes()).toEqual([]);
+  });
+
   it("INV-2: is refused on a read-only endpoint before it is sent, offering no write route", async () => {
     const w = world({ readOnly: true });
     const result = await w.run(closeOne);

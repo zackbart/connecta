@@ -16,11 +16,12 @@ import { useCloseOnRecovery } from "./contract-state.js";
 import { RunsAs } from "./endpoints.js";
 import { Monogram, SharePie } from "./marks.js";
 
-export type MatrixRow = OperatorConnectorOverlay & { title: string };
+export type MatrixRow = OperatorConnectorOverlay & { title: string; readOnly?: boolean };
 
 interface OpenCell {
   key: string;
   rowId: string;
+  connectorReadOnly: boolean;
   title: string;
   column: MatrixColumn;
   cell: Exclude<MatrixCell, { kind: "none" }>;
@@ -148,19 +149,19 @@ function CellPopover({
           <span className="visually-hidden"> on </span>
           <code>{open.column.path}</code>
         </p>
-        {open.column.readOnly ? <span className="badge tag accent">read-only</span> : null}
+        {open.column.readOnly || open.connectorReadOnly ? <span className="badge tag accent">read-only</span> : null}
       </div>
       {open.cell.tools.length ? (
         <ul className="matrix-popover-tools">
           {open.cell.tools.map((tool) => {
-            const refused = open.column.readOnly && tool.classification === "write";
+            const refused = (open.column.readOnly || open.connectorReadOnly) && tool.classification !== "read";
             return (
               <li key={tool.name} className={refused ? "refused" : undefined}>
                 <code>{tool.name}</code>
                 {tool.classification ? (
                   <span className={`tool-kind ${tool.classification}`}>{tool.classification}</span>
                 ) : null}
-                {refused ? <span className="visually-hidden"> (refused on a read-only endpoint)</span> : null}
+                {refused ? <span className="visually-hidden"> (refused by read-only policy)</span> : null}
               </li>
             );
           })}
@@ -241,6 +242,7 @@ export function ConnectorMatrix({
                       <span className="matrix-connector">
                         <Monogram id={row.id} title={row.title} size="sm" />
                         {link(row)}
+                        {row.readOnly ? <span className="badge tag accent">Read-only</span> : null}
                         <ConnectorStatus id={row.id} name={row.title} live={row} state={state} compact />
                       </span>
                     </th>
@@ -269,6 +271,7 @@ export function ConnectorMatrix({
                                   setOpen({
                                     key,
                                     rowId: row.id,
+                                    connectorReadOnly: row.readOnly === true,
                                     title: row.title,
                                     column,
                                     cell,

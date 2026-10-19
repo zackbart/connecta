@@ -127,7 +127,7 @@ function endpointGroups(
     const grant = grants.find((g) => g.connectorId === config.id);
     if (!live || !grant) return [];
     const tools = live.tools.filter((tool) => {
-      if (readOnly && tool.classification !== "read") return false;
+      if ((readOnly || config.readOnly) && tool.classification !== "read") return false;
       return (
         grant.tools === "all" ||
         grant.tools.some((g) => g.name === tool.name && (!g.requireReadOnly || tool.classification === "read"))

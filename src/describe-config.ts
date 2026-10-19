@@ -42,6 +42,8 @@ export type DescribedMember = { kind: "human"; namespace: string; id: string } |
 
 /** One connector as `describeConfig()` reports it. */
 export interface DescribedConnector {
+  /** Connector policy, independent of endpoint policy; omitted when false. */
+  readOnly?: boolean;
   id: string;
   title?: string;
   description?: string;
@@ -301,6 +303,7 @@ function describeConnector(
   const guideSummary = connectorGuideSummary(connector);
   const guided = connector.usageGuide !== undefined;
   return {
+    ...(connector.readOnly === true ? { readOnly: true } : {}),
     id: connector.id,
     ...(str(connector.title) !== undefined ? { title: connector.title! } : {}),
     ...(str(connector.description) !== undefined ? { description: connector.description! } : {}),

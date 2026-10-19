@@ -115,6 +115,28 @@ async function noStyleAttributes(page: Page, scope: string) {
   expect(await page.evaluate(`document.querySelectorAll("${scope}[style], ${scope} [style]").length`)).toBe(0);
 }
 
+test("INV-2: connector Read-only badges appear in cards, configuration and matrix", async ({ page }) => {
+  const contract = crowdedMaintainer();
+  contract.config!.connectors.find((connector) => connector.id === "slack")!.readOnly = true;
+  await install(page, contract);
+  await page.goto(VISUAL_ORIGIN + "/connectors");
+  const card = page
+    .locator(".connector-card")
+    .filter({ has: page.getByRole("heading", { name: "Slack", exact: true }) });
+  await expect(card.getByText("Read-only", { exact: true })).toBeVisible();
+  await page.goto(VISUAL_ORIGIN + "/connectors/slack#connection");
+  await expect(
+    page.getByLabel("Connector configuration", { exact: true }).getByText("Read-only", { exact: true }),
+  ).toBeVisible();
+  await page.goto(VISUAL_ORIGIN + "/connectors?view=matrix");
+  await expect(
+    page.getByRole("rowheader").filter({ hasText: "Slack" }).getByText("Read-only", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /^Slack on \/mcp:/ }).click();
+  await expect(page.getByRole("dialog").locator(".refused")).toContainText("post");
+  await noCsp(page);
+});
+
 test.describe("who can use each endpoint", () => {
   test("INV-4: /mcp lists root maintainers, pools list members, agents carry a token mark", async ({ page }) => {
     await install(page, crowdedMaintainer());

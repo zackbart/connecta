@@ -110,6 +110,8 @@ export interface BreezeOptions {
   callAdmission?: ConnectorCallAdmissionPolicy;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /** Default `list_people` page size. Defaults to 100; connecta's cap is 1,000. */
   defaultPageSize?: number;
 }
