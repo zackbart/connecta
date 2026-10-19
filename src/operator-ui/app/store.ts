@@ -668,6 +668,8 @@ function memberAuthorizationPending(): boolean {
 
 /** Catalog and auth controls publish together, guarded by one refresh revision. */
 let snapshotRevision = 0;
+/** A full cycle displaced by polling still needs publication after the poll window. */
+let interruptedFullRefresh = false;
 /**
  * Refresh the catalog and auth controls. A viewer never confirmed as a
  * maintainer, or with no maintainer data yet, has nothing maintainer-only to
@@ -694,7 +696,14 @@ async function refreshSnapshot(
   if (signedOut || state.role !== "maintainer") return;
   // A scoped OAuth cycle supersedes general publication without cancelling
   // the older transport or letting its deadline overwrite the newer state.
-  if (recoveryRead && recoveryRead.controller.signal !== pollSignal) releaseRecoveryRead();
+  if (recoveryRead && recoveryRead.controller.signal !== pollSignal) {
+    releaseRecoveryRead();
+    // The scoped merge cannot publish unrelated results from the displaced
+    // full cycle. Queue a full retry once polling stops, so repeated polls
+    // cannot spend the recovery budget superseding every retry in turn.
+    if (connectorId) interruptedFullRefresh = true;
+  }
+  if (!connectorId) interruptedFullRefresh = false;
   // A new catalog cycle also supersedes any summary that has not landed yet.
   ++dataRevision;
   const identityCurrent = fence();
@@ -999,6 +1008,10 @@ export function stopOAuthPolling(connector?: string): void {
   oauthDeadlineTimer = undefined;
   oauthPollController?.abort();
   oauthPollController = undefined;
+  if (awaitingAuthorization.size === 0 && interruptedFullRefresh) {
+    interruptedFullRefresh = false;
+    scheduleRecovery();
+  }
 }
 
 /** Connector-page unmount cancels any read still owned by that view. */

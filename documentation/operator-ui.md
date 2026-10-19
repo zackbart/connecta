@@ -148,6 +148,9 @@ with its fix prompt and in Activity, and never affects health or attention.
 During a refresh, known statuses stay visible until the matching catalog and
 auth detail reads settle together. Health counts and attention rows update
 once per cycle. Cards reserve the action footer even when no action is needed.
+A scoped OAuth poll that overtakes a pending full refresh queues a full retry
+through the bounded recovery schedule when polling stops, so unrelated health
+changes still land without spending the retry budget on competing cycles.
 
 The top bar uses an icon-only Search button (⌘K or Ctrl+K opens the palette).
 Deployment names stay on one line with ellipsis and their full name on hover;

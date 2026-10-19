@@ -1052,6 +1052,65 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(store.getState().contract?.live.connectors).toHaveLength(2);
   });
 
+  it.each(["success", "delayed success", "deadline"])(
+    "INV-4 INV-10: retries a full refresh overtaken by scoped OAuth polling (%s)",
+    async (terminal) => {
+      const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
+      const crm = { id: "crm", status: "auth_required", oauth: true, toolCount: 0, tools: [] };
+      const tickets = { id: "tickets", status: "ok", toolCount: 0, tools: [] };
+      const notes = { ...tickets, id: "notes" };
+      const rows = [crm, tickets, notes];
+      configMock.mockImplementation(async () => Response.json(v2(rows, rows)));
+      fetchMock.mockImplementation(async (path: string) =>
+        Response.json(
+          path === "/ui/data" ? { ...uiData("operator"), connectors: rows } : rows.find((row) => path.endsWith(row.id)),
+        ),
+      );
+      store.routeChanged("/connectors/crm");
+      await store.boot();
+      vi.useFakeTimers();
+      const slow = deferred<void>();
+      const failed = { ...tickets, status: "error", problem: "connector_unavailable" };
+      const connected = { ...crm, status: "ok" };
+      const updated = [crm, failed, notes];
+      let scopeConnected = false;
+      configMock.mockImplementation(async (path: string) =>
+        Response.json(v2(rows, path.includes("?connector=") ? [scopeConnected ? connected : crm] : updated)),
+      );
+      fetchMock.mockImplementation(async (path: string) => {
+        if (path.startsWith("/ui/oauth/")) {
+          return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
+        }
+        if (path === "/ui/data") return Response.json({ ...uiData("operator"), connectors: updated });
+        if (path.endsWith("/notes")) {
+          await slow.promise;
+          return Response.json(notes);
+        }
+        return Response.json(path.endsWith("/tickets") ? failed : scopeConnected ? connected : crm);
+      });
+      await store.startOAuth("crm", "continue");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getState().data?.connectors[1]?.status).toBe("ok");
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/connectors/tickets")).toHaveLength(2);
+
+      // The full cycle has already read tickets' failure, but notes holds its
+      // atomic publication open. Polls only update crm, and must not burn the
+      // recovery budget repeatedly superseding deployment-wide retries.
+      if (terminal === "delayed success") await vi.advanceTimersByTimeAsync(18_000);
+      scopeConnected = terminal !== "deadline";
+      await vi.advanceTimersByTimeAsync(terminal === "deadline" ? 30_000 : 2000);
+      const crmStatus = scopeConnected ? "ok" : "auth_required";
+      expect(store.getState().data?.connectors[0]?.status).toBe(crmStatus);
+      expect(configMock.mock.calls.some(([path]) => path === "/ui/api/config?connector=crm")).toBe(true);
+      updated[0] = scopeConnected ? connected : crm;
+      slow.resolve();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(store.getState().data?.connectors.map((row) => row.status)).toEqual([crmStatus, "error", "ok"]);
+      expect(store.getState().contract?.live.connectors.map((row) => row.status)).toEqual([crmStatus, "error", "ok"]);
+      expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/ui/oauth/"))).toHaveLength(1);
+    },
+  );
+
   it.each(["ok", "error", "network", "refused"])("INV-10: stops OAuth polling on %s", async (terminal) => {
     const { fetchMock, configMock, connector, contract } = await pollingStore();
     fetchMock.mockImplementation(async () => {
