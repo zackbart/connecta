@@ -106,11 +106,18 @@ test.afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-async function openShell(page: Page, scheme = "light", clerk = false) {
-  await page.route("**/ui/api/config", async (route) => route.fulfill({ json: await fixtureContract(fixture) }));
+async function openShell(page: Page, scheme = "light", clerk = false, crowded = false) {
+  const served = crowded
+    ? {
+        ...fixture,
+        serverInfo: { name: "Assistant tools production deployment", version: "1.0" },
+        accessTokenManagement: "available" as const,
+      }
+    : fixture;
+  await page.route("**/ui/api/config", async (route) => route.fulfill({ json: await fixtureContract(served) }));
   await page.route("**/ui/data", (route) =>
     route.fulfill({
-      json: { ...fixture, connectors: fixture.connectors.map((c) => ({ ...c, status: "loading", toolCount: 0 })) },
+      json: { ...served, connectors: served.connectors.map((c) => ({ ...c, status: "loading", toolCount: 0 })) },
     }),
   );
   await page.route("**/ui/connectors/*", (route) =>
@@ -119,6 +126,16 @@ async function openShell(page: Page, scheme = "light", clerk = false) {
   await page.addInitScript(
     `localStorage.setItem('connecta:token', ${JSON.stringify(TOKEN)}); localStorage.setItem('connecta:scheme', ${JSON.stringify(scheme)});`,
   );
+  if (crowded)
+    await page.route("**/endpoints", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: renderUiHtml(undefined, "https://connecta.example/mcp", {
+          ownerName: "Example",
+          productName: "Connecta",
+        }),
+      }),
+    );
   await page.goto(origin + (clerk ? "/endpoints?clerk" : "/endpoints"));
   await expect(page.getByRole("heading", { name: "Endpoints", exact: true })).toBeVisible();
   await expect(page.locator(".endpoint-table")).toBeVisible();
@@ -339,3 +356,41 @@ test("browser 404 pages retain the common CSP without Clerk permissions", async 
   expect(violation).toBe("inline");
   expect(await page.evaluate("window.__errorScriptRan")).toBeUndefined();
 });
+
+for (const width of [1440, 1200, 1024, 390]) {
+  test(`masthead fits a long deployment name and six tabs at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openShell(page, "light", false, true);
+    await expect(page.locator(".page-nav .navlink")).toHaveCount(6);
+    const search = page.getByRole("button", { name: "Search ⌘K", exact: true });
+    await expect(search).toHaveAttribute("title", "Search ⌘K");
+    await expect(search.locator("span, kbd")).toHaveCount(0);
+    expect((await search.boundingBox())!.width).toBeLessThanOrEqual(36);
+    const nav = page.locator(".page-nav");
+    const name = page.locator(".deployment-name");
+    if (width >= 1024) {
+      await expect(name).toHaveAttribute("title", "Assistant tools production deployment");
+      expect(await name.evaluate((node) => node.ownerDocument.defaultView!.getComputedStyle(node).whiteSpace)).toBe(
+        "nowrap",
+      );
+      expect((await name.boundingBox())!.height).toBeLessThan(30);
+      // At desktop widths all six tabs fit without scrolling.
+      if (width >= 1200) expect(await nav.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      const bounds = (await nav.boundingBox())!;
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual((await search.boundingBox())!.x);
+      if (width >= 1200) {
+        const last = (await nav.getByRole("link", { name: "Settings", exact: true }).boundingBox())!;
+        expect(last.x + last.width).toBeLessThanOrEqual(bounds.x + bounds.width + 1);
+      }
+    } else {
+      await expect(name).toBeHidden();
+      await nav.getByRole("link", { name: "Settings", exact: true }).click();
+      await expect(nav.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("aria-current", "page");
+      expect(await nav.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
+    }
+    expect(await page.evaluate("document.documentElement.scrollWidth <= innerWidth")).toBe(true);
+    if (process.env.OPERATOR_MAST_CAPTURE) {
+      await page.screenshot({ path: `/tmp/connecta-ui-${process.env.OPERATOR_MAST_CAPTURE}-${width}.png` });
+    }
+  });
+}

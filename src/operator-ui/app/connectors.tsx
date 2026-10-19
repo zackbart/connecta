@@ -1,18 +1,20 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { OperatorConnectorOverlay, OperatorTool } from "../contract.js";
+import type { ConnectorHealth } from "../health.js";
 import { formatDate, type OperatorState } from "../view.js";
 import { Badge, followLink, Pill, pillStatus, StateBlock } from "./parts.js";
 import { Button, Input, SegmentedControl } from "./primitives.js";
 import { ProblemAction, verdictFor } from "./problems.js";
-import { ContractState, maintainerContract } from "./contract-state.js";
+import { ContractState } from "./contract-state.js";
+import { useConnectorHealth } from "./health.js";
 import { ConnectorMatrix } from "./matrix.js";
 import { loadOperatorContract } from "./store.js";
 
 function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
   const href = `/connectors/${encodeURIComponent(id)}${tab ? `#${tab}` : ""}`;
   return (
-    <a href={href} onClick={(event) => followLink(event, href, "connector")}>
+    <a href={href} title={name ?? id} aria-label={name ?? id} onClick={(event) => followLink(event, href, "connector")}>
       {name ?? id}
     </a>
   );
@@ -70,18 +72,18 @@ export function sinceLabel(iso: string, now = Date.now()): string {
 
 type Row = OperatorConnectorOverlay & { title: string; authScope: string; readOnly?: boolean; description?: string };
 
-function ConnectorCard({ row, state }: { row: Row; state: OperatorState }) {
-  const health = verdictFor(row.id, row, state);
+function ConnectorCard({ row, steady }: { row: Row; steady: ConnectorHealth }) {
+  const health = verdictFor(row.id, row, steady);
   const titleId = `connector-card-${row.id}`;
   return (
     <li className={`connector-card ${health.action ? `attention ${health.tone}` : ""}`} aria-labelledby={titleId}>
       <div className="connector-card-top">
         <div className="connector-card-name">
-          <h3 id={titleId}>
+          <h3 id={titleId} title={row.title}>
             <ConnectorLink id={row.id} name={row.title} />
           </h3>
           <span className="connector-card-sub">
-            <code>{row.id}</code>
+            <code title={row.id}>{row.id}</code>
             <AuthScopeBadge scope={row.authScope} />
             {row.readOnly ? <Pill status="info">Read-only</Pill> : null}
           </span>
@@ -134,7 +136,10 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
       hash: location.hash,
       replace: true,
     });
-  const contract = maintainerContract(state);
+  // Steady rows: a connector being read again keeps its last verdict, so
+  // cards, filter counts and the attention set hold still until it settles.
+  const health = useConnectorHealth(state);
+  const contract = health.contract;
   const rows: Row[] =
     contract?.config?.connectors.flatMap((config) => {
       const live = contract.live.connectors.find((c) => c.id === config.id);
@@ -150,7 +155,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
           ]
         : [];
     }) ?? [];
-  const attention = new Set(rows.filter((row) => verdictFor(row.id, row, state).action).map((row) => row.id));
+  const attention = new Set(rows.filter((row) => verdictFor(row.id, row, health).action).map((row) => row.id));
   const q = query.trim().toLowerCase();
   const visible = rows.filter(
     (row) =>
@@ -205,12 +210,13 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
               contract={contract}
               rows={visible}
               state={state}
+              health={health}
               link={(row) => <ConnectorLink id={row.id} name={row.title} />}
             />
           ) : visible.length ? (
             <ul className="connector-grid" aria-label="Connectors">
               {visible.map((row) => (
-                <ConnectorCard key={row.id} row={row} state={state} />
+                <ConnectorCard key={row.id} row={row} steady={health} />
               ))}
             </ul>
           ) : (

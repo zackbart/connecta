@@ -32,6 +32,7 @@ import { ActivityPage } from "./activity.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
 import { MemberPage } from "./member.js";
 import { ContractState } from "./contract-state.js";
+import { HealthProvider } from "./health.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import { Icon } from "./icons.js";
 import {
@@ -82,7 +83,12 @@ function visiblePages(state: OperatorState): OperatorPage[] {
 
 function DeploymentName({ state }: { state: OperatorState }) {
   const name = state.contract?.role === "maintainer" ? state.contract.config?.server.name : undefined;
-  return name ? <span className="deployment-name">{name}</span> : null;
+  const redundant = name?.trim().toLowerCase() === productName.trim().toLowerCase();
+  return name && !redundant ? (
+    <span className="deployment-name" title={name}>
+      {name}
+    </span>
+  ) : null;
 }
 
 /** The signed-in account, where the sign-in exposes one: Clerk's primary email. */
@@ -411,7 +417,9 @@ function OperatorApp() {
     <>
       {recovering ? <RecoveryBanner state={state} /> : null}
       <div id="app" inert={recovering} className={recovering ? "stale" : undefined}>
-        <CurrentPage state={state} />
+        <HealthProvider state={state}>
+          <CurrentPage state={state} />
+        </HealthProvider>
       </div>
     </>
   ) : state.session === "denied" ? (

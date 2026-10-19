@@ -154,6 +154,14 @@ kbd {
   height: 0.4375rem;
   width: 0.4375rem;
 }
+/* The full pill text remains in the accessibility tree when space is tight. */
+.pill-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .badge.tag {
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);

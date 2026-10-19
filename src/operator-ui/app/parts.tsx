@@ -82,7 +82,14 @@ function FixPromptPreview({ kind, connectorId }: { kind: FixPromptKind; connecto
 
 /** A short tag: a mode, a classification, where a value came from. */
 export function Badge({ tone = "neutral", children }: { tone?: Tone; children: ReactNode }) {
-  return <span className={tone === "neutral" ? "badge tag" : `badge tag ${tone}`}>{children}</span>;
+  return (
+    <span
+      className={tone === "neutral" ? "badge tag" : `badge tag ${tone}`}
+      title={typeof children === "string" ? children : undefined}
+    >
+      {children}
+    </span>
+  );
 }
 
 /** How something is doing, in four words a glance can read. */
@@ -113,9 +120,12 @@ export function pillStatus(tone: Tone): PillStatus {
 export function Pill({ status = "neutral", children }: { status?: PillStatus; children: ReactNode }) {
   const tone = PILL_TONE[status];
   return (
-    <span className={tone ? `badge pill ${tone}` : "badge pill"}>
+    <span
+      className={tone ? `badge pill ${tone}` : "badge pill"}
+      title={typeof children === "string" ? children : undefined}
+    >
       <span className="pill-dot" aria-hidden="true" />
-      {children}
+      <span className="pill-label">{children}</span>
     </span>
   );
 }

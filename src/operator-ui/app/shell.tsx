@@ -88,8 +88,9 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
     <>
       <button
         type="button"
-        className="command-trigger"
-        aria-label="Search"
+        className="icon-button command-trigger"
+        aria-label="Search ⌘K"
+        title="Search ⌘K"
         aria-keyshortcuts="Meta+K Control+K"
         onClick={() => {
           commandReturnFocus.current = document.activeElement as HTMLElement;
@@ -97,10 +98,6 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
         }}
       >
         <Icon name="search" size={15} />
-        <span className="command-label" aria-hidden="true">
-          Search
-        </span>
-        <kbd aria-hidden="true">⌘K</kbd>
       </button>
       <button
         type="button"

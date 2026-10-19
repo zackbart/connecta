@@ -672,9 +672,8 @@ export function problemTone(problem: UiProblem): "warn" | "danger" {
     : "danger";
 }
 
-/** What the page knows about a connector beyond its live status: catalog drift and a failed detail read. */
+/** What the page knows about a connector beyond its live status: a failed detail read. */
 export interface ConnectorSignals {
-  drift?: boolean;
   failed?: boolean;
 }
 
@@ -683,7 +682,7 @@ export interface ConnectorVerdict {
   tone: "ok" | "warn" | "danger" | "neutral";
   label: string;
   /** The link to the Connection tab, or null when the connector is fine. */
-  action: "Connect" | "Replace key" | "Inspect" | "Review" | null;
+  action: "Connect" | "Replace key" | "Inspect" | null;
 }
 
 const PROBLEM_LABEL: Readonly<Record<UiProblem, string>> = {
@@ -703,7 +702,7 @@ function problemAction(problem: UiProblem): NonNullable<ConnectorVerdict["action
 /**
  * The verdict the Connectors list, the Overview, Endpoints and a connector's
  * page all show. The server's problem code comes first, then a failed detail
- * read on this page, then a non-ok status, then catalog drift. A problem
+ * read on this page, then a non-ok status. Catalog drift is informational. A problem
  * outranks the status, so a connector whose catalog failed is never
  * "Connected". A failed read marks its connector `connector_unavailable` in
  * the store, so that one code beside a failed read is the page's own and
@@ -722,7 +721,6 @@ export function connectorVerdict(
     const tone = connectorStatusTone(live.status) === "warn" ? "warn" : "danger";
     return { tone, label: connectorStatusLabel(live.status), action: tone === "warn" ? "Connect" : "Inspect" };
   }
-  if (signals.drift) return { tone: "warn", label: "Catalog drift", action: "Review" };
   return { tone: "ok", label: "Connected", action: null };
 }
 

@@ -1,6 +1,7 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Locator } from "@playwright/test";
 import type { OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
+import { attentionItems } from "../../src/operator-ui/overview.js";
 import { fixPrompt } from "../../src/operator-ui/fix-prompts.js";
 import { createTestConnecta } from "../helpers.js";
 import { machineAuth } from "../helpers/machine-auth.js";
@@ -102,6 +103,353 @@ test("the overview is the maintainer's landing page, with health, attention and 
   await checks(page);
 });
 
+test("catalog drift stays informational across health, filters and endpoints", async ({ page }) => {
+  const served = structuredClone(data);
+  served.connectors.find((c) => c.id === "github")!.catalogDrift = {
+    observedAt: VISUAL_NOW,
+    unclassifiedTools: 2,
+    unservedTools: 0,
+    annotationConflicts: 0,
+    schemaChanges: 0,
+  };
+  await install(page, maintainer(), served);
+  await page.goto(VISUAL_ORIGIN + "/");
+  await expect(page.locator(".overview-title .badge")).toHaveText("2 need attention");
+  await expect(page.locator(".stat-number").first()).toHaveText("5/6");
+  await expect(page.locator(".attention-item h3")).toHaveText(["Notion needs a credential", "triage has no token"]);
+  await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "GitHub", exact: true }) });
+  await expect(card).toContainText("Connected");
+  await expect(card).not.toHaveClass(/attention/);
+  await expect(card.locator(".problem-action")).toHaveCount(0);
+  await page.getByRole("button", { name: /Needs attention/ }).click();
+  await expect(card).toHaveCount(0);
+  await page.getByRole("link", { name: "Endpoints", exact: true }).click();
+  await expect(page.getByText("Catalog drift", { exact: true })).toHaveCount(0);
+  await page.goto(VISUAL_ORIGIN + "/connectors/github#connection");
+  await expect(page.locator("#drift-github")).toHaveAttribute("data-drift", "warning");
+  await expect(page.getByRole("button", { name: /Copy fix prompt for GitHub/ })).toBeVisible();
+});
+
+for (const empty of [false, true]) {
+  test(`connector cards keep their height when health changes${empty ? " and the catalog empties" : ""}`, async ({
+    page,
+  }) => {
+    const contract = maintainer();
+    // One card: grid siblings must not mask a height change in this card.
+    contract.config!.connectors = contract.config!.connectors.filter((c) => c.id === "github");
+    contract.live.connectors = contract.live.connectors.filter((c) => c.id === "github");
+    const served = structuredClone(data);
+    served.connectors = served.connectors.filter((c) => c.id === "github");
+    await install(page, contract, served);
+    await page.goto(VISUAL_ORIGIN + "/connectors");
+    const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "GitHub", exact: true }) });
+    await expect(card).toContainText("Connected");
+    await page.evaluate("document.fonts.ready");
+    await expect(card.locator(".tool-split-bar")).toHaveCount(1);
+    const before = (await card.boundingBox())!.height;
+    const live = contract.live.connectors.find((c) => c.id === "github")!;
+    live.status = empty ? "error" : "auth_required";
+    live.problem = empty ? "catalog_failed" : "auth_required";
+    if (empty) {
+      live.tools = [];
+      Object.assign(served.connectors[0]!, { status: "error", tools: [], toolCount: 0 });
+    }
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(
+      card.getByRole("link", { name: `${empty ? "Inspect" : "Connect"} GitHub`, exact: true }),
+    ).toBeVisible();
+    if (empty) await expect(card.locator(".tool-split")).toHaveText("No tools");
+    expect((await card.boundingBox())!.height).toBe(before);
+  });
+}
+
+const LONG_CONNECTOR_ID = "customer_management_eu_production";
+const LONG_CONNECTOR_TITLE = "Customer Management European Production Workspace";
+const HEADER_VERDICTS = [
+  { status: "loading", label: "Loading details" },
+  { status: "ok", label: "Connected" },
+  { status: "auth_required", problem: "oauth_required", label: "Authorization needed" },
+  { status: "credential_required", problem: "credential_required", label: "Credential needed" },
+  { status: "error", problem: "credential_mismatch", label: "Credential mismatch" },
+  { status: "error", problem: "catalog_failed", label: "Catalog failed" },
+  { status: "error", problem: "connector_unavailable", label: "Unavailable" },
+] as const;
+
+function longConnector(scope: "shared" | "personal", readOnly: boolean) {
+  const contract = maintainer();
+  contract.config!.connectors = [
+    {
+      ...contract.config!.connectors[0]!,
+      id: LONG_CONNECTOR_ID,
+      title: LONG_CONNECTOR_TITLE,
+      authScope: scope,
+      readOnly,
+    },
+  ];
+  contract.live.connectors = [
+    {
+      ...contract.live.connectors.find((c) => c.id === "github")!,
+      id: LONG_CONNECTOR_ID,
+    },
+  ];
+  const served = structuredClone(data);
+  served.connectors = [{ ...served.connectors.find((c) => c.id === "github")!, id: LONG_CONNECTOR_ID }];
+  return { contract, served, live: contract.live.connectors[0]! };
+}
+
+/** Check actual text boxes, rather than letting a fixed outer height hide wrapping. */
+async function singleLine(locator: Locator) {
+  for (const element of await locator.all()) {
+    expect(
+      await element.evaluate((node) => {
+        const style = node.ownerDocument.defaultView!.getComputedStyle(node);
+        const range = node.ownerDocument.createRange();
+        range.selectNodeContents(node);
+        const rects = [...range.getClientRects()];
+        return style.whiteSpace === "nowrap" && rects.every((rect) => Math.abs(rect.top - rects[0]!.top) < 1);
+      }),
+    ).toBe(true);
+  }
+}
+
+for (const width of [320, 390, 1024, 1440]) {
+  for (const scope of ["shared", "personal"] as const) {
+    for (const readOnly of [false, true]) {
+      test(`single long-id connector card stays steady: ${width}px, ${scope}, readOnly=${readOnly}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 900 });
+        const { contract, served, live } = longConnector(scope, readOnly);
+        const tools = live.tools;
+        live.status = "loading" as typeof live.status;
+        delete live.problem;
+        await install(page, contract, served);
+        await page.goto(VISUAL_ORIGIN + "/connectors");
+        // One card prevents a taller grid sibling from masking a reflow.
+        const card = page.locator(".connector-card");
+        await expect(card).toHaveCount(1);
+        const pill = card.locator(".connector-card-top > .badge");
+        await expect(pill).toHaveText("Loading details");
+        await page.evaluate("document.fonts.ready");
+        const height = (await card.boundingBox())!.height;
+        const headerHeight = (await card.locator(".connector-card-top").boundingBox())!.height;
+        const link = card.getByRole("link", { name: LONG_CONNECTOR_TITLE, exact: true });
+        await expect(link).toHaveAttribute("title", LONG_CONNECTOR_TITLE);
+        await link.focus();
+        await expect(link).toBeFocused();
+        await expect(card.locator("code")).toHaveAttribute("title", LONG_CONNECTOR_ID);
+        await expect(card.locator("code")).toMatchAriaSnapshot(`- code: ${LONG_CONNECTOR_ID}`);
+        await expect(card.locator(".connector-card-sub .badge.tag")).toHaveText(
+          scope === "personal" ? "Per person" : "Shared",
+        );
+        await expect(card.locator(".connector-card-sub .pill")).toHaveCount(readOnly ? 1 : 0);
+        const verify = async (label: string) => {
+          await expect(pill).toHaveText(label);
+          await expect(pill).toHaveAttribute("title", label);
+          await singleLine(card.locator("h3, code, .badge.tag, .pill-label"));
+          expect((await card.boundingBox())!.height, label).toBe(height);
+          expect((await card.locator(".connector-card-top").boundingBox())!.height, label).toBe(headerHeight);
+          expect(await card.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+        };
+        for (const empty of [false, true]) {
+          live.tools = empty ? [] : tools;
+          // Loading is an initial fallback; a refresh must keep its earlier verdict.
+          live.status = "loading" as typeof live.status;
+          delete live.problem;
+          await page.goto(VISUAL_ORIGIN + "/connectors");
+          await verify("Loading details");
+          for (const verdict of HEADER_VERDICTS.slice(1)) {
+            live.status = verdict.status as typeof live.status;
+            delete live.problem;
+            if ("problem" in verdict) live.problem = verdict.problem;
+            await page.getByRole("button", { name: "Refresh", exact: true }).click();
+            await verify(verdict.label);
+            await expect(card.locator(".problem-action")).toHaveCount("problem" in verdict ? 1 : 0);
+            await expect(card.locator(".tool-split-bar")).toHaveCount(empty ? 0 : 1);
+          }
+          await page.route(`${VISUAL_ORIGIN}/ui/connectors/${LONG_CONNECTOR_ID}`, (route) => route.abort());
+          await page.getByRole("button", { name: "Refresh", exact: true }).click();
+          await verify("Couldn't load");
+          await page.unroute(`${VISUAL_ORIGIN}/ui/connectors/${LONG_CONNECTOR_ID}`);
+        }
+        expect(await page.locator("#connectionsView [style]").count()).toBe(0);
+        await checks(page);
+      });
+    }
+  }
+
+  test(`long connector detail header stays on one line at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const { contract, served, live } = longConnector("personal", true);
+    const tools = live.tools;
+    live.status = "loading" as typeof live.status;
+    delete live.problem;
+    await install(page, contract, served);
+    await page.goto(`${VISUAL_ORIGIN}/connectors/${LONG_CONNECTOR_ID}`);
+    const header = page.locator(".conn-head");
+    await expect(header.getByRole("heading", { name: LONG_CONNECTOR_TITLE })).toBeVisible();
+    await expect(header.locator(".conn-title > .badge")).toHaveText("Loading details");
+    await page.evaluate("document.fonts.ready");
+    const height = (await header.boundingBox())!.height;
+    await expect(header.locator("h1")).toHaveAttribute("title", LONG_CONNECTOR_TITLE);
+    await expect(header.locator("code")).toHaveAttribute("title", LONG_CONNECTOR_ID);
+    for (const empty of [false, true]) {
+      live.tools = empty ? [] : tools;
+      for (const verdict of HEADER_VERDICTS.slice(1)) {
+        live.status = verdict.status as typeof live.status;
+        delete live.problem;
+        if ("problem" in verdict) live.problem = verdict.problem;
+        await page.getByRole("button", { name: "Refresh catalog" }).click();
+        await expect(header.locator(".conn-title > .badge")).toHaveText(verdict.label);
+        await singleLine(header.locator("h1, code, .pill-label"));
+        expect((await header.boundingBox())!.height, verdict.label).toBe(height);
+        expect(await header.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+      }
+    }
+    await page.route(`${VISUAL_ORIGIN}/ui/connectors/${LONG_CONNECTOR_ID}`, (route) => route.abort());
+    await page.getByRole("button", { name: "Refresh catalog" }).click();
+    await expect(header.locator(".conn-title > .badge")).toHaveText("Couldn't load");
+    expect((await header.boundingBox())!.height).toBe(height);
+    expect(await page.locator(".conn-heading[style], .conn-heading [style]").count()).toBe(0);
+    await checks(page);
+  });
+
+  test(`long Overview attention rows stay on one line at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const { contract, served, live } = longConnector("shared", true);
+    live.status = "error";
+    live.problem = "catalog_failed";
+    await install(page, contract, served);
+    await page.goto(VISUAL_ORIGIN + "/");
+    const row = page
+      .locator(".attention-item")
+      .filter({ has: page.getByRole("link", { name: LONG_CONNECTOR_TITLE, exact: true }) });
+    await expect(row).toBeVisible();
+    await page.evaluate("document.fonts.ready");
+    const height = (await row.boundingBox())!.height;
+    const link = row.getByRole("link", { name: LONG_CONNECTOR_TITLE, exact: true });
+    await expect(link).toHaveAttribute("title", LONG_CONNECTOR_TITLE);
+    await link.focus();
+    await expect(link).toBeFocused();
+    for (const verdict of HEADER_VERDICTS.filter((verdict) => "problem" in verdict)) {
+      live.status = verdict.status;
+      live.problem = verdict.problem;
+      await page.getByRole("link", { name: "Connectors", exact: true }).click();
+      await page.getByRole("button", { name: "Refresh", exact: true }).click();
+      await expect(page.locator(".connector-card-top > .badge")).toHaveText(verdict.label);
+      await page.getByRole("link", { name: "Overview", exact: true }).click();
+      const item = attentionItems(contract).find((item) => item.subject === LONG_CONNECTOR_TITLE)!;
+      await expect(row.locator("h3")).toHaveText(`${item.subject} ${item.problem}`);
+      await expect(row.locator("h3")).toHaveAttribute("title", `${item.subject} ${item.problem}`);
+      await expect(row.locator("p")).toHaveAttribute("title", item.body);
+      await singleLine(row.locator("h3, p"));
+      expect((await row.boundingBox())!.height, verdict.label).toBe(height);
+    }
+    await checks(page);
+  });
+}
+
+test("a full refresh keeps surviving attention rows in config order as each detail settles", async ({ page }) => {
+  const contract = maintainer();
+  const ids = ["github", "gmail"];
+  for (const id of ids) {
+    Object.assign(
+      contract.live.connectors.find((c) => c.id === id)!,
+      { status: "error", problem: "catalog_failed" },
+    );
+  }
+  await install(page, contract);
+  const initialDetails = Promise.all(ids.map((id) => page.waitForResponse(`${VISUAL_ORIGIN}/ui/connectors/${id}`)));
+  await page.goto(VISUAL_ORIGIN + "/");
+  await initialDetails;
+  const headings = page.locator(".attention-item h3");
+  const old = [
+    "GitHub couldn't load its tools",
+    "Gmail couldn't load its tools",
+    "Notion needs a credential",
+    "triage has no token",
+  ];
+  await expect(headings).toHaveText(old);
+  const order = await page
+    .locator(".attention-item")
+    .evaluateAll((rows) => rows.map((r) => r.getAttribute("data-attention")));
+  const releases: Array<() => void> = [];
+  const requested = new Set<string>();
+  for (const id of ids) {
+    const barrier = new Promise<void>((resolve) => releases.push(resolve));
+    await page.route(`${VISUAL_ORIGIN}/ui/connectors/${id}`, async (route) => {
+      requested.add(id);
+      await barrier;
+      await route.fulfill({ json: data.connectors.find((c) => c.id === id) });
+    });
+    Object.assign(
+      contract.live.connectors.find((c) => c.id === id)!,
+      { status: "auth_required", problem: "oauth_required" },
+    );
+  }
+  try {
+    // Overview refreshes the whole snapshot on focus when a connector is in
+    // error, using the same incremental publication as the Refresh control.
+    await page.evaluate('window.dispatchEvent(new Event("focus"))');
+    await expect.poll(() => requested.size).toBe(2);
+    await expect(headings).toHaveText(old);
+    releases[0]!();
+    await expect(headings).toHaveText(["GitHub needs authorization", ...old.slice(1)]);
+    expect(
+      await page.locator(".attention-item").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-attention"))),
+    ).toEqual(order);
+    releases[1]!();
+    await expect(headings).toHaveText(["GitHub needs authorization", "Gmail needs authorization", ...old.slice(2)]);
+    expect(
+      await page.locator(".attention-item").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-attention"))),
+    ).toEqual(order);
+  } finally {
+    releases.forEach((release) => release());
+  }
+  await checks(page);
+});
+
+for (const id of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+  test(`connector id ${id} renders during initial loading and after a failed detail read`, async ({ page }) => {
+    const contract = maintainer();
+    contract.config!.connectors = [{ ...contract.config!.connectors[0]!, id, title: id }];
+    contract.live.connectors = [{ ...contract.live.connectors[0]!, id }];
+    contract.matrix = contract.matrix
+      .filter((c) => c.connectorId === "github" && c.pool === null)
+      .map((c) => ({ ...c, connectorId: id }));
+    contract.pools = [];
+    contract.agents = [];
+    const served = {
+      ...data,
+      connectors: [{ ...data.connectors.find((c) => c.id === "github")!, id, status: "loading" as const }],
+    };
+    await install(page, contract, served);
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(`${VISUAL_ORIGIN}/ui/connectors/${id}`, async (route) => {
+      await barrier;
+      await route.abort();
+    });
+    try {
+      await page.goto(VISUAL_ORIGIN + "/connectors");
+      const card = page.locator(".connector-card");
+      await expect(card).toContainText("Connected");
+      release();
+      await expect(card).toContainText("Couldn't load");
+      await page.getByRole("link", { name: "Overview", exact: true }).click();
+      await expect(page.locator(".attention-item h3")).toHaveText(`${id} didn't load on this page`);
+      await page.getByRole("link", { name: "Endpoints", exact: true }).click();
+      await expect(page.locator(".endpoint-toggle").first()).toBeVisible();
+      await checks(page);
+    } finally {
+      release();
+    }
+  });
+}
+
 test("each problem row links to its existing fix and copies its fixed prompt", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: VISUAL_ORIGIN });
   await install(page, maintainer());
@@ -120,7 +468,7 @@ test("each problem row links to its existing fix and copies its fixed prompt", a
   await expect(page.getByRole("heading", { name: "Notion", exact: true }).first()).toBeVisible();
 });
 
-test("a failing connector comes first and turns its links red", async ({ page }) => {
+test("a failing connector keeps config order and turns its links red", async ({ page }) => {
   const contract = maintainer();
   const gmail = contract.live.connectors.find((c) => c.id === "gmail")!;
   gmail.status = "error";

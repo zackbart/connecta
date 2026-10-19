@@ -784,10 +784,25 @@ test("retries a failed connection without reloading the list", async ({ page }) 
   await expect(row.locator('[data-problem="connector_unavailable"]')).toBeVisible();
   faults.clear();
   await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
-  // Back to the Connectors list's verdict: its catalog drift, not "Unavailable".
-  await expect(row.locator(".conn-head")).toContainText("Catalog drift");
+  // Informational drift does not change the recovered connection's verdict.
+  await expect(row.locator(".conn-head")).toContainText("Connected");
   await expect(row.locator("[data-problem]")).toHaveCount(0);
   expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(1);
+});
+
+test("keeps a connector's verdict while its refresh is in flight", async ({ page }) => {
+  await page.route("**/ui/connectors/drifted", (route) => route.abort());
+  await openAuthenticated(page);
+  const row = await openRow(page, "Hosted proxy");
+  await expect(row.locator(".conn-head")).toContainText("Couldn't load");
+  const release = holdDetails("drifted");
+  await page.unroute("**/ui/connectors/drifted");
+  await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
+  await expect(row.getByText("Loading authentication details…")).toBeVisible();
+  // Not "Unavailable" or "Loading details": the last verdict until the read settles.
+  await expect(row.locator(".conn-head")).toContainText("Couldn't load");
+  release();
+  await expect(row.locator(".conn-head")).toContainText("Connected");
 });
 
 test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {

@@ -327,7 +327,9 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
   );
   const connectors = (contract.role === "maintainer" ? (contract.config?.connectors ?? []) : []).flatMap((config) => {
     const live = contract.live.connectors.find((c) => c.id === config.id);
-    return live ? [{ config, live, health: connectorVerdict(live, options.signals?.[config.id]) }] : [];
+    const signals =
+      options.signals && Object.hasOwn(options.signals, config.id) ? options.signals[config.id] : undefined;
+    return live ? [{ config, live, health: connectorVerdict(live, signals) }] : [];
   });
   const health = new Map(connectors.map(({ config, health }) => [config.id, health]));
 

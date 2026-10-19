@@ -61,7 +61,7 @@ pool member, who gets the member page, with no tabs, on every path.
 | Activity             | No calls                             | Activity              | Member page, no activity request    |
 | Settings             | Snapshot without connectors or pools | Config                | Member page, no configuration facts |
 
-Populated Overview has a failing connector, drift, auth and credential problems
+Populated Overview has a failing connector, auth and credential problems
 and a tokenless agent in its attention list. Populated Endpoints shows who can use each endpoint; populated Tokens has one
 agent per slot state, with pools and last seen.
 
@@ -102,7 +102,13 @@ empty catalog counts zero.
 `test/browser/operator-overview.spec.ts` covers the Overview on the frozen v2
 fixtures: the status pill, stat labels and numbers, map columns, dashed read-only grants and dotted
 tokenless access; attention rows with their fix links, a copied fix prompt equal
-to the catalogue's text and a failing connector sorted first; the hover
+to the catalogue's text, config order through a staggered full refresh, prototype-named
+connector IDs during loading and failure, and stable single-card height when
+its catalog empties. A single long-id, long-title card at 320, 390, 1024 and
+1440px covers all eight status labels, both auth scopes, with and without the
+Read-only badge, tools and an action. Text rows stay single-line, full text
+remains accessible, links stay focusable, and the detail header and Overview
+attention rows retain their height; the hover
 sentence replacing the legend, and dimming; keyboard focus in column order with each node's sentence
 as its accessible name, Enter opening an endpoint's row and a connector; the
 narrow list, whose caller chips link where their map nodes do; an empty deployment; and a member at `/` getting the member page

@@ -68,15 +68,16 @@ parameters such as signed handoffs. A pool member sees the
   marks; a tokenless agent's mark is hollow). A dot legend counts each segment
   kind; the first two tiles link to their pages. At 760px and below the tiles
   sit two up, with People · Agents as one row across both.
-- **Needs attention.** One row per connector whose health is not ok, failing
-  first, then one per agent in a pool whose token is missing or revoked. A
+- **Needs attention.** One row per connector whose health is not ok, in
+  configuration order, then one per agent in a pool whose token is missing or revoked. A
   row names the problem ("crm needs authorization"), the endpoints it
   affects ("Affects /mcp and /mcp/team") or the agent URL it can't connect at,
-  and links to the existing fix: Connect, Replace key, Inspect or Review on
+  and links to the existing fix: Connect, Replace key or Inspect on
   the connector's Connection tab, or Issue token on Tokens. A row with a
-  problem code or drift also has Copy fix prompt. A problem keeps its row and
+  problem code also has Copy fix prompt. A problem keeps its row and
   prompt when the connector's detail read failed, prefixed "Details didn't
-  load". With no rows it reads "All clear".
+  load". Surviving connector rows retain their order as individual reads settle,
+  even when their severity changes. With no rows it reads "All clear".
 - **Who reaches what.** The [connection map](#connection-map).
 
 ### Connection map
@@ -137,12 +138,34 @@ One card per connector: title and id, one status pill, a Shared or Per person
 badge, a Read-only badge when connector `readOnly` is enabled, its tool count over a read and write bar, and when it was last called.
 All, Needs attention and Healthy filter the cards, with counts, beside a
 search field. A connector that is not fine adds one action (Connect, Replace
-key, Inspect, or Review for drift) that opens its Connection tab.
+key or Inspect) that opens its Connection tab.
 
 Every view shares one verdict per connector: the server's problem code first
 (a failed catalog reads "Catalog failed", never "Connected"), then a failed
-detail read ("Couldn't load", with no fix prompt), then a non-ok status, then
-catalog drift.
+detail read ("Couldn't load", with no fix prompt), then a non-ok status.
+Catalog drift is informational: it stays in the connector's Connection panel
+with its fix prompt and in Activity, and never affects health or attention.
+
+Health does not bounce while details load. A connector whose detail read is
+in flight (its `/ui/data` row is `loading`, during sign-in, Retry or a
+connector's Refresh) keeps the verdict the page last showed for it on every
+view (cards, filter counts, the Overview headline, bar, attention list and map,
+Endpoints and the connector page) until that read settles, never "Loading
+details" or an in-between verdict. A connector with no earlier verdict shows
+its contract status. Each connector changes only when its own read settles,
+so one slow read never holds back the others and no row moves for an
+in-between verdict. A new signed-in identity starts fresh. Cards reserve the action footer
+even when no action is needed and the tool bar row even when the catalog is
+empty. Each card header keeps its title, status and id/scope badges on single
+lines; long text truncates with ellipsis and retains its full value on hover
+and for screen readers. The connector detail header and Overview attention
+text follow the same rule, and truncated links remain keyboard focusable.
+Wider status labels never change the card height.
+
+The top bar uses an icon-only Search button (⌘K or Ctrl+K opens the palette).
+Deployment names stay on one line with ellipsis and their full name on hover;
+a name matching the product label is omitted. Tabs scroll horizontally when
+needed, moving to a second row on narrow screens.
 
 A List / Matrix toggle (`?view=matrix`) switches to a table of connectors by
 endpoint, `/mcp` first. A row header is the connector's monogram and name, plus
@@ -288,13 +311,13 @@ red when the calls span more than a minute.
 
 The top bar is one row: the mark, branding and deployment name, the section
 links (Overview, Endpoints, Connectors, Activity, Tokens, Settings), then
-Search (the command palette, also ⌘K or Ctrl+K), Appearance, and Account
+icon-only Search (the command palette, also ⌘K or Ctrl+K), Appearance, and Account
 (the signed-in account with Sign out or Change token). The mark is connecta's
 drawn "C" only when no product name, owner or favicon is configured; with
 `branding.favicon.svg` it is that SVG; otherwise there is none. The sign-in
 gate shows the same mark above "Sign in". Below 820px the section links move
 to a second row that scrolls sideways and keeps the current section in view,
-and Search shrinks to its icon. A member's top bar has only branding and
+with Search remaining an icon. A member's top bar has only branding and
 Account. The command palette searches visible pages, connectors and tools,
 opening connector results on Tools.
 

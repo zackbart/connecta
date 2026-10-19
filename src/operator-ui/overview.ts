@@ -7,7 +7,7 @@ import { connectorVerdict, type ConnectorSignals } from "./view.js";
 
 /**
  * The Overview's headline and its "Needs attention" list, from operator
- * contract v2 and the page's own drift and failed-read signals. Pure, like
+ * contract v2 and the page's own failed-read signals. Pure, like
  * the map beside it: a test reads what each row says and links to without a
  * browser.
  */
@@ -59,7 +59,7 @@ function affects(paths: string[]): string {
 }
 
 /**
- * One row per connector that is not healthy, failing first, then one per
+ * One row per connector that is not healthy, in config order, then one per
  * agent that sits in an endpoint without a working token. Each row carries
  * the fix the rest of the UI already offers for it.
  */
@@ -73,7 +73,7 @@ export function attentionItems(
   for (const config of contract.config?.connectors ?? []) {
     const live = contract.live.connectors.find((c) => c.id === config.id);
     if (!live) continue;
-    const signals = options.signals?.[config.id] ?? {};
+    const signals = options.signals && Object.hasOwn(options.signals, config.id) ? options.signals[config.id]! : {};
     const verdict = connectorVerdict(live, signals);
     if ((verdict.tone !== "warn" && verdict.tone !== "danger") || !verdict.action) continue;
     const title = config.title ?? config.id;
@@ -114,14 +114,6 @@ export function attentionItems(
         body: affects(paths),
         fix: null,
       });
-    } else {
-      // Healthy but drifted: the live tool list differs from the reviewed one.
-      connectors.push({
-        ...base,
-        problem: "has a changed tool list",
-        body: affects(paths),
-        fix: { kind: "catalog_drift", connectorId: config.id },
-      });
     }
   }
   const agents: AttentionItem[] = contract.agents
@@ -146,11 +138,9 @@ export function attentionItems(
         fix: null,
       };
     });
-  return [
-    ...connectors.filter((item) => item.tone === "danger"),
-    ...connectors.filter((item) => item.tone === "warn"),
-    ...agents,
-  ];
+  // Severity changes as individual details settle. Config order keeps surviving
+  // rows in place without waiting for the slowest connector's read.
+  return [...connectors, ...agents];
 }
 
 /** The numbers above the list, counted from the same map the page draws. */
@@ -163,7 +153,7 @@ export function overviewHeadline(
   const bar = (contract.config?.connectors ?? []).flatMap((config) => {
     const live = contract.live.connectors.find((c) => c.id === config.id);
     if (!live) return [];
-    const health = connectorVerdict(live, signals[config.id]);
+    const health = connectorVerdict(live, Object.hasOwn(signals, config.id) ? signals[config.id] : undefined);
     return [{ id: config.id, title: config.title ?? config.id, tone: health.tone, label: health.label }];
   });
   const healthy = bar.filter((entry) => entry.tone === "ok").length;
