@@ -2,6 +2,8 @@
 // Catalog hashes cover every reviewed name and two unknowns under nine hint
 // shapes. Guide edits are enumerated separately; all other fields stay exact.
 import { describe, expect, it } from "vitest";
+import linearCatalogGuideChanges from "./fixtures/linear-hosted-catalog-guide-changes.json";
+import { hostedCatalog as linearHostedCatalog } from "../src/providers/linear/fixtures.js";
 import before from "./fixtures/hosted-presets-abc0d176.json";
 import configChanges from "./fixtures/provider-5d-config-changes.json";
 import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
@@ -54,6 +56,7 @@ function expectedGuide(name: Name, content: string): string {
   const restAdmission = restAdmissionGuideChanges as Partial<Record<Name, string[][]>>;
   // The docs correctness pass corrects argument names and write lists.
   const docsCorrectness = docsCorrectnessGuideChanges as Partial<Record<Name, string[][]>>;
+  const linearCatalog = linearCatalogGuideChanges as Partial<Record<Name, string[][]>>;
   const changes = Object.hasOwn(configChanges, name) ? [] : guideChanges[name];
   for (const [from, to] of [
     ...changes,
@@ -65,6 +68,7 @@ function expectedGuide(name: Name, content: string): string {
     ...(admission[name] ?? []),
     ...(restAdmission[name] ?? []),
     ...(docsCorrectness[name] ?? []),
+    ...(linearCatalog[name] ?? []),
   ])
     content = content.replaceAll(from!, to!);
   return content;
@@ -127,9 +131,18 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
     const fixture = providerFixtures.find((fixture) => fixture.name === name)!;
     const connector = fixture.create("fixture", hostedCase(name));
     const review = catalogReviewOf(connector)!;
-    expect(Object.fromEntries([...review.tools].filter(([name]) => Object.hasOwn(recorded.verdicts, name)))).toEqual(
-      recorded.verdicts,
-    );
+    // The later Linear live-catalog review adds digests. Its provider suite
+    // verifies them against complete schemas; preserve the historical verdicts here.
+    const historical = [...review.tools].filter(([name]) => Object.hasOwn(recorded.verdicts, name));
+    expect(
+      Object.fromEntries(
+        historical.map(([tool, entry]) => {
+          if (name !== "linear") return [tool, entry];
+          const { schemaDigest: _digest, ...verdict } = entry;
+          return [tool, verdict];
+        }),
+      ),
+    ).toEqual(recorded.verdicts);
     expect(Object.isFrozen(classify.tools)).toBe(true);
     expect(connector.classification).toEqual(classify);
     for (const entry of Object.values(classify.tools)) {
@@ -146,7 +159,11 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
     for (const [index, hints] of before.variants.entries()) {
       const annotations = hints as ToolAnnotations | null;
       const real = fixture.create("fixture", hostedCase(name));
-      const facts = names.map((name) => ({ name, ...(annotations ? { annotations } : {}) }));
+      const facts = names.map((toolName) => {
+        const schema =
+          name === "linear" ? linearHostedCatalog.find((tool) => tool.name === toolName)?.inputSchema : undefined;
+        return { name: toolName, ...(schema ? { inputSchema: schema } : {}), ...(annotations ? { annotations } : {}) };
+      });
       const connector = { ...real, listTools: async () => structuredClone(facts) };
       const registry = registryFor(connector);
       const served = await registry.getTools("fixture", "https://connecta.example");

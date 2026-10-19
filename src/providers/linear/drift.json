@@ -73,8 +73,63 @@
         "delete_customer",
         "save_customer_need",
         "delete_customer_need",
-        "extract_images"
+        "extract_images",
+        "list_custom_views",
+        "save_issue_label",
+        "retire_issue_label",
+        "restore_issue_label",
+        "retire_project_label",
+        "restore_project_label",
+        "save_project_label",
+        "get_notifications",
+        "mark_notification",
+        "get_triage_responsibility",
+        "update_diff",
+        "save_initiative_label",
+        "retire_initiative_label",
+        "restore_initiative_label",
+        "list_customer_needs"
       ]
+    },
+    {
+      "type": "manual",
+      "source": "https://linear.app/docs/mcp",
+      "rationale": "The public MCP setup page has no complete tool inventory, and hosted catalogs vary by plan and enabled features. Review the credentialed catalog and official changelog without calling operational tools; providers:check cannot obtain credentials or automatically accept these schemas.",
+      "evidence": {
+        "reviewedAt": "2026-10-19",
+        "endpoint": "https://mcp.linear.app/mcp",
+        "changelog": "https://linear.app/changelog/2026-10-08-stacked-pull-requests",
+        "capture": "catalog.fixture.json",
+        "source": "Credentialed Connecta catalog discovery, complete JSON input schemas with no truncation; annotations are served observations, not an independent raw tools/list capture. No output schemas or inferred outputs were exposed. No operational tools were called.",
+        "hostedToolCount": 76,
+        "reviewedToolCount": 82,
+        "newlyReviewed": [
+          "list_custom_views",
+          "save_issue_label",
+          "retire_issue_label",
+          "restore_issue_label",
+          "retire_project_label",
+          "restore_project_label",
+          "save_project_label",
+          "get_notifications",
+          "mark_notification",
+          "get_triage_responsibility",
+          "update_diff",
+          "save_initiative_label",
+          "retire_initiative_label",
+          "restore_initiative_label",
+          "list_customer_needs"
+        ],
+        "absentHosted": [
+          "list_customers",
+          "save_customer",
+          "delete_customer",
+          "save_customer_need",
+          "delete_customer_need",
+          "list_customer_needs"
+        ],
+        "notes": "Retain the five previously reviewed plan-gated customer tools. list_customer_needs is a documentation-only read addition announced 2026-10-08, with no schema digest until observed. create_issue_label and create_initiative_label remain live deprecated create-only writes. Schema digests in index.ts cover the full observed schemas using vettedSchemaDigest; the test fixture is not a runtime schema source."
+      }
     }
   ]
 }

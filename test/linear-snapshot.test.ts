@@ -2,9 +2,12 @@
 // pre-conversion provider (`withVettedCatalog(LINEAR_VETTED_CATALOG)`); these
 // tests run the converted provider through the real `remoteMcp()` against an
 // in-process downstream and require identical agent-facing output, with one
-// named exception that is strictly safer.
+// named exception that is strictly safer. Later catalog reviews enumerate guide
+// changes and supply captured schemas while preserving the historical verdicts.
 import type { Transport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import linearCatalogGuideChanges from "./fixtures/linear-hosted-catalog-guide-changes.json";
+import { hostedCatalog } from "../src/providers/linear/fixtures.js";
 import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
 import readOnlyGuideChanges from "./fixtures/hosted-readonly-820-guide-changes.json";
 import before from "./fixtures/linear-0.28-snapshot.json";
@@ -51,6 +54,18 @@ async function listThroughLinear(
         content: [],
       }));
     }
+    // Preserve the vendor JSON schemas exactly; rebuilding them through Zod
+    // would change the complete-schema digests introduced by the later review.
+    mcp.server.setRequestHandler("tools/list", async () => ({
+      tools: names.map((name) => ({
+        name,
+        description: `d ${name}`,
+        inputSchema: (hostedCatalog.find((tool) => tool.name === name)?.inputSchema ?? { type: "object" }) as {
+          type: "object";
+        },
+        ...(annotations ? { annotations } : {}),
+      })),
+    }));
   });
   downstream.transport = server.transport;
   const connector = linear("tracker", {
@@ -75,7 +90,11 @@ describe("linear() before and after defineProvider", () => {
     for (const [key, options] of Object.entries(before.configs)) {
       const connector = linear("tracker", options as LinearOptions);
       const expected = structuredClone(before.connectors[key as keyof typeof before.connectors]);
-      for (const [from, to] of [...guideChanges.linear, ...readOnlyGuideChanges.linear]) {
+      for (const [from, to] of [
+        ...guideChanges.linear,
+        ...readOnlyGuideChanges.linear,
+        ...linearCatalogGuideChanges.linear,
+      ]) {
         expected.usageGuide.content = expected.usageGuide.content.replaceAll(from!, to!);
       }
       expect(
@@ -121,10 +140,9 @@ describe("linear() before and after defineProvider", () => {
     const tools = linear.definition.classify?.tools ?? {};
     expect(
       Object.fromEntries(
-        Object.entries(tools).map(([name, entry]) => [
-          name,
-          OLD_VERDICT[typeof entry === "string" ? entry : entry.verdict],
-        ]),
+        Object.entries(tools)
+          .filter(([name]) => Object.hasOwn(before.verdicts, name))
+          .map(([name, entry]) => [name, OLD_VERDICT[typeof entry === "string" ? entry : entry.verdict]]),
       ),
     ).toEqual(before.verdicts);
   });
@@ -175,13 +193,17 @@ describe("linear() before and after defineProvider", () => {
     expect(corrected.sort()).toEqual(cases(["read", "readIdempotent", "readNotDestructive", "readAndDestructive"]));
   });
 
-  it("reports the same drift counts against the reviewed names", async () => {
+  it("reports the historical drift counts plus the 15 names from the later catalog review", async () => {
     const reviewed = Object.keys(before.verdicts);
     const { connector } = await listThroughLinear([...reviewed.slice(1), "summon_new_thing"], null);
     const { observedAt, ...counts } = observedCatalogDrift(connector) ?? {
       observedAt: "",
     };
     expect(observedAt).not.toBe("");
-    expect(counts).toEqual(before.driftAllButFirstPlusOneNew);
+    expect(counts).toEqual({
+      ...before.driftAllButFirstPlusOneNew,
+      // The historical listing omits all 15 additions reviewed on 2026-10-19.
+      unservedTools: before.driftAllButFirstPlusOneNew.unservedTools + 15,
+    });
   });
 });
