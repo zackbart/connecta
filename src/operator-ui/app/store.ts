@@ -129,9 +129,9 @@ export function navHint(): { activity: boolean } {
 }
 
 function gate(notice: Notice | null = null, session: OperatorState["session"] = "gated"): void {
-  interruptedFullRefresh = false;
   cancelRecoveryRead();
   queryClient.clear();
+  scopedRows.clear();
   forgetNav();
   stopOAuthPolling();
   clearTimeout(returnTimer);
@@ -669,8 +669,10 @@ function memberAuthorizationPending(): boolean {
 
 /** Catalog and auth controls publish together, guarded by one refresh revision. */
 let snapshotRevision = 0;
-/** A full cycle displaced by polling still needs publication after the poll window. */
-let interruptedFullRefresh = false;
+/** Query keys: one per cycle, including scoped polls that share a revision. */
+let snapshotReads = 0;
+/** Connectors a scoped OAuth poll published during the full cycle of this revision. */
+const scopedRows = new Map<string, number>();
 /**
  * Refresh the catalog and auth controls. A viewer never confirmed as a
  * maintainer, or with no maintainer data yet, has nothing maintainer-only to
@@ -695,19 +697,16 @@ async function refreshSnapshot(
   preloaded?: OperatorUiContractV2,
 ): Promise<void> {
   if (signedOut || state.role !== "maintainer") return;
-  // A scoped OAuth cycle supersedes general publication without cancelling
-  // the older transport or letting its deadline overwrite the newer state.
-  if (recoveryRead && recoveryRead.controller.signal !== pollSignal) {
-    releaseRecoveryRead();
-    // The scoped merge cannot publish unrelated results from the displaced
-    // full cycle. Queue a full retry once polling stops, so repeated polls
-    // cannot spend the recovery budget superseding every retry in turn.
-    if (connectorId) interruptedFullRefresh = true;
-  }
-  // A new catalog cycle also supersedes any summary that has not landed yet.
-  ++dataRevision;
+  // A scoped OAuth poll publishes beside a pending full cycle. Release that
+  // cycle's guard so its deadline cannot clear the poll's newer row.
+  if (recoveryRead && recoveryRead.controller.signal !== pollSignal) releaseRecoveryRead();
+  // A full cycle fences every older cycle and any summary that has not landed.
+  // A scoped poll joins the current revision instead: it never fences the
+  // full cycle, and a newer full cycle still fences it.
+  if (!connectorId) ++dataRevision;
   const identityCurrent = fence();
-  const revision = ++snapshotRevision;
+  const revision = connectorId ? snapshotRevision : ++snapshotRevision;
+  const read = ++snapshotReads;
   const current = () => identityCurrent() && revision === snapshotRevision && !pollSignal?.aborted;
   const data = state.data;
   if (!data) return;
@@ -736,12 +735,11 @@ async function refreshSnapshot(
     if (connectorId && loadedContract && !outcomes.has(connectorId)) return;
     // Health, catalog facts and auth controls settle once per cycle. Keep the
     // last confirmed snapshot visible while any matching detail is pending.
-    const contract =
-      loadedContract && connectorId ? mergeConnectorContract(loadedContract, connectorId) : loadedContract;
-    // Only a current full publication discharges the obligation. A failed
-    // read also publishes an honest unverified state; a superseded cycle cannot.
-    // Clear before detailsPatch stops polling or publication notifies listeners.
-    if (!connectorId) interruptedFullRefresh = false;
+    const contract = connectorId
+      ? loadedContract && mergeConnectorContract(loadedContract, connectorId)
+      : loadedContract && withScopedRows(loadedContract, revision, outcomes);
+    if (connectorId && contract) scopedRows.set(connectorId, revision);
+    else if (!connectorId) scopedRows.clear();
     set({
       ...detailsPatch(outcomes, quiet && !connectorId, contract),
       contract,
@@ -763,7 +761,7 @@ async function refreshSnapshot(
   const worker = async () => {
     while (next < connectors.length && current()) {
       const connector = connectors[next++]!;
-      const outcome = await readConnector(connector.id, token, revision, detailsAdmitted, pollSignal);
+      const outcome = await readConnector(connector.id, token, read, detailsAdmitted, pollSignal);
       if (current()) {
         outcomes.set(connector.id, outcome);
       }
@@ -773,7 +771,7 @@ async function refreshSnapshot(
     ? Promise.resolve()
     : queryClient
         .fetchQuery({
-          queryKey: ["operator-config", state.generation, revision],
+          queryKey: ["operator-config", state.generation, read],
           queryFn: ({ signal }) =>
             fetchContract(
               connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
@@ -817,6 +815,26 @@ async function refreshSnapshot(
     );
   if (needsRecovery) scheduleRecovery();
   else resetRecovery(false);
+}
+
+/**
+ * A full cycle's contract, except rows a scoped OAuth poll published while it
+ * was pending: that poll's row is the newer evidence, so it stays, and this
+ * cycle's detail for it is dropped. Every other row publishes from this cycle.
+ */
+function withScopedRows(
+  next: OperatorUiContractV2,
+  revision: number,
+  outcomes: Map<string, DetailOutcome>,
+): OperatorUiContractV2 {
+  const previous = state.contract?.live.connectors;
+  const connectors = next.live.connectors.map((live) => {
+    const kept = scopedRows.get(live.id) === revision && previous?.find((row) => row.id === live.id);
+    if (!kept) return live;
+    outcomes.delete(live.id);
+    return kept;
+  });
+  return { ...next, live: { ...next.live, connectors } };
 }
 
 /** A scoped poll replaces one live row; all unrelated contract facts stay put. */
@@ -1012,9 +1030,6 @@ export function stopOAuthPolling(connector?: string): void {
   oauthDeadlineTimer = undefined;
   oauthPollController?.abort();
   oauthPollController = undefined;
-  if (awaitingAuthorization.size === 0 && interruptedFullRefresh) {
-    scheduleRecovery();
-  }
 }
 
 /** Connector-page unmount cancels any read still owned by that view. */
@@ -1464,7 +1479,6 @@ function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, expos
     recoveryRead = undefined;
     clearTimeout(cycle.timer);
     set({ recoveryPending: false });
-    if (interruptedFullRefresh) scheduleRecovery();
   });
   return Promise.race([work, released]);
 }
@@ -1482,38 +1496,22 @@ function resetRecovery(cancelRead = true): void {
 /** All passive admission reads share the deadline, budget and in-flight read. */
 function recover(): void {
   const now = Date.now();
-  if (
-    signedOut ||
-    recoveryRead ||
-    (interruptedFullRefresh && awaitingAuthorization.size > 0) ||
-    now < recoveryNotBefore ||
-    now - lastReturnPass < RETURN_MIN_INTERVAL_MS
-  )
-    return;
+  if (signedOut || recoveryRead || now < recoveryNotBefore || now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
   lastReturnPass = now;
-  if (interruptedFullRefresh && state.role === "maintainer" && state.data) {
-    void guardedRecoveryRead((signal) => refreshSnapshot(false, undefined, signal), true);
-  } else {
-    void loadCurrent(true);
-  }
+  void loadCurrent(true);
 }
 
 function scheduleRecovery(): void {
-  if (signedOut || (interruptedFullRefresh && awaitingAuthorization.size > 0)) return;
+  if (signedOut) return;
   if (recoveryTimer !== undefined) return;
   // Refusals keep the attempt count. Even after the automatic budget is spent,
   // focus must wait through the final backoff before requesting admission.
   const delay = RECOVERY_DELAYS_MS[Math.min(recoveryAttempt, RECOVERY_DELAYS_MS.length - 1)]!;
   recoveryNotBefore = Math.max(Date.now() + delay, lastReturnPass + RETURN_MIN_INTERVAL_MS);
-  // Replacing a cycle fenced by polling is owed publication, not another
-  // failed-read retry. Coalesce it onto this timer and preserve the failure
-  // budget, including exhaustion. Keep it owed until a full cycle publishes.
-  if (!interruptedFullRefresh) {
-    if (recoveryAttempt >= RECOVERY_DELAYS_MS.length) return;
-    recoveryAttempt++;
-  }
+  if (recoveryAttempt >= RECOVERY_DELAYS_MS.length) return;
+  recoveryAttempt++;
   const current = fence();
   recoveryTimer = setTimeout(() => {
     recoveryTimer = undefined;
@@ -1626,13 +1624,13 @@ type DetailOutcome =
 async function readConnector(
   id: string,
   token: string | null | undefined,
-  revision: number,
+  read: number,
   admitted: () => boolean,
   pollSignal?: AbortSignal,
 ): Promise<DetailOutcome> {
   try {
     return await queryClient.fetchQuery({
-      queryKey: ["connector", state.generation, id, revision],
+      queryKey: ["connector", state.generation, id, read],
       queryFn: ({ signal }) =>
         fetchConnector(id, token, pollSignal ? AbortSignal.any([signal, pollSignal]) : signal, admitted),
     });

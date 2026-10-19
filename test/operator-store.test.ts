@@ -1053,7 +1053,7 @@ describe("operator recovery bounds and snapshot ordering", () => {
   });
 
   it.each(["success", "delayed success", "deadline"])(
-    "INV-4 INV-10: retries a full refresh overtaken by scoped OAuth polling (%s)",
+    "INV-4 INV-10: publishes a full refresh overlapped by scoped OAuth polling (%s)",
     async (terminal) => {
       const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
       const crm = { id: "crm", status: "auth_required", oauth: true, toolCount: 0, tools: [] };
@@ -1111,9 +1111,9 @@ describe("operator recovery bounds and snapshot ordering", () => {
     },
   );
 
-  it.each([false, true])(
-    "INV-4 INV-10: publishes a displaced full refresh after recovery exhaustion (replacement fails: %s)",
-    async (replacementFails) => {
+  it.each(["success", "failure", "late failure"])(
+    "INV-4 INV-10: publishes a full refresh overlapped by OAuth polling after recovery exhaustion (%s)",
+    async (outcome) => {
       const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
       const crm = { id: "crm", status: "auth_required", oauth: true, toolCount: 0, tools: [] };
       const tickets = { id: "tickets", status: "ok", toolCount: 0, tools: [] };
@@ -1150,8 +1150,9 @@ describe("operator recovery bounds and snapshot ordering", () => {
         }
         if (path === "/ui/data") return Response.json({ ...uiData("operator"), connectors: updated });
         if (path.endsWith("/notes")) {
-          if (++notesReads === 1) await slow.promise;
-          else if (replacementFails) throw new Error("still offline");
+          notesReads++;
+          await slow.promise;
+          if (outcome !== "success") throw new Error("still offline");
           return Response.json(notes);
         }
         return Response.json(path.endsWith("/tickets") ? failed : connected);
@@ -1159,32 +1160,200 @@ describe("operator recovery bounds and snapshot ordering", () => {
       await store.startOAuth("crm", "continue");
       await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(2000);
+      // The scoped poll publishes crm beside the pending full cycle.
       expect(store.getState().data?.connectors.map((row) => row.status)).toEqual(["ok", "ok", "error"]);
+      // A late failure crosses the full cycle's 15-second deadline first.
+      if (outcome === "late failure") await vi.advanceTimersByTimeAsync(17_000);
       slow.resolve();
       await vi.advanceTimersByTimeAsync(0);
-      // The owed publication respects the exhausted budget's final backoff.
-      await vi.advanceTimersByTimeAsync(7999);
+      const settled = ["ok", "error", outcome === "success" ? "ok" : "error"];
+      expect(store.getState().data?.connectors.map((row) => row.status)).toEqual(settled);
+      expect(store.getState().contract?.live.connectors.map((row) => row.status)).toEqual(settled);
+      const reads = fetchMock.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      // One full cycle, no replacement, renewed failure budget, or OAuth replay.
       expect(notesReads).toBe(1);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(store.getState().data?.connectors.map((row) => row.status)).toEqual([
-        "ok",
-        "error",
-        replacementFails ? "error" : "ok",
-      ]);
-      expect(store.getState().contract?.live.connectors.map((row) => row.status)).toEqual([
-        "ok",
-        "error",
-        replacementFails ? "error" : "ok",
-      ]);
-      expect(notesReads).toBe(2);
+      expect(fetchMock.mock.calls).toHaveLength(reads);
+      expect(configMock.mock.calls.filter(([path]) => path === "/ui/api/config")).toHaveLength(1);
+      expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/ui/oauth/"))).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  /**
+   * Every ordering of a scoped OAuth poll against one full refresh whose
+   * `notes` detail is slow, with `tickets` newly failed and crm consented. The
+   * full cycle publishes once; a poll that lands while it is pending keeps its
+   * newer crm row. Nothing else schedules a replacement read.
+   */
+  const orderings = (["before", "during", "after"] as const).flatMap((poll) =>
+    ([false, true] as const).flatMap((exhausted) =>
+      (["success", "failure", "late failure"] as const).map((notes) => [poll, exhausted, notes] as const),
+    ),
+  );
+  it.each(orderings)(
+    "INV-4 INV-10: settles health with one full refresh in flight (poll %s, retries exhausted: %s, notes %s)",
+    async (poll, exhausted, outcome) => {
+      const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
+      const server = { consented: false, ticketsFailed: false, notesFail: exhausted };
+      const ids = ["crm", "tickets", "notes"];
+      const row = (id: string) => {
+        const failed = id === "tickets" && server.ticketsFailed;
+        const status = id === "crm" ? (server.consented ? "ok" : "auth_required") : failed ? "error" : "ok";
+        return {
+          id,
+          status,
+          toolCount: 0,
+          tools: [],
+          ...(id === "crm" ? { oauth: true } : {}),
+          ...(failed ? { problem: "connector_unavailable" } : {}),
+        };
+      };
+      let hold: ReturnType<typeof deferred<void>> | undefined;
+      let notesReads = 0;
+      let inFlight = 0;
+      let maxInFlight = 0;
+      configMock.mockImplementation(async (path: string) =>
+        Response.json(
+          v2(
+            ids.map((id) => ({ id })),
+            path.includes("?connector=") ? [row("crm")] : ids.map(row),
+          ),
+        ),
+      );
+      fetchMock.mockImplementation(async (path: string) => {
+        if (path.startsWith("/ui/oauth/")) {
+          return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
+        }
+        if (path === "/ui/data") return Response.json({ ...uiData("operator"), connectors: ids.map(row) });
+        if (!path.endsWith("/notes")) return Response.json(row(path.slice(path.lastIndexOf("/") + 1)));
+        notesReads++;
+        maxInFlight = Math.max(maxInFlight, ++inFlight);
+        try {
+          const held = hold;
+          hold = undefined;
+          await held?.promise;
+          if (server.notesFail) throw new Error("offline");
+          return Response.json(row("notes"));
+        } finally {
+          inFlight--;
+        }
+      });
+      store.routeChanged("/connectors/crm");
+      vi.useFakeTimers();
+      await store.boot();
+      if (exhausted) await vi.advanceTimersByTimeAsync(16_000);
+      expect(notesReads).toBe(exhausted ? 5 : 1);
+      // The full refresh under test: tickets has newly failed and notes is slow.
+      const startFull = () => {
+        server.ticketsFailed = true;
+        hold = deferred<void>();
+        const slow = hold;
+        notesReads = 0;
+        return async () => {
+          if (outcome === "late failure") await vi.advanceTimersByTimeAsync(17_000);
+          server.notesFail = outcome !== "success";
+          slow.resolve();
+          await vi.advanceTimersByTimeAsync(0);
+        };
+      };
+      const consentAndPoll = async () => {
+        server.consented = true;
+        await vi.advanceTimersByTimeAsync(2000);
+      };
+      if (poll === "before") {
+        await store.startOAuth("crm", "continue");
+        await consentAndPoll();
+        expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+        const release = startFull();
+        void store.loadOperatorContract();
+        await vi.advanceTimersByTimeAsync(0);
+        await release();
+      } else {
+        const release = startFull();
+        await store.startOAuth("crm", "continue");
+        await vi.advanceTimersByTimeAsync(0);
+        if (poll === "during") {
+          await consentAndPoll();
+          // The poll's row lands while the full cycle is still pending.
+          expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+          await release();
+        } else {
+          await release();
+          // The full cycle's own crm read predates consent.
+          expect(store.getState().data?.connectors[0]?.status).toBe("auth_required");
+          await consentAndPoll();
+        }
+      }
+      await vi.advanceTimersByTimeAsync(120_000);
+      const settled = ["ok", "error", outcome === "success" ? "ok" : "error"];
+      expect(store.getState().data?.connectors.map((c) => c.status)).toEqual(settled);
+      expect(store.getState().contract?.live.connectors.map((c) => c.status)).toEqual(settled);
+      expect(store.getState().contractPhase).toBe("ready");
+      expect(maxInFlight).toBe(1);
+      // Only failed reads retry, within the existing budget of four.
+      if (outcome === "success" || exhausted) expect(notesReads).toBe(1);
+      else expect(notesReads).toBeLessThanOrEqual(5);
       const reads = fetchMock.mock.calls.length;
       const contracts = configMock.mock.calls.length;
       await vi.advanceTimersByTimeAsync(60_000);
-      // One replacement, no authorization replay or renewed failure budget.
       expect(fetchMock.mock.calls).toHaveLength(reads);
       expect(configMock.mock.calls).toHaveLength(contracts);
-      expect(configMock.mock.calls.filter(([path]) => path === "/ui/api/config")).toHaveLength(2);
       expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/ui/oauth/"))).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each(["identity reset", "sign-out"])(
+    "INV-4 INV-10: %s during an overlapped full refresh leaves no timers or late publication",
+    async (teardown) => {
+      const loaded = await loadStore({ id: "a", getToken: async () => "a" });
+      const { store, fetchMock, configMock } = loaded;
+      const crm = { id: "crm", status: "auth_required", oauth: true, toolCount: 0, tools: [] };
+      const notes = { id: "notes", status: "ok", toolCount: 0, tools: [] };
+      const rows = [crm, notes];
+      configMock.mockImplementation(async () => Response.json(v2(rows, rows)));
+      fetchMock.mockImplementation(async (path: string) =>
+        Response.json(
+          path === "/ui/data" ? { ...uiData("operator"), connectors: rows } : rows.find((row) => path.endsWith(row.id)),
+        ),
+      );
+      store.routeChanged("/connectors/crm");
+      vi.useFakeTimers();
+      await store.boot();
+      const slow = deferred<void>();
+      let notesSignal: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (path: string, init: RequestInit) => {
+        if (path.startsWith("/ui/oauth/")) {
+          return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
+        }
+        if (path.endsWith("/notes") && !notesSignal) {
+          notesSignal = init.signal ?? undefined;
+          await slow.promise;
+          return Response.json({ ...notes, status: "error", problem: "connector_unavailable" });
+        }
+        return Response.json(
+          path === "/ui/data" ? { ...uiData("operator"), connectors: rows } : rows.find((row) => path.endsWith(row.id)),
+        );
+      });
+      await store.startOAuth("crm", "continue");
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(configMock.mock.calls.some(([path]) => path === "/ui/api/config?connector=crm")).toBe(true);
+      if (teardown === "sign-out") store.signOut();
+      else loaded.changeSession({ id: "b", getToken: async () => "b" });
+      expect(notesSignal?.aborted).toBe(true);
+      slow.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      fetchMock.mockClear();
+      configMock.mockClear();
+      await vi.advanceTimersByTimeAsync(60_000);
+      // The old identity's late failure never lands, and polling never resumes.
+      expect(store.getState().data?.connectors.map((row) => row.status)).toEqual(
+        teardown === "sign-out" ? undefined : ["auth_required", "ok"],
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(configMock).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
     },
   );
 
