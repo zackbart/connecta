@@ -1138,10 +1138,13 @@ async function checkOAuthDiscovery(provider, runtime, resource) {
     "authorization-server metadata",
     await loadPublished(provider, "authorization-server metadata", authorizationServerMetadataUrl(issuer)),
   );
-  if (server.client_id_metadata_document_supported !== true) {
+  // The runtime prefers CIMD and falls back to advertised DCR. A vendor
+  // such as Intercom supporting DCR alone is a valid hosted OAuth server.
+  const hasDcr = typeof server.registration_endpoint === "string" && server.registration_endpoint.trim() !== "";
+  if (server.client_id_metadata_document_supported !== true && !hasDcr) {
     findings.push({
       kind: "mcp-auth",
-      detail: `${issuer} no longer advertises Client ID Metadata Document support, which ${provider}() requires`,
+      detail: `${issuer} advertises neither Client ID Metadata Document support nor a dynamic client registration endpoint`,
     });
   }
   if (
