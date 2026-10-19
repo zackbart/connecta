@@ -239,6 +239,8 @@ export interface RegistryView {
     requestScope?: object,
     callOptions?: ConnectorOperationOptions,
   ): Promise<ConnectorStatus>;
+  /** Rebuild a status with this partition's latest bounded observations, without probing. */
+  withCatalogObservations(id: string, baseUrl: string, status: ConnectorStatus): ConnectorStatus;
   invalidateStored(id: string): Promise<void>;
   /** Bind returned OAuth state to its initiating user for either owner scope. */
   bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void>;
@@ -1219,6 +1221,25 @@ export class Registry implements RegistryView {
     return observedAt === undefined ? null : Math.max(0, Date.now() - observedAt);
   }
 
+  /** Pure lookup shared by status probes and operator catalog refreshes. */
+  withCatalogObservations(
+    id: string,
+    baseUrl: string,
+    status: ConnectorStatus,
+    scope?: RegistryScope,
+  ): ConnectorStatus {
+    const connector = this.connectors.get(id);
+    if (!connector) return ownStatus({ state: "error", message: "Unknown connector" });
+    const report = this.catalogDriftOf(connector, baseUrl, scope);
+    const access = this.catalogAccess.get(id);
+    // Connector.status is an open plugin seam. Rebuild its public fields so
+    // it cannot smuggle payload or another partition's observations (INV-6).
+    return Object.assign(boundedStatus(status), {
+      ...(report ? { catalogDrift: report } : {}),
+      ...(access ? { catalogAccess: { ...access } } : {}),
+    });
+  }
+
   /** Best-effort connector status for the operator UI. */
   async statusFor(
     id: string,
@@ -1237,18 +1258,8 @@ export class Registry implements RegistryView {
     // The report is rebuilt rather than spread through: what the seam returned
     // is third-party output, and status is read by the operator UI and copied
     // into responses.
-    const withObservations = (status: ConnectorStatus): ConnectorStatus => {
-      const report = this.catalogDriftOf(connector, baseUrl, scope);
-      const access = this.catalogAccess.get(id);
-      // Connector.status is an open plugin seam. Rebuild its public fields so
-      // a connector cannot smuggle payload through either registry-owned
-      // observation when this runtime has not made one, nor through its
-      // message, which survives only when connecta wrote it (INV-6).
-      return Object.assign(boundedStatus(status), {
-        ...(report ? { catalogDrift: report } : {}),
-        ...(access ? { catalogAccess: { ...access } } : {}),
-      });
-    };
+    const withObservations = (status: ConnectorStatus): ConnectorStatus =>
+      this.withCatalogObservations(id, baseUrl, status, scope);
     // Credential declarations own their readiness even when a static catalog
     // or a plugin status would otherwise report success. Never probe an empty slot.
     if (connector.credential) {
@@ -1443,6 +1454,13 @@ class ScopedRegistryView implements RegistryView {
     return registry
       ? registry.statusFor(args[0], args[1], args[2], args[3], this.scope)
       : Promise.resolve({ state: "error", message: "Unknown connector" });
+  }
+
+  withCatalogObservations(id: string, baseUrl: string, status: ConnectorStatus): ConnectorStatus {
+    return (
+      this.registryFor(id)?.withCatalogObservations(id, baseUrl, status, this.scope) ??
+      ownStatus({ state: "error", message: "Unknown connector" })
+    );
   }
 
   invalidateStored(id: string): Promise<void> {

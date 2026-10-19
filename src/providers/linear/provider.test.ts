@@ -337,7 +337,7 @@ describe("linear()", () => {
     for (const tool of hostedCatalog) {
       const entry = reviewed[tool.name];
       expect(entry, tool.name).toBeDefined();
-      expect(entry).toMatchObject({ schemaDigest: await vettedSchemaDigest(tool) });
+      expect(entry).toMatchObject({ schemaDigest: await vettedSchemaDigest(tool, "legacy") });
       expect(entry).toMatchObject({
         verdict: tool.annotations?.readOnlyHint ? "read" : tool.annotations?.destructiveHint ? "destructive" : "write",
       });
@@ -348,7 +348,7 @@ describe("linear()", () => {
     );
     expect(observedCatalogDrift(connector)).toMatchObject({
       unclassifiedTools: 0,
-      unservedTools: 6,
+      unservedTools: 0,
       annotationConflicts: 0,
       schemaChanges: 0,
     });

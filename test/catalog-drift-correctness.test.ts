@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { detectCatalogDrift, reviewedCatalog, vettedSchemaDigest } from "../src/catalog-drift.js";
+import { buildUiData } from "../src/ui.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { driftState, driftSummary } from "../src/operator-ui/view.js";
@@ -87,6 +88,7 @@ describe("catalog drift correctness", () => {
     const linearReview = reviewedCatalog(linear.definition.classify!, "linear");
     for (const name of [
       "list_customers",
+      "list_customer_needs",
       "save_customer",
       "delete_customer",
       "save_customer_need",
@@ -199,6 +201,64 @@ describe("catalog drift correctness", () => {
     }
     await app.getTools("crm", BASE);
     expect(driftState((await app.statusFor("crm", BASE)).catalogDrift)).toBe("clean");
+  });
+
+  describe.each(["runtime", "operator"] as const)("%s refresh", (path) => {
+    it.each(["hash failure", "schema change"] as const)(
+      "INV-1 INV-4 INV-6: returns the new observation on the same refresh after a %s",
+      async (failure) => {
+        let listing = [tool()];
+        const schemaDigest = await vettedSchemaDigest(listing[0]!);
+        const status = vi.fn(async () => ({ state: "ok" as const }));
+        const list = vi.fn(async () => listing);
+        const app = registry({
+          ...connectorWith({ id: "crm", tools: list, status }),
+          classification: { tools: { list: { verdict: "read", schemaDigest } } },
+        });
+        // Exercise the scoped lookup too: operator requests use a registry view.
+        const view = app.scoped({ principalKey: "alice", subjectKey: "alice", connectorIds: ["crm"] });
+        const refresh = async () => {
+          if (path === "operator") {
+            const row = (await buildUiData(view, BASE, { name: "connecta", version: "test" })).connectors[0]!;
+            return { report: row.catalogDrift, read: row.tools[0]?.safety === "runs_in_programs" };
+          }
+          const tools = await view.getTools("crm", BASE);
+          return {
+            report: (await view.statusFor("crm", BASE)).catalogDrift,
+            read: tools[0]?.classification === "read",
+          };
+        };
+        await view.getTools("crm", BASE);
+        expect(driftState((await refresh()).report)).toBe("clean");
+        status.mockClear();
+        list.mockClear();
+        if (failure === "schema change") listing = [tool({ type: "object", required: ["id"] })];
+        const original = crypto.subtle.digest.bind(crypto.subtle);
+        const spy = vi.spyOn(crypto.subtle, "digest").mockImplementation(async (algorithm, data) => {
+          if (failure === "hash failure" && new TextDecoder().decode(data as Uint8Array).startsWith('{"inputSchema"'))
+            throw new Error("private hashing failure");
+          return original(algorithm, data);
+        });
+        try {
+          const { report, read } = await refresh();
+          expect(read).toBe(false);
+          expect(report).toMatchObject(
+            failure === "hash failure"
+              ? { verification: "unavailable" }
+              : { verification: "complete", schemaChanges: 1 },
+          );
+          expect(driftSummary(report)).not.toContain("Matches the reviewed manifest");
+          expect(JSON.stringify(report)).not.toContain("private hashing failure");
+          expect(status).toHaveBeenCalledTimes(1);
+          expect(list).toHaveBeenCalledTimes(1);
+          expect((await app.statusFor("crm", BASE)).catalogDrift).toBeUndefined();
+        } finally {
+          spy.mockRestore();
+        }
+        listing = [tool()];
+        expect(driftState((await refresh()).report)).toBe("clean");
+      },
+    );
   });
 
   it.each(["personal", "shared"] as const)(

@@ -196,7 +196,9 @@ no differences, and schema pins for every live reviewed tool. “Schemas not
 pinned” and “Partial schema coverage” describe missing review evidence; they
 are not clean schema comparisons. “Schema verification unavailable” replaces
 an earlier successful report if hashing fails. Known differences remain visible
-alongside coverage or verification limits.
+alongside coverage or verification limits. Each operator refresh returns the
+comparison from the catalog it just loaded, including hashing failures and
+schema changes, without another downstream status probe.
 
 The unserved count excludes reviewed names explicitly marked optional for
 plan, feature, or permission gating. Present optional tools still participate
