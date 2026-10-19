@@ -157,6 +157,8 @@ export interface PlanningCenterOptions {
   authScope?: "shared" | "personal";
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /**
    * The `User-Agent` Planning Center sees. It asks integrations to identify
    * themselves and refuses a request without one; name your deployment and a

@@ -24,7 +24,7 @@ descriptions. On a writable endpoint, programs and `call_destructive_tool` may
 write within the caller's grants, and `execute_code` is annotated as a write;
 the client controls approval. On a read-only endpoint, search and describe omit
 write tools and every write call is refused with `read_only_endpoint`, even one
-a connector guide names; tell the user rather than looking for another route. Never change pool, identity, or `readOnly` to work
+a connector guide names; tell the user rather than looking for another route. A connector marked Read-only serves only read-classified tools even on a writable endpoint; writes and unclassified tools are omitted from search/describe and refused on every call path. Endpoint and connector restrictions compose by OR. Never change pool, identity, or `readOnly` to work
 around a refusal.
 [Routing between the call surfaces](./meta-tools.md#routing-between-the-call-surfaces)
 owns the full decision rules.

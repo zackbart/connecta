@@ -111,7 +111,7 @@ import { retryAfterMs } from "./guarded-fetch.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
-import { CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
+import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -223,6 +223,8 @@ export interface RemoteMcpOptions {
    * construct.
    */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /**
@@ -302,6 +304,7 @@ const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
     "classify",
     "skills",
   ),
+  readOnly: READ_ONLY,
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
   auth: REMOTE_MCP_AUTH,
@@ -1467,6 +1470,7 @@ interface ConnectionState {
  */
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   opts = assertKnownOptions(opts, `remoteMcp(${JSON.stringify(id)})`, REMOTE_MCP_OPTIONS);
+  if (opts.readOnly !== undefined) READ_ONLY.parse(opts.readOnly, `Connector(${JSON.stringify(id)}).readOnly`);
   if (opts.callAdmission !== undefined)
     CALL_ADMISSION.parse(opts.callAdmission, `remoteMcp(${JSON.stringify(id)}).callAdmission`);
   const skillsEnabled = opts.skills;
@@ -2891,6 +2895,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       },
     }),
     ...(opts.description !== undefined ? { description: opts.description } : {}),
+    ...(opts.readOnly !== undefined ? { readOnly: opts.readOnly } : {}),
     ...(opts.authScope !== undefined ? { authScope: opts.authScope } : {}),
     ...(opts.maxResultBytes !== undefined ? { maxResultBytes: opts.maxResultBytes } : {}),
     ...(opts.callAdmission !== undefined ? { callAdmission: opts.callAdmission } : {}),

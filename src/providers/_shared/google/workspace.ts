@@ -122,13 +122,15 @@ export interface GoogleWorkspaceOptions {
   callAdmission?: ConnectorCallAdmissionPolicy;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /** API base override for a proxy or test double. */
   baseUrl?: string;
 }
 
 /** The closed options every Workspace provider accepts; see `assertKnownOptions`. */
 export const GOOGLE_WORKSPACE_OPTIONS = optionsOf<GoogleWorkspaceOptions>()({
-  ...keys("purpose", "subject", "title", "instructions", "maxResultBytes", "baseUrl"),
+  ...keys("purpose", "subject", "title", "instructions", "maxResultBytes", "baseUrl", "readOnly"),
   // A string is the key's JSON; only the object form has keys to check.
   serviceAccount: optionsOf<GoogleServiceAccount>()(keys("clientEmail", "privateKey", "clientId")),
   callAdmission: CALL_ADMISSION,

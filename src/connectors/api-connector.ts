@@ -3,7 +3,7 @@ import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-r
 import { compileValidator, validateCatalogToolInput } from "../validate.js";
 import { array, assertKnownOptions, instance, keys, optionsOf, strings } from "../config-schema.js";
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
-import { CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
+import { READ_ONLY, CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import { assertStaticToolNames } from "../tool-name.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
@@ -141,6 +141,8 @@ export interface ApiOptions {
    * construct.
    */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /**
@@ -208,6 +210,7 @@ function checkToolContract(id: string, tool: ApiTool): void {
 /** The closed options api() accepts; see `assertKnownOptions`. */
 export const API_OPTIONS = optionsOf<ApiOptions>()({
   ...keys("title", "description", "authScope", "maxResultBytes", "testCredential", "testCredentials", "validateArgs"),
+  readOnly: READ_ONLY,
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
   credential: CREDENTIAL,
@@ -290,6 +293,7 @@ export interface ApiOAuthHooks {
  */
 export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks): Connector {
   opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
+  if (opts.readOnly !== undefined) READ_ONLY.parse(opts.readOnly, `Connector(${JSON.stringify(id)}).readOnly`);
   if (opts.callAdmission !== undefined)
     CALL_ADMISSION.parse(opts.callAdmission, `api(${JSON.stringify(id)}).callAdmission`);
   assertStaticToolNames(opts.tools, `api(${JSON.stringify(id)}).tools`);
@@ -326,6 +330,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
     ...defined({
       description: opts.description,
       authScope: opts.authScope,
+      readOnly: opts.readOnly,
       maxResultBytes: opts.maxResultBytes,
       callAdmission: opts.callAdmission,
       usageGuide: opts.usageGuide,

@@ -44,7 +44,7 @@ The full Node run checks the executed test tree, including runtime skips.
 - **INV-2: Writes respect the endpoint.** Each endpoint (plain `/mcp`, and a
   pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write
   tools from search and describe and refuses every write call on every path
-  before validation or dispatch; guides may still name them. A writable endpoint sends writes only through
+  before validation or dispatch; guides may still name them. A connector's `readOnly` applies the same restriction on every endpoint and composes with endpoint policy by OR. A writable endpoint sends writes only through
   `call_destructive_tool` and programs, and annotates `execute_code` as a
   write. Approval belongs to the host.
 - **INV-3: Generated code mints nothing.** No connectors, grants, downstream

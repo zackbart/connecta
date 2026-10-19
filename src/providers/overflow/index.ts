@@ -129,6 +129,8 @@ export interface OverflowOptions {
   callAdmission?: ConnectorCallAdmissionPolicy;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /** Default page size for page-numbered list tools. Defaults to 25; Overflow caps it at 100. */
   defaultPageSize?: number;
   /**

@@ -125,6 +125,8 @@ export interface TithelyOptions {
   callAdmission?: ConnectorCallAdmissionPolicy;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /** Default page size for list tools. Defaults to 25; this connector's cap is 99. */
   defaultPageSize?: number;
   /** API base override for a proxy or test double; replaces the environment's endpoint. */

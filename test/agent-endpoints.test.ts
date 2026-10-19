@@ -419,6 +419,29 @@ describe("agent endpoint admission", () => {
     await c.close();
   });
 
+  it("INV-2 INV-4: a writable agent endpoint cannot bypass connector readOnly", async () => {
+    const storage = memoryStorage();
+    let writes = 0;
+    const configured = connectors(() => writes++);
+    configured[0]!.readOnly = true;
+    const c = deployment({
+      storage,
+      connectors: configured,
+      pools: { writers: { tools: ["notes"], readOnly: false, members: ["agent:bot"] } },
+    });
+    try {
+      const bot = await issueAgentToken(storage, "bot");
+      expect(await searchText(c, "/agent/writers", bot)).not.toContain("notes.delete");
+      for (const name of ["call_tool", "call_destructive_tool"]) {
+        const refused = await rpc(c, "/agent/writers", bot, name, { address: "notes.delete", args: {} });
+        expect(JSON.stringify(refused)).toContain("read_only_endpoint");
+      }
+      expect(writes).toBe(0);
+    } finally {
+      await c.close();
+    }
+  });
+
   it("INV-2: an agent endpoint carries its pool's readOnly", async () => {
     const storage = memoryStorage();
     const deleted = { count: 0 };

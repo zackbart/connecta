@@ -19,6 +19,9 @@ import { STRIPE_API_BASE_URL, STRIPE_MCP_ENDPOINT, stripe } from "./index.js";
 import { connectorGuideSummary } from "../../skills.js";
 import { catalogReviewOf, detectCatalogDrift, observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
 import { hostedTools } from "./fixtures.js";
+import { CatalogService } from "../../catalog-service.js";
+import { createMetaTools } from "../../meta-tools.js";
+import { makeRegistry } from "../../../test/helpers.js";
 
 const SANDBOX = { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" } as const;
 const LIVE = { purpose: "Revenue for the real business", auth: { type: "apiKey" }, mode: "production" } as const;
@@ -1166,4 +1169,36 @@ describe("stripe() over an API key", () => {
       .catch(() => undefined);
     expect(sent).toEqual([]);
   });
+});
+
+describe("Stripe connector readOnly", () => {
+  beforeEach(() => mockRemoteMcp(mocks));
+
+  it.each(["oauth", "apiKey"] as const)(
+    "INV-1 INV-2: %s auth omits writes and refuses them before auth or dispatch",
+    async (type) => {
+      mocks.listTools.mockResolvedValue(hostedTools);
+      const connector = stripe(
+        "billing",
+        type === "oauth"
+          ? { purpose: "Revenue reports", auth: { type }, readOnly: true }
+          : { ...SANDBOX, readOnly: true },
+      );
+      expect(connector.readOnly).toBe(true);
+      const registry = makeRegistry([connector]);
+      const catalog = new CatalogService(registry, "https://connecta.test");
+      const page = await catalog.search({ connector: "billing" });
+      expect(page.entries.some((entry) => entry.tool.name === "stripe_api_read")).toBe(true);
+      expect(page.entries.every((entry) => entry.tool.classification === "read")).toBe(true);
+      expect(page.entries.some((entry) => entry.tool.name === "stripe_api_write")).toBe(false);
+      const meta = createMetaTools(registry, "https://connecta.test", { readOnly: false });
+      for (const invoke of [meta.callTool, meta.callDestructiveTool]) {
+        const result = await invoke({ address: "billing.stripe_api_write", args: {} });
+        expect(result.structuredContent).toMatchObject({ error: { code: "read_only_endpoint" } });
+      }
+      if (type === "oauth")
+        expect(mocks.remoteMcp).toHaveBeenCalledWith("billing", expect.objectContaining({ readOnly: true }));
+      else expect(mocks.remoteMcp).not.toHaveBeenCalled();
+    },
+  );
 });

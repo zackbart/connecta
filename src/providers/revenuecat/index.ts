@@ -39,6 +39,8 @@ export interface RevenueCatOptions {
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /**
    * Optional per-runtime policy. There is no default even though RevenueCat
    * publishes numbers (API v2, read 2026-08-18): the limit is per minute per

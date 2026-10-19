@@ -6,6 +6,31 @@
 }
 ---
 
+<!-- fragment: setup -->
+## Choose OAuth or an API key
+
+Import `stripe` from `@zackbart/connecta/providers/stripe`. Choose one of two setup paths:
+
+```ts
+// OAuth: Stripe's hosted MCP. Authorize the connection with Stripe.
+stripe("billing", { purpose: "Payments", auth: { type: "oauth" } });
+stripe("billing", { purpose: "Revenue reports", auth: { type: "oauth" }, readOnly: true });
+
+// API key: Connecta's REST connector. Paste the key into this connection in the operator UI.
+stripe("billing", { purpose: "Payments", auth: { type: "apiKey" }, mode: "production" });
+stripe("billing", { purpose: "Revenue reports", auth: { type: "apiKey" }, mode: "production", readOnly: true });
+```
+
+For an API key, set `mode` to `"production"` or `"sandbox"` to match the key.
+Use a secret (`sk_`) or restricted (`rk_`) key. For read-only access, prefer a
+restricted `rk_` key configured with only read permissions: Stripe enforces
+those permissions too. Connecta's `readOnly: true` omits non-read tools and
+refuses their calls on every endpoint. Omit it for the default writable connector;
+endpoint restrictions still apply. OAuth needs no `mode` and can reach both live
+and sandbox accounts through Stripe's account selectors.
+
+<!-- endfragment -->
+
 <!-- fragment: oauth -->
 
 

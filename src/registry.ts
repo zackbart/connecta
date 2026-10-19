@@ -448,6 +448,9 @@ export class Registry implements RegistryView {
       if (this.connectors.has(c.id)) {
         throw new Error(`Duplicate connector id "${c.id}"`);
       }
+      if (c.readOnly !== undefined && typeof c.readOnly !== "boolean") {
+        throw new Error(`Connector "${c.id}" readOnly must be a boolean.`);
+      }
       if (c.authScope !== undefined && c.authScope !== "shared" && c.authScope !== "personal") {
         throw new Error(`Invalid authScope on connector "${c.id}": expected "shared" or "personal"`);
       }

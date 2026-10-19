@@ -46,6 +46,8 @@ export interface BasecampOptions {
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /**
    * Optional per-runtime policy. There is no default: Basecamp's API documents
    * several dynamically adjusted limits (GET versus POST, per second, hour,

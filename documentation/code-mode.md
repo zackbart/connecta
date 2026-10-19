@@ -283,7 +283,7 @@ signature is byte-identical to the one `search_tools` returns.
 integration is ambiguous. `safety: "readOnly"` selects stored read verdicts;
 `"approvalRequired"` selects stored write verdicts; omitted or `"all"` selects
 both. Search and describe rows carry `classification`. These filters grant no
-authority and change no call admission decision. On a read-only endpoint,
+authority and change no call admission decision. On a read-only endpoint or connector,
 search and describe omit write tools (`W12`): a write is absent from every
 filter, and describing one is `unknown_tool`. `connecta.skill` guides are not
 filtered and may name such a write; calling it is still refused.
@@ -569,7 +569,7 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
 | `unknown_address`            | no visible connector owns the tool address or grants the resource reader                                                                                                                              | false         |
 | `unknown_tool`               | the connector has no such tool                                                                                                                                                                        | false         |
-| `read_only_endpoint`         | a program on a read-only endpoint attempted a write (`E4`)                                                                                                                                            | false         |
+| `read_only_endpoint`         | a program on a read-only endpoint or connector attempted a write (`E4`)                                                                                                                               | false         |
 | `auth_required`              | the credential is missing, expired, or rejected                                                                                                                                                       | false         |
 | `invalid_args`               | arguments or discovery bounds were rejected                                                                                                                                                           | false         |
 | `not_found`                  | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap                      | false         |
@@ -594,7 +594,7 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 sentence. A program cannot recover credentials — only an operator can — so stop
 and let the failure reach the model.
 
-**E4.** A tool classified as a write never runs on a read-only endpoint
+**E4.** A tool classified as a write never runs on a read-only endpoint or connector
 (`W12`). A program's call is refused with `read_only_endpoint` before
 validation and before anything is sent. The refusal carries no `nextAction` and
 echoes no arguments: no route on that endpoint writes, so the program reports
@@ -702,7 +702,7 @@ errors retain their contributing connectors as well.
 Search counts, ranking, and term analysis retain every searched connector,
 including matches outside the returned page or beyond the requested offset.
 Each page rechecks current auth,
-grants, pool membership, and the endpoint's `readOnly`. Reading a stash inside a program carries
+grants, pool membership, and endpoint OR connector `readOnly`. Reading a stash inside a program carries
 its dependencies forward to any new return stash. The page cap is the smallest
 of the deployment cap and contributing connectors' effective `maxResultBytes`.
 Read-only endpoints cannot page write results. A UUID is a handle, never a grant.
@@ -1026,7 +1026,9 @@ sent and records nothing: it was never an attempt (`W9`).
 Whether an endpoint writes belongs to deployment code. Every deployment sets
 `readOnly` for `/mcp` explicitly; construction fails without it. Each named pool inherits
 the deployment's `readOnly` unless it sets its own, in either direction. The
-client owns approval; Connecta answers one question per endpoint: can it write.
+client owns approval. Every connector also accepts optional `readOnly?: boolean`
+(default `false`), enforced on every endpoint. Effective read-only is endpoint OR
+connector; setting connector `false` cannot reopen a read-only endpoint.
 
 ```ts
 createConnecta({

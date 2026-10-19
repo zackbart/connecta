@@ -1112,7 +1112,8 @@ function metaToolsForRequest(
                 return false;
               continue;
             }
-            if (!registry.getConnector(dependency.connector)) return false;
+            const connector = registry.getConnector(dependency.connector);
+            if (!connector) return false;
             const tools = await registry.getTools(
               dependency.connector,
               baseUrl,
@@ -1125,7 +1126,7 @@ function metaToolsForRequest(
               !(
                 dependency.access === "catalog" ||
                 (dependency.classification === "read" && tool.classification === "read") ||
-                opts.readOnly !== true
+                (opts.readOnly !== true && connector.readOnly !== true)
               )
             )
               return false;

@@ -3,6 +3,21 @@
 Use this guide to change connectors in deployment configuration.
 [All agent routes](./README.md) are in the index.
 
+## Make one connection read-only
+
+Every connector accepts optional `readOnly?: boolean`, defaulting to `false`:
+`remoteMcp("notes", { url: "https://notes.example.com/mcp", auth: { type: "headers", headers: {} }, readOnly: true })`,
+`api("tickets", { readOnly: true, tools: [] })`, and maintained providers such as
+`stripe("billing", { purpose: "Revenue reports", auth: { type: "oauth" }, readOnly: true })`.
+A custom `Connector` sets `readOnly: true` on its connector object.
+
+Only tools classified read appear in search and describe, and every write or
+unclassified tool call is refused before dispatch on every endpoint, including
+maintainers' plain `/mcp`, programs, `call_tool`, and `call_destructive_tool`.
+Effective read-only is endpoint `readOnly` OR connector `readOnly`; connector
+`false` never widens an endpoint. Existing pool/deployment inheritance is unchanged.
+Guides may still name unavailable tools. The operator UI shows a Read-only badge.
+
 ## Add or remove a connector
 
 Connectors are code-owned. Edit the deployment's `src/connecta.config.ts`;
@@ -92,7 +107,7 @@ const tracker = linear("tracker", {
 ```
 
 Linear defaults to OAuth; its read-only endpoint requests only the downstream
-read scope. That is separate from a Connecta `readOnly` endpoint. Read the installed `dist/providers/linear/index.d.ts` for API-key framing,
+read scope. That is separate from Connecta endpoint or connector `readOnly`. Read the installed `dist/providers/linear/index.d.ts` for API-key framing,
 workspace instructions, and admission choices.
 
 The [human README](../README.md#what-you-can-connect) lists available
@@ -143,6 +158,8 @@ search limits, transcript permissions and paging. The
 reviewed classification includes task writes listed in Claude's directory even
 though Wispr's public help describes read-only access; discover the account's
 actual tools before assuming those writes exist.
+
+For minimal Stripe OAuth/API-key examples with and without connector `readOnly`, see [Stripe setup](./provider-auth-migration.md#stripe). With an API key, prefer a restricted `rk_` key with only read permissions for read-only access; Stripe enforces it too.
 
 Stripe requires `auth`: `{ type: "oauth" }` reaches Stripe's hosted MCP
 server, and `{ type: "apiKey" }` with `mode` reaches Connecta's REST connector

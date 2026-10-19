@@ -513,6 +513,7 @@ const AUTH_MODE: Record<string, string> = {
  * catalog. Anything else becomes a tile, so a new field is never hidden.
  */
 const CONNECTOR_KNOWN = [
+  "readOnly",
   "id",
   "title",
   "description",
@@ -588,6 +589,7 @@ export function connectorSummary(connector: DescribedConnector, sources: Sources
   const base = `config.connectors.${connector.id}`;
   const kind = SOURCE_KIND[connector.source.kind] ?? SOURCE_KIND.custom!;
   const badges: ConnectorBadge[] = [{ id: "kind", label: kind.label, icon: kind.icon }];
+  if (connector.readOnly) badges.push({ id: "readOnly", label: "Read-only" });
   if (connector.source.provider) badges.push({ id: "provider", label: connector.source.provider, icon: "box" });
   badges.push(
     connector.authScope === "personal"

@@ -384,6 +384,8 @@ export type ConnectorSkillResourceContents = {
 
 /** The whole plugin contract — the one open seam. */
 export interface Connector {
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   id: string; // address prefix; [a-z0-9_-]+
   /**
    * Who owns this connector's downstream authentication. `shared` keeps one
@@ -418,7 +420,7 @@ export interface Connector {
    * cross-operation sequencing rule).
    *
    * Served as `skill://connecta/connectors/<slug>/SKILL.md`, with generated
-   * frontmatter followed by the unchanged guide body. `connector:<id>` is a
+   * frontmatter, a read-only policy notice when configured, and the guide body. `connector:<id>` is a
    * one-release lookup alias. The guide remains deployment-owned configuration;
    * no runtime registration or shared mutable copy exists.
    */
@@ -629,7 +631,7 @@ export interface ConnectorDescription {
 }
 
 export interface ConnectorUsageGuide {
-  /** Markdown returned verbatim by `skills({ name: "connector:<id>" })`. */
+  /** Markdown served by `skills`, with a policy notice when the connector is read-only. */
   content: string;
   /**
    * Discovery hint describing the conventions the guide covers. Whitespace is

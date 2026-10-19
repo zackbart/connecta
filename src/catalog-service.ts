@@ -758,7 +758,7 @@ export class CatalogService {
         Effect.result(
           withDeadlineEffect(
             (signal) =>
-              this.readOnly
+              this.readOnly || this.registry.getConnector(id)?.readOnly === true
                 ? Effect.map(this.catalog(id, { signal }), (tools) =>
                     tools.filter((tool) => tool.classification === "read"),
                   )

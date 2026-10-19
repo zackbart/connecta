@@ -36,6 +36,8 @@ interface MixpanelCommonOptions {
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
   /**
    * Optional per-runtime policy. API mode defaults to 60 calls/hour and five
    * concurrent calls across all tools and projects. MCP mode has no default:

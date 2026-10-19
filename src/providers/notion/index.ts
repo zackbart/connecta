@@ -45,6 +45,8 @@ interface NotionCommonOptions {
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
+  /** Serve only read-classified tools on every endpoint. Defaults to false. */
+  readOnly?: boolean;
 }
 
 /**
@@ -356,7 +358,7 @@ const NOTION_MCP_CLASSIFICATION: ToolClassification = {
   },
 };
 
-const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes");
+const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
 
 /** The closed options notion() accepts, selected by `auth.type`; see `assertKnownOptions`. */
 const NOTION_OPTIONS = variants(["auth", "type"], {

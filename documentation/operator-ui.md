@@ -134,7 +134,7 @@ cells for the root), guarded grants' live verdicts, and read-only mode.
 ### Connectors
 
 One card per connector: title and id, one status pill, a Shared or Per person
-badge, its tool count over a read and write bar, and when it was last called.
+badge, a Read-only badge when connector `readOnly` is enabled, its tool count over a read and write bar, and when it was last called.
 All, Needs attention and Healthy filter the cards, with counts, beside a
 search field. A connector that is not fine adds one action (Connect, Replace
 key, Inspect, or Review for drift) that opens its Connection tab.
