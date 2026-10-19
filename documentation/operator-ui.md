@@ -156,8 +156,11 @@ its contract status. Each connector changes only when its own read settles,
 so one slow read never holds back the others and no row moves for an
 in-between verdict. A new signed-in identity starts fresh. Cards reserve the action footer
 even when no action is needed and the tool bar row even when the catalog is
-empty. Card titles stay on one line with ellipsis and their full title on hover,
-so wider status labels do not change the card height.
+empty. Each card header keeps its title, status and id/scope badges on single
+lines; long text truncates with ellipsis and retains its full value on hover
+and for screen readers. The connector detail header and Overview attention
+text follow the same rule, and truncated links remain keyboard focusable.
+Wider status labels never change the card height.
 
 The top bar uses an icon-only Search button (⌘K or Ctrl+K opens the palette).
 Deployment names stay on one line with ellipsis and their full name on hover;

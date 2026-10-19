@@ -104,7 +104,11 @@ fixtures: the status pill, stat labels and numbers, map columns, dashed read-onl
 tokenless access; attention rows with their fix links, a copied fix prompt equal
 to the catalogue's text, config order through a staggered full refresh, prototype-named
 connector IDs during loading and failure, and stable single-card height when
-its catalog empties, plus a long-title card at 390px across every status label; the hover
+its catalog empties. A single long-id, long-title card at 320, 390, 1024 and
+1440px covers all eight status labels, both auth scopes, with and without the
+Read-only badge, tools and an action. Text rows stay single-line, full text
+remains accessible, links stay focusable, and the detail header and Overview
+attention rows retain their height; the hover
 sentence replacing the legend, and dimming; keyboard focus in column order with each node's sentence
 as its accessible name, Enter opening an endpoint's row and a connector; the
 narrow list, whose caller chips link where their map nodes do; an empty deployment; and a member at `/` getting the member page

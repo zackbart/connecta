@@ -41,14 +41,14 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
       <div className="page-heading conn-heading">
         <div className="conn-head">
           <div className="conn-title">
-            <h1 id="connectorHeading" tabIndex={-1}>
+            <h1 id="connectorHeading" tabIndex={-1} title={config?.title ?? "Connector"}>
               {config?.title ?? "Connector"}
             </h1>
             {live ? <Pill status={pillStatus(verdict!.tone)}>{verdict!.label}</Pill> : null}
           </div>
           {config && live ? (
             <div className="conn-badges">
-              <code>{id}</code>
+              <code title={id}>{id}</code>
               <AuthScopeBadge scope={config.authScope} />
               <ToolSplit tools={live.tools} />
             </div>

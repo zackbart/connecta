@@ -134,9 +134,14 @@ function AttentionRow({ item }: { item: AttentionItem }) {
         <Icon name={icon} size={15} />
       </span>
       <div className="attention-text">
-        <h3>
+        <h3 title={`${item.subject} ${item.problem}`}>
           {item.href ? (
-            <a href={item.href} onClick={(event) => followLink(event, item.href!)}>
+            <a
+              href={item.href}
+              title={item.subject}
+              aria-label={item.subject}
+              onClick={(event) => followLink(event, item.href!)}
+            >
               {subject}
             </a>
           ) : (
@@ -144,7 +149,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
           )}{" "}
           {item.problem}
         </h3>
-        <p>{item.body}</p>
+        <p title={item.body}>{item.body}</p>
       </div>
       <div className="attention-actions">
         {item.fix ? (

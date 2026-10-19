@@ -14,7 +14,7 @@ import { loadOperatorContract } from "./store.js";
 function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
   const href = `/connectors/${encodeURIComponent(id)}${tab ? `#${tab}` : ""}`;
   return (
-    <a href={href} onClick={(event) => followLink(event, href, "connector")}>
+    <a href={href} title={name ?? id} aria-label={name ?? id} onClick={(event) => followLink(event, href, "connector")}>
       {name ?? id}
     </a>
   );
@@ -83,7 +83,7 @@ function ConnectorCard({ row, steady }: { row: Row; steady: ConnectorHealth }) {
             <ConnectorLink id={row.id} name={row.title} />
           </h3>
           <span className="connector-card-sub">
-            <code>{row.id}</code>
+            <code title={row.id}>{row.id}</code>
             <AuthScopeBadge scope={row.authScope} />
             {row.readOnly ? <Pill status="info">Read-only</Pill> : null}
           </span>
