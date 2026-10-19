@@ -86,78 +86,103 @@ const STRIPE_ADMISSION: Readonly<Record<StripeMode, ConnectorCallAdmissionPolicy
 };
 
 /**
- * Reviewed in #705's provider audit against https://docs.stripe.com/mcp.
- * Retains the release-reviewed inventory, including names absent from today's
- * public reference. Live annotations were not reverified without credentials.
- * No schema digest is asserted without a captured schema to review. This
- * classifies the hosted OAuth catalog only; the REST connector annotates each
- * tool it authors.
+ * Re-reviewed for #343 against the hosted OAuth catalog and official MCP and
+ * analytics docs on 2026-10-19 (#703). Digests cover the complete describe
+ * schemas captured in fixtures.ts, not inferred result shapes. The documented
+ * get_stripe_account_info remains reviewed without an uncaptured digest.
+ * This review applies only to hosted OAuth; REST annotates its own tools.
  */
 const STRIPE_CLASSIFICATION: ToolClassification = {
-  tools: {
+  "tools": {
     "stripe_api_search": {
       "verdict": "read",
       "reason": "Searches API method contracts and object records; it does not invoke mutating methods.",
+      "schemaDigest": "sha256:1fdb44c12347b21b3896250e2a3c88763b54f4cdfe4fff27f7067d004e3097e4",
     },
     "stripe_api_details": {
       "verdict": "read",
       "reason": "Reads the parameter contract for an API method; it does not execute that method.",
+      "schemaDigest": "sha256:a80bf5b685eba9b0cb91df7fa36afac04bcb97a7dcadb3c07bd22f0a4fcc7771",
     },
     "stripe_api_read": {
       "verdict": "read",
       "reason": "The vendor restricts this generic tool to HTTP GET; all mutating methods use stripe_api_write.",
+      "schemaDigest": "sha256:90b15c317384e244a19472d2bffcc0da73a1174f16fd89a7562134a3da5d0d53",
     },
-    "get_stripe_account_info": { "verdict": "read", "reason": "Reads metadata for the selected Stripe account." },
+    "get_stripe_account_info": {
+      "verdict": "read",
+      "reason":
+        "Reads metadata for the selected Stripe account; still documented although absent from the observed hosted catalog.",
+    },
     "get_balance_summary": {
       "verdict": "read",
       "reason": "Retrieves Stripe balance summary information without changing vendor state.",
+      "schemaDigest": "sha256:857973344e59ca7199bc65e62d5e7198332542339f387b7363626ad752437a11",
     },
-    "list_metrics": {
-      "verdict": "read",
-      "reason": "Retrieves Stripe metrics information without changing vendor state.",
-    },
-    "explain_metric": {
-      "verdict": "read",
-      "reason": "Explains an existing metric definition without creating an analytics run.",
-    },
-    "metric_drilldown": { "verdict": "read", "reason": "Reads the breakdown of an existing metric." },
-    "show_metric_app": { "verdict": "read", "reason": "Displays an existing metric app without changing its data." },
     "list_available_accounts_or_orgs": {
       "verdict": "read",
-      "reason": "Retrieves Stripe available accounts or orgs information without changing vendor state.",
+      "reason":
+        "Lists accessible accounts with stripe_context and livemode without changing vendor state; verified in the hosted catalog despite omission from public docs.",
+      "schemaDigest": "sha256:5ed608b204ddf3e117f419a0443db5bdc28783133476e953338f525489dd5626",
     },
     "manage_stripe_accounts": {
       "verdict": "read",
       "reason":
-        "Selects account context for the session; the reviewed contract does not mutate payment or account records.",
+        "Returns a Dashboard reconsent URL; the tool itself does not add accounts, remove accounts, or change permissions.",
+      "schemaDigest": "sha256:abb66368ed8d461b1106eb2257235a5d836f76906674c44be9ac816b6d509cd4",
     },
     "search_stripe_documentation": {
       "verdict": "read",
       "reason": "Searches Stripe reference documentation without accessing payment mutations.",
+      "schemaDigest": "sha256:18b5d9f565d28bc4786ba1f657a2c291c43f4c9137e4c5ca5fbbf5dd114eae67",
     },
     "stripe_api_write": {
       "verdict": "destructive",
       "reason": "Can dispatch POST, PATCH, PUT, or DELETE across the Stripe API, including edits and cancellations.",
+      "schemaDigest": "sha256:61d1bdc4e6862989c46250bdbea3adfc6169c24dbf6e8b20fc4251108da5c4e7",
     },
-    "create_refund": {
+    "convert_currency": {
       "verdict": "destructive",
-      "reason": "Moves money and changes an existing payment; a refund cannot be undone.",
+      "reason": "Converts existing funds between currencies in a Financial Account, changing balances.",
+      "schemaDigest": "sha256:5a861f71e41b6c680452a5817d7c67c4a708796a4e0dcf7adbd8c4f89c6c99f8",
+    },
+    "send_money": {
+      "verdict": "destructive",
+      "reason": "Sends funds to a third-party recipient through an outbound payment or payout link.",
+      "schemaDigest": "sha256:5415856ee7e5073f3e6ea3280c5f17289449ded3dbb92d4a4ab9b52af1ed3049",
+    },
+    "setup_recipient": {
+      "verdict": "destructive",
+      "reason":
+        "Creates a recipient account for outbound payments; retain the upstream destructive hint rather than treating setup as a read.",
+      "schemaDigest": "sha256:75e0bb1003a3a74badab81d4fb76f4a8481b186f7755b0a7ee73f1623b163457",
+    },
+    "transfer_money": {
+      "verdict": "destructive",
+      "reason": "Moves existing funds between Stripe balances or Financial Accounts.",
+      "schemaDigest": "sha256:e75be95113883df72577127387cf2a11fae51d2cc01df80a085f4b276bd362d8",
+    },
+    "atlas_company_formation": {
+      "verdict": "destructive",
+      "reason":
+        "Creates or advances company formation state; list and retrieve actions share this mutating tool boundary.",
+      "schemaDigest": "sha256:648e1faca5f5ac3dc7018890a336081135842d9418ee6df94dcbd81b7d861694",
     },
     "stripe_implementation_planner": {
       "verdict": "write",
       "reason": "Creates or continues provider-side planning state.",
+      "schemaDigest": "sha256:284dce4e701ab4cb9b9c9fbf61104cae2eab0b9eef1b986f128fc1bbc42ef185",
     },
     "stripe_analytics": {
       "verdict": "write",
-      "reason": "Mixes retrieval with durable query-run creation, so the whole tool is a write.",
+      "reason":
+        "The hosted schema includes execute_query_run and execute_query_template alongside retrieval; asynchronous query-run creation makes the whole tool a write even though it analyzes existing data.",
+      "schemaDigest": "sha256:c6b22ff19b5fe2d359b20f99b67591ba74cf504870123711579556b6937916b9",
     },
-    "stripe_report": {
+    "send_stripe_feedback": {
       "verdict": "write",
-      "reason": "May create durable report-run state, so retrieval paths cannot make the whole tool read-only.",
-    },
-    "send_stripe_mcp_feedback": {
-      "verdict": "write",
-      "reason": "Submits feedback to Stripe, creating provider-side state.",
+      "reason": "Submits feedback to Stripe, creating provider-side state; replaces send_stripe_mcp_feedback.",
+      "schemaDigest": "sha256:4ac352f04a8d974bdb56503f4826e7fbc19458e0f0d0c369f17e82d5fb6a7a86",
     },
   },
 };

@@ -1,0 +1,82 @@
+{
+  "verdicts": {
+    "stripe_api_search": {
+      "verdict": "read-only",
+      "schemaDigest": "sha256:1fdb44c12347b21b3896250e2a3c88763b54f4cdfe4fff27f7067d004e3097e4"
+    },
+    "stripe_api_details": {
+      "verdict": "read-only",
+      "schemaDigest": "sha256:a80bf5b685eba9b0cb91df7fa36afac04bcb97a7dcadb3c07bd22f0a4fcc7771"
+    },
+    "stripe_api_read": {
+      "verdict": "read-only",
+      "schemaDigest": "sha256:90b15c317384e244a19472d2bffcc0da73a1174f16fd89a7562134a3da5d0d53"
+    },
+    "get_stripe_account_info": {
+      "verdict": "read-only"
+    },
+    "get_balance_summary": {
+      "verdict": "read-only",
+      "schemaDigest": "sha256:857973344e59ca7199bc65e62d5e7198332542339f387b7363626ad752437a11"
+    },
+    "list_available_accounts_or_orgs": {
+      "verdict": "read-only",
+      "schemaDigest": "sha256:5ed608b204ddf3e117f419a0443db5bdc28783133476e953338f525489dd5626"
+    },
+    "manage_stripe_accounts": {
+      "verdict": "read-only",
+      "schemaDigest": "sha256:abb66368ed8d461b1106eb2257235a5d836f76906674c44be9ac816b6d509cd4"
+    },
+    "search_stripe_documentation": {
+      "verdict": "read-only",
+      "schemaDigest": "sha256:18b5d9f565d28bc4786ba1f657a2c291c43f4c9137e4c5ca5fbbf5dd114eae67"
+    },
+    "stripe_api_write": {
+      "verdict": "destructive",
+      "schemaDigest": "sha256:61d1bdc4e6862989c46250bdbea3adfc6169c24dbf6e8b20fc4251108da5c4e7"
+    },
+    "convert_currency": {
+      "verdict": "destructive",
+      "schemaDigest": "sha256:5a861f71e41b6c680452a5817d7c67c4a708796a4e0dcf7adbd8c4f89c6c99f8"
+    },
+    "send_money": {
+      "verdict": "destructive",
+      "schemaDigest": "sha256:5415856ee7e5073f3e6ea3280c5f17289449ded3dbb92d4a4ab9b52af1ed3049"
+    },
+    "setup_recipient": {
+      "verdict": "destructive",
+      "schemaDigest": "sha256:75e0bb1003a3a74badab81d4fb76f4a8481b186f7755b0a7ee73f1623b163457"
+    },
+    "transfer_money": {
+      "verdict": "destructive",
+      "schemaDigest": "sha256:e75be95113883df72577127387cf2a11fae51d2cc01df80a085f4b276bd362d8"
+    },
+    "atlas_company_formation": {
+      "verdict": "destructive",
+      "schemaDigest": "sha256:648e1faca5f5ac3dc7018890a336081135842d9418ee6df94dcbd81b7d861694"
+    },
+    "stripe_implementation_planner": {
+      "verdict": "additive",
+      "schemaDigest": "sha256:284dce4e701ab4cb9b9c9fbf61104cae2eab0b9eef1b986f128fc1bbc42ef185"
+    },
+    "stripe_analytics": {
+      "verdict": "additive",
+      "schemaDigest": "sha256:c6b22ff19b5fe2d359b20f99b67591ba74cf504870123711579556b6937916b9"
+    },
+    "send_stripe_feedback": {
+      "verdict": "additive",
+      "schemaDigest": "sha256:4ac352f04a8d974bdb56503f4826e7fbc19458e0f0d0c369f17e82d5fb6a7a86"
+    }
+  },
+  "classified": [
+    "61577dff67a835887c6103155e5c0ee032b7f5b57662237dd60e70f399ce2894",
+    "61577dff67a835887c6103155e5c0ee032b7f5b57662237dd60e70f399ce2894",
+    "19edb295f10ae0e46a54b550649ad426119083a306b01d57811ab7afca14ad66",
+    "c81595e49ab9014cc709247280ede122b42869e976f2b447e23d331997b4ddea",
+    "50ec781fe4a21be1a7875256ae04d593caad1018d525a61592fd7bee6f1cd606",
+    "13c7b8daa4e2be0945ab66ebd22ed6e4ee4fda65e78cf6b09bc240d1b6a4d9a9",
+    "122a2ecb89aa32ca0ee8c55a781168162bd7d3dbfcaf5a7a4d6d5f9309997abf",
+    "77eb0e01f5b42ead8f7c8e703217cab879683df296a44d06e621900030e03e93",
+    "2162a8c83bbed9351da5b34715161cbf7cfd1f3e86de635604491aa312328d77"
+  ]
+}

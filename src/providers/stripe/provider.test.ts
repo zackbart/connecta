@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, ConnectorContext, ToolDef } from "../../types.js";
-import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
+import { guideOf, servedTools, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { ConnectorCallError } from "../../errors.js";
 
@@ -17,6 +17,8 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 
 import { STRIPE_API_BASE_URL, STRIPE_MCP_ENDPOINT, stripe } from "./index.js";
 import { connectorGuideSummary } from "../../skills.js";
+import { catalogReviewOf, detectCatalogDrift, observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
+import { hostedTools } from "./fixtures.js";
 
 const SANDBOX = { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" } as const;
 const LIVE = { purpose: "Revenue for the real business", auth: { type: "apiKey" }, mode: "production" } as const;
@@ -62,6 +64,16 @@ describe("stripe() over OAuth", () => {
       "stripe_api_details",
       "stripe_analytics",
       "stripe_implementation_planner",
+      "convert_currency",
+      "send_money",
+      "transfer_money",
+      "setup_recipient",
+      "atlas_company_formation",
+      "send_stripe_feedback",
+      "human_confirmation.approval_token",
+      "wait for the human to confirm approval",
+      "exact original arguments",
+      "separate from the host's tool approval",
       "search_stripe_documentation",
       "Idempotency-Key",
       "100 requests per second in live mode and 25 in sandbox mode",
@@ -111,11 +123,135 @@ describe("stripe() over OAuth", () => {
     expect(connectorGuideSummary(connector)).toContain("Live and sandbox Stripe accounts");
   });
 
-  itClassifiesLikeARelease(() => stripe("billing", { purpose: "Rehearsal", auth: { type: "oauth" } }), mocks, {
-    read: ["stripe_api_read", "list_available_accounts_or_orgs", "manage_stripe_accounts"],
-    write: "stripe_analytics",
-    destructive: "stripe_api_write",
-    unknown: ["create_customer", "get_new_treasury_thing", "wreck_new_thing"],
+  it("INV-1: matches all 16 hosted schemas and retains only the documented account-info review absent live", async () => {
+    const connector = stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } });
+    const review = catalogReviewOf(connector)!;
+    expect(review.tools.size).toBe(17);
+    expect(hostedTools).toHaveLength(16);
+    for (const tool of hostedTools) {
+      expect(review.tools.get(tool.name)?.schemaDigest, tool.name).toBe(await vettedSchemaDigest(tool));
+    }
+    expect(review.tools.get("get_stripe_account_info")).toEqual({ verdict: "read-only" });
+    mocks.listTools.mockResolvedValue(structuredClone(hostedTools));
+    const tools = await servedTools(connector);
+    for (const tool of tools) {
+      expect(tool.classification, tool.name).toBe(tool.annotations?.readOnlyHint === true ? "read" : "write");
+    }
+    expect(observedCatalogDrift(connector)).toMatchObject({
+      unclassifiedTools: 0,
+      unservedTools: 1,
+      annotationConflicts: 0,
+      schemaChanges: 0,
+    });
+    expect(await detectCatalogDrift(review, [...hostedTools, { name: "get_stripe_account_info" }])).toEqual({
+      unclassifiedTools: 0,
+      unservedTools: 0,
+      annotationConflicts: 0,
+      schemaChanges: 0,
+    });
+  });
+
+  it("INV-1: fills silent reviewed reads and refuses contradictory read annotations", async () => {
+    const reads = hostedTools.filter((tool) => tool.annotations?.readOnlyHint === true);
+    mocks.listTools.mockResolvedValue(
+      reads.map((tool) => {
+        const silent = structuredClone(tool);
+        delete silent.annotations;
+        return silent;
+      }),
+    );
+    const connector = stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } });
+    expect((await servedTools(connector)).every((tool) => tool.classification === "read")).toBe(true);
+    mocks.listTools.mockResolvedValue(
+      reads.map((tool) => ({ ...structuredClone(tool), annotations: { readOnlyHint: false } })),
+    );
+    expect((await servedTools(connector)).every((tool) => tool.classification === "write")).toBe(true);
+  });
+
+  it("INV-1: keeps money movement, recipient setup, Atlas, and generic writes destructive despite read claims", async () => {
+    const names = [
+      "convert_currency",
+      "send_money",
+      "transfer_money",
+      "setup_recipient",
+      "atlas_company_formation",
+      "stripe_api_write",
+    ];
+    mocks.listTools.mockResolvedValue(
+      hostedTools
+        .filter((tool) => names.includes(tool.name))
+        .map((tool) => ({
+          ...structuredClone(tool),
+          annotations: { readOnlyHint: true, destructiveHint: false },
+        })),
+    );
+    const tools = await servedTools(stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } }));
+    expect(tools).toHaveLength(names.length);
+    for (const tool of tools) {
+      expect(tool.classification, tool.name).toBe("write");
+      expect(tool.annotations, tool.name).toEqual({ readOnlyHint: false, destructiveHint: true });
+    }
+  });
+
+  it("INV-1: retains analytics, planner, and renamed feedback writes across retrieval and read claims", async () => {
+    const names = ["stripe_analytics", "stripe_implementation_planner", "send_stripe_feedback"];
+    mocks.listTools.mockResolvedValue(
+      hostedTools
+        .filter((tool) => names.includes(tool.name))
+        .map((tool) => ({
+          ...structuredClone(tool),
+          annotations: { readOnlyHint: true },
+        })),
+    );
+    const tools = await servedTools(stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } }));
+    expect(tools).toHaveLength(names.length);
+    expect(tools.every((tool) => tool.classification === "write" && tool.annotations?.readOnlyHint === false)).toBe(
+      true,
+    );
+    const analytics = hostedTools.find((tool) => tool.name === "stripe_analytics")!;
+    expect(analytics.inputSchema).toMatchObject({
+      properties: {
+        intent: {
+          enum: expect.arrayContaining([
+            "execute_query_run",
+            "execute_query_template",
+            "retrieve_query_run",
+            "retrieve_query_template",
+          ]),
+        },
+      },
+    });
+  });
+
+  it("INV-1: fails closed on hosted input and output schema drift", async () => {
+    const connector = stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } });
+    for (const field of ["inputSchema", "outputSchema"] as const) {
+      const tool = structuredClone(hostedTools.find((tool) => tool.name === "stripe_api_search")!);
+      tool[field] = { ...(tool[field] as object), additionalProperties: false };
+      mocks.listTools.mockResolvedValue([tool]);
+      expect((await servedTools(connector))[0]).toMatchObject({
+        classification: "write",
+        annotations: { readOnlyHint: false },
+      });
+      expect(observedCatalogDrift(connector)?.schemaChanges).toBe(1);
+    }
+  });
+
+  it("INV-1: removes retired names from the review and leaves their unannotated reappearance closed", async () => {
+    const names = [
+      "list_metrics",
+      "explain_metric",
+      "metric_drilldown",
+      "show_metric_app",
+      "create_refund",
+      "stripe_report",
+      "send_stripe_mcp_feedback",
+    ];
+    const connector = stripe("billing", { purpose: "Catalog review", auth: { type: "oauth" } });
+    const review = catalogReviewOf(connector)!;
+    for (const name of names) expect(review.tools.has(name), name).toBe(false);
+    mocks.listTools.mockResolvedValue(names.map((name) => ({ name })));
+    expect((await servedTools(connector)).every((tool) => tool.classification === "write")).toBe(true);
   });
 });
 

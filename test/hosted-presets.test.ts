@@ -6,6 +6,8 @@ import linearCatalogGuideChanges from "./fixtures/linear-hosted-catalog-guide-ch
 import { hostedCatalog as linearHostedCatalog } from "../src/providers/linear/fixtures.js";
 import revenuecatReviewGuideChanges from "./fixtures/revenuecat-review-guide-changes.json";
 import revenuecatContracts from "../src/providers/revenuecat/contracts.fixture.json";
+import stripeCatalogChanges from "./fixtures/stripe-catalog-343-classification.json";
+import stripeGuideChanges from "./fixtures/stripe-catalog-343-guide-changes.json";
 import before from "./fixtures/hosted-presets-abc0d176.json";
 import configChanges from "./fixtures/provider-5d-config-changes.json";
 import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
@@ -75,6 +77,7 @@ function expectedGuide(name: Name, content: string): string {
     ...(linearCatalog[name] ?? []),
     ...(revenuecatReview[name] ?? []),
     ...(name === "mixpanel" ? mixpanelReviewChanges.guideChanges : []),
+    ...((stripeGuideChanges as Partial<Record<Name, string[][]>>)[name] ?? []),
   ])
     content = content.replaceAll(from!, to!);
   return content;
@@ -94,7 +97,7 @@ const registryFor = (connector: Connector) =>
   });
 
 describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name) => {
-  const recorded = before.providers[name];
+  const recorded = name === "stripe" ? { ...before.providers[name], ...stripeCatalogChanges } : before.providers[name];
 
   it("preserves connection choices, metadata, describe(), and guides except the enumerated prerequisites", async () => {
     const configs = configChanges[name as keyof typeof configChanges] ?? recorded.configs;
