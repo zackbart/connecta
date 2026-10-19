@@ -23,6 +23,7 @@
     "src/providers/github/index.ts",
     "src/providers/gmail/index.ts",
     "src/providers/infisical/index.ts",
+    "src/providers/intercom/index.ts",
     "src/providers/linear/index.ts",
     "src/providers/mixpanel/index.ts",
     "src/providers/notion/index.ts",

@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "provider": "intercom",
+  "checks": [
+    {
+      "type": "mcp-docs",
+      "setup": "https://developers.intercom.com/docs/guides/mcp.md",
+      "endpoints": ["https://mcp.intercom.com/mcp", "https://mcp.eu.intercom.com/mcp"],
+      "reviewed": [
+        "search",
+        "fetch",
+        "search_conversations",
+        "get_conversation",
+        "search_contacts",
+        "get_contact",
+        "list_companies",
+        "get_company",
+        "list_articles",
+        "search_articles",
+        "get_article",
+        "create_article",
+        "update_article",
+        "add_internal_note",
+        "send_operator_message",
+        "get_operator_response",
+        "get_proposal_details",
+        "apply_proposals",
+        "reject_proposals"
+      ]
+    },
+    {
+      "type": "oauth-discovery",
+      "setup": "https://mcp.intercom.com/.well-known/oauth-protected-resource/mcp",
+      "endpoints": ["https://mcp.intercom.com/mcp"],
+      "reviewed": [
+        "search",
+        "fetch",
+        "search_conversations",
+        "get_conversation",
+        "search_contacts",
+        "get_contact",
+        "list_companies",
+        "get_company",
+        "list_articles",
+        "search_articles",
+        "get_article",
+        "create_article",
+        "update_article",
+        "add_internal_note",
+        "send_operator_message",
+        "get_operator_response",
+        "get_proposal_details",
+        "apply_proposals",
+        "reject_proposals"
+      ]
+    },
+    {
+      "type": "oauth-discovery",
+      "setup": "https://mcp.eu.intercom.com/.well-known/oauth-protected-resource/mcp",
+      "endpoints": ["https://mcp.eu.intercom.com/mcp"],
+      "reviewed": [
+        "search",
+        "fetch",
+        "search_conversations",
+        "get_conversation",
+        "search_contacts",
+        "get_contact",
+        "list_companies",
+        "get_company",
+        "list_articles",
+        "search_articles",
+        "get_article",
+        "create_article",
+        "update_article",
+        "add_internal_note",
+        "send_operator_message",
+        "get_operator_response",
+        "get_proposal_details",
+        "apply_proposals",
+        "reject_proposals"
+      ]
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.intercom.com/docs/guides/mcp.md",
+      "rationale": "Review the 14 core tools and five optional Fin Operator tools against catalog.review.md and the classification table. Official docs describe parameters but omit complete JSON input schemas; anonymous tools/list returns 401 in both regions. Schema digests remain unpinned. No authenticated listing or operational tool calls were made.",
+      "evidence": {
+        "reviewedAt": "2026-10-19",
+        "additionalOfficialSource": "https://developers.intercom.com/docs/guides/fin-operator-mcp.md",
+        "changelog": "https://developers.intercom.com/docs/build-an-integration/learn-more/rest-apis/unversioned-changes",
+        "reviewed": [
+          "search",
+          "fetch",
+          "search_conversations",
+          "get_conversation",
+          "search_contacts",
+          "get_contact",
+          "list_companies",
+          "get_company",
+          "list_articles",
+          "search_articles",
+          "get_article",
+          "create_article",
+          "update_article",
+          "add_internal_note",
+          "send_operator_message",
+          "get_operator_response",
+          "get_proposal_details",
+          "apply_proposals",
+          "reject_proposals"
+        ],
+        "coreToolCount": 14,
+        "optionalOperatorToolCount": 5,
+        "readToolCount": 13,
+        "writeToolCount": 6,
+        "destructiveToolCount": 5,
+        "schemaDigests": "unpinned",
+        "schemasCaptured": false,
+        "catalogAccess": {
+          "us": 401,
+          "eu": 401
+        },
+        "notes": "Markdown docs are current; indexed HTML was stale (US-only, 13 tools). AU is unsupported. OAuth uses authorization code and refresh tokens with DCR and PKCE S256; both regions advertise mcp and operator scopes. Remote callbacks require allowlisting. add_internal_note may reopen a conversation; reject_proposals removes pending proposals and is conservatively destructive despite the vendor hint."
+      }
+    }
+  ]
+}

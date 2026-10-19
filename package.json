@@ -114,6 +114,10 @@
       "types": "./dist/providers/infisical/index.d.ts",
       "import": "./dist/providers/infisical/index.js"
     },
+    "./providers/intercom": {
+      "types": "./dist/providers/intercom/index.d.ts",
+      "import": "./dist/providers/intercom/index.js"
+    },
     "./providers/linear": {
       "types": "./dist/providers/linear/index.d.ts",
       "import": "./dist/providers/linear/index.js"

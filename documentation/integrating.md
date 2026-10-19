@@ -107,6 +107,32 @@ pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
 A request must not choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
 
+Intercom uses `intercom()` from `@zackbart/connecta/providers/intercom`:
+
+```ts
+import { intercom } from "@zackbart/connecta/providers/intercom";
+
+const support = intercom("support", {
+  purpose: "Customer support triage",
+  region: "eu",
+});
+// Add support to the deployment's connectors array.
+```
+
+Set `region` explicitly to `"us"` or `"eu"` to match the workspace; AU is
+unsupported. OAuth defaults to personal ownership because it acts as the
+authorizing teammate. Non-loopback OAuth callbacks require an Intercom Customer
+Support allowlist entry for the deployment's redirect URI before authorization
+can complete. Alternatively, set `auth: { type: "credential" }` and connect an
+API token through the [shared credential procedure](./auth.md#connect-a-shared-credential);
+token auth defaults to shared ownership. Fin Operator tools require OAuth,
+workspace availability and teammate permission. Article operations, internal
+notes and Operator actions can write; a note can reopen a snoozed conversation.
+Use a read-only endpoint when writes are unwanted. Catalog review is based on
+[Intercom's docs](https://developers.intercom.com/docs/guides/mcp), with unpinned
+schemas; inspect live tools and the runtime guide before acting on sensitive
+customer data.
+
 Wispr Flow uses OAuth only through `wisprFlow()` from
 `@zackbart/connecta/providers/wispr-flow`. It reaches the authorized account's
 Notetaker content, with personal and work accounts holding separate data.

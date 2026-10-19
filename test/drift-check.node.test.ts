@@ -988,6 +988,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       issuer: "",
       client_id_metadata_document_supported: true,
       code_challenge_methods_supported: ["S256"],
+      registration_endpoint: undefined as string | undefined,
     };
     const http = createServer((request, response) => {
       response.setHeader("content-type", "application/json");
@@ -1044,9 +1045,13 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
         schemasVendored: false,
       });
 
-      // The constructor requires a metadata-document client id, so losing
-      // that support is a finding; so is the resource naming another endpoint.
-      server = { ...server, client_id_metadata_document_supported: false };
+      // DCR fallback is valid when the vendor does not support CIMD (Intercom).
+      server = { ...server, client_id_metadata_document_supported: false, registration_endpoint: `${issuer}/register` };
+      const dcr = await run();
+      expect(JSON.parse(dcr.output).docs[0].findings).toEqual([]);
+
+      // Losing both registration methods is a finding; so is a wrong resource.
+      server = { ...server, registration_endpoint: undefined };
       await resource("https://mcp.basecamp.com/v2/mcp");
       const drifted = await run();
       expect(drifted.status).toBe(0);
