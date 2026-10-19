@@ -163,6 +163,53 @@ for (const empty of [false, true]) {
   });
 }
 
+test("narrow long-title connector cards keep their height across every status label", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const contract = maintainer();
+  // One card prevents a taller sibling from masking a reflow.
+  contract.config!.connectors = [{ ...contract.config!.connectors[0]!, title: "Customer Management" }];
+  contract.live.connectors = [contract.live.connectors.find((c) => c.id === "github")!];
+  const live = contract.live.connectors[0]!;
+  // Cover the renderer's loading fallback even though current contracts carry settled statuses.
+  live.status = "loading" as typeof live.status;
+  delete live.problem;
+  const served = structuredClone(data);
+  served.connectors = served.connectors.filter((c) => c.id === "github");
+  await install(page, contract, served);
+  await page.goto(VISUAL_ORIGIN + "/connectors");
+  const card = page.locator(".connector-card");
+  const pill = card.locator(".connector-card-top > .badge");
+  await expect(pill).toHaveText("Loading details");
+  await page.evaluate("document.fonts.ready");
+  const height = (await card.boundingBox())!.height;
+  await expect(card.getByRole("heading", { name: "Customer Management" })).toHaveAttribute(
+    "title",
+    "Customer Management",
+  );
+  const verdicts = [
+    { status: "ok", label: "Connected" },
+    { status: "auth_required", problem: "oauth_required", label: "Authorization needed" },
+    { status: "credential_required", problem: "credential_required", label: "Credential needed" },
+    { status: "error", problem: "credential_mismatch", label: "Credential mismatch" },
+    { status: "error", problem: "catalog_failed", label: "Catalog failed" },
+    { status: "error", problem: "connector_unavailable", label: "Unavailable" },
+  ] as const;
+  for (const verdict of verdicts) {
+    live.status = verdict.status;
+    delete live.problem;
+    if ("problem" in verdict) live.problem = verdict.problem;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(pill).toHaveText(verdict.label);
+    expect((await card.boundingBox())!.height, verdict.label).toBe(height);
+  }
+  await page.route(`${VISUAL_ORIGIN}/ui/connectors/github`, (route) => route.abort());
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(pill).toHaveText("Couldn't load");
+  expect((await card.boundingBox())!.height, "Couldn't load").toBe(height);
+  expect(await page.locator("#connectionsView [style]").count()).toBe(0);
+  await checks(page);
+});
+
 test("a full refresh keeps surviving attention rows in config order as each detail settles", async ({ page }) => {
   const contract = maintainer();
   const ids = ["github", "gmail"];

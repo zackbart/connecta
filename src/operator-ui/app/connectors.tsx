@@ -79,7 +79,7 @@ function ConnectorCard({ row, steady }: { row: Row; steady: ConnectorHealth }) {
     <li className={`connector-card ${health.action ? `attention ${health.tone}` : ""}`} aria-labelledby={titleId}>
       <div className="connector-card-top">
         <div className="connector-card-name">
-          <h3 id={titleId}>
+          <h3 id={titleId} title={row.title}>
             <ConnectorLink id={row.id} name={row.title} />
           </h3>
           <span className="connector-card-sub">
