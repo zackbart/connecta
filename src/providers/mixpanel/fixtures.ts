@@ -1,3 +1,5 @@
+import hostedSchemas from "./hosted-schemas.fixture.json";
+import type { ToolDef } from "../../types.js";
 import { mixpanel } from "./index.js";
 const options: Parameters<typeof mixpanel>[1] = { purpose: "Audit fixture", via: "api", auth: { type: "credential" } };
 export const fixture = {
@@ -31,3 +33,8 @@ export const responses = {
   export: '{"event":"Signed up","properties":{"time":1602611311,"$insert_id":"hpuDqcvpltpCjBsebtxwadtEBDnFAdycabFb","mp_processing_time_ms":1602625711874}}\n',
   event: { event: "Signup", properties: { time: 1618716477000, distinct_id: "91304156-cafc-4673-a237-623d1129c801", $insert_id: "29fc2962-6d9c-455d-95ad-95b84f09b9e4", "Referred by": "Friend" } },
 };
+
+// Full live JSON describe schemas reviewed on 2026-10-19. No served annotations:
+// Connecta synthesizes readOnlyHint:false for stale digests. Tests supply raw
+// hint scenarios explicitly rather than mistaking those served hints for upstream.
+export const hostedSchemaFixtures: ToolDef[] = hostedSchemas;

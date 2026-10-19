@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { observedCatalogDrift } from "../../catalog-drift.js";
+import { observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
 import type { ToolDef } from "../../types.js";
+import { hostedSchemaFixtures } from "./fixtures.js";
+import { thingsDeployment } from "../../../test/fixtures/things-deployment.js";
 import {
   guideOf,
   itClassifiesLikeARelease,
@@ -151,9 +153,13 @@ describe("mixpanel()", () => {
     );
   });
 
-  it("records a reviewed schema digest for every classified tool", () => {
-    expect(MIXPANEL_VETTED_CATALOG.tools.size).toBe(64);
+  it("records live reviewed digests and leaves the unavailable audit-log beta unpinned", () => {
+    expect(MIXPANEL_VETTED_CATALOG.tools.size).toBe(65);
     for (const [name, record] of MIXPANEL_VETTED_CATALOG.tools) {
+      if (name === "Get-Audit-Log") {
+        expect(record).toEqual({ verdict: "read-only" });
+        continue;
+      }
       expect(name).toBeTruthy();
       expect(record.schemaDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
     }
@@ -234,6 +240,94 @@ describe("mixpanel()", () => {
       { readOnlyHint: false, destructiveHint: true },
     ]);
     expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 3 });
+  });
+
+  it("INV-1: serves current hosted read schemas without a deployment override or bypassing digest checks", async () => {
+    mocks.schemasAsReviewed = false;
+    const reads = hostedSchemaFixtures.filter((tool) =>
+      ["Get-Events", "Get-Dashboard", "List-Cohorts", "Get-Metric"].includes(tool.name),
+    );
+    // These are schemas, not previously served tools. Stale reviews synthesize
+    // readOnlyHint:false on discovery; feeding that back as an upstream fact
+    // would mistake a schema lapse for an explicit annotation conflict.
+    for (const annotations of [undefined, { readOnlyHint: true }]) {
+      mocks.listTools.mockResolvedValue(reads.map((tool) => ({ ...tool, ...(annotations ? { annotations } : {}) })));
+      const connector = mixpanel("analytics", { purpose: "Product decisions" });
+      const tools = await servedTools(connector);
+      expect(tools.map((tool) => tool.classification)).toEqual(reads.map(() => "read"));
+      expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+      expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 0, annotationConflicts: 0 });
+    }
+  });
+
+  it("INV-1: current schemas still fail closed on a new schema change or explicit upstream write hint", async () => {
+    mocks.schemasAsReviewed = false;
+    const events = hostedSchemaFixtures.find((tool) => tool.name === "Get-Events")!;
+    mocks.listTools.mockResolvedValue([
+      { ...events, inputSchema: { ...events.inputSchema, description: "A new unreviewed schema" } },
+    ]);
+    const connector = mixpanel("analytics", { purpose: "Product decisions" });
+    expect((await servedTools(connector))[0]?.classification).toBe("write");
+    expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 1 });
+    mocks.listTools.mockResolvedValue([{ ...events, annotations: { readOnlyHint: false } }]);
+    expect((await servedTools(connector))[0]?.classification).toBe("write");
+    expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 0, annotationConflicts: 1 });
+  });
+
+  it("INV-1: keeps experiment computations and metadata filling as writes with matching schemas", async () => {
+    mocks.schemasAsReviewed = false;
+    const writes = hostedSchemaFixtures.filter((tool) => ["Get-Experiment", "Fill-Event-Metadata"].includes(tool.name));
+    mocks.listTools.mockResolvedValue(writes.map((tool) => ({ ...tool, annotations: { readOnlyHint: true } })));
+    const connector = mixpanel("analytics", { purpose: "Product decisions" });
+    const tools = await servedTools(connector);
+    expect(tools.map((tool) => tool.classification)).toEqual(["write", "write"]);
+    expect(tools.every((tool) => tool.annotations?.destructiveHint === true)).toBe(true);
+    for (const tool of writes) {
+      expect(await vettedSchemaDigest(tool)).toBe(MIXPANEL_VETTED_CATALOG.tools.get(tool.name)?.schemaDigest);
+    }
+    expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 0 });
+  });
+
+  it("INV-1: reviews the documented audit-log beta as a read without inventing a live schema", async () => {
+    mocks.schemasAsReviewed = false;
+    mocks.listTools.mockResolvedValue([{ name: "Get-Audit-Log" }]);
+    const tools = await servedTools(mixpanel("analytics", { purpose: "Organization audit history" }));
+    expect(tools[0]?.classification).toBe("read");
+    expect(MIXPANEL_VETTED_CATALOG.tools.get("Get-Audit-Log")?.schemaDigest).toBeUndefined();
+  });
+
+  it("INV-1 INV-2: exposes refreshed reads on a read-only pool and refuses write-capable experiment reads", async () => {
+    mocks.schemasAsReviewed = false;
+    mocks.listTools.mockResolvedValue(hostedSchemaFixtures);
+    const connector = mixpanel("things", { purpose: "Product decisions" });
+    const dispatch = vi.spyOn(connector, "callTool");
+    const app = thingsDeployment(connector);
+    expect(await app.searched("readOnly", "readonly")).toEqual([
+      "things.Get-Dashboard",
+      "things.Get-Events",
+      "things.Get-Metric",
+      "things.List-Cohorts",
+    ]);
+    for (const [name, args] of [
+      ["Get-Events", { project_id: 1 }],
+      ["Get-Dashboard", { project_id: 1, dashboard_id: 2 }],
+      ["List-Cohorts", { project_id: 1 }],
+      ["Get-Metric", { project_id: 1, metric_id: 2 }],
+    ] as const) {
+      expect((await app.call("call_tool", { address: `things.${name}`, args }, "readonly")).isError).toBeFalsy();
+    }
+    expect(dispatch).toHaveBeenCalledTimes(4);
+    const refused = await app.call(
+      "call_tool",
+      {
+        address: "things.Get-Experiment",
+        args: { project_id: 1, experiment_id: "experiment", compute_exposures: false, compute_metrics: false },
+      },
+      "readonly",
+    );
+    expect(refused.structuredContent?.error.code).toBe("read_only_endpoint");
+    expect(dispatch).toHaveBeenCalledTimes(4);
+    await app.connecta.close();
   });
 
   it("rejects an empty account purpose at construction", () => {

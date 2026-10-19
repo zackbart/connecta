@@ -4,9 +4,9 @@
   "checks": [
     {
       "type": "mcp-docs",
-      "setup": "https://docs.mixpanel.com/docs/features/mcp.md",
+      "setup": "https://docs.mixpanel.com/docs/mcp.md",
       "inventory": {
-        "url": "https://docs.mixpanel.com/docs/features/mcp.md",
+        "url": "https://docs.mixpanel.com/docs/mcp.md",
         "format": "table",
         "start": "## Available Tools",
         "end": "## MCP Server URLs"
@@ -80,8 +80,44 @@
         "Update-Experiment",
         "Create-Feature-Flag",
         "Update-Feature-Flag",
-        "Fill-Event-Metadata"
+        "Fill-Event-Metadata",
+        "Get-Audit-Log"
       ]
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/docs/mcp",
+      "rationale": "Hosted schemas require an authenticated catalog. Compare full JSON describe input/output schemas with the reviewed pins; served annotations can include Connecta's stale-schema fallback and are not raw upstream hints. Get-Experiment compute flags persist caches and may auto-conclude an experiment, so retain a write verdict even with a matching schema.",
+      "evidence": {
+        "reviewedAt": "2026-10-19",
+        "previousSchemaReview": "2026-08-30",
+        "changelog": "https://docs.mixpanel.com/changelogs",
+        "liveToolCount": 66,
+        "unchangedPinnedSchemas": 53,
+        "changedSchemaDigests": {
+          "Get-Dashboard": "sha256:0af78ab95566a20eeba08af6922f2017d98503e2b14dcbe8d7e2ac54eef870d7",
+          "Get-Events": "sha256:09d7874b0c60cf790944b8998ee943f200912eac4349dfa80d0f2ae82a7a7998",
+          "List-Cohorts": "sha256:505ff07f668186b670bcce28aa339076140b85896eb4f64afad78d963018297a",
+          "Get-Metric": "sha256:451e867abd1162f25bec96f76cb1b1d1d84eb33c04fe4d804e729810d93d26d7",
+          "Get-Experiment": "sha256:aebe329b5c5f3a9a465d40f12af1d6336d1304cc949c291eea752a5dd532e6fa",
+          "Create-Dashboard": "sha256:59fbe58cc8b69b31adfa7015e541d495abc566f56b1320e10ad77288ff9facf0",
+          "Update-Dashboard": "sha256:6f2f11e94a13667848bdcb30531a7ff478a8c53460a5e0859f8241b64d0008da",
+          "Create-Metric": "sha256:c10bc660e0664a9aba6450a45b50fb1fbea6a4fac809fd5390616416f72e04d6",
+          "Update-Metric": "sha256:ca03823ea995d0ae53807a60b1dd0d47f1667b28cfd24cdab52a9fc66f0c2834",
+          "Create-Experiment": "sha256:ce64eafec7f2490fa3c76030c75340bf5dd282a9d0bfb0c5353bcdc3b50f602d",
+          "Update-Experiment": "sha256:27c0e2b58fbb1468dda938c4112560e9481f58bc4ddafd4a94bad56666c5b12c"
+        },
+        "liveOutsideReviewedCatalog": {
+          "Get-Project-Token": "sha256:8cf0628b6f97e0d6fe4ca44638326d1036c959d897077244e83a87a96bb0fc03",
+          "Get-Live-Events": "sha256:ead9817fc15e91bd6528515c0bf0f3459403b71a5ffa8c142e82836c2405570f"
+        },
+        "documentedNotLive": ["Get-Audit-Log"],
+        "retainedWrite": ["Fill-Event-Metadata"],
+        "classificationChanged": {
+          "Get-Experiment": "destructive"
+        },
+        "getExperimentDescriptionExcerpt": "Either flag persists the refreshed cache server-side and may trigger an auto-conclude transition."
+      }
     },
     {
       "type": "manual",
