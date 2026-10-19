@@ -313,6 +313,15 @@ function validateCheck(check, allowUnrecorded) {
           Object.entries(inventory.categories).every(
             ([category, names]) => /^[a-z0-9-]+$/.test(category) && strings(names),
           )), "inventory categories must map category slugs to known tool names");
+      require(inventory.acknowledgedRemoved === undefined ||
+        (inventory.format === "vercel-categories" && strings(inventory.acknowledgedRemoved) &&
+          inventory.acknowledgedRemoved.every((name) =>
+            check.reviewed.includes(name),
+          )), "acknowledged removed names must be unique reviewed names");
+      require(inventory.acknowledgedUnclassified === undefined ||
+        (inventory.format === "vercel-categories" && strings(
+          inventory.acknowledgedUnclassified,
+        )), "acknowledged unclassified names must be unique non-empty strings");
     }
     return;
   }
@@ -1119,8 +1128,23 @@ async function checkDocumentedProvider(provider, defaults, options) {
   const reviewed = [...runtime.reviewed].sort();
   const reviewedSet = new Set(reviewed);
   const documentedSet = new Set(documented ?? []);
-  const added = (documented ?? []).filter((name) => !reviewedSet.has(name));
-  const removed = documented === undefined ? [] : reviewed.filter((name) => !documentedSet.has(name));
+  // Only the reviewed categorized Vercel capture acknowledges unclassified names.
+  // Every unreviewed row from other inventories remains drift (including RevenueCat).
+  const acknowledged = new Set(categorized ? (defaults.inventory?.acknowledgedUnclassified ?? []) : []);
+  const added = (documented ?? []).filter((name) => !reviewedSet.has(name) && !acknowledged.has(name));
+  const intentionallyUnclassified = (documented ?? []).filter(
+    (name) => !reviewedSet.has(name) && acknowledged.has(name),
+  );
+  const acknowledgedRemoved = new Set(categorized ? (defaults.inventory?.acknowledgedRemoved ?? []) : []);
+  // Capture coverage is broader than the runtime classifier. A documented
+  // tool left to live annotations must still report its future removal.
+  const baseline = categorized
+    ? [...new Set([...reviewed, ...Object.values(defaults.inventory.categories ?? {}).flat()])].sort()
+    : reviewed;
+  const removed =
+    documented === undefined
+      ? []
+      : baseline.filter((name) => !documentedSet.has(name) && !acknowledgedRemoved.has(name));
 
   if (categorized) {
     for (const name of removed) {
@@ -1146,6 +1170,7 @@ async function checkDocumentedProvider(provider, defaults, options) {
       documentedTools: undefined,
       added: [],
       removed: [],
+      intentionallyUnclassified: [],
       findings: discovery.findings,
       authorizationServer: discovery.authorizationServer,
       advertisedScopes: discovery.advertisedScopes,
@@ -1179,6 +1204,7 @@ async function checkDocumentedProvider(provider, defaults, options) {
     ...(categorized ? { inventoryPages: inventory.pages } : {}),
     added,
     removed,
+    intentionallyUnclassified,
     findings,
     schemaAuthority: "live-tools-list",
     schemasVendored: false,
@@ -1222,6 +1248,9 @@ function printDocs(result) {
   }
   for (const tool of result.removed) {
     console.log(`  not documented ${tool} (kept from release review)`);
+  }
+  for (const tool of result.intentionallyUnclassified) {
+    console.log(`  fail-closed   ${tool} (reviewed capture; live annotations remain authoritative)`);
   }
   for (const finding of result.findings) {
     console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);

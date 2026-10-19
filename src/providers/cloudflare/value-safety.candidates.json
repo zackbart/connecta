@@ -1,6 +1,6 @@
 {
   "format": 5,
-  "digest": "sha256:4f142b047af2c8469e4572092bf42ffab31954fef0cc2c8b7bbb79b11df577ef",
+  "digest": "sha256:128d27e93f42fd16e70c69b09c6deb4c0bbf0539c7b46a3e4cc65dbb6a6e1f81",
   "options": {
     "dataRoot": "result"
   },
@@ -595,11 +595,11 @@
       "named": false
     },
     "GET /accounts/{account_id}/access/organizations/doh": {
-      "fields": ["result.doh_jwt_duration"],
+      "fields": ["result.doh_jwt_duration", "result.leak_reporter"],
       "named": false
     },
     "PUT /accounts/{account_id}/access/organizations/doh": {
-      "fields": ["result.doh_jwt_duration"],
+      "fields": ["result.doh_jwt_duration", "result.leak_reporter"],
       "named": false
     },
     "POST /accounts/{account_id}/access/organizations/revoke_user": {
@@ -679,7 +679,7 @@
       "named": true
     },
     "GET /accounts/{account_id}/access/service_tokens": {
-      "fields": [],
+      "fields": ["result[].leak_reporter"],
       "named": true
     },
     "POST /accounts/{account_id}/access/service_tokens": {
@@ -687,19 +687,19 @@
       "named": true
     },
     "GET /accounts/{account_id}/access/service_tokens/{service_token_id}": {
-      "fields": [],
+      "fields": ["result.leak_reporter"],
       "named": true
     },
     "PUT /accounts/{account_id}/access/service_tokens/{service_token_id}": {
-      "fields": [],
+      "fields": ["result.leak_reporter"],
       "named": true
     },
     "DELETE /accounts/{account_id}/access/service_tokens/{service_token_id}": {
-      "fields": [],
+      "fields": ["result.leak_reporter"],
       "named": true
     },
     "POST /accounts/{account_id}/access/service_tokens/{service_token_id}/refresh": {
-      "fields": [],
+      "fields": ["result.leak_reporter"],
       "named": true
     },
     "POST /accounts/{account_id}/access/service_tokens/{service_token_id}/rotate": {
@@ -731,6 +731,10 @@
       "named": false
     },
     "POST /accounts/{account_id}/ai-gateway/billing/topup": {
+      "fields": ["result.client_secret"],
+      "named": false
+    },
+    "POST /accounts/{account_id}/ai-gateway/billing/topup/config": {
       "fields": ["result.client_secret"],
       "named": false
     },
@@ -892,35 +896,35 @@
       ],
       "named": false
     },
-    "GET /accounts/{account_id}/ai-search/namespaces/{name}/instances": {
+    "GET /accounts/{account_id}/ai-search/namespaces/{namespace}/instances": {
       "fields": [
         "result[].indexing_options.keyword_tokenizer",
         "result[].source_params.web_crawler.parse_options.include_headers"
       ],
       "named": false
     },
-    "POST /accounts/{account_id}/ai-search/namespaces/{name}/instances": {
+    "POST /accounts/{account_id}/ai-search/namespaces/{namespace}/instances": {
       "fields": [
         "result.indexing_options.keyword_tokenizer",
         "result.source_params.web_crawler.parse_options.include_headers"
       ],
       "named": false
     },
-    "GET /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": {
+    "GET /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": {
       "fields": [
         "result.indexing_options.keyword_tokenizer",
         "result.source_params.web_crawler.parse_options.include_headers"
       ],
       "named": false
     },
-    "PUT /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": {
+    "PUT /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": {
       "fields": [
         "result.indexing_options.keyword_tokenizer",
         "result.source_params.web_crawler.parse_options.include_headers"
       ],
       "named": false
     },
-    "DELETE /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": {
+    "DELETE /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": {
       "fields": [
         "result.indexing_options.keyword_tokenizer",
         "result.source_params.web_crawler.parse_options.include_headers"
@@ -1526,6 +1530,38 @@
       "fields": ["result.required_tokens"],
       "named": false
     },
+    "GET /accounts/{account_id}/cws/basic-auth-credentials": {
+      "fields": [],
+      "named": true
+    },
+    "POST /accounts/{account_id}/cws/basic-auth-credentials": {
+      "fields": [],
+      "named": true
+    },
+    "GET /accounts/{account_id}/cws/basic-auth-credentials/{credential_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /accounts/{account_id}/cws/basic-auth-credentials/{credential_id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /accounts/{account_id}/cws/basic-auth-credentials/{credential_id}/secrets": {
+      "fields": [],
+      "named": true
+    },
+    "POST /accounts/{account_id}/cws/basic-auth-credentials/{credential_id}/secrets": {
+      "fields": [],
+      "named": true
+    },
+    "GET /accounts/{account_id}/cws/basic-auth-credentials/{credential_id}/secrets/{secret_id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /accounts/{account_id}/cws/basic-auth-credentials/{credential_id}/secrets/{secret_id}": {
+      "fields": [],
+      "named": true
+    },
     "POST /accounts/{account_id}/d1/database/{database_id}/export": {
       "fields": ["result.result.signed_url"],
       "named": false
@@ -1608,6 +1644,34 @@
     },
     "GET /accounts/{account_id}/devices/physical-devices": {
       "fields": ["result_info.cursor"],
+      "named": false
+    },
+    "GET /accounts/{account_id}/devices/policies": {
+      "fields": ["result[].enable_device_credential_authentication"],
+      "named": false
+    },
+    "GET /accounts/{account_id}/devices/policy": {
+      "fields": ["result.enable_device_credential_authentication"],
+      "named": false
+    },
+    "POST /accounts/{account_id}/devices/policy": {
+      "fields": ["result.enable_device_credential_authentication"],
+      "named": false
+    },
+    "PATCH /accounts/{account_id}/devices/policy": {
+      "fields": ["result.enable_device_credential_authentication"],
+      "named": false
+    },
+    "GET /accounts/{account_id}/devices/policy/{policy_id}": {
+      "fields": ["result.enable_device_credential_authentication"],
+      "named": false
+    },
+    "PATCH /accounts/{account_id}/devices/policy/{policy_id}": {
+      "fields": ["result.enable_device_credential_authentication"],
+      "named": false
+    },
+    "DELETE /accounts/{account_id}/devices/policy/{policy_id}": {
+      "fields": ["result[].enable_device_credential_authentication"],
       "named": false
     },
     "GET /accounts/{account_id}/devices/posture": {
@@ -2330,8 +2394,12 @@
     "GET /accounts/{account_id}/one/applications/{application_id}/setup-flows": {
       "fields": [
         "result[].auth_config.authorization_url",
+        "result[].steps",
+        "result[].steps[].form_fields[].is_used_in_create",
         "result[].steps[].form_fields[].name",
-        "result[].steps[].form_fields[].type"
+        "result[].steps[].form_fields[].type",
+        "result[].steps[].is_used_in_create",
+        "result[].steps[].is_used_in_update"
       ],
       "named": false
     },
@@ -3622,6 +3690,10 @@
       "fields": [],
       "named": true
     },
+    "GET /cws/filter-schema": {
+      "fields": ["result.policy_fields[].operators", "result.workload_fields[].operators"],
+      "named": false
+    },
     "GET /memberships": {
       "fields": ["result[].policies[].resource_groups[].meta.value"],
       "named": false
@@ -4143,7 +4215,7 @@
       "named": true
     },
     "GET /zones/{zone_id}/access/service_tokens": {
-      "fields": [],
+      "fields": ["result[].leak_reporter"],
       "named": true
     },
     "POST /zones/{zone_id}/access/service_tokens": {
@@ -4151,15 +4223,15 @@
       "named": true
     },
     "GET /zones/{zone_id}/access/service_tokens/{service_token_id}": {
-      "fields": [],
+      "fields": ["result.leak_reporter"],
       "named": true
     },
     "PUT /zones/{zone_id}/access/service_tokens/{service_token_id}": {
-      "fields": [],
+      "fields": ["result.leak_reporter"],
       "named": true
     },
     "DELETE /zones/{zone_id}/access/service_tokens/{service_token_id}": {
-      "fields": [],
+      "fields": ["result.leak_reporter"],
       "named": true
     },
     "GET /zones/{zone_id}/acm/custom_trust_store": {
@@ -4838,6 +4910,14 @@
   },
   "reviewed": {
     "operations": {
+      "GET /accounts/{account_id}/devices/policies": ["enable_device_credential_authentication"],
+      "GET /accounts/{account_id}/devices/policy": ["enable_device_credential_authentication"],
+      "POST /accounts/{account_id}/devices/policy": ["enable_device_credential_authentication"],
+      "PATCH /accounts/{account_id}/devices/policy": ["enable_device_credential_authentication"],
+      "GET /accounts/{account_id}/devices/policy/{policy_id}": ["enable_device_credential_authentication"],
+      "PATCH /accounts/{account_id}/devices/policy/{policy_id}": ["enable_device_credential_authentication"],
+      "DELETE /accounts/{account_id}/devices/policy/{policy_id}": ["enable_device_credential_authentication"],
+      "GET /cws/filter-schema": ["policy_fields.operators", "workload_fields.operators"],
       "GET /accounts/{account_id}/access/apps": [
         "cors_headers.allowed_headers",
         "policies.exclude.any_valid_service_token",
@@ -5872,19 +5952,19 @@
       "PUT /accounts/{account_id}/access/ai-controls/mcp/servers/{id}": ["auth_config_summary"],
       "DELETE /accounts/{account_id}/access/ai-controls/mcp/servers/{id}": ["auth_config_summary"],
       "GET /accounts/{account_id}/access/users/{user_id}/last_seen_identity": ["passkeys"],
-      "GET /accounts/{account_id}/ai-search/namespaces/{name}/instances": [
+      "GET /accounts/{account_id}/ai-search/namespaces/{namespace}/instances": [
         "source_params.web_crawler.parse_options.include_headers"
       ],
-      "POST /accounts/{account_id}/ai-search/namespaces/{name}/instances": [
+      "POST /accounts/{account_id}/ai-search/namespaces/{namespace}/instances": [
         "source_params.web_crawler.parse_options.include_headers"
       ],
-      "GET /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": [
+      "GET /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
         "source_params.web_crawler.parse_options.include_headers"
       ],
-      "PUT /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": [
+      "PUT /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
         "source_params.web_crawler.parse_options.include_headers"
       ],
-      "DELETE /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": [
+      "DELETE /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
         "source_params.web_crawler.parse_options.include_headers"
       ],
       "POST /accounts/{account_id}/ai/tomarkdown": ["tokens"],
@@ -6297,6 +6377,8 @@
       "GET /accounts/{account_id}/k2/streams/{stream_id}": ["http.authentication"],
       "PATCH /accounts/{account_id}/k2/streams/{stream_id}": ["http.authentication"],
       "GET /accounts/{account_id}/one/applications/{application_id}/setup-flows": [
+        "steps",
+        "steps.form_fields.default_value",
         "steps.form_fields.name",
         "steps.form_fields.type"
       ],

@@ -1,7 +1,7 @@
 // Node-only: exercises the filesystem and fetch bounds of the public maintainer inventory checker.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,11 +53,17 @@ async function localReferences() {
   const directory = await mkdtemp(join(tmpdir(), "connecta-vercel-inventory-"));
   temporary.push(directory);
   await Promise.all(recording.pages.map(async (page) => writeFile(join(directory, page.file), await text(page.file))));
+  // Replay the October 8 pages against their own reviewed evidence. Live
+  // contract refreshes must not change a historical parser reproduction.
+  await mkdir(join(directory, "vercel"));
+  await writeFile(join(directory, "vercel/drift.json"), await text("drift.json"));
   const setup = join(directory, "setup.md");
   await writeFile(setup, "https://mcp.vercel.com OAuth");
   const args = [
     join(root, "scripts/drift-check.mjs"),
     "--docs",
+    "--provider-dir",
+    directory,
     "--provider",
     "vercel",
     "--tool-reference",
@@ -511,7 +517,7 @@ describe("Vercel public inventory", () => {
 
   it("INV-10 reports advisory additions/removals and never records classifications", async () => {
     const { directory, args, report } = await localReferences();
-    const evidence = join(root, "src/providers/vercel/drift.json");
+    const evidence = join(directory, "vercel/drift.json");
     const before = await readFile(evidence, "utf8");
     const result = report();
     expect(result.docs[0]).toMatchObject({ documentedTools: 213, inventoryPages: 29, findings: [] });

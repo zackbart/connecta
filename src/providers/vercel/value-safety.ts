@@ -25,7 +25,7 @@
 // name, description, log line, or identifier is out of scope.
 
 // Embedded URL verdict (#812): reviewed paths + global signing parameters.
-// Evidence: pinned index/candidates sha256:32399b3ed273 identify deployment
+// Evidence: pinned index/candidates sha256:5a702fd2dc76 identify deployment
 // reads/creation/listing, build events and runtime logs; the operation/path
 // list below scans errorMessage, deployments.errorMessage, payload.text/text
 // and message respectively, both lists and individual named-stream rows.
@@ -34,9 +34,9 @@
 // other application content retain generic query parameters byte for byte.
 // Literal X-Amz-/X-Goog- Signature/Credential/Security-Token values are
 // withheld in every string. Existing structured-capability rules still apply.
-// The original full response document is unavailable at its unversioned URL:
-// current upstream differs and is supplementary evidence only. This is not a
-// claim of complete pinned-response review or of a Vercel-wide host policy.
+// The full pinned response document was reviewed on 2026-10-19, including
+// CI failureReason and task recommendations: no vendor-minted bearer links
+// are documented there. This is not a Vercel-wide host policy.
 
 import {
   redact,
@@ -62,6 +62,7 @@ const PROJECT = [
   "internalRoutes[].missing[?header].value",
   "security.firewallRoutes[].has[?header].value",
   "security.firewallRoutes[].missing[?header].value",
+  "security.firewallRoutes[].response_has[?header].value",
 ];
 /** Project metadata whose names contain a credential word. */
 const PROJECT_ALLOW = [
@@ -126,6 +127,7 @@ const FIREWALL_CONDITIONS = [
 ];
 /** Every firewall config shape: rules, rulesets, and top-level conditions, active, draft, and versions. */
 const FIREWALL = under(["rules[]", "rulesets[]", "conditions[]"], FIREWALL_CONDITIONS);
+const BYPASS_CONDITIONS = ["condition", "conditionGroup[].conditions[?header].value"];
 const FIREWALL_REASON =
   "Firewall rules match header, cookie, and query values, which can be credentials a rule checks for (an X-Auth-Key).";
 const TEAM_INVITE = "Teams carry inviteCode, which lets its holder join the team (visible to owners).";
@@ -136,6 +138,14 @@ const TEAM_INVITE = "Teams carry inviteCode, which lets its holder join the team
  * these operations project it themselves (value-safe environment variables).
  */
 const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
+  "GET /ai-gateway/budgets/list": safe("Coverage counts per API key; no key value.", ["defaultCoveredCounts.api-key"]),
+  "GET /v8/artifacts/status": safe("Remote-cache read-only status is a flag.", ["readOnly"]),
+  "GET /v1/security/firewall/bypass/rules": redact(FIREWALL_REASON, under(["", "rules[]"], BYPASS_CONDITIONS)),
+  "POST /v1/security/firewall/bypass/rules": redact(
+    "The compiled condition and header, cookie, or query matches can contain stored credentials.",
+    BYPASS_CONDITIONS,
+  ),
+  "DELETE /v1/security/firewall/bypass/rules": safe("Deletes a conditional bypass rule; no response value."),
   "PATCH /aliases/{id}/protection-bypass": refuse("creates a shareable link that bypasses Deployment Protection."),
   "POST /api-keys": refuse("mints an AI Gateway API key and returns it in cleartext."),
   "POST /v1/connect/authorize/{connector}": refuse(

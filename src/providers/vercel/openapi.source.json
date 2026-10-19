@@ -1,7 +1,7 @@
 {
   "url": "https://openapi.vercel.sh/",
-  "revision": "sha256:32399b3ed273",
-  "digest": "sha256:32399b3ed273548c8b14dd4715ff26c7c295399fa0f08bf5c81aee89460cfb90",
+  "revision": "sha256:5a702fd2dc76",
+  "digest": "sha256:5a702fd2dc76b4bef328551d3e091657a542eeca5312e5b726efb11a497f6ed1",
   "latest": "https://openapi.vercel.sh/",
   "options": {
     "depth": 2,

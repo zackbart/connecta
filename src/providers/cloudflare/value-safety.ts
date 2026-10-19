@@ -16,7 +16,7 @@
 // or the whole body when it is not an envelope); lists are traversed
 // implicitly and `*` matches every key of an object.
 // Embedded URL verdict (#812): reviewed paths + global signing parameters.
-// Evidence: digest-verified schema revision 3fad73eb27c381031c09ccdfa28ef9352029cd5a:
+// Evidence: digest-verified schema revision 843eae2fbf4fe774ef9c91021dd34017ac9c970a:
 // builds_BuildLogsResponse.lines (timestamp/log-message tuples),
 // pages_deployment_log.data.line and workers-observability_query_results
 // events.events and invocations.* -> telemetry_event.$metadata.message/error
@@ -30,7 +30,10 @@
 // JavaScript served as application/javascript) are not decoded or scanned.
 // Recording/download/upload capabilities retain their structured-field rules.
 // The review found no documented Cloudflare-minted links embedded in other
-// free text and justifies no Cloudflare/R2/S3-wide file-host policy.
+// free text, including AI Search item/job logs and Cloudforce match data,
+// and justifies no Cloudflare/R2/S3-wide file-host policy. The new Cloudforce
+// match responses omit schemas; their documented event semantics supplement
+// the schema review, rather than proving every returned field.
 
 import {
   redact as reviewed,
@@ -254,6 +257,49 @@ const A = "/accounts/{account_id}";
 const Z = "/zones/{zone_id}";
 
 const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
+  [`POST ${A}/ai-gateway/billing/topup/config`]: refuse(
+    "Returns a payment client secret; complete billing setup in the dashboard.",
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/cws/basic-auth-credentials`,
+      `POST ${A}/cws/basic-auth-credentials`,
+      `GET ${A}/cws/basic-auth-credentials/{credential_id}`,
+      `DELETE ${A}/cws/basic-auth-credentials/{credential_id}`,
+      `GET ${A}/cws/basic-auth-credentials/{credential_id}/secrets`,
+      `POST ${A}/cws/basic-auth-credentials/{credential_id}/secrets`,
+      `GET ${A}/cws/basic-auth-credentials/{credential_id}/secrets/{secret_id}`,
+      `DELETE ${A}/cws/basic-auth-credentials/{credential_id}/secrets/{secret_id}`,
+    ].map((key) => [
+      key,
+      safe(
+        "CWS returns only username, ids, and creation/expiry metadata; password input and hashes are never returned.",
+      ),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/devices/policies`,
+      `GET ${A}/devices/policy`,
+      `POST ${A}/devices/policy`,
+      `PATCH ${A}/devices/policy`,
+      `GET ${A}/devices/policy/{policy_id}`,
+      `PATCH ${A}/devices/policy/{policy_id}`,
+      `DELETE ${A}/devices/policy/{policy_id}`,
+    ].map((key) => [
+      key,
+      safe(
+        "Device credential authentication is a boolean reauthentication policy, not a credential.",
+        "enable_device_credential_authentication",
+      ),
+    ]),
+  ),
+  "GET /cws/filter-schema": safe(
+    "Filter-builder fields and advisory operator labels; no credentials.",
+    "policy_fields.operators",
+    "workload_fields.operators",
+  ),
+
   // Access
   [`GET ${A}/access/apps`]: ACCESS_APP,
   [`POST ${A}/access/apps`]: ACCESS_APP,
@@ -864,18 +910,24 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
         [`PUT ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
         [`DELETE ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
         [`GET ${A}/access/users/{user_id}/last_seen_identity`, "passkeys"],
-        [`GET ${A}/ai-search/namespaces/{name}/instances`, "source_params.web_crawler.parse_options.include_headers"],
-        [`POST ${A}/ai-search/namespaces/{name}/instances`, "source_params.web_crawler.parse_options.include_headers"],
         [
-          `GET ${A}/ai-search/namespaces/{name}/instances/{id}`,
+          `GET ${A}/ai-search/namespaces/{namespace}/instances`,
           "source_params.web_crawler.parse_options.include_headers",
         ],
         [
-          `PUT ${A}/ai-search/namespaces/{name}/instances/{id}`,
+          `POST ${A}/ai-search/namespaces/{namespace}/instances`,
           "source_params.web_crawler.parse_options.include_headers",
         ],
         [
-          `DELETE ${A}/ai-search/namespaces/{name}/instances/{id}`,
+          `GET ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
+          "source_params.web_crawler.parse_options.include_headers",
+        ],
+        [
+          `PUT ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
+          "source_params.web_crawler.parse_options.include_headers",
+        ],
+        [
+          `DELETE ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
           "source_params.web_crawler.parse_options.include_headers",
         ],
         [`POST ${A}/ai/tomarkdown`, "tokens"],
@@ -1297,10 +1349,10 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       ),
     ]),
   ),
-  [`GET ${A}/one/applications/{application_id}/setup-flows`]: safe(
-    "Setup flows describe the OAuth authorization URL and form fields to fill, not credentials.",
-    "steps.form_fields.name",
-    "steps.form_fields.type",
+  [`GET ${A}/one/applications/{application_id}/setup-flows`]: reviewed(
+    "Setup form defaults may carry credential values; withhold defaults while retaining field names and input types.",
+    ["steps.form_fields.default_value"],
+    ["steps", "steps.form_fields.name", "steps.form_fields.type"],
   ),
   ...Object.fromEntries(
     [
@@ -1539,6 +1591,7 @@ export const CLOUDFLARE_VALUE_SAFETY: ValueSafetyTable = {
           ["amr_matching_session_duration", "A session duration."],
           ["doh_jwt_duration", "A token lifetime setting."],
           ["token_endpoint_auth_method", "An OAuth client authentication method name."],
+          ["leak_reporter", "The secret-scanning partner name, not the leaked token."],
           ["has_rotated_secret", "Whether a client secret was rotated; a flag."],
           ["secret_preview", "A masked preview of a caller-supplied key."],
           ["token_pricing", "Per-token model pricing."],

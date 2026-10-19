@@ -12,7 +12,7 @@
         "end": "### Connect to the Cloudflare API MCP server"
       },
       "endpoints": ["https://mcp.cloudflare.com/mcp"],
-      "reviewed": ["search", "execute"]
+      "reviewed": ["search", "execute", "docs"]
     },
     {
       "type": "openapi-index",

@@ -142,6 +142,10 @@ const GLOBAL_API_KEY_CREDENTIAL: ConnectorCredentialConfig = {
  */
 const CLOUDFLARE_MCP_CLASSIFICATION: ToolClassification = {
   tools: {
+    docs: {
+      verdict: "read",
+      reason: "Searches Cloudflare documentation without executing API methods.",
+    },
     search: {
       verdict: "read",
       reason: "Searches the Cloudflare OpenAPI contract without executing API methods.",

@@ -62,7 +62,7 @@ describe("cloudflare() over OAuth", () => {
     const guide = guideOf(connector);
     for (const text of [
       "Hosted MCP over OAuth",
-      "A read-only endpoint therefore gets only `search` here",
+      "A read-only endpoint therefore gets `docs` and `search` here",
       "configure an API-token connector",
       "no `graphql_query`",
       "authorize_connector",
@@ -106,12 +106,14 @@ describe("cloudflare() over OAuth", () => {
   it("INV-1: keeps execute destructive despite a read claim and fails closed on an unknown tool", async () => {
     mocks.listTools.mockResolvedValue([
       { name: "search" },
+      { name: "docs" },
       { name: "execute", annotations: { readOnlyHint: true } },
       { name: "list_zones" },
     ]);
     const tools = await servedTools(cloudflare("cf", { purpose: "Ops", auth: { type: "oauth" } }));
     expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
       ["search", { readOnlyHint: true, destructiveHint: false }],
+      ["docs", { readOnlyHint: true, destructiveHint: false }],
       ["execute", { readOnlyHint: false, destructiveHint: true }],
       ["list_zones", { readOnlyHint: false }],
     ]);
@@ -1396,6 +1398,102 @@ describe("cloudflare() over a key", () => {
       const ordinary = await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, token()));
       expect(ordinary.message).toContain("secret 0xECHOED rejected");
     });
+  });
+
+  it("INV-1: admits stateless application lookup and posture validation as reads", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    for (const [path, body, result] of [
+      [
+        `/accounts/${ACCOUNT}/resource-library/applications/lookup`,
+        { lookup: "block Example Chat" },
+        [{ id: 1, name: "Example Chat" }],
+      ],
+      [
+        `/accounts/${ACCOUNT}/data-security/posture/finding_types/validate`,
+        {
+          name: "policy",
+          description: "Policy",
+          asset_vendor: "GOOGLE_WORKSPACE",
+          asset_class: "GoogleWorkspaceFile",
+          severity: "High",
+          expression: 'result := "pass"',
+          applies_to_all_integrations: true,
+        },
+        { valid: false, errors: [{ message: "Invalid definition" }] },
+      ],
+    ] as const) {
+      respond = () => Response.json({ success: true, result });
+      expect(await connector.callTool("cloudflare_api_read", { method: "POST", path, body }, token())).toMatchObject({
+        status: 200,
+        data: result,
+      });
+    }
+    expect(sent.map((request) => request.method)).toEqual(["POST", "POST"]);
+  });
+
+  it("INV-5: withholds application setup form defaults before select without losing field metadata", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    const form_fields = [
+      { name: "client_secret", type: "password", default_value: "stored-secret-marker" },
+      { name: "proof", type: "password", default_value: "stored-password-marker" },
+      { name: "region", type: "text", default_value: "default-region" },
+    ];
+    respond = () =>
+      Response.json({ success: true, result: [{ id: "flow_1", steps: [{ type: "form", form_fields }] }] });
+    const result = await connector.callTool(
+      "cloudflare_api_read",
+      {
+        path: `/accounts/${ACCOUNT}/one/applications/app1/setup-flows`,
+        select: ["id", "steps.form_fields"],
+      },
+      token(),
+    );
+    expect(JSON.stringify(result)).not.toMatch(/stored-secret-marker|stored-password-marker|default-region/);
+    expect(result).toMatchObject({
+      data: [
+        {
+          id: "flow_1",
+          steps: [
+            {
+              form_fields: form_fields.map(({ default_value: _, ...field }) => ({
+                ...field,
+                default_value: "[redacted]",
+              })),
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("INV-5: keeps CWS secret metadata, redacts unexpected secrets, and refuses payment client secrets", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    const path = `/accounts/${ACCOUNT}/cws/basic-auth-credentials/c1/secrets`;
+    respond = () =>
+      Response.json({ success: true, result: [{ id: "s1", created_at: "2026-10-19", password: "stored-password" }] });
+    const read = await connector.callTool("cloudflare_api_read", { path }, token());
+    expect(JSON.stringify(read)).not.toContain("stored-password");
+    // Password hashes are not documented responses; the password field is
+    // still removed if the vendor returns it despite its closed schema.
+    expect(read).toMatchObject({ data: [{ id: "s1", password: "[redacted]" }] });
+    respond = () => Response.json({ success: true, result: { id: "s1", expires_at: null } });
+    expect(
+      await connector.callTool(
+        "cloudflare_api_write",
+        { method: "POST", path, body: { password: "new-password" } },
+        token(),
+      ),
+    ).toMatchObject({ data: { id: "s1", expires_at: null } });
+    const before = sent.length;
+    const error = await refusal(
+      connector.callTool(
+        "cloudflare_api_write",
+        { method: "POST", path: `/accounts/${ACCOUNT}/ai-gateway/billing/topup/config`, body: {} },
+        token(),
+      ),
+    );
+    expect(error.message).toContain("payment client secret");
+    expect(sent).toHaveLength(before);
   });
 
   it("keeps billed, activating, and outbound POSTs out of the read tool (round 1, finding 5)", async () => {

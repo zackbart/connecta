@@ -970,6 +970,71 @@ describe("vercel() over an access token", () => {
     ).toEqual([{ id: "inv_1", email: "a@example.com", role: "MEMBER" }]);
   });
 
+  it("INV-5: withholds conditional-bypass credentials in compiled and structured responses before selection", async () => {
+    const connector = vercel("hosting", TOKEN);
+    const rule = {
+      id: "rule_1",
+      projectId: "prj_1",
+      domain: "app.example.com",
+      condition: 'http.request.headers["x-auth-key"] == "stored-access"',
+      conditionGroup: [
+        {
+          conditions: [
+            { type: "header", key: "X-Auth-Key", op: "eq", value: "stored-access" },
+            { type: "cookie", key: "session", op: "eq", value: ["stored-cookie"] },
+            { type: "query", key: "proof", op: "eq", value: "stored-query" },
+            { type: "ip_address", op: "eq", value: "192.0.2.1" },
+          ],
+        },
+      ],
+    };
+    for (const data of [rule, { rules: [rule] }]) {
+      respond = () => Response.json(data);
+      const result = await call(connector, "vercel_api_read", {
+        path: "/v1/security/firewall/bypass/rules",
+        query: { projectId: "prj_1" },
+      });
+      expect(JSON.stringify(result)).not.toMatch(/stored-access|stored-cookie|stored-query/);
+      expect(JSON.stringify(result)).toContain("192.0.2.1");
+      expect(JSON.stringify(result)).toContain("[redacted]");
+    }
+    respond = () => Response.json(rule);
+    const created = await call(connector, "vercel_api_write", {
+      method: "POST",
+      path: "/v1/security/firewall/bypass/rules",
+      query: { projectId: "prj_1" },
+      body: { domain: "app.example.com", conditionGroup: [{ conditions: [rule.conditionGroup[0]!.conditions[0]!] }] },
+      select: ["condition", "conditionGroup"],
+    });
+    expect(JSON.stringify(created)).not.toMatch(/stored-access|stored-cookie|stored-query/);
+    respond = () =>
+      Response.json({
+        projects: [
+          {
+            security: {
+              firewallRoutes: [
+                { response_has: [{ type: "header", key: "X-Auth-Key", value: "stored-response-match" }] },
+              ],
+            },
+          },
+        ],
+      });
+    expect(JSON.stringify(await call(connector, "vercel_api_read", { path: "/v10/projects" }))).not.toContain(
+      "stored-response-match",
+    );
+  });
+
+  it("accepts sandbox commands without the removed cmdId requirement", async () => {
+    const connector = vercel("hosting", TOKEN);
+    respond = () => Response.json({ id: "cmd_1" });
+    await call(connector, "vercel_api_write", {
+      method: "POST",
+      path: "/v2/sandboxes/sessions/s1/cmd",
+      body: { command: "pwd" },
+    });
+    expect(sent).toHaveLength(1);
+  });
+
   it("redacts header, cookie, and query condition values in every firewall config operation", async () => {
     const connector = vercel("hosting", TOKEN);
     const conditions = [

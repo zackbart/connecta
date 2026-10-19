@@ -701,7 +701,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const cleanReport = JSON.parse(clean.output).docs[0];
     expect(cleanReport).toMatchObject({
       provider: "vercel",
-      documentedTools: 217,
+      documentedTools: 247,
       added: expect.any(Array),
       removed: [],
       findings: [],
@@ -709,13 +709,34 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       schemasVendored: false,
     });
 
-    expect(cleanReport.added).toHaveLength(174);
-    await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("14 tools", "15 tools"));
+    expect(cleanReport.added).toEqual([]);
+    expect(cleanReport.intentionallyUnclassified).toHaveLength(207);
+    await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("17 tools", "18 tools"));
     const category = join(dirname(toolReference), "deployments.md");
     await writeFile(category, `${await readFile(category, "utf8")}\n## ` + "`new_vercel_tool`\n");
     const drifted = runDocumented("vercel", toolReference, setupReference);
     expect(drifted.status).toBe(0);
     expect(JSON.parse(drifted.output).docs[0].added).toEqual([...cleanReport.added, "new_vercel_tool"].sort());
+  });
+
+  it("keeps reviewed absent tools classified while reporting future removals", async () => {
+    const { directory, toolReference, setupReference } = await documentedVercelWorkspace();
+    const first = runDocumented("vercel", toolReference, setupReference);
+    expect(JSON.parse(first.output).docs[0].removed).toEqual([]);
+    const teams = join(directory, "teams.md");
+    await writeFile(teams, (await readFile(teams, "utf8")).replace("## `list_teams`", "## `replacement_tool`"));
+    const result = JSON.parse(runDocumented("vercel", toolReference, setupReference).output).docs[0];
+    expect(result.removed).toEqual(["list_teams"]);
+    expect(result.added).toEqual(["replacement_tool"]);
+  });
+
+  it("reports a captured but unclassified Vercel tool removal after complete count reconciliation", async () => {
+    const { directory, toolReference, setupReference } = await documentedVercelWorkspace();
+    await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("23 tools", "22 tools"));
+    const sandboxes = join(directory, "sandboxes.md");
+    await writeFile(sandboxes, (await readFile(sandboxes, "utf8")).replace("## `run_session_command`", ""));
+    const result = JSON.parse(runDocumented("vercel", toolReference, setupReference).output).docs[0];
+    expect(result).toMatchObject({ documentedTools: 246, added: [], removed: ["run_session_command"], findings: [] });
   });
 
   it("INV-8 refuses a removal with no known category evidence", async () => {
@@ -808,7 +829,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const cloudflare = join(directory, "cloudflare.md");
     await writeFile(
       cloudflare,
-      `# Cloudflare MCP\n\nOAuth\n\n## Cloudflare API MCP server\n\nTwo tools: \`search()\` and \`execute()\`.\n\n### Connect to the Cloudflare API MCP server\n\n${CLOUDFLARE_MCP_ENDPOINT}\n`,
+      `# Cloudflare MCP\n\nOAuth\n\n## Cloudflare API MCP server\n\nThree tools: \`search()\`, \`execute()\`, and \`docs()\`.\n\n### Connect to the Cloudflare API MCP server\n\n${CLOUDFLARE_MCP_ENDPOINT}\n`,
     );
     const cloudflareResult = runDocumented("cloudflare", cloudflare, cloudflare);
     expect(cloudflareResult.status).toBe(0);

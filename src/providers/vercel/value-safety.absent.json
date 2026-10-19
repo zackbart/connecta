@@ -5,7 +5,8 @@
     "DELETE /v1/projects/{idOrName}/avatar": [
       "internalRoutes[].missing[?header].value",
       "security.firewallRoutes[].has[?header].value",
-      "security.firewallRoutes[].missing[?header].value"
+      "security.firewallRoutes[].missing[?header].value",
+      "security.firewallRoutes[].response_has[?header].value"
     ],
     "DELETE /v1/projects/{idOrName}/env": ["[].legacyValue", "[].value", "legacyValue", "value", "vsmValue"],
     "DELETE /v9/projects/{idOrName}/env/{id}": ["vsmValue"],
@@ -36,7 +37,8 @@
     "GET /v1/microfrontends/groups/{groupId}/projects": [
       "projects[].internalRoutes[].missing[?header].value",
       "projects[].security.firewallRoutes[].has[?header].value",
-      "projects[].security.firewallRoutes[].missing[?header].value"
+      "projects[].security.firewallRoutes[].missing[?header].value",
+      "projects[].security.firewallRoutes[].response_has[?header].value"
     ],
     "GET /v1/security/firewall/config": [
       "active.conditions[].conditionGroup[].conditions[?header].values",
@@ -82,7 +84,8 @@
     "GET /v9/projects/{idOrName}": [
       "internalRoutes[].missing[?header].value",
       "security.firewallRoutes[].has[?header].value",
-      "security.firewallRoutes[].missing[?header].value"
+      "security.firewallRoutes[].missing[?header].value",
+      "security.firewallRoutes[].response_has[?header].value"
     ],
     "PATCH /v1/drains/{id}": ["headers{}", "origin:url", "secret"],
     "PATCH /v1/env": ["created[].value", "data[].value"],
@@ -90,7 +93,8 @@
     "PATCH /v1/projects/{projectId}/microfrontends": [
       "internalRoutes[].missing[?header].value",
       "security.firewallRoutes[].has[?header].value",
-      "security.firewallRoutes[].missing[?header].value"
+      "security.firewallRoutes[].missing[?header].value",
+      "security.firewallRoutes[].response_has[?header].value"
     ],
     "PATCH /v12/deployments/{id}/cancel": [
       "services[].redirects[].headers{}",
@@ -102,7 +106,8 @@
     "PATCH /v9/projects/{idOrName}": [
       "internalRoutes[].missing[?header].value",
       "security.firewallRoutes[].has[?header].value",
-      "security.firewallRoutes[].missing[?header].value"
+      "security.firewallRoutes[].missing[?header].value",
+      "security.firewallRoutes[].response_has[?header].value"
     ],
     "PATCH /v9/projects/{idOrName}/env/{id}": ["[].legacyValue", "[].value", "vsmValue"],
     "POST /v1/drains": ["headers{}", "origin:url", "secret"],
@@ -128,7 +133,8 @@
     "POST /v1/projects/{idOrName}/avatar": [
       "internalRoutes[].missing[?header].value",
       "security.firewallRoutes[].has[?header].value",
-      "security.firewallRoutes[].missing[?header].value"
+      "security.firewallRoutes[].missing[?header].value",
+      "security.firewallRoutes[].response_has[?header].value"
     ],
     "POST /v1/projects/{projectId}/routes/generate": [
       "route.has[?header].value",
@@ -146,7 +152,8 @@
     "POST /v11/projects": [
       "internalRoutes[].missing[?header].value",
       "security.firewallRoutes[].has[?header].value",
-      "security.firewallRoutes[].missing[?header].value"
+      "security.firewallRoutes[].missing[?header].value",
+      "security.firewallRoutes[].response_has[?header].value"
     ],
     "POST /v13/deployments": [
       "services[].redirects[].headers{}",
