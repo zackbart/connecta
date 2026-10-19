@@ -1528,52 +1528,59 @@ describe("status UI", () => {
     expect(byId.evil.authorizationUrl).toBeUndefined();
   });
 
-  it("/ui/data carries drift counts only, and omits them until a refresh saw one", async () => {
-    const drifting: Connector = {
-      id: "drifting",
-      description: "Hosted provider",
-      catalogDrift() {
-        return {
-          observedAt: "2026-08-12T12:00:00.000Z",
-          unclassifiedTools: 2,
-          unservedTools: 0,
-          annotationConflicts: 1,
-          schemaChanges: 0,
-          // The plugin seam is open, so the payload it is not allowed to send
-          // is sent here on purpose: nothing but counts may reach an operator.
-          toolNames: ["billing.delete_customer"],
-        } as never;
-      },
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        throw new Error("n/a");
-      },
-    };
-    const c = makeDeployment(uiDeploymentConfig([drifting]));
-    const res = await fetchTestUiDetails(
-      c,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    const body = (await res.json()) as any;
-    const byId = Object.fromEntries(body.connectors.map((x: any) => [x.id, x]));
-    expect(byId.drifting.catalogDrift).toEqual({
-      observedAt: "2026-08-12T12:00:00.000Z",
-      unclassifiedTools: 2,
-      unservedTools: 0,
-      annotationConflicts: 1,
-      schemaChanges: 0,
-    });
-    expect(JSON.stringify(body)).not.toContain("billing.delete_customer");
-    // A connector that reports no observation gets no field at all, which is
-    // what the UI renders as "not observed" rather than as "clean".
-    expect(byId.calc.catalogDrift).toBeUndefined();
-  });
+  it.each(["ok", "auth_required"] as const)(
+    "INV-6: /ui/data bounds drift and prefers the current catalog observation when status is %s",
+    async (state) => {
+      const drifting: Connector = {
+        id: "drifting",
+        description: "Hosted provider",
+        async status() {
+          return { state };
+        },
+        catalogDrift() {
+          return {
+            observedAt: "2026-08-12T12:00:00.000Z",
+            unclassifiedTools: 2,
+            unservedTools: 0,
+            annotationConflicts: 1,
+            schemaChanges: 0,
+            // The plugin seam is open, so the payload it is not allowed to send
+            // is sent here on purpose: nothing but counts may reach an operator.
+            toolNames: ["billing.delete_customer"],
+          } as never;
+        },
+        async listTools() {
+          return [];
+        },
+        async callTool() {
+          throw new Error("n/a");
+        },
+      };
+      const c = makeDeployment(uiDeploymentConfig([drifting]));
+      const res = await fetchTestUiDetails(
+        c,
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        }),
+      );
+      const body = (await res.json()) as any;
+      const byId = Object.fromEntries(body.connectors.map((x: any) => [x.id, x]));
+      expect(byId.drifting.catalogDrift).toEqual({
+        observedAt: state === "ok" ? expect.any(String) : "2026-08-12T12:00:00.000Z",
+        reviewedBaseline: false,
+        unclassifiedTools: state === "ok" ? 0 : 2,
+        unservedTools: 0,
+        annotationConflicts: state === "ok" ? 0 : 1,
+        schemaChanges: 0,
+      });
+      expect(JSON.stringify(body)).not.toContain("billing.delete_customer");
+      // A connector that reports no observation gets no field at all, which is
+      // what the UI renders as "not observed" rather than as "clean".
+      expect(byId.calc.catalogDrift).toBeUndefined();
+    },
+  );
 
-  it("/ui/data strips connector-supplied catalog-access payloads", async () => {
+  it("INV-6: /ui/data replaces connector-supplied catalog access with the current bounded observation", async () => {
     const hostile: Connector = {
       id: "hostile_status",
       description: "Hostile status seam",
@@ -1605,7 +1612,8 @@ describe("status UI", () => {
     const body = (await res.json()) as any;
     const connector = body.connectors.find((candidate: any) => candidate.id === "hostile_status");
 
-    expect(connector.catalogAccess).toBeUndefined();
+    expect(connector.catalogAccess).toEqual({ state: "fresh", observedAt: expect.any(String) });
+    expect(connector.catalogAccess.observedAt).not.toBe("2026-08-13T12:00:00.000Z");
     expect(JSON.stringify(body)).not.toContain("exfiltrate-this");
   });
 

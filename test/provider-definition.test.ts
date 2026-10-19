@@ -609,7 +609,7 @@ describe("remoteMcp({ classify })", () => {
     }
   });
 
-  it("reports drift as counts against the reviewed names", async () => {
+  it("INV-6: reports drift and schema coverage against the reviewed names", async () => {
     const connector = served({
       tools: {
         ...THINGS.tools,
@@ -626,6 +626,9 @@ describe("remoteMcp({ classify })", () => {
       const { observedAt, ...counts } = observedCatalogDrift(connector) ?? { observedAt: "" };
       expect(observedAt).toMatch(/^\d{4}-/);
       expect(counts).toEqual({
+        reviewedBaseline: true,
+        verification: "complete",
+        schemaCoverage: { pinned: 1, unpinned: 2 },
         unclassifiedTools: 2,
         unservedTools: 1,
         annotationConflicts: 2,

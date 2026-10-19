@@ -291,10 +291,12 @@ describe("revenuecat()", () => {
 
   it("INV-1: verifies the four captured schemas and fails closed when a reviewed read changes", async () => {
     for (const tool of reviewedTools) {
-      expect(await vettedSchemaDigest(tool)).toBe(
+      expect(await vettedSchemaDigest(tool, "legacy")).toBe(
         contracts.schemaDigests[tool.name as keyof typeof contracts.schemaDigests],
       );
-      expect(REVENUECAT_VETTED_CATALOG.tools.get(tool.name)?.schemaDigest).toBe(await vettedSchemaDigest(tool));
+      expect(REVENUECAT_VETTED_CATALOG.tools.get(tool.name)?.schemaDigest).toBe(
+        await vettedSchemaDigest(tool, "legacy"),
+      );
     }
     expect([...REVENUECAT_VETTED_CATALOG.tools.values()].filter((t) => t.schemaDigest)).toHaveLength(4);
     const connector = revenuecat("crm", { purpose: "Subscription questions" });
@@ -320,7 +322,7 @@ describe("revenuecat()", () => {
     expect(served.filter((t) => t.classification === "write").map((t) => t.name)).toEqual(["validate-app-credentials"]);
     expect(await detectCatalogDrift(REVENUECAT_VETTED_CATALOG, facts)).toEqual({
       unclassifiedTools: 0,
-      unservedTools: 63,
+      unservedTools: 0,
       annotationConflicts: 0,
       schemaChanges: 0,
     });

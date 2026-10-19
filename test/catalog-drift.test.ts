@@ -419,7 +419,14 @@ describe("the connector seam is projected, not echoed", () => {
       },
     }) as unknown as Connector;
 
-  const REPORT_KEYS = ["annotationConflicts", "observedAt", "schemaChanges", "unclassifiedTools", "unservedTools"];
+  const REPORT_KEYS = [
+    "annotationConflicts",
+    "observedAt",
+    "reviewedBaseline",
+    "schemaChanges",
+    "unclassifiedTools",
+    "unservedTools",
+  ];
 
   it("INV-6: health neither reads nor reports a connector drift seam", async () => {
     const connector = leaky();
@@ -504,7 +511,7 @@ describe("schema digests", () => {
       },
       outputSchema: { type: "object", "é": true, "Z": [{ y: 1, x: 2 }] },
     };
-    expect(await vettedSchemaDigest(tool)).toBe(
+    expect(await vettedSchemaDigest(tool, "legacy")).toBe(
       await sha256(
         JSON.stringify(
           sortedJson({
@@ -518,7 +525,7 @@ describe("schema digests", () => {
 
   it("INV-1: digest every leaf of a schema deeper than the host stack", async () => {
     const first = await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("string", 10_000) });
-    expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(first).toMatch(/^sha256-sets-v1:[a-f0-9]{64}$/);
     expect(await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("number", 10_000) })).not.toBe(first);
   });
 
@@ -534,7 +541,7 @@ describe("schema digests", () => {
         name: "wide",
         inputSchema: { enum: Array.from({ length: 99_990 }, (_, index) => index) },
       }),
-    ).resolves.toMatch(/^sha256:/);
+    ).resolves.toMatch(/^sha256-sets-v1:/);
   });
 
   describe.each(Object.keys(DIGESTED_READ) as Array<keyof typeof DIGESTED_READ>)("(%s)", (path) => {

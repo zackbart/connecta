@@ -730,13 +730,24 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(result.added).toEqual(["replacement_tool"]);
   });
 
-  it("reports a captured but unclassified Vercel tool removal after complete count reconciliation", async () => {
+  it("INV-1: reports a captured Vercel tool removal and its stale acknowledgement after complete count reconciliation", async () => {
     const { directory, toolReference, setupReference } = await documentedVercelWorkspace();
     await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("23 tools", "22 tools"));
     const sandboxes = join(directory, "sandboxes.md");
     await writeFile(sandboxes, (await readFile(sandboxes, "utf8")).replace("## `run_session_command`", ""));
     const result = JSON.parse(runDocumented("vercel", toolReference, setupReference).output).docs[0];
-    expect(result).toMatchObject({ documentedTools: 246, added: [], removed: ["run_session_command"], findings: [] });
+    expect(result).toMatchObject({
+      documentedTools: 246,
+      added: [],
+      removed: ["run_session_command"],
+      findings: [
+        {
+          kind: "stale-unclassified-acknowledgement",
+          detail: "run_session_command: acknowledgement no longer applies",
+        },
+      ],
+    });
+    expect(result.intentionallyUnclassified).not.toContain("run_session_command");
   });
 
   it("INV-8 refuses a removal with no known category evidence", async () => {
@@ -764,6 +775,99 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     ]);
     expect(docs.added).toBeUndefined();
     expect(docs.removed).toBeUndefined();
+  });
+
+  it("INV-1: detects documented access changes and stale unclassified acknowledgements", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-access-"));
+    temporary.push(directory);
+    const records = await recordWorkspace({
+      crm: {
+        version: 1,
+        provider: "crm",
+        checks: [
+          {
+            type: "mcp-docs",
+            setup: "https://crm.example/setup",
+            inventory: {
+              url: "https://crm.example/tools",
+              format: "table",
+              accessColumn: "Access",
+              acknowledgedUnclassified: ["preview"],
+            },
+            endpoints: ["https://crm.example/mcp"],
+            reviewed: ["list"],
+            reviewedAccess: { list: "write" },
+          },
+        ],
+      },
+    });
+    const reference = join(directory, "crm.md");
+    const run = () =>
+      reportFor(records, ["--docs", "--tool-reference", `crm=${reference}`, "--setup-reference", `crm=${reference}`]);
+    await writeFile(
+      reference,
+      "# MCP\nOAuth https://crm.example/mcp\n\n| Tool | Access | Description |\n| --- | --- | --- |\n| `list` | Read | Checks credentials |\n| `preview` | Read | Renders screenshot |\n| `preview` | | Duplicate with blank access |\n",
+    );
+    const result = run();
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.output).docs[0];
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "documented-access-changed",
+          detail: expect.stringContaining("list"),
+        }),
+        expect.objectContaining({
+          kind: "stale-unclassified-acknowledgement",
+          detail: expect.stringContaining("preview"),
+        }),
+      ]),
+    );
+    expect(report.intentionallyUnclassified).not.toContain("preview");
+    expect(report.added).toContain("preview");
+    // Reordered columns work too; blank access retains its explicit acknowledgement.
+    await writeFile(
+      reference,
+      "# MCP\nOAuth https://crm.example/mcp\n\n| Access | Description | Tool |\n| --- | --- | --- |\n| Write | Checks credentials | `list` |\n| | Renders screenshot | `preview` |\n",
+    );
+    const quiet = JSON.parse(run().output).docs[0];
+    expect(quiet.findings).toEqual([]);
+    expect(quiet.intentionallyUnclassified).toContain("preview");
+  });
+
+  it.each([
+    [
+      "| Tool | Access |\n| --- | --- |\n| `get-app` | Read |\n\n## Changed table\n\n| Tool | Permissions |\n| --- | --- |\n| `validate-app-credentials` | Read |",
+      "no longer contains Access",
+    ],
+    ["| Tool | Description |\n| --- | --- |\n| `get-app` | Read data |", "no longer contains Access"],
+    ["| Tool | Access |\n| --- | --- |\n| `get-app` | Maybe |", "unknown access"],
+    ["| Tool | Access |\n| --- | --- |\n| `get-app` | Read |\n| `get-app` | Write |", "conflicting access"],
+  ])("INV-1: reports malformed Access evidence locally: %s", async (table, detail) => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-access-parser-"));
+    temporary.push(directory);
+    const reference = join(directory, "revenuecat.md");
+    await writeFile(reference, `# MCP\nOAuth https://mcp.revenuecat.ai/mcp\n\n${table}\n`);
+    const result = runDocumented("revenuecat", reference, reference);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output).docs[0].findings).toEqual([
+      expect.objectContaining({ kind: "parser-error", detail: expect.stringContaining(detail) }),
+    ]);
+  });
+
+  it("INV-1: reports reviewed Access evidence that disappears without masking explicit duplicates", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-access-missing-"));
+    temporary.push(directory);
+    const reference = join(directory, "revenuecat.md");
+    const text = "# MCP\nOAuth https://mcp.revenuecat.ai/mcp\n\n| Tool | Access |\n| --- | --- |\n| `get-app` | |\n";
+    await writeFile(reference, text);
+    const report = JSON.parse(runDocumented("revenuecat", reference, reference).output).docs[0];
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({ kind: "documented-access-missing", detail: expect.stringContaining("get-app") }),
+    );
+    await writeFile(reference, `${text}| \`get-app\` | Read |\n`);
+    const recovered = JSON.parse(runDocumented("revenuecat", reference, reference).output).docs[0];
+    expect(recovered.findings.some((finding: Finding) => finding.kind === "documented-access-missing")).toBe(false);
   });
 
   it("reads table inventories and treats documented additions as findings", async () => {
@@ -1507,6 +1611,14 @@ describe("hosted vendor evidence", () => {
           entry.name,
         ).toBe(true);
         expect(reviewedLists, entry.name).toContainEqual([...check.reviewed].sort());
+        if (check.reviewedAccess) {
+          const definition = (Object.values(module) as any[]).find((value) => value?.definition?.classify)?.definition;
+          for (const [name, access] of Object.entries(check.reviewedAccess)) {
+            const record = definition.classify.tools[name];
+            const verdict = typeof record === "string" ? record : record.verdict;
+            expect(verdict === "read" ? "read" : "write", `${entry.name}.${name}`).toBe(access);
+          }
+        }
       }
     }
   });

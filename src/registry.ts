@@ -39,6 +39,7 @@ import {
   catalogReviewOf,
   classifyCatalog,
   observeReviewedDrift,
+  type CatalogSchemaVerification,
   observedCatalogDrift,
 } from "./catalog-drift.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
@@ -238,6 +239,8 @@ export interface RegistryView {
     requestScope?: object,
     callOptions?: ConnectorOperationOptions,
   ): Promise<ConnectorStatus>;
+  /** Rebuild a status with this partition's latest bounded observations, without probing. */
+  withCatalogObservations(id: string, baseUrl: string, status: ConnectorStatus): ConnectorStatus;
   invalidateStored(id: string): Promise<void>;
   /** Bind returned OAuth state to its initiating user for either owner scope. */
   bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void>;
@@ -411,13 +414,8 @@ export class Registry implements RegistryView {
   private readonly catalogObservedAt = new Map<string, number>();
   /** Last payload-free agent catalog access in this runtime. */
   private readonly catalogAccess = new Map<string, CatalogAccessObservation>();
-  /** Count-only intake findings, including catalogs loaded from storage. */
-  private droppedToolNames = new Map<string, { count: number; observedAt: string }>();
-  /**
-   * Schema digest verification per reviewed facts array. Only the registry's
-   * own deep-frozen arrays are keys, so an entry stays true while they live.
-   */
-  private readonly verifiedFacts = new WeakMap<readonly ToolDef[], ReadonlySet<string>>();
+  /** Bounded tokens isolating count-only observations by catalog identity. */
+  private readonly catalogObservationPartitions = new Map<string, object>();
   private readonly observedOutputSchemas: ObservedOutputSchemas;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
@@ -538,9 +536,6 @@ export class Registry implements RegistryView {
         constructionChecks: false,
       },
     );
-    // Counts only, like the connector-wide reviewed drift observation. No
-    // principal, credentials, or catalog payload crosses this registry boundary.
-    registry.droppedToolNames = this.droppedToolNames;
     if (this.callAdmissionClosed) registry.closeCallAdmission();
     this.personalRegistries.set(principalKey, registry);
     return registry;
@@ -743,13 +738,7 @@ export class Registry implements RegistryView {
     attachCaller(context, scope?.caller);
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
-      partition: JSON.stringify([
-        scope?.principalKey ?? this.opts.credentialOwner ?? null,
-        scope?.subjectKey ?? null,
-        scope?.caller?.identity ?? null,
-        scope?.caller?.authenticated ?? false,
-        scope?.caller?.pool ?? null,
-      ]),
+      partition: this.catalogPartition(scope),
       sharedPartition: JSON.stringify([baseUrl, this.opts.publicUrl ?? null, scope?.caller?.pool ?? null]),
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
@@ -802,27 +791,46 @@ export class Registry implements RegistryView {
     return Object.fromEntries([...snapshots].map(([id, values]) => [id, aggregateCallAdmissionSnapshots(values)]));
   }
 
-  /**
-   * The drift a connector last showed in this runtime: the registry's own
-   * observation against a connector's `classification`, otherwise whatever
-   * the connector's `catalogDrift()` seam reports, bounded either way.
-   */
-  private catalogDriftOf(connector: Connector): CatalogDriftReport | undefined {
-    const report = boundedCatalogDrift(
-      catalogReviewOf(connector) ? observedCatalogDrift(connector) : connector.catalogDrift?.(),
-    );
-    const dropped = this.droppedToolNames.get(connector.id);
-    if (!dropped) return report;
-    return {
-      ...(report ?? {
-        unclassifiedTools: 0,
-        unservedTools: 0,
-        annotationConflicts: 0,
-        schemaChanges: 0,
-      }),
-      observedAt: dropped.observedAt,
-      ...(dropped.count > 0 ? { droppedTools: dropped.count } : {}),
-    };
+  /** The admitted identity fields used by both catalog caching and reporting. */
+  private catalogPartition(scope?: RegistryScope): string {
+    return JSON.stringify([
+      scope?.principalKey ?? this.opts.credentialOwner ?? null,
+      scope?.subjectKey ?? null,
+      scope?.caller?.identity ?? null,
+      scope?.caller?.authenticated ?? false,
+      scope?.caller?.pool ?? null,
+    ]);
+  }
+
+  /** Bounded, in-memory tokens; no principal or catalog data is persisted. */
+  private catalogObservationPartition(
+    id: string,
+    baseUrl: string,
+    scope?: RegistryScope,
+    create = false,
+  ): object | undefined {
+    const key = JSON.stringify([id, this.catalogPartition(scope), baseUrl, this.opts.publicUrl ?? null]);
+    let partition = this.catalogObservationPartitions.get(key);
+    if (!partition && create) {
+      partition = {};
+      this.catalogObservationPartitions.set(key, partition);
+      if (this.catalogObservationPartitions.size > 1024)
+        this.catalogObservationPartitions.delete(this.catalogObservationPartitions.keys().next().value!);
+    }
+    return partition;
+  }
+
+  private catalogDriftOf(connector: Connector, baseUrl: string, scope?: RegistryScope): CatalogDriftReport | undefined {
+    const partition = this.catalogObservationPartition(connector.id, baseUrl, scope);
+    const observed = partition ? observedCatalogDrift(connector, partition) : undefined;
+    // Plugin reports cannot establish a reviewed baseline or schema coverage
+    // that this registry has not checked. Personal plugin seams have no subject
+    // parameter and must never bypass the partition above.
+    const fallback =
+      !observed && !catalogReviewOf(connector) && connector.authScope !== "personal"
+        ? connector.catalogDrift?.()
+        : undefined;
+    return boundedCatalogDrift(observed ?? (fallback ? { ...fallback, reviewedBaseline: false } : undefined));
   }
 
   /** Reject queued/future downstream admission; active permits release safely. */
@@ -1023,10 +1031,11 @@ export class Registry implements RegistryView {
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
-  ): Promise<ToolDef[]> {
+  ): Promise<{ tools: ToolDef[]; verification: CatalogSchemaVerification | undefined }> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
+    if (connector.staticTools)
+      return { tools: markCatalogFreshness(connector.staticTools, Infinity), verification: undefined };
     const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
     let listed: ToolDef[];
     try {
@@ -1052,9 +1061,15 @@ export class Registry implements RegistryView {
     }
     const facts = frozenFacts(structuredClone(tools));
     const accepted = this.acceptToolNames(facts);
-    this.observeDroppedToolNames(connector, facts.length - accepted.length);
     const review = catalogReviewOf(connector);
-    if (review) await observeReviewedDrift(connector, review, accepted, this.opts.logger);
+    const verification = await observeReviewedDrift(
+      connector,
+      review,
+      accepted,
+      this.opts.logger,
+      this.catalogObservationPartition(id, baseUrl, scope, true)!,
+      facts.length - accepted.length,
+    );
     if (catalogFetchedAt(ctx) === undefined) {
       try {
         await storeCustomCatalogFallback(ctx, id, facts);
@@ -1074,20 +1089,13 @@ export class Registry implements RegistryView {
       state: freshUntil > Date.now() ? "fresh" : "stale",
       observedAt: new Date().toISOString(),
     });
-    return markCatalogFreshness(facts, freshUntil);
+    return { tools: markCatalogFreshness(accepted, freshUntil), verification };
   }
 
   /** The served catalog excludes control-character names; raw caches stay complete. */
   private acceptToolNames(tools: ToolDef[]): ToolDef[] {
     const accepted = tools.filter((tool) => !hasControlCharacters(tool.name));
     return accepted.length === tools.length ? tools : accepted;
-  }
-
-  /** Observe intake once, never while serving an older cached listing. */
-  private observeDroppedToolNames(connector: Connector, count: number): void {
-    if (count > 0 || this.droppedToolNames.has(connector.id)) {
-      this.droppedToolNames.set(connector.id, { count, observedAt: new Date().toISOString() });
-    }
   }
 
   /**
@@ -1105,7 +1113,7 @@ export class Registry implements RegistryView {
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
   ): Promise<ToolDef[]> {
-    const tools = await this.loadDownstreamTools(id, baseUrl, requestScope, callOptions, scope);
+    const { tools, verification } = await this.loadDownstreamTools(id, baseUrl, requestScope, callOptions, scope);
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     const accepted = this.acceptToolNames(tools);
@@ -1115,7 +1123,7 @@ export class Registry implements RegistryView {
     return carryCatalogFreshness(
       tools,
       review
-        ? await classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts, overrides)
+        ? await classifyCatalog(review, id, accepted, this.opts.logger, overrides, verification)
         : accepted.map((tool) => this.publishUnreviewedTool(id, tool)),
     );
   }
@@ -1213,6 +1221,25 @@ export class Registry implements RegistryView {
     return observedAt === undefined ? null : Math.max(0, Date.now() - observedAt);
   }
 
+  /** Pure lookup shared by status probes and operator catalog refreshes. */
+  withCatalogObservations(
+    id: string,
+    baseUrl: string,
+    status: ConnectorStatus,
+    scope?: RegistryScope,
+  ): ConnectorStatus {
+    const connector = this.connectors.get(id);
+    if (!connector) return ownStatus({ state: "error", message: "Unknown connector" });
+    const report = this.catalogDriftOf(connector, baseUrl, scope);
+    const access = this.catalogAccess.get(id);
+    // Connector.status is an open plugin seam. Rebuild its public fields so
+    // it cannot smuggle payload or another partition's observations (INV-6).
+    return Object.assign(boundedStatus(status), {
+      ...(report ? { catalogDrift: report } : {}),
+      ...(access ? { catalogAccess: { ...access } } : {}),
+    });
+  }
+
   /** Best-effort connector status for the operator UI. */
   async statusFor(
     id: string,
@@ -1231,18 +1258,8 @@ export class Registry implements RegistryView {
     // The report is rebuilt rather than spread through: what the seam returned
     // is third-party output, and status is read by the operator UI and copied
     // into responses.
-    const withObservations = (status: ConnectorStatus): ConnectorStatus => {
-      const report = this.catalogDriftOf(connector);
-      const access = this.catalogAccess.get(id);
-      // Connector.status is an open plugin seam. Rebuild its public fields so
-      // a connector cannot smuggle payload through either registry-owned
-      // observation when this runtime has not made one, nor through its
-      // message, which survives only when connecta wrote it (INV-6).
-      return Object.assign(boundedStatus(status), {
-        ...(report ? { catalogDrift: report } : {}),
-        ...(access ? { catalogAccess: { ...access } } : {}),
-      });
-    };
+    const withObservations = (status: ConnectorStatus): ConnectorStatus =>
+      this.withCatalogObservations(id, baseUrl, status, scope);
     // Credential declarations own their readiness even when a static catalog
     // or a plugin status would otherwise report success. Never probe an empty slot.
     if (connector.credential) {
@@ -1437,6 +1454,13 @@ class ScopedRegistryView implements RegistryView {
     return registry
       ? registry.statusFor(args[0], args[1], args[2], args[3], this.scope)
       : Promise.resolve({ state: "error", message: "Unknown connector" });
+  }
+
+  withCatalogObservations(id: string, baseUrl: string, status: ConnectorStatus): ConnectorStatus {
+    return (
+      this.registryFor(id)?.withCatalogObservations(id, baseUrl, status, this.scope) ??
+      ownStatus({ state: "error", message: "Unknown connector" })
+    );
   }
 
   invalidateStored(id: string): Promise<void> {

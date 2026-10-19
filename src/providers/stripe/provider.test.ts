@@ -129,7 +129,11 @@ describe("stripe() over OAuth", () => {
     expect(review.tools.size).toBe(17);
     expect(hostedTools).toHaveLength(16);
     for (const tool of hostedTools) {
-      expect(review.tools.get(tool.name)?.schemaDigest, tool.name).toBe(await vettedSchemaDigest(tool));
+      const recorded = review.tools.get(tool.name)?.schemaDigest;
+      expect(recorded, tool.name).toBeDefined();
+      expect(recorded, tool.name).toBe(
+        await vettedSchemaDigest(tool, recorded!.startsWith("sha256:") ? "legacy" : "sets-v1"),
+      );
     }
     expect(review.tools.get("get_stripe_account_info")).toEqual({ verdict: "read-only" });
     mocks.listTools.mockResolvedValue(structuredClone(hostedTools));

@@ -264,12 +264,15 @@ export interface ReviewedTool {
   /** Why the verdict holds when the name or downstream annotations do not say. */
   readonly reason?: string;
   /**
-   * `sha256:<hex>` digest of the input and output schemas the review read.
+   * `sha256-sets-v1:<hex>` digest of the reviewed input/output schemas.
+   * Legacy `sha256:<hex>` pins retain literal array ordering.
    * Omit until a review has actually read them; an invented digest reports
    * drift that never happened. When the live schema no longer matches it, or
    * it cannot be checked, the verdict lapses and the tool is served as a write.
    */
   readonly schemaDigest?: string;
+  /** Absence is expected under plan, feature, or permission gating. */
+  readonly optional?: boolean;
 }
 
 /**
@@ -301,7 +304,7 @@ export interface CatalogDriftCounts {
   droppedTools?: number;
   /** Live tools no release classified. Each one fails closed at call time. */
   unclassifiedTools: number;
-  /** Classified names this catalog no longer serves — plan gating included. */
+  /** Required reviewed names this catalog no longer serves. */
   unservedTools: number;
   /** Explicit downstream annotations that contradict a vetted verdict. */
   annotationConflicts: number;
@@ -311,6 +314,12 @@ export interface CatalogDriftCounts {
 
 /** One drift observation, taken while serving a catalog refresh. */
 export interface CatalogDriftReport extends CatalogDriftCounts {
+  /** False when this listing has no reviewed classification to compare. */
+  reviewedBaseline?: boolean;
+  /** Whether all pinned schemas could be checked on this observation. */
+  verification?: "complete" | "unavailable";
+  /** Live reviewed tools with and without recorded schema digests. */
+  schemaCoverage?: { pinned: number; unpinned: number };
   /** When the observation was taken; never when a probe was scheduled. */
   observedAt: string;
 }

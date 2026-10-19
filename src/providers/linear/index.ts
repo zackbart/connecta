@@ -478,21 +478,25 @@ const LINEAR_CLASSIFICATION: ToolClassification = {
     // Customer requests (plan-gated)
     list_customers: {
       "verdict": "read",
+      optional: true,
       "reason": "Reads existing Linear list customers data without changing workspace state.",
     },
     list_customer_needs: {
       verdict: "read",
+      optional: true,
       reason:
         "Lists customer requests for an issue, project or initiative; announced in Linear's 2026-10-08 changelog and plan-gated in hosted catalogs.",
     },
-    save_customer: { verdict: "destructive", reason: UPSERT },
+    save_customer: { verdict: "destructive", optional: true, reason: UPSERT },
     delete_customer: {
       "verdict": "destructive",
+      optional: true,
       "reason": "Changes or removes existing Linear state through delete_customer.",
     },
-    save_customer_need: { verdict: "destructive", reason: UPSERT },
+    save_customer_need: { verdict: "destructive", optional: true, reason: UPSERT },
     delete_customer_need: {
       "verdict": "destructive",
+      optional: true,
       "reason": "Changes or removes existing Linear state through delete_customer_need.",
     },
     // Markdown helper.

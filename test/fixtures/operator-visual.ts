@@ -166,7 +166,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     if (contract.config) contract.config.connectaVersion = data.connectaVersion = "0.29.0";
     else data.connectaVersion = "0.29.0";
     for (const connector of data.connectors) {
-      if (connector.id === "github" && !empty) connector.catalogDrift = { observedAt: VISUAL_NOW, unclassifiedTools: 2, unservedTools: 0, annotationConflicts: 1, schemaChanges: 1 };
+      if (connector.id === "github" && !empty) connector.catalogDrift = { observedAt: VISUAL_NOW, reviewedBaseline: true, verification: "complete", schemaCoverage: { pinned: 2, unpinned: 0 }, unclassifiedTools: 2, unservedTools: 0, annotationConflicts: 1, schemaChanges: 1 };
     }
     return {
       contract, data,
@@ -252,7 +252,7 @@ export function operatorVisualVariant(base: OperatorVisualFixture, variant: Visu
   if (variant === "drift-clean" || variant === "drift-unobserved") {
     const github = fixture.data.connectors.find(c => c.id === "github")!;
     if (variant === "drift-unobserved") delete github.catalogDrift;
-    else github.catalogDrift = { observedAt: VISUAL_NOW, unclassifiedTools: 0, unservedTools: 0, annotationConflicts: 0, schemaChanges: 0 };
+    else github.catalogDrift = { observedAt: VISUAL_NOW, reviewedBaseline: true, verification: "complete", schemaCoverage: { pinned: 2, unpinned: 0 }, unclassifiedTools: 0, unservedTools: 0, annotationConflicts: 0, schemaChanges: 0 };
   }
   if (variant === "legacy-activity") fixture.activity.events = [
     { ...call, actor: { kind: "clerk", id: "user_1", namespace: "https://tenant.example", label: "Ada Lovelace" }, source: "resume_execution", outcome: "approved", approval: "call", attempts: 0 },

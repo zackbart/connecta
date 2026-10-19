@@ -11,6 +11,7 @@ export function reviewedFixture(connector: Connector, catalog: VettedCatalog): C
     classification: reviewedClassification({
       tools: Object.fromEntries([...catalog.tools].map(([name, record]) => [name, {
         verdict: verdicts[record.verdict]!,
+        ...(record.optional !== undefined ? { optional: record.optional } : {}),
         ...(record.schemaDigest ? { schemaDigest: record.schemaDigest } : {}),
       }])),
     }, "fixture"),

@@ -194,6 +194,13 @@ to live annotations belong in `inventory.acknowledgedUnclassified`, with the
 review rationale recorded beside the provider evidence. Neither list accepts
 future names or partial captures; complete category counts remain mandatory.
 
+For documented tables with Access values, require `inventory.accessColumn` and
+record `reviewedAccess` (read/write) matching the runtime verdicts. Explicit
+access makes an `acknowledgedUnclassified` entry stale, even if another copy of
+the row is blank. Optional reviewed tools must declare `optional: true` with
+plan/feature/permission evidence; present tools keep their full classification
+and schema checks. New schema pins use `sha256-sets-v1:`; legacy `sha256:` pins
+keep their literal-array comparison until a reviewed migration.
 Never fetch credentials, call operational tools, file issues, or silently accept
 a new baseline. Recording endpoint evidence is an explicit action.
 

@@ -951,6 +951,10 @@ describe("a forwarded catalog drift report", () => {
     async callTool() {
       return {};
     },
+    // Exercise the forwarded seam without manufacturing a new listing report.
+    async status() {
+      return { state: "ok" };
+    },
     catalogDrift: () => ({
       observedAt,
       unclassifiedTools: 1,

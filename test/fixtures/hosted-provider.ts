@@ -45,8 +45,8 @@ export async function servedTools(
   const listed = await connector.listTools(ctx);
   const review = catalogReviewOf(connector);
   if (!review) return listed;
-  await observeReviewedDrift(connector, review, listed, ctx.logger);
-  return classifyCatalog(review, connector.id, listed, ctx.logger);
+  const verification = await observeReviewedDrift(connector, review, listed, ctx.logger);
+  return classifyCatalog(review, connector.id, listed, ctx.logger, undefined, verification);
 }
 
 export const context: ConnectorContext = {

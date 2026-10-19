@@ -117,6 +117,12 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           // The registry owns the failed catalog observation; the page only
           // needs to know there was one.
           Effect.catch(() => Effect.succeed({ status, tools: [], catalogFailed: !signal.aborted })),
+          // Loading the catalog may replace an earlier clean observation.
+          // Read this view's current bounded facts without another status probe.
+          Effect.map((observed) => ({
+            ...observed,
+            status: registry.withCatalogObservations(c.id, baseUrl, observed.status),
+          })),
         );
       }).pipe(
         Effect.catch((error) =>
@@ -221,7 +227,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           toolCount: tools.length,
           tools,
           // Counts only, and only when a refresh in this runtime produced them.
-          // `Registry.statusFor` already rebuilt the report through
+          // `Registry.withCatalogObservations` rebuilt the report through
           // `boundedCatalogDrift`, so what lands here cannot carry a name or a
           // schema even if the plugin seam returned one.
           ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
