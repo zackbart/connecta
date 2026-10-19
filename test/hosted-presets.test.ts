@@ -155,7 +155,7 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
     const historical = [...review.tools].filter(([name]) => Object.hasOwn(recorded.verdicts, name));
     expect(
       Object.fromEntries(
-        historical.map(([tool, entry]) => {
+        historical.map(([tool, { optional: _optional, ...entry }]) => {
           if (name !== "linear") return [tool, entry];
           const { schemaDigest: _digest, ...verdict } = entry;
           return [tool, verdict];
