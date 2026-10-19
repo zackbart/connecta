@@ -10,7 +10,7 @@ import { accessTokens, AccessTokenManager } from "../../src/access-tokens.js";
 import { api } from "../../src/connectors/api.js";
 import { CredentialVault, encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
-import type { Connector } from "../../src/types.js";
+import type { CatalogDriftReport, Connector } from "../../src/types.js";
 import { createTestConnecta } from "../helpers.js";
 import { fakeClerkAuth } from "../fixtures/http.js";
 
@@ -99,6 +99,9 @@ function data(): UiData {
             },
             catalogDrift: {
               observedAt: "2026-08-12T12:00:00.000Z",
+              reviewedBaseline: true,
+              verification: "complete",
+              schemaCoverage: { pinned: 2, unpinned: 0 },
               unclassifiedTools: 0,
               unservedTools: 0,
               annotationConflicts: 0,
@@ -114,6 +117,9 @@ function data(): UiData {
             tools: [],
             catalogDrift: {
               observedAt: "2026-08-12T12:00:00.000Z",
+              reviewedBaseline: true,
+              verification: "complete",
+              schemaCoverage: { pinned: 2, unpinned: 0 },
               unclassifiedTools: 2,
               unservedTools: 0,
               annotationConflicts: 0,
@@ -808,8 +814,11 @@ test("copies a fix prompt that carries nothing from the failure", async ({ page,
 });
 
 /** Hosted proxy's drift prompt is its own kind; these cases clear it so one button remains. */
-const CLEAN_DRIFT = {
+const CLEAN_DRIFT: CatalogDriftReport = {
   observedAt: "2026-08-12T12:00:00.000Z",
+  reviewedBaseline: true,
+  verification: "complete",
+  schemaCoverage: { pinned: 2, unpinned: 0 },
   unclassifiedTools: 0,
   unservedTools: 0,
   annotationConflicts: 0,

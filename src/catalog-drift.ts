@@ -34,13 +34,12 @@ function observationTime(value: unknown): string | undefined {
 }
 
 /**
- * Rebuild a drift report as bounded counts and a canonical timestamp.
+ * Rebuild a drift report as bounded counts, closed verification facts, and a timestamp.
  *
  * `Connector.catalogDrift()` sits on the open plugin seam, and what it returns
- * lands in the body of unauthenticated `/health`, on connector status, in the
- * operator page, and in `connecta doctor`. TypeScript constrains neither an
- * extra enumerable property nor what `observedAt` holds at runtime, so "counts
- * and a time and nothing else" is *made* true here — at the boundary where
+ * lands on authenticated connector status and the operator page. TypeScript
+ * constrains neither extra enumerable properties nor `observedAt` at runtime.
+ * Counts, closed verification facts, and a time are rebuilt at the boundary where
  * third-party output becomes a response — rather than trusted. A report whose
  * `observedAt` names no instant is no observation connecta can date, and is
  * dropped whole (INV-6): a plugin forwarding a downstream's report could
@@ -53,6 +52,18 @@ export function boundedCatalogDrift(report: CatalogDriftReport | undefined): Cat
   if (observedAt === undefined) return undefined;
   return {
     observedAt,
+    ...(typeof report.reviewedBaseline === "boolean" ? { reviewedBaseline: report.reviewedBaseline } : {}),
+    ...(report.verification === "complete" || report.verification === "unavailable"
+      ? { verification: report.verification }
+      : {}),
+    ...(report.schemaCoverage && typeof report.schemaCoverage === "object"
+      ? {
+          schemaCoverage: {
+            pinned: boundedCount(report.schemaCoverage.pinned),
+            unpinned: boundedCount(report.schemaCoverage.unpinned),
+          },
+        }
+      : {}),
     unclassifiedTools: boundedCount(report.unclassifiedTools),
     unservedTools: boundedCount(report.unservedTools),
     annotationConflicts: boundedCount(report.annotationConflicts),
@@ -77,11 +88,12 @@ interface VettedToolRecord {
    * Digest of the input and output schemas that release read, or undefined
    * when no release has recorded them. Undefined is not "unchanged": a
    * manifest with no digest cannot report a schema change, and says so by
-   * counting none. The credential-free provider check does not create or
-   * update schema digests; the live `tools/list` response remains the schema
+   * counting none and reporting the unpinned coverage. The provider check never
+   * creates or updates schema digests; live `tools/list` remains the schema
    * agents receive ([#351](https://github.com/zackbart/connecta/issues/351)).
    */
   schemaDigest?: string;
+  optional?: boolean;
 }
 
 /**
@@ -109,6 +121,8 @@ export interface VettedCatalogInput {
    * read them; an invented digest reports drift that never happened.
    */
   schemaDigests?: Readonly<Record<string, string>>;
+  /** Reviewed names that may be absent under plan/permission gating. */
+  optionalTools?: ReadonlySet<string>;
 }
 
 const encoder = new TextEncoder();
@@ -140,47 +154,94 @@ function canonicalKeys(value: object): [string, unknown][] {
  * digest, and a schema deeper than the host stack cannot exhaust it. Throws
  * past {@link MAX_SCHEMA_DIGEST_NODES}, and on any value JSON cannot carry.
  */
-function canonicalJson(root: unknown): string {
-  type Task = { readonly text: string } | { readonly value: unknown };
+type SchemaMode = "data" | "root" | "schema" | "map" | "schema-array" | "set";
+const SCHEMA_MAPS = new Set([
+  "properties",
+  "patternProperties",
+  "$defs",
+  "definitions",
+  "dependentSchemas",
+  "dependencies",
+]);
+const SCHEMA_ARRAYS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
+const SCHEMA_CHILDREN = new Set([
+  "items",
+  "additionalItems",
+  "additionalProperties",
+  "unevaluatedProperties",
+  "unevaluatedItems",
+  "contains",
+  "propertyNames",
+  "not",
+  "if",
+  "then",
+  "else",
+  "contentSchema",
+]);
+function childMode(mode: SchemaMode, key: string, value: unknown): SchemaMode {
+  if (mode === "root" || mode === "map") return "schema";
+  if (mode !== "schema") return "data";
+  if (key === "required" || key === "enum" || key === "type") return "set";
+  if (SCHEMA_MAPS.has(key)) return "map";
+  if (SCHEMA_ARRAYS.has(key) || (key === "items" && Array.isArray(value))) return "schema-array";
+  return SCHEMA_CHILDREN.has(key) ? "schema" : "data";
+}
+function canonicalJson(root: unknown, sets: boolean): string {
+  type Task =
+    | { text: string; out: string[] }
+    | { value: unknown; mode: SchemaMode; out: string[] }
+    | { members: string[][]; out: string[] };
   const out: string[] = [];
-  const stack: Task[] = [{ value: root }];
+  const stack: Task[] = [{ value: root, mode: sets ? "root" : "data", out }];
   let nodes = 0;
   while (stack.length > 0) {
     const task = stack.pop()!;
+    const out = task.out;
     if ("text" in task) {
       out.push(task.text);
       continue;
     }
-    if (++nodes > MAX_SCHEMA_DIGEST_NODES) {
-      throw new Error(`schema has more than ${MAX_SCHEMA_DIGEST_NODES} values; refusing to digest it in part.`);
+    if ("members" in task) {
+      out.push(
+        "[",
+        task.members
+          .map((member) => member.join(""))
+          .sort()
+          .join(","),
+        "]",
+      );
+      continue;
     }
-    const value = task.value;
-    if (value === null || value === undefined) {
-      out.push("null");
-    } else if (typeof value === "string" || typeof value === "boolean") {
-      out.push(JSON.stringify(value));
-    } else if (typeof value === "number") {
-      out.push(Number.isFinite(value) ? JSON.stringify(value) : "null");
-    } else if (typeof value === "function" || typeof value === "symbol") {
-      // Only array items reach here; object keys holding these are dropped.
-      out.push("null");
-    } else if (typeof value !== "object") {
-      throw new Error(`schema holds a ${typeof value}, which JSON cannot carry.`);
-    } else if (Array.isArray(value)) {
-      out.push("[");
-      stack.push({ text: "]" });
-      for (let index = value.length - 1; index >= 0; index -= 1) {
-        stack.push({ value: value[index] });
-        if (index > 0) stack.push({ text: "," });
+    if (++nodes > MAX_SCHEMA_DIGEST_NODES)
+      throw new Error(`schema has more than ${MAX_SCHEMA_DIGEST_NODES} values; refusing to digest it in part.`);
+    const { value, mode } = task;
+    if (value === null || value === undefined) out.push("null");
+    else if (typeof value === "string" || typeof value === "boolean") out.push(JSON.stringify(value));
+    else if (typeof value === "number") out.push(Number.isFinite(value) ? JSON.stringify(value) : "null");
+    else if (typeof value === "function" || typeof value === "symbol") out.push("null");
+    else if (typeof value !== "object") throw new Error(`schema holds a ${typeof value}, which JSON cannot carry.`);
+    else if (Array.isArray(value)) {
+      if (mode === "set") {
+        const members: string[][] = Array.from({ length: value.length }, () => []);
+        stack.push({ members, out });
+        for (let index = value.length - 1; index >= 0; index--)
+          stack.push({ value: value[index], mode: "data", out: members[index]! });
+      } else {
+        out.push("[");
+        stack.push({ text: "]", out });
+        for (let index = value.length - 1; index >= 0; index--) {
+          stack.push({ value: value[index], mode: mode === "schema-array" ? "schema" : "data", out });
+          if (index > 0) stack.push({ text: ",", out });
+        }
       }
     } else {
       out.push("{");
-      stack.push({ text: "}" });
+      stack.push({ text: "}", out });
       const entries = canonicalKeys(value);
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
+      for (let index = entries.length - 1; index >= 0; index--) {
         const [key, item] = entries[index]!;
-        stack.push({ value: item });
-        stack.push({ text: `${index > 0 ? "," : ""}${JSON.stringify(key)}:` });
+        stack.push({ value: item, mode: childMode(mode, key, item), out });
+        stack.push({ text: `${index > 0 ? "," : ""}${JSON.stringify(key)}:`, out });
       }
     }
   }
@@ -194,21 +255,28 @@ function canonicalJson(root: unknown): string {
  * `src/catalog-fingerprint.ts`: that one is deliberately conservative because a
  * spurious cache write is cheap, while a spurious drift finding spends a
  * maintainer's attention on a downstream that reordered its JSON keys.
+ * New pins use `sha256-sets-v1:` and sort required, enum, and type arrays only
+ * at schema keyword locations. Tuple arrays and JSON data keep their order.
+ * Legacy `sha256:` pins use the original literal-array form, so an upgrade
+ * cannot silently invalidate a reviewed provider manifest.
  * Description and annotations are excluded — a reworded description is P1's
  * business, and an annotation change is already its own drift category.
  *
  * Rejects rather than digesting part of a schema: a digest that ignored some
  * leaf would let a reviewed read keep its verdict after that leaf changed.
  */
-export async function vettedSchemaDigest(tool: ToolDef): Promise<string> {
+export async function vettedSchemaDigest(tool: ToolDef, format: "sets-v1" | "legacy" = "sets-v1"): Promise<string> {
   const bytes = encoder.encode(
-    canonicalJson({
-      inputSchema: tool.inputSchema ?? null,
-      outputSchema: tool.outputSchema ?? null,
-    }),
+    canonicalJson(
+      {
+        inputSchema: tool.inputSchema ?? null,
+        outputSchema: tool.outputSchema ?? null,
+      },
+      format === "sets-v1",
+    ),
   );
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return `${format === "sets-v1" ? "sha256-sets-v1" : "sha256"}:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /**
@@ -226,6 +294,7 @@ export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
     const digest = digestFor(name);
     tools.set(name, {
       verdict: "read-only",
+      ...(input.optionalTools?.has(name) ? { optional: true } : {}),
       ...(digest !== undefined ? { schemaDigest: digest } : {}),
     });
   }
@@ -236,6 +305,7 @@ export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
     const digest = digestFor(name);
     tools.set(name, {
       verdict,
+      ...(input.optionalTools?.has(name) ? { optional: true } : {}),
       ...(digest !== undefined ? { schemaDigest: digest } : {}),
     });
   }
@@ -243,6 +313,9 @@ export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
     if (!tools.has(name)) {
       throw new Error(`vettedCatalog() recorded a schema digest for unclassified tool "${name}".`);
     }
+  }
+  for (const name of input.optionalTools ?? []) {
+    if (!tools.has(name)) throw new Error(`vettedCatalog() marked unclassified tool "${name}" optional.`);
   }
   return { version: 1, tools };
 }
@@ -257,8 +330,8 @@ const PUBLIC_VERDICTS: Readonly<Record<VettedVerdict, ToolVerdict>> = {
   additive: "write",
   destructive: "destructive",
 };
-const SCHEMA_DIGEST = /^sha256:[0-9a-f]{64}$/;
-const REVIEWED_TOOL_KEYS = new Set(["verdict", "reason", "schemaDigest"]);
+const SCHEMA_DIGEST = /^sha256(?:-sets-v1)?:[0-9a-f]{64}$/;
+const REVIEWED_TOOL_KEYS = new Set(["verdict", "reason", "schemaDigest", "optional"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -301,7 +374,7 @@ function parseClassification(
     for (const key of Object.keys(record)) {
       if (!REVIEWED_TOOL_KEYS.has(key)) fail(`tool "${name}" has unknown key "${key}".`);
     }
-    const { verdict: publicVerdict, reason, schemaDigest: digest } = record;
+    const { verdict: publicVerdict, reason, schemaDigest: digest, optional } = record;
     const verdict =
       typeof publicVerdict === "string" && Object.hasOwn(VERDICTS, publicVerdict) ? VERDICTS[publicVerdict] : undefined;
     if (verdict === undefined) {
@@ -311,10 +384,12 @@ function parseClassification(
       fail(`tool "${name}" reason must be a non-empty string.`);
     }
     if (digest !== undefined && (typeof digest !== "string" || !SCHEMA_DIGEST.test(digest))) {
-      fail(`tool "${name}" schemaDigest must be "sha256:" and 64 lowercase hex digits.`);
+      fail(`tool "${name}" schemaDigest must be "sha256:" or "sha256-sets-v1:" and 64 lowercase hex digits.`);
     }
+    if (optional !== undefined && typeof optional !== "boolean") fail(`tool "${name}" optional must be a boolean.`);
     tools.set(name, {
       verdict,
+      ...(typeof optional === "boolean" ? { optional } : {}),
       ...(typeof digest === "string" ? { schemaDigest: digest } : {}),
     });
     frozen[name] =
@@ -323,6 +398,7 @@ function parseClassification(
         : Object.freeze({
             verdict: PUBLIC_VERDICTS[verdict],
             ...(typeof reason === "string" ? { reason } : {}),
+            ...(typeof optional === "boolean" ? { optional } : {}),
             ...(typeof digest === "string" ? { schemaDigest: digest } : {}),
           });
   }
@@ -445,11 +521,20 @@ async function changedSchemas(catalog: VettedCatalog, tools: readonly ToolDef[])
   const changed = new Set<string>();
   for (const definition of tools) {
     const recorded = catalog.tools.get(definition.name)?.schemaDigest;
-    if (recorded !== undefined && recorded !== (await vettedSchemaDigest(definition))) {
+    if (
+      recorded !== undefined &&
+      recorded !== (await vettedSchemaDigest(definition, recorded.startsWith("sha256:") ? "legacy" : "sets-v1"))
+    ) {
       changed.add(definition.name);
     }
   }
   return changed;
+}
+
+/** One whole-schema verification shared by reporting and serving this listing. */
+export interface CatalogSchemaVerification {
+  changed: ReadonlySet<string>;
+  available: boolean;
 }
 
 /** Every served tool whose review recorded a digest: what cannot be verified. */
@@ -479,8 +564,8 @@ function countDrift(
     if (contradicts(record, definition)) annotationConflicts += 1;
   }
   let unservedTools = 0;
-  for (const name of catalog.tools.keys()) {
-    if (!served.has(name)) unservedTools += 1;
+  for (const [name, record] of catalog.tools) {
+    if (!record.optional && !served.has(name)) unservedTools += 1;
   }
   return {
     unclassifiedTools,
@@ -530,25 +615,27 @@ export function catalogReviewOf(connector: Connector): VettedCatalog | undefined
  * Classify downstream facts with a review: what the registry serves on every
  * read, from whichever cache layer the facts came from.
  *
- * Every tool returned is a fresh object, so nothing a caller does to one can
- * reach the facts, `memo`, or a later read. `memo` holds digest verification
- * per facts array; the registry passes one only for deep-frozen arrays it
- * owns. A failed verification is not kept, so the next read tries again, and
- * meanwhile no digested review vouches for a read (INV-1).
+ * Every tool returned is fresh. The registry supplies the same whole-schema
+ * verification it observed for this listing, including failures. Standalone
+ * callers verify here. No failed verification survives onto a later listing,
+ * and meanwhile no digested review vouches for a read (INV-1).
  */
 export async function classifyCatalog(
   catalog: VettedCatalog,
   connectorId: string,
   facts: readonly ToolDef[],
   logger: Logger,
-  memo?: WeakMap<readonly ToolDef[], ReadonlySet<string>>,
   overrides?: Readonly<Record<string, "read" | "write">>,
+  verification?: CatalogSchemaVerification,
 ): Promise<ToolDef[]> {
-  let lapsed = memo?.get(facts);
+  let lapsed = verification
+    ? verification.available
+      ? verification.changed
+      : digestedTools(catalog, facts)
+    : undefined;
   if (!lapsed) {
     try {
       lapsed = await changedSchemas(catalog, facts);
-      memo?.set(facts, lapsed);
     } catch (error) {
       lapsed = digestedTools(catalog, facts);
       logFailure(
@@ -564,45 +651,68 @@ export async function classifyCatalog(
     .map((fact) => servedTool(catalog, fact, unverified, overrides?.[fact.name]));
 }
 
-/**
- * The drift each reviewed connector object showed on its last listing in this
- * runtime. Keyed by the connector rather than by registry, so a principal's
- * registry and the root report one observation, as they serve one connector.
- */
-const observations = new WeakMap<Connector, CatalogDriftReport>();
+/** Counts only, retained weakly by connector and an explicit runtime/catalog partition. */
+const observations = new WeakMap<Connector, WeakMap<object, CatalogDriftReport>>();
 
 /**
- * Compare a listing a refresh just received with the connector's review, and
- * keep the counts as its latest observation.
- *
- * The check happens where the tools are already in hand, while serving a
- * refresh the deployment asked for. It adds no request of its own, which is
- * the whole boundary: connecta watches a contract while it is serving a
- * refresh, and never initiates one to go looking
- * ([#179](https://github.com/zackbart/connecta/issues/179),
- * [#343](https://github.com/zackbart/connecta/issues/343)).
+ * Observe tools already fetched by a listing. No probe, persistence, or catalog
+ * payload: registry-owned partition tokens isolate deployment and subject.
+ * A digest failure replaces old success, while classification fails closed.
  */
 export async function observeReviewedDrift(
   connector: Connector,
-  catalog: VettedCatalog,
+  catalog: VettedCatalog | undefined,
   listed: readonly ToolDef[],
   logger: Logger,
-): Promise<void> {
-  try {
-    const changed = await changedSchemas(catalog, listed);
-    observations.set(connector, {
-      observedAt: new Date().toISOString(),
-      ...countDrift(catalog, listed, changed),
-    });
-  } catch (error) {
-    // A drift check is a report about a catalog, never a condition for
-    // serving one. Keep the last good observation rather than replacing it
-    // with a lie, and let the refresh through; classification fails closed.
-    logFailure(logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
+  partition: object = connector,
+  droppedTools = 0,
+): Promise<CatalogSchemaVerification | undefined> {
+  let verification: CatalogSchemaVerification | undefined;
+  let report: CatalogDriftReport = {
+    observedAt: new Date().toISOString(),
+    reviewedBaseline: catalog !== undefined,
+    unclassifiedTools: 0,
+    unservedTools: 0,
+    annotationConflicts: 0,
+    schemaChanges: 0,
+    ...(droppedTools > 0 ? { droppedTools } : {}),
+  };
+  if (catalog) {
+    const reviewed = listed.filter((tool) => catalog.tools.has(tool.name));
+    const pinned = digestedTools(catalog, reviewed).size;
+    const schemaCoverage = { pinned, unpinned: reviewed.length - pinned };
+    try {
+      verification = { changed: await changedSchemas(catalog, listed), available: true };
+      report = {
+        ...report,
+        ...countDrift(catalog, listed, verification.changed),
+        schemaCoverage,
+        verification: "complete",
+      };
+    } catch (error) {
+      verification = { changed: new Set(), available: false };
+      report = {
+        ...report,
+        ...countDrift(catalog, listed, verification.changed),
+        schemaCoverage,
+        verification: "unavailable",
+      };
+      logFailure(logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
+    }
   }
+  let partitions = observations.get(connector);
+  if (!partitions) {
+    partitions = new WeakMap();
+    observations.set(connector, partitions);
+  }
+  partitions.set(partition, report);
+  return verification;
 }
 
-/** The latest drift {@link observeReviewedDrift} kept for `connector`. */
-export function observedCatalogDrift(connector: Connector): CatalogDriftReport | undefined {
-  return observations.get(connector);
+/** Look up only this runtime/catalog partition; never start a listing. */
+export function observedCatalogDrift(
+  connector: Connector,
+  partition: object = connector,
+): CatalogDriftReport | undefined {
+  return observations.get(connector)?.get(partition);
 }

@@ -221,6 +221,15 @@ for precedence, schema digests, and `unlisted: "hide"`. Review the behavior
 before declaring a read, and do not use classification to bypass provider target
 scopes or caller grants.
 
+A reviewed name is required by default for drift comparison. Mark a tool
+`optional: true` only when the downstream can omit it because of plan,
+feature, or permission gating. For example, a remote `crm` connector can use
+`classify: { tools: { list_accounts: "read", list_customers: { verdict: "read",
+optional: true } } }`. Absence of `list_customers` then adds no unserved count;
+when present, its verdict, annotations, and any pinned schema are still checked.
+A missing schema pin means that tool's schema has not been verified against a
+review. Zero schema changes alone does not establish a matching schema.
+
 ## A hand-written HTTP capability
 
 Define only the operations the deployment needs. Every `api()` tool needs a

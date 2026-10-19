@@ -747,7 +747,7 @@ export type DriftState = "clean" | "warning" | "unavailable";
  * drift model exists to avoid.
  */
 const DRIFT_CATEGORIES: ReadonlyArray<{
-  key: keyof Omit<CatalogDriftReport, "observedAt">;
+  key: keyof Omit<CatalogDriftReport, "observedAt" | "reviewedBaseline" | "verification" | "schemaCoverage">;
   label: string;
 }> = [
   { key: "unclassifiedTools", label: "Unclassified" },
@@ -764,7 +764,16 @@ function driftTotal(drift?: CatalogDriftReport): number {
 
 export function driftState(drift?: CatalogDriftReport): DriftState {
   if (!drift) return "unavailable";
-  return driftTotal(drift) > 0 ? "warning" : "clean";
+  if (driftTotal(drift) > 0) return "warning";
+  if (
+    drift.reviewedBaseline !== true ||
+    drift.verification !== "complete" ||
+    !drift.schemaCoverage ||
+    drift.schemaCoverage.unpinned > 0 ||
+    drift.schemaCoverage.pinned === 0
+  )
+    return "unavailable";
+  return "clean";
 }
 
 /** Every category with its count, so a clean report still shows its zeros. */
@@ -781,15 +790,22 @@ export function driftCounts(drift?: CatalogDriftReport): Array<{ key: string; la
 
 /** One line naming the state and when it was observed. Never what drifted. */
 export function driftSummary(drift?: CatalogDriftReport): string {
-  const state = driftState(drift);
-  if (state === "unavailable") {
-    return "No catalog refresh yet.";
-  }
-  const observed = formatDate(drift?.observedAt);
+  if (!drift) return "No catalog refresh yet.";
+  const observed = formatDate(drift.observedAt);
   const when = observed ? ` · observed ${observed}` : "";
-  if (state === "clean") return `Matches the reviewed manifest${when}`;
   const total = driftTotal(drift);
-  return `${total} difference${total === 1 ? "" : "s"} from the reviewed manifest${when}`;
+  const difference = total
+    ? `${total} difference${total === 1 ? "" : "s"}${drift.reviewedBaseline === false ? "" : " from the reviewed manifest"} · `
+    : "";
+  if (drift.reviewedBaseline === false) return `${difference}No reviewed baseline${when}`;
+  if (drift.verification === "unavailable") return `${difference}Schema verification unavailable${when}`;
+  const coverage = drift.schemaCoverage;
+  if (!coverage || coverage.pinned === 0) return `${difference}Schemas not pinned${when}`;
+  if (coverage.unpinned > 0)
+    return `${difference}Partial schema coverage (${coverage.pinned} pinned, ${coverage.unpinned} not pinned)${when}`;
+  if (driftState(drift) === "clean") return `Matches the reviewed manifest${when}`;
+  if (!total) return `Schema verification unavailable${when}`;
+  return `${difference.replace(/ · $/, "")}${when}`;
 }
 
 /**

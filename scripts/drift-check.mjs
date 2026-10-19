@@ -19,7 +19,7 @@ const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
 /**
  * @typedef {{type: "endpoints", specification: object, endpoints: object[], scopes?: string[]} |
  * {type: "versioned-endpoints", specifications: object, endpoints: object[]} |
- * {type: "mcp-docs", setup: string, inventory?: object, endpoints: string[], reviewed: string[]} |
+ * {type: "mcp-docs", setup: string, inventory?: object, endpoints: string[], reviewed: string[], reviewedAccess?: Record<string, "read" | "write">} |
  * {type: "oauth-discovery", setup: string, endpoints: string[], reviewed: string[]} |
  * {type: "mcp-catalog", endpoint: string, reviewed: object[]} |
  * {type: "manual", source: string, rationale: string, evidence?: object} |
@@ -297,13 +297,21 @@ function validateCheck(check, allowUnrecorded) {
       strings(check.reviewed), "MCP check requires setup, endpoints, and reviewed vendor names");
     if (check.type === "oauth-discovery")
       require(check.inventory === undefined, "OAuth discovery checks have no tool inventory");
+    if (check.reviewedAccess !== undefined) {
+      require(check.reviewedAccess !== null &&
+        typeof check.reviewedAccess === "object" &&
+        !Array.isArray(check.reviewedAccess) &&
+        Object.entries(check.reviewedAccess).every(
+          ([name, access]) => check.reviewed.includes(name) && (access === "read" || access === "write"),
+        ), "reviewed access must map reviewed names to read or write");
+    }
     if (check.inventory !== undefined) {
       const inventory = check.inventory;
       require(nonempty(inventory.url) &&
         ["headings", "inline", "inline-calls", "table", "vercel-categories"].includes(
           inventory.format,
         ), "inventory requires URL and supported parser format");
-      for (const key of ["start", "end", "prefix"])
+      for (const key of ["start", "end", "prefix", "accessColumn"])
         require(inventory[key] === undefined || nonempty(inventory[key]), `inventory ${key} must be non-empty`);
       require(inventory.categories === undefined ||
         (inventory.format === "vercel-categories" &&
@@ -320,10 +328,9 @@ function validateCheck(check, allowUnrecorded) {
             check.reviewed.includes(name),
           )), "acknowledged removed names must be unique reviewed names");
       require(inventory.acknowledgedUnclassified === undefined ||
-        (inventory.format === "vercel-categories" &&
-          strings(
-            inventory.acknowledgedUnclassified,
-          )), "acknowledged unclassified names must be unique non-empty strings");
+        strings(
+          inventory.acknowledgedUnclassified,
+        ), "acknowledged unclassified names must be unique non-empty strings");
     }
     return;
   }
@@ -1033,6 +1040,54 @@ function documentedToolNames(markdown, inventory) {
   return [...new Set(names)].sort();
 }
 
+/** Access is vendor evidence, never inferred from tool names or descriptions. */
+function documentedToolAccess(markdown, inventory) {
+  const access = new Map();
+  if (inventory.format !== "table") return access;
+  let toolColumn = -1;
+  let accessColumn = -1;
+  let found = false;
+  const clean = (cell) => cell.replaceAll(/[`*_]/g, "").trim().toLowerCase();
+  for (const line of documentedSection(markdown, inventory).split("\n")) {
+    if (!line.trimStart().startsWith("|")) {
+      toolColumn = -1;
+      accessColumn = -1;
+      continue;
+    }
+    const cells = line
+      .trim()
+      .replace(/^\||\|$/g, "")
+      .split("|")
+      .map((cell) => cell.trim());
+    const header = cells.map(clean);
+    const column = header.indexOf((inventory.accessColumn ?? "Access").toLowerCase());
+    const toolHeader = header.findIndex((cell) => cell === "tool" || cell === "tool name");
+    if (inventory.accessColumn && toolHeader >= 0 && column < 0)
+      throw new ParserError(`tool table no longer contains ${inventory.accessColumn} column`);
+    if (column >= 0) {
+      toolColumn = toolHeader;
+      if (inventory.accessColumn && toolColumn < 0)
+        throw new ParserError("access table no longer contains Tool column");
+      accessColumn = column;
+      found ||= toolColumn >= 0;
+      continue;
+    }
+    if (toolColumn < 0 || accessColumn < 0) continue;
+    const name = /^`([A-Za-z][A-Za-z0-9_-]*)`$/.exec(cells[toolColumn] ?? "")?.[1];
+    if (!name) continue;
+    const value = clean(cells[accessColumn] ?? "");
+    if (!value) continue;
+    if (value !== "read" && value !== "write")
+      throw new ParserError(`tool reference has unknown access for ${name}: ${value}`);
+    if (access.has(name) && access.get(name) !== value)
+      throw new ParserError(`tool reference has conflicting access for ${name}`);
+    access.set(name, value);
+  }
+  if (inventory.accessColumn && !found)
+    throw new ParserError(`tool reference no longer contains ${inventory.accessColumn} and Tool columns`);
+  return access;
+}
+
 /** RFC 8414 metadata location for an issuer, path inserted after the host. */
 function authorizationServerMetadataUrl(issuer) {
   const url = new URL(issuer);
@@ -1130,9 +1185,13 @@ async function checkDocumentedProvider(provider, defaults, options) {
   const reviewed = [...runtime.reviewed].sort();
   const reviewedSet = new Set(reviewed);
   const documentedSet = new Set(documented ?? []);
-  // Only the reviewed categorized Vercel capture acknowledges unclassified names.
-  // Every unreviewed row from other inventories remains drift (including RevenueCat).
-  const acknowledged = new Set(categorized ? (defaults.inventory?.acknowledgedUnclassified ?? []) : []);
+  const access =
+    inventory === undefined || categorized ? new Map() : documentedToolAccess(inventory, defaults.inventory);
+  const acknowledgements = defaults.inventory?.acknowledgedUnclassified ?? [];
+  const staleAcknowledgements = acknowledgements.filter(
+    (name) => access.has(name) || reviewedSet.has(name) || !documentedSet.has(name),
+  );
+  const acknowledged = new Set(acknowledgements.filter((name) => !staleAcknowledgements.includes(name)));
   const added = (documented ?? []).filter((name) => !reviewedSet.has(name) && !acknowledged.has(name));
   const intentionallyUnclassified = (documented ?? []).filter(
     (name) => !reviewedSet.has(name) && acknowledged.has(name),
@@ -1182,6 +1241,31 @@ async function checkDocumentedProvider(provider, defaults, options) {
   }
 
   const findings = [];
+  for (const name of staleAcknowledgements)
+    findings.push({
+      kind: "stale-unclassified-acknowledgement",
+      detail: `${name}: acknowledgement no longer applies${access.has(name) ? `; docs declare ${access.get(name)} access` : ""}`,
+    });
+  for (const [name] of Object.entries(defaults.reviewedAccess ?? {})) {
+    if (documentedSet.has(name) && !access.has(name))
+      findings.push({
+        kind: "documented-access-missing",
+        detail: `${name}: docs no longer declare the reviewed access value`,
+      });
+  }
+  for (const [name, documentedAccess] of access) {
+    const reviewedAccess = defaults.reviewedAccess?.[name];
+    if (reviewedAccess !== undefined && reviewedAccess !== documentedAccess)
+      findings.push({
+        kind: "documented-access-changed",
+        detail: `${name}: docs declare ${documentedAccess}, reviewed ${reviewedAccess}`,
+      });
+    else if (reviewedSet.has(name) && reviewedAccess === undefined)
+      findings.push({
+        kind: "documented-access-unreviewed",
+        detail: `${name}: docs declare ${documentedAccess}; no reviewed access evidence`,
+      });
+  }
   for (const endpoint of runtime.endpoints) {
     if (!setup.includes(endpoint) && !setup.includes(endpoint.replace(/\/$/, ""))) {
       findings.push({
@@ -1252,7 +1336,9 @@ function printDocs(result) {
     console.log(`  not documented ${tool} (kept from release review)`);
   }
   for (const tool of result.intentionallyUnclassified) {
-    console.log(`  fail-closed   ${tool} (reviewed capture; live annotations remain authoritative)`);
+    console.log(
+      `  fail-closed   ${tool} (${result.inventoryPages ? "reviewed capture; live annotations remain authoritative" : "official access class is blank"})`,
+    );
   }
   for (const finding of result.findings) {
     console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);

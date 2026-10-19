@@ -1165,7 +1165,7 @@ a table.
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
-reason?, schemaDigest? } }, unlisted?: "hide" }`, validated at construction. It fails closed
+reason?, schemaDigest?, optional? } }, unlisted?: "hide" }`, validated at construction. It fails closed
 (INV-1): a reviewed read fills silence but yields to an explicit write
 annotation, a reviewed write stays a write whatever the downstream claims, an
 unlisted tool is a read only when it says so, and a reviewed tool whose
@@ -1191,8 +1191,45 @@ receives a separate deep copy of its definition, so mutations cannot change
 classification, schemas, or write accounting later in the same program.
 A restart applies the current review to cached SDK facts. Retired registry
 manifest versions 2 and 3 are ignored and expire on their original TTL.
-During successful listings the registry counts drift against the same record, and `scripts/drift-check.mjs` compares
-its names with published inventories. The internal `withVettedCatalog()`
+During listings the registry counts drift against the same record. Optional
+reviewed tools do not count as unserved when gated out. Reports carry an explicit
+reviewed-baseline fact, counts of live reviewed tools with and without schema
+pins, and complete/unavailable schema verification. A digest failure replaces
+the previous observation rather than retaining a stale clean result (INV-1,
+INV-6). Observation and classification share the same verification result for each
+listing; classification still fails closed.
+
+Reports are in-memory only, weakly keyed by connector and a registry-owned
+catalog partition token. The partition uses the same admitted principal,
+subject, caller identity, authenticated flag and pool as catalog caching, plus
+connector id and endpoint URLs. Personal registries do not share tokens with
+each other or the root. Each registry retains at most 1,024 tokens; eviction or
+restart yields no observation, never another subject's counts. No new storage
+key or durable catalog record is introduced.
+
+New schema pins use `sha256-sets-v1:<hex>`. Canonicalization sorts object keys
+and schema `required`, `enum`, and `type` arrays, including schema-valued
+legacy dependencies. Tuple arrays and JSON data
+inside defaults, constants, enum members and examples retain order. Existing
+`sha256:<hex>` pins continue using the original key-sorted, literal-array
+algorithm; their reviewed digests are unchanged. Migrating a legacy pin requires
+reviewing the complete schemas and recording a new versioned digest. Legacy
+pins may still report conservative drift for array reordering until migrated.
+The iterative digest retains the whole-schema node ceiling in both formats.
+
+The maintainer `scripts/drift-check.mjs` compares published inventories with
+provider evidence. Table inventories can require `inventory.accessColumn` and
+record `reviewedAccess` (`read` or `write`, with destructive verdicts recorded
+as write). These access snapshots must agree with the provider's runtime
+classification. A documented access change or disappearance of a reviewed explicit Access
+value is advisory drift, never an
+automatically accepted verdict. An explicit access value makes an
+`acknowledgedUnclassified` entry stale: report it and resume reporting that
+unreviewed tool as an addition. Missing tools and already reviewed names also
+invalidate such acknowledgements. Duplicate explicit access values must agree;
+a blank duplicate does not erase an explicit value elsewhere. Missing required
+columns in any tool table, unknown access values and conflicting rows are provider-local parser
+findings. The internal `withVettedCatalog()`
 helper has been removed. Public provider `*_VETTED_CATALOG` exports remain
 deprecated aliases derived from each definition
 (`test/classified-decorators.test.ts`, `test/hosted-presets.test.ts`).
