@@ -14,7 +14,7 @@
     ],
     [
       "payment client secrets,",
-      "payment client secrets (including AI Gateway top-up configuration),"
+      "payment client secrets (including AI Gateway top-up configuration), Cloudforce One priority-intelligence match reads and updates (their response schemas are unreviewed),"
     ],
     [
       "and every environment or plain-text binding value",

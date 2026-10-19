@@ -1496,6 +1496,41 @@ describe("cloudflare() over a key", () => {
     expect(sent).toHaveLength(before);
   });
 
+  it.each([200, 400])(
+    "INV-5: refuses schemaless Cloudforce matches before a secret-bearing HTTP %i response",
+    async (status) => {
+      const connector = cloudflare("cf", TOKEN);
+      const marker = "stored-secret-marker";
+      const url = "https://example.com/download?token=bearer-marker";
+      respond = () =>
+        Response.json(
+          status === 200
+            ? { success: true, result: [{ value: marker, url }] }
+            : { success: false, errors: [{ code: 10001, message: `${marker} ${url}` }] },
+          { status },
+        );
+      for (const method of ["GET", "PATCH"] as const) {
+        const error = await refusal(
+          connector.callTool(
+            method === "GET" ? "cloudflare_api_read" : "cloudflare_api_write",
+            {
+              method,
+              path: `/accounts/${ACCOUNT}/cloudforce-one/v2/priority-intelligence/p1/matches`,
+              ...(method === "PATCH" ? { body: {} } : {}),
+            },
+            token(),
+          ),
+        );
+        expect(error.code).toBe("invalid_args");
+        expect(error.message).toContain("no reviewed response schema");
+        expect(`${error.message} ${JSON.stringify(error)}`).not.toMatch(/stored-secret-marker|bearer-marker/);
+      }
+      // Refusal precedes dispatch: neither success nor vendor error bodies can
+      // reach the response mapper, projections, or caller.
+      expect(sent).toEqual([]);
+    },
+  );
+
   it("keeps billed, activating, and outbound POSTs out of the read tool (round 1, finding 5)", async () => {
     const connector = cloudflare("cf", TOKEN);
     for (const path of [

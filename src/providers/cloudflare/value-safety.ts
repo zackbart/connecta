@@ -4,7 +4,8 @@
 // `value-safety.node.test.ts` runs the shared harness over it.
 //
 // - `refuse`: the operation exists to mint, rotate, or hand back a credential
-//   (or move money through a payment secret); nothing is sent.
+//   (or move money through a payment secret), or lacks a reviewed response
+//   contract; nothing is sent.
 // - `redact`: the operation is useful, and these field paths carry a
 //   credential or stored secret; they are replaced before the result is
 //   returned, on every method. A path ending in `#url` keeps only the URL's
@@ -30,10 +31,10 @@
 // JavaScript served as application/javascript) are not decoded or scanned.
 // Recording/download/upload capabilities retain their structured-field rules.
 // The review found no documented Cloudflare-minted links embedded in other
-// free text, including AI Search item/job logs and Cloudforce match data,
-// and justifies no Cloudflare/R2/S3-wide file-host policy. The new Cloudforce
-// match responses omit schemas; their documented event semantics supplement
-// the schema review, rather than proving every returned field.
+// free text, including AI Search item/job logs, and justifies no
+// Cloudflare/R2/S3-wide file-host policy. The new Cloudforce match responses
+// omit schemas; both operations are refused until their response contracts
+// can be reviewed, including their error bodies.
 
 import {
   redact as reviewed,
@@ -55,6 +56,8 @@ const ACTS = "This GET acts rather than reads (it completes a connection or an u
 const INTERNAL = "An internal Cloudflare test route; it is not part of the supported API.";
 const CAPTURE =
   "A URL scan's captured session (cookies, request and response headers, response bodies, DOM) can carry credentials, so Connecta does not return it. Read scan verdicts with GET /accounts/{account_id}/urlscanner/v2/search.";
+const UNREVIEWED_MATCHES =
+  "Cloudforce match responses have no reviewed response schema; Connecta refuses this operation until its success and error values can be reviewed.";
 
 const METADATA = "Returns names, ids, status, and timestamps; no credential value.";
 const REVOKES = "Revokes or deletes; returns no credential value.";
@@ -465,6 +468,8 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
     "A Mesh node token lets anyone run this connector; Connecta does not return it.",
   ),
   // Cloudforce One
+  [`GET ${A}/cloudforce-one/v2/priority-intelligence/{priority_id}/matches`]: refuse(UNREVIEWED_MATCHES),
+  [`PATCH ${A}/cloudforce-one/v2/priority-intelligence/{priority_id}/matches`]: refuse(UNREVIEWED_MATCHES),
   [`GET ${A}/cloudforce-one/v2/credential-monitor/domains`]: safe(METADATA),
   [`POST ${A}/cloudforce-one/v2/credential-monitor/domains`]: safe(METADATA),
   [`DELETE ${A}/cloudforce-one/v2/credential-monitor/domains/{id}`]: safe(REVOKES),
