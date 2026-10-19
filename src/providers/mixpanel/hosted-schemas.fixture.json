@@ -1,0 +1,2848 @@
+[
+  {
+    "name": "Get-Events",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "integer"
+        },
+        "workspace_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "event_names": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "include_details": {
+          "default": false,
+          "type": "boolean"
+        },
+        "tag": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "verified": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dropped": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": ["project_id"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "properties": {
+        "events": {
+          "description": "Events with metadata",
+          "items": {
+            "description": "An event with its name and metadata.",
+            "properties": {
+              "name": {
+                "description": "Event name",
+                "type": "string"
+              },
+              "tags": {
+                "description": "List of tag names",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Event description"
+              },
+              "display_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Display name"
+              },
+              "verified": {
+                "default": false,
+                "description": "Whether event is verified",
+                "type": "boolean"
+              },
+              "hidden": {
+                "default": false,
+                "description": "Whether event is hidden",
+                "type": "boolean"
+              },
+              "dropped": {
+                "default": false,
+                "description": "Whether event is dropped",
+                "type": "boolean"
+              },
+              "merged_into": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Canonical event this one was merged into. When set, this event is no longer tracked separately and queries against it resolve to the canonical — query the canonical instead."
+              },
+              "merged_sources": {
+                "description": "Event names merged into this one; its data combines theirs with its own",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": ["name"],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "count": {
+          "default": 0,
+          "description": "Number of events returned",
+          "type": "integer"
+        }
+      },
+      "required": ["events"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "Get-Dashboard",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "integer"
+        },
+        "dashboard_id": {
+          "type": "integer"
+        },
+        "include_layout": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": ["project_id", "dashboard_id"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "description": "LLM-facing dashboard type returned by tools.",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "creator_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "creator_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "creator_email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "is_restricted": {
+          "default": false,
+          "type": "boolean"
+        },
+        "created": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "modified": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "is_favorited": {
+          "default": false,
+          "type": "boolean"
+        },
+        "unique_view_count": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total_view_count": {
+          "default": 0,
+          "type": "integer"
+        },
+        "parent_dashboard_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent dashboard ID if nested"
+        },
+        "workspace_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filters": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Board filters applied to every report, as the boards UI stores them"
+        },
+        "time_filter": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Board date range applied to every report"
+        },
+        "layout": {
+          "anyOf": [
+            {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "maxItems": 3,
+                      "minItems": 3,
+                      "prefixItems": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "html_content": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["html_content"],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "id": {
+                                  "type": "integer"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["id", "name", "description"],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["name", "description"],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "content_id": {
+                                  "type": "integer"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["content_id", "title", "description"],
+                              "type": "object"
+                            },
+                            {
+                              "description": "An experiment card: a board cell that references an existing experiment.\n\nThe card holds no experiment data of its own, so ``name`` is the experiment's\ncurrent name and ``experiment_id`` is the key to pass to Get-Experiment for\nstatus and results.",
+                              "properties": {
+                                "experiment_id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["experiment_id", "name"],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "name": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "default": null
+                                }
+                              },
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      ],
+                      "type": "array"
+                    },
+                    "type": "array"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Layout as [[row_id, [[cell_id, type, extra], ...]], ...]. Use with Update-Dashboard."
+        }
+      },
+      "required": ["id", "title"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "Get-Experiment",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "integer"
+        },
+        "experiment_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compute_exposures": {
+          "default": false,
+          "type": "boolean"
+        },
+        "compute_metrics": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": ["project_id", "experiment_id"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "description": "Detailed information for an experiment, with optional live query data.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hypothesis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "description": "Status values for experiments.",
+          "enum": ["draft", "active", "concluded", "success", "fail", "archived"],
+          "type": "string"
+        },
+        "created": {
+          "type": "string"
+        },
+        "modified": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "creator_email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "feature_flag_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variants": {
+          "anyOf": [
+            {
+              "items": {
+                "description": "Variant as returned from the experiments API.",
+                "properties": {
+                  "key": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "isControl": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metrics": {
+          "anyOf": [
+            {
+              "items": {
+                "description": "Metric as returned from the experiments API.",
+                "properties": {
+                  "id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "type": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "direction": {
+                    "default": "up",
+                    "enum": ["up", "down"],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "settings": {
+          "anyOf": [
+            {
+              "description": "Settings as returned from the experiments API.",
+              "properties": {
+                "collectionMethod": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "featureFlagSettings": {
+                  "anyOf": [
+                    {
+                      "description": "Feature flag settings nested within experiment settings.",
+                      "properties": {
+                        "featureFlagId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "featureFlagKey": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "exposureEventSettings": {
+                  "anyOf": [
+                    {
+                      "description": "Exposure event settings nested within experiment settings.",
+                      "properties": {
+                        "experimentName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "hiddenVariants": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": {
+                                "type": "boolean"
+                              },
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "sampleSize": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "minimumDetectableEffect": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "endCondition": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "endAfterDays": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "confidenceLevel": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "testingModel": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "controlKey": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "workspaceId": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "excludeQA": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "srm": {
+                  "anyOf": [
+                    {
+                      "description": "SRM (Sample Ratio Mismatch) settings nested within experiment settings.",
+                      "properties": {
+                        "enabled": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "targetAllocations": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": {
+                                "type": "number"
+                              },
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "cuped": {
+                  "anyOf": [
+                    {
+                      "description": "CUPED variance reduction settings nested within experiment settings.",
+                      "properties": {
+                        "enabled": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "preExposureDatePreset": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "multipleTestingCorrection": {
+                  "anyOf": [
+                    {
+                      "description": "Multiple testing correction methods.",
+                      "enum": ["off", "bonferroni", "benjamini-hochberg"],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "winsorization": {
+                  "anyOf": [
+                    {
+                      "description": "Winsorization settings nested within experiment settings.",
+                      "properties": {
+                        "enabled": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "percentile": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "preExperimentBias": {
+                  "anyOf": [
+                    {
+                      "description": "Pre-experiment bias settings nested within experiment settings.",
+                      "properties": {
+                        "enabled": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "preExperimentDuration": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "acknowledged": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "statsigVersion": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "exposures_cache": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "description": "Cached exposure counts per variant with metadata.",
+              "properties": {
+                "$last_computed": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "$srm_analysis": {
+                  "anyOf": [
+                    {
+                      "description": "SRM (Sample Ratio Mismatch) analysis result.",
+                      "properties": {
+                        "p_value": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "chi_square": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "results_cache": {
+          "anyOf": [
+            {
+              "description": "Cached metric results with summary and metadata.",
+              "properties": {
+                "metrics": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "description": "Statistical results for a single variant on a single metric.",
+                              "properties": {
+                                "value": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "default": null
+                                },
+                                "sampleSize": {
+                                  "anyOf": [
+                                    {
+                                      "type": "integer"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "default": null
+                                },
+                                "lift": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "default": null
+                                },
+                                "liftConfidence": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "default": null
+                                },
+                                "significance": {
+                                  "anyOf": [
+                                    {
+                                      "enum": ["NO", "YES_POSITIVE", "YES_NEGATIVE"],
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "default": null
+                                },
+                                "pValue": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "default": null
+                                }
+                              },
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "type": "object"
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "summary": {
+                  "anyOf": [
+                    {
+                      "description": "Results grouped by statistical significance.",
+                      "properties": {
+                        "positive": {
+                          "anyOf": [
+                            {
+                              "items": {
+                                "description": "A single item in the results cache summary.",
+                                "properties": {
+                                  "metricId": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "variant": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "lift": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "liftConfidence": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "sampleSize": {
+                                    "anyOf": [
+                                      {
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "significance": {
+                                    "anyOf": [
+                                      {
+                                        "enum": ["NO", "YES_POSITIVE", "YES_NEGATIVE"],
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "pValue": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "negative": {
+                          "anyOf": [
+                            {
+                              "items": {
+                                "description": "A single item in the results cache summary.",
+                                "properties": {
+                                  "metricId": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "variant": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "lift": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "liftConfidence": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "sampleSize": {
+                                    "anyOf": [
+                                      {
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "significance": {
+                                    "anyOf": [
+                                      {
+                                        "enum": ["NO", "YES_POSITIVE", "YES_NEGATIVE"],
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "pValue": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "no": {
+                          "anyOf": [
+                            {
+                              "items": {
+                                "description": "A single item in the results cache summary.",
+                                "properties": {
+                                  "metricId": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "variant": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "lift": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "liftConfidence": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "sampleSize": {
+                                    "anyOf": [
+                                      {
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "significance": {
+                                    "anyOf": [
+                                      {
+                                        "enum": ["NO", "YES_POSITIVE", "YES_NEGATIVE"],
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  },
+                                  "pValue": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "default": null
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "$last_computed": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "message": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "variant": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deleted": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workspace_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "live_exposures": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "live_srm_analysis": {
+          "anyOf": [
+            {
+              "description": "SRM (Sample Ratio Mismatch) analysis result.",
+              "properties": {
+                "p_value": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "chi_square": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "live_metrics": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "description": "Statistical results for a single variant on a single metric.",
+                      "properties": {
+                        "value": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "sampleSize": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "lift": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "liftConfidence": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "significance": {
+                          "anyOf": [
+                            {
+                              "enum": ["NO", "YES_POSITIVE", "YES_NEGATIVE"],
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "pValue": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "live_retro_aa": {
+          "anyOf": [
+            {
+              "description": "Bonferroni-corrected retrospective A/A health-check verdict.\n\nPopulated by ``Get-Experiment`` with ``compute_metrics=true`` whenever\n``settings.preExperimentBias.enabled`` is not false. Mirrors the wire\nshape emitted by webapp's\n``api/version_2_0/insights/experiments/retro_aa.format_retro_aa_verdict``:\nconsumers (in-app banner, the ``explain_health_check`` tool,\nalerting tools) all read the same verdict so their decisions cannot\ndisagree.\n\nEach ``results`` entry carries its non-control variants under\n``variants`` — consumers that only need the banner rollup can read\n``results[].is_failing``; consumers that need to attribute the bias\nto a specific arm read ``results[].variants[].is_failing``.\n\nRead ``acknowledged`` alongside ``any_failing`` to compute\n``requires_attention = any_failing and not acknowledged`` — the raw\nflags are kept separate so different consumers can choose whether to\nsuppress acknowledged failures (banner hides them; alerting may still\nwant to surface them).",
+              "properties": {
+                "base_alpha": {
+                  "type": "number"
+                },
+                "corrected_alpha": {
+                  "type": "number"
+                },
+                "model": {
+                  "default": "frequentist",
+                  "type": "string"
+                },
+                "decision_threshold": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "metric_count": {
+                  "type": "integer"
+                },
+                "variant_count": {
+                  "type": "integer"
+                },
+                "include_srm": {
+                  "type": "boolean"
+                },
+                "any_failing": {
+                  "type": "boolean"
+                },
+                "acknowledged": {
+                  "type": "boolean"
+                },
+                "results": {
+                  "items": {
+                    "description": "Per-metric retro A/A verdict — rolls up per-variant outcomes for\nbanner consumers, while preserving the per-variant breakdown under\n``variants`` for detail views and AI consumers.",
+                    "properties": {
+                      "metric_id": {
+                        "type": "string"
+                      },
+                      "is_failing": {
+                        "type": "boolean"
+                      },
+                      "variants": {
+                        "items": {
+                          "description": "Per-(metric, non-control variant) retro A/A verdict.\n\nPreserves which specific variants are biased on a given metric so\ndetail views and AI consumers can report e.g. \"variant_b biased on\nmetric_x but variant_c passed\" instead of a lossy rollup. Matches\nthe dict shape produced by\n``api/version_2_0/insights/experiments/retro_aa.py:format_retro_aa_verdict``.",
+                          "properties": {
+                            "variant_key": {
+                              "type": "string"
+                            },
+                            "p_value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "default": null
+                            },
+                            "prob_beat_control": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "default": null
+                            },
+                            "is_failing": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": ["variant_key", "is_failing"],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": ["metric_id", "is_failing", "variants"],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "base_alpha",
+                "corrected_alpha",
+                "metric_count",
+                "variant_count",
+                "include_srm",
+                "any_failing",
+                "acknowledged",
+                "results"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "live_results_errors": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "validationFindings": {
+          "anyOf": [
+            {
+              "description": "Sorted list of detected pitfalls; empty when the config is clean.",
+              "properties": {
+                "pitfalls": {
+                  "items": {
+                    "properties": {
+                      "pitfall_kind": {
+                        "enum": [
+                          "pre_experiment_bias_likely",
+                          "high_variance_no_winsorization",
+                          "multiple_primaries_no_bonferroni",
+                          "underpowered_duration_insufficient",
+                          "underpowered_duration_marginal",
+                          "cohort_too_small",
+                          "missing_guardrails",
+                          "hypothesis_metric_mismatch",
+                          "primary_lacks_leading_indicator"
+                        ],
+                        "type": "string"
+                      },
+                      "severity": {
+                        "enum": ["blocker", "warning", "fyi"],
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "fix_action": {
+                        "anyOf": [
+                          {
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "action": {
+                                    "const": "extend_duration",
+                                    "default": "extend_duration",
+                                    "type": "string"
+                                  },
+                                  "days": {
+                                    "exclusiveMinimum": 0,
+                                    "type": "integer"
+                                  }
+                                },
+                                "required": ["days"],
+                                "type": "object"
+                              },
+                              {
+                                "properties": {
+                                  "action": {
+                                    "const": "enable_cuped",
+                                    "default": "enable_cuped",
+                                    "type": "string"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "properties": {
+                                  "action": {
+                                    "const": "enable_winsorization",
+                                    "default": "enable_winsorization",
+                                    "type": "string"
+                                  },
+                                  "percentile": {
+                                    "default": 5,
+                                    "exclusiveMaximum": 50,
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "properties": {
+                                  "action": {
+                                    "const": "enable_bonferroni",
+                                    "default": "enable_bonferroni",
+                                    "type": "string"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "properties": {
+                                  "action": {
+                                    "const": "add_guardrail",
+                                    "default": "add_guardrail",
+                                    "type": "string"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "description": "Pre-fills the *suggested* cohort size and per-arm target so the\nagent can offer either remediation in one Update-Experiment call:\nexpand the cohort to ``suggested_cohort_size`` or shrink the per-arm\ntarget to ``suggested_target_sample_size``.",
+                                "properties": {
+                                  "action": {
+                                    "const": "resize_cohort_or_sample",
+                                    "default": "resize_cohort_or_sample",
+                                    "type": "string"
+                                  },
+                                  "suggested_cohort_size": {
+                                    "type": "integer"
+                                  },
+                                  "suggested_target_sample_size": {
+                                    "type": "integer"
+                                  }
+                                },
+                                "required": ["suggested_cohort_size", "suggested_target_sample_size"],
+                                "type": "object"
+                              },
+                              {
+                                "description": "No-op fix — flags primary metrics for user review (heuristic pitfall).",
+                                "properties": {
+                                  "action": {
+                                    "const": "review_metric_alignment",
+                                    "default": "review_metric_alignment",
+                                    "type": "string"
+                                  }
+                                },
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": ["pitfall_kind", "severity", "message"],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": ["id", "name", "status", "created"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "List-Cohorts",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "integer"
+        },
+        "workspace_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": ["project_id"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "description": "Lightweight cohort header returned by List-Cohorts.",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "count": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "verified": {
+                "type": "boolean"
+              }
+            },
+            "required": ["id", "name", "description", "count", "verified"],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": ["result"],
+      "type": "object",
+      "x-fastmcp-wrap-result": true
+    }
+  },
+  {
+    "name": "Get-Metric",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "integer"
+        },
+        "metric_id": {
+          "type": "integer"
+        }
+      },
+      "required": ["project_id", "metric_id"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "description": "Detailed information for a saved metric including its full definition.",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "enum": ["metric", "formula"],
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "definition": {
+          "additionalProperties": false,
+          "description": "Output-side definition referencing tolerant sections.",
+          "properties": {
+            "displayOptions": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "Display options for a metric.",
+                  "properties": {
+                    "chartType": {
+                      "default": "line",
+                      "enum": ["line", "bar"],
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "sections": {
+              "additionalProperties": false,
+              "description": "Output-side sections referencing tolerant events.",
+              "properties": {
+                "events": {
+                  "items": {
+                    "additionalProperties": false,
+                    "description": "Output-side event: tolerant ``math`` (any webapp value).",
+                    "properties": {
+                      "event": {
+                        "type": "string"
+                      },
+                      "math": {
+                        "default": "total",
+                        "type": "string"
+                      },
+                      "filters": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "description": "A filter for 'string' properties that requires a comparison value.",
+                                  "properties": {
+                                    "type": {
+                                      "const": "string",
+                                      "default": "string",
+                                      "type": "string"
+                                    },
+                                    "propertyName": {
+                                      "description": "The event or user property name.",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "propertyType": {
+                                      "default": "string",
+                                      "enum": ["string", "list"],
+                                      "type": "string"
+                                    },
+                                    "resource": {
+                                      "default": "event",
+                                      "enum": ["event", "user"],
+                                      "type": "string"
+                                    },
+                                    "operator": {
+                                      "enum": ["equals", "contains", "does not equal", "does not contain"],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["propertyName", "operator", "value"],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "description": "A filter for 'string' properties using 'is set'/'is not set' — value is not needed.",
+                                  "properties": {
+                                    "type": {
+                                      "const": "string",
+                                      "default": "string",
+                                      "type": "string"
+                                    },
+                                    "propertyName": {
+                                      "description": "The event or user property name.",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "propertyType": {
+                                      "default": "string",
+                                      "enum": ["string", "number", "boolean", "datetime", "list"],
+                                      "type": "string"
+                                    },
+                                    "resource": {
+                                      "default": "event",
+                                      "enum": ["event", "user"],
+                                      "type": "string"
+                                    },
+                                    "operator": {
+                                      "enum": ["is set", "is not set"],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["propertyName", "operator"],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "description": "A filter for 'number' properties using the 'between' operator.",
+                                  "properties": {
+                                    "type": {
+                                      "const": "number_array",
+                                      "default": "number_array",
+                                      "type": "string"
+                                    },
+                                    "propertyName": {
+                                      "description": "The event or user property name.",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "propertyType": {
+                                      "default": "number",
+                                      "enum": ["string", "number", "boolean", "datetime", "list"],
+                                      "type": "string"
+                                    },
+                                    "resource": {
+                                      "default": "event",
+                                      "enum": ["event", "user"],
+                                      "type": "string"
+                                    },
+                                    "operator": {
+                                      "const": "is between",
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "description": "[low, high]",
+                                      "items": {
+                                        "type": "number"
+                                      },
+                                      "maxItems": 2,
+                                      "minItems": 2,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": ["propertyName", "operator", "value"],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "description": "A filter for 'number' properties.",
+                                  "properties": {
+                                    "type": {
+                                      "const": "number",
+                                      "default": "number",
+                                      "type": "string"
+                                    },
+                                    "propertyName": {
+                                      "description": "The event or user property name.",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "propertyType": {
+                                      "default": "number",
+                                      "enum": ["string", "number", "boolean", "datetime", "list"],
+                                      "type": "string"
+                                    },
+                                    "resource": {
+                                      "default": "event",
+                                      "enum": ["event", "user"],
+                                      "type": "string"
+                                    },
+                                    "operator": {
+                                      "enum": [
+                                        "is at least",
+                                        "is equal to",
+                                        "is not equal to",
+                                        "is greater than",
+                                        "is less than",
+                                        "is at most"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": ["propertyName", "operator", "value"],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "description": "A filter for 'boolean' properties.",
+                                  "properties": {
+                                    "type": {
+                                      "const": "boolean",
+                                      "default": "boolean",
+                                      "type": "string"
+                                    },
+                                    "propertyName": {
+                                      "description": "The event or user property name.",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "propertyType": {
+                                      "default": "boolean",
+                                      "enum": ["string", "number", "boolean", "datetime", "list"],
+                                      "type": "string"
+                                    },
+                                    "resource": {
+                                      "default": "event",
+                                      "enum": ["event", "user"],
+                                      "type": "string"
+                                    },
+                                    "operator": {
+                                      "enum": ["true", "false"],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": ["propertyName", "operator", "value"],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "description": "A filter for 'datetime' properties.",
+                                  "properties": {
+                                    "type": {
+                                      "const": "datetime",
+                                      "default": "datetime",
+                                      "type": "string"
+                                    },
+                                    "propertyName": {
+                                      "description": "The event or user property name.",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "propertyType": {
+                                      "default": "datetime",
+                                      "enum": ["string", "number", "boolean", "datetime", "list"],
+                                      "type": "string"
+                                    },
+                                    "resource": {
+                                      "default": "event",
+                                      "enum": ["event", "user"],
+                                      "type": "string"
+                                    },
+                                    "operator": {
+                                      "enum": ["was on", "was before", "was since"],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "description": "ISO date, e.g. 2026-10-01",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["propertyName", "operator", "value"],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "description": "Filter on sub-properties of a 'list of objects' property.\n\nUse when the property holds an array of nested objects (e.g.\n`cart: [{item_name, item_cost}, ...]`) and you want events where the list\nitems match the inner predicate(s). The `listItemFilters` are ordinary\nproperty filters whose `propertyName` is the sub-property (e.g. 'item_name').",
+                                  "properties": {
+                                    "type": {
+                                      "const": "list-of-objects",
+                                      "default": "list-of-objects",
+                                      "type": "string"
+                                    },
+                                    "propertyName": {
+                                      "description": "The base 'list of objects' property name (e.g. 'cart').",
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "resource": {
+                                      "default": "event",
+                                      "enum": ["event", "user"],
+                                      "type": "string"
+                                    },
+                                    "listItemFilters": {
+                                      "description": "Ordinary property filters applied to each object in the list; set each filter's propertyName to the sub-property (e.g. 'item_name'). Multiple filters are ANDed within a single list item.",
+                                      "items": {
+                                        "oneOf": [
+                                          {
+                                            "additionalProperties": false,
+                                            "description": "A filter for 'string' properties that requires a comparison value.",
+                                            "properties": {
+                                              "type": {
+                                                "const": "string",
+                                                "default": "string",
+                                                "type": "string"
+                                              },
+                                              "propertyName": {
+                                                "description": "The event or user property name.",
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "propertyType": {
+                                                "default": "string",
+                                                "enum": ["string", "list"],
+                                                "type": "string"
+                                              },
+                                              "resource": {
+                                                "default": "event",
+                                                "enum": ["event", "user"],
+                                                "type": "string"
+                                              },
+                                              "operator": {
+                                                "enum": ["equals", "contains", "does not equal", "does not contain"],
+                                                "type": "string"
+                                              },
+                                              "value": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": ["propertyName", "operator", "value"],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "description": "A filter for 'string' properties using 'is set'/'is not set' — value is not needed.",
+                                            "properties": {
+                                              "type": {
+                                                "const": "string",
+                                                "default": "string",
+                                                "type": "string"
+                                              },
+                                              "propertyName": {
+                                                "description": "The event or user property name.",
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "propertyType": {
+                                                "default": "string",
+                                                "enum": ["string", "number", "boolean", "datetime", "list"],
+                                                "type": "string"
+                                              },
+                                              "resource": {
+                                                "default": "event",
+                                                "enum": ["event", "user"],
+                                                "type": "string"
+                                              },
+                                              "operator": {
+                                                "enum": ["is set", "is not set"],
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": ["propertyName", "operator"],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "description": "A filter for 'number' properties using the 'between' operator.",
+                                            "properties": {
+                                              "type": {
+                                                "const": "number_array",
+                                                "default": "number_array",
+                                                "type": "string"
+                                              },
+                                              "propertyName": {
+                                                "description": "The event or user property name.",
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "propertyType": {
+                                                "default": "number",
+                                                "enum": ["string", "number", "boolean", "datetime", "list"],
+                                                "type": "string"
+                                              },
+                                              "resource": {
+                                                "default": "event",
+                                                "enum": ["event", "user"],
+                                                "type": "string"
+                                              },
+                                              "operator": {
+                                                "const": "is between",
+                                                "type": "string"
+                                              },
+                                              "value": {
+                                                "description": "[low, high]",
+                                                "items": {
+                                                  "type": "number"
+                                                },
+                                                "maxItems": 2,
+                                                "minItems": 2,
+                                                "type": "array"
+                                              }
+                                            },
+                                            "required": ["propertyName", "operator", "value"],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "description": "A filter for 'number' properties.",
+                                            "properties": {
+                                              "type": {
+                                                "const": "number",
+                                                "default": "number",
+                                                "type": "string"
+                                              },
+                                              "propertyName": {
+                                                "description": "The event or user property name.",
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "propertyType": {
+                                                "default": "number",
+                                                "enum": ["string", "number", "boolean", "datetime", "list"],
+                                                "type": "string"
+                                              },
+                                              "resource": {
+                                                "default": "event",
+                                                "enum": ["event", "user"],
+                                                "type": "string"
+                                              },
+                                              "operator": {
+                                                "enum": [
+                                                  "is at least",
+                                                  "is equal to",
+                                                  "is not equal to",
+                                                  "is greater than",
+                                                  "is less than",
+                                                  "is at most"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "value": {
+                                                "type": "number"
+                                              }
+                                            },
+                                            "required": ["propertyName", "operator", "value"],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "description": "A filter for 'boolean' properties.",
+                                            "properties": {
+                                              "type": {
+                                                "const": "boolean",
+                                                "default": "boolean",
+                                                "type": "string"
+                                              },
+                                              "propertyName": {
+                                                "description": "The event or user property name.",
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "propertyType": {
+                                                "default": "boolean",
+                                                "enum": ["string", "number", "boolean", "datetime", "list"],
+                                                "type": "string"
+                                              },
+                                              "resource": {
+                                                "default": "event",
+                                                "enum": ["event", "user"],
+                                                "type": "string"
+                                              },
+                                              "operator": {
+                                                "enum": ["true", "false"],
+                                                "type": "string"
+                                              },
+                                              "value": {
+                                                "type": "boolean"
+                                              }
+                                            },
+                                            "required": ["propertyName", "operator", "value"],
+                                            "type": "object"
+                                          },
+                                          {
+                                            "additionalProperties": false,
+                                            "description": "A filter for 'datetime' properties.",
+                                            "properties": {
+                                              "type": {
+                                                "const": "datetime",
+                                                "default": "datetime",
+                                                "type": "string"
+                                              },
+                                              "propertyName": {
+                                                "description": "The event or user property name.",
+                                                "minLength": 1,
+                                                "type": "string"
+                                              },
+                                              "propertyType": {
+                                                "default": "datetime",
+                                                "enum": ["string", "number", "boolean", "datetime", "list"],
+                                                "type": "string"
+                                              },
+                                              "resource": {
+                                                "default": "event",
+                                                "enum": ["event", "user"],
+                                                "type": "string"
+                                              },
+                                              "operator": {
+                                                "enum": ["was on", "was before", "was since"],
+                                                "type": "string"
+                                              },
+                                              "value": {
+                                                "description": "ISO date, e.g. 2026-10-01",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": ["propertyName", "operator", "value"],
+                                            "type": "object"
+                                          }
+                                        ]
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "listQuantifier": {
+                                      "default": "any",
+                                      "description": "'any': keep events where at least one list item matches; 'all': every item must match.",
+                                      "enum": ["any", "all"],
+                                      "type": "string"
+                                    },
+                                    "listInclusion": {
+                                      "default": "all",
+                                      "description": "'all': keep the whole list; 'matching': keep only items that matched.",
+                                      "enum": ["all", "matching"],
+                                      "type": "string"
+                                    },
+                                    "propertyObjectKey": {
+                                      "description": "Only for nested objects: the path prefix within each list item (e.g. ['sales'] for cart.sales.sale_price). Omit for direct sub-properties.",
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": ["propertyName", "listItemFilters"],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": ["event"],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": ["events"],
+              "type": "object"
+            }
+          },
+          "required": ["sections"],
+          "type": "object"
+        },
+        "verified": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "owned_by": {
+          "anyOf": [
+            {
+              "description": "Owner information for a metric.",
+              "properties": {
+                "id": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "email": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": ["id", "name", "type", "definition"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "Fill-Event-Metadata",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "integer"
+        }
+      },
+      "required": ["project_id"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "description": "Result of an AI-enriched metadata fill.",
+      "properties": {
+        "events_updated": {
+          "default": 0,
+          "description": "Number of events whose metadata was filled in.",
+          "type": "integer"
+        },
+        "note": {
+          "default": "Refresh the project's Lexicon page to see the newly filled metadata.",
+          "description": "Follow-up suggestion to relay to the user after the fill completes.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  }
+]

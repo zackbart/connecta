@@ -19,6 +19,7 @@ import notionAdmissionGuideChanges from "./fixtures/notion-token-admission-813-g
 import restAdmissionGuideChanges from "./fixtures/rest-write-admission-812-guide-changes.json";
 import docsCorrectnessGuideChanges from "./fixtures/docs-correctness-guide-changes.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
+import mixpanelReviewChanges from "./fixtures/hosted-mixpanel-343-review-changes.json";
 import { classifyTool } from "../src/tool-safety.js";
 import { providerFixtures } from "./providers.generated.js";
 import { Registry } from "../src/registry.js";
@@ -73,6 +74,7 @@ function expectedGuide(name: Name, content: string): string {
     ...(docsCorrectness[name] ?? []),
     ...(linearCatalog[name] ?? []),
     ...(revenuecatReview[name] ?? []),
+    ...(name === "mixpanel" ? mixpanelReviewChanges.guideChanges : []),
   ])
     content = content.replaceAll(from!, to!);
   return content;
@@ -153,7 +155,7 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
           return [tool, verdict];
         }),
       ),
-    ).toEqual(expectedVerdicts);
+    ).toEqual(name === "mixpanel" ? { ...expectedVerdicts, ...mixpanelReviewChanges.verdicts } : expectedVerdicts);
     expect(Object.isFrozen(classify.tools)).toBe(true);
     expect(connector.classification).toEqual(classify);
     for (const entry of Object.values(classify.tools)) {
@@ -182,7 +184,9 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
       const registry = registryFor(connector);
       const served = await registry.getTools("fixture", "https://connecta.example");
       expect(served.map((tool) => tool.name)).toEqual(names);
-      expect(await hash(served.map((tool) => [tool.name, tool.annotations ?? null]))).toBe(recorded.classified[index]);
+      expect(await hash(served.map((tool) => [tool.name, tool.annotations ?? null]))).toBe(
+        (name === "mixpanel" ? mixpanelReviewChanges.classified : recorded.classified)[index],
+      );
       for (const tool of served) {
         expect(tool.classification).toBe(classifyTool(tool));
       }

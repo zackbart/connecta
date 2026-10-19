@@ -67,10 +67,10 @@ export interface MixpanelApiOptions extends MixpanelCommonOptions {
 export type MixpanelOptions = MixpanelMcpOptions | MixpanelApiOptions;
 
 /**
- * Reviewed in #705's provider audit against https://docs.mixpanel.com/docs/mcp.
- * Retains the release-reviewed inventory, including names absent from today's
- * public reference. Live annotations were not reverified without credentials.
- * Schema digests retain the 2026-08-30 live US review (#395, #512).
+ * Reviewed against https://docs.mixpanel.com/docs/mcp and the 2026-10-19 live
+ * US describe schemas (#343, #703). Eleven of the 64 previously pinned tools
+ * changed since the 2026-08-30 review (#395, #512); unchanged pins are retained.
+ * Get-Audit-Log is documented beta-only: no live schema digest is claimed.
  */
 const MIXPANEL_CLASSIFICATION: ToolClassification = {
   tools: {
@@ -102,7 +102,7 @@ const MIXPANEL_CLASSIFICATION: ToolClassification = {
     "Get-Dashboard": {
       "verdict": "read",
       "reason": "Retrieves Mixpanel dashboard information without changing vendor state.",
-      "schemaDigest": "sha256:56659fa3277723b75e24f3b4ca142ac9cd62120fb97e6c9252c221d00cdf8509",
+      "schemaDigest": "sha256:0af78ab95566a20eeba08af6922f2017d98503e2b14dcbe8d7e2ac54eef870d7",
     },
     "Get-Business-Context": {
       "verdict": "read",
@@ -119,10 +119,15 @@ const MIXPANEL_CLASSIFICATION: ToolClassification = {
       "reason": "Retrieves Mixpanel organizations information without changing vendor state.",
       "schemaDigest": "sha256:e4c23f123dde073e00038d92ebd53f45157c83a4d3a2ff686ab1b66c859f4a11",
     },
+    "Get-Audit-Log": {
+      "verdict": "read",
+      "reason":
+        "Queries existing organization audit history; limited-access beta requiring organization admin or owner access.",
+    },
     "Get-Events": {
       "verdict": "read",
       "reason": "Retrieves Mixpanel events information without changing vendor state.",
-      "schemaDigest": "sha256:d206fe30ab47d64bf6090bffdb4d119a80cfc2a35963bbe7fd52d56060090ded",
+      "schemaDigest": "sha256:09d7874b0c60cf790944b8998ee943f200912eac4349dfa80d0f2ae82a7a7998",
     },
     "List-Properties": {
       "verdict": "read",
@@ -167,7 +172,7 @@ const MIXPANEL_CLASSIFICATION: ToolClassification = {
     "List-Cohorts": {
       "verdict": "read",
       "reason": "Retrieves Mixpanel cohorts information without changing vendor state.",
-      "schemaDigest": "sha256:fd04778d60a027cfd777b40f36fbb037ba070661e149b2fce35a14865cada2db",
+      "schemaDigest": "sha256:505ff07f668186b670bcce28aa339076140b85896eb4f64afad78d963018297a",
     },
     "Describe-Cohort-Schema": {
       "verdict": "read",
@@ -182,7 +187,7 @@ const MIXPANEL_CLASSIFICATION: ToolClassification = {
     "Get-Metric": {
       "verdict": "read",
       "reason": "Retrieves Mixpanel metric information without changing vendor state.",
-      "schemaDigest": "sha256:eef10dd9ca25a63a63775565cbc4f2261b289dec526aa33df0f318eefbc96c46",
+      "schemaDigest": "sha256:451e867abd1162f25bec96f76cb1b1d1d84eb33c04fe4d804e729810d93d26d7",
     },
     "List-Metrics": {
       "verdict": "read",
@@ -200,9 +205,10 @@ const MIXPANEL_CLASSIFICATION: ToolClassification = {
       "schemaDigest": "sha256:26a3f3e0b4e52135d74335dd769103303071fc48c15b1df40efd2dfa5a353848",
     },
     "Get-Experiment": {
-      "verdict": "read",
-      "reason": "Retrieves Mixpanel experiment information without changing vendor state.",
-      "schemaDigest": "sha256:ab685aa985aa2ec36d9cbeb1b3c1ef298b020e552e8fdce12e75abbeb4706f2b",
+      "verdict": "destructive",
+      "reason":
+        "Optional compute flags persist refreshed result caches and may auto-conclude an experiment; the full tool can modify existing state.",
+      "schemaDigest": "sha256:aebe329b5c5f3a9a465d40f12af1d6336d1304cc949c291eea752a5dd532e6fa",
     },
     "Get-Experiment-Setup-Guidance": {
       "verdict": "read",
@@ -253,12 +259,12 @@ const MIXPANEL_CLASSIFICATION: ToolClassification = {
     "Create-Dashboard": {
       "verdict": "write",
       "reason": "Create Dashboard creates or appends Mixpanel state; it has side effects.",
-      "schemaDigest": "sha256:bd3b6e5134d27dafb04ccdf04d19e54dd23e6e2dc16989e418006e484268037b",
+      "schemaDigest": "sha256:59fbe58cc8b69b31adfa7015e541d495abc566f56b1320e10ad77288ff9facf0",
     },
     "Update-Dashboard": {
       "verdict": "destructive",
       "reason": "Update Dashboard changes existing Mixpanel state or removes it.",
-      "schemaDigest": "sha256:2cc179ba75eda476ba7488f01503d947f023a4460aa98c4806ef0ab10c3b3ce8",
+      "schemaDigest": "sha256:6f2f11e94a13667848bdcb30531a7ff478a8c53460a5e0859f8241b64d0008da",
     },
     "Duplicate-Dashboard": {
       "verdict": "write",
@@ -363,22 +369,22 @@ const MIXPANEL_CLASSIFICATION: ToolClassification = {
     "Create-Metric": {
       "verdict": "write",
       "reason": "Create Metric creates or appends Mixpanel state; it has side effects.",
-      "schemaDigest": "sha256:315766d0c197d87bb44aedd16732f6e69fbfc93661d1fcfc177cadc1751f26ce",
+      "schemaDigest": "sha256:c10bc660e0664a9aba6450a45b50fb1fbea6a4fac809fd5390616416f72e04d6",
     },
     "Update-Metric": {
       "verdict": "destructive",
       "reason": "Update Metric changes existing Mixpanel state or removes it.",
-      "schemaDigest": "sha256:739bb6abdab19282afd4a6644a96183daabe9098a5322c44a77b840608a5ee9d",
+      "schemaDigest": "sha256:ca03823ea995d0ae53807a60b1dd0d47f1667b28cfd24cdab52a9fc66f0c2834",
     },
     "Create-Experiment": {
       "verdict": "write",
       "reason": "Create Experiment creates or appends Mixpanel state; it has side effects.",
-      "schemaDigest": "sha256:1cfc2edeb2ac2d329a531d2095671a0653ab5b94b9e233b34268ff29a48c5ac5",
+      "schemaDigest": "sha256:ce64eafec7f2490fa3c76030c75340bf5dd282a9d0bfb0c5353bcdc3b50f602d",
     },
     "Update-Experiment": {
       "verdict": "destructive",
       "reason": "Update Experiment changes existing Mixpanel state or removes it.",
-      "schemaDigest": "sha256:3ea3902555c146f45127fc563b36ffb7ff04b7594765dac9ae98cc09dc432808",
+      "schemaDigest": "sha256:27c0e2b58fbb1468dda938c4112560e9481f58bc4ddafd4a94bad56666c5b12c",
     },
     "Create-Feature-Flag": {
       "verdict": "write",
