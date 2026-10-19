@@ -780,6 +780,27 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(JSON.parse(drifted.output).docs[0].added).toContain("new_stripe_tool");
   });
 
+  it("reports every unreviewed RevenueCat row even when Access is blank", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-revenuecat-"));
+    temporary.push(directory);
+    const evidence = await documentedEvidence("revenuecat");
+    expect(evidence.inventory).not.toHaveProperty("acknowledgedUnclassified");
+    const reference = join(directory, "revenuecat.md");
+    const rows = evidence.reviewed.map((name: string) => `| \`${name}\` | Read | Fixture |`).join("\n");
+    // The reference retains a second, blank Access row for the screenshot tool.
+    await writeFile(
+      reference,
+      `# MCP\n\n${evidence.endpoints[0]}\nOAuth\n\n| Tool | Access | Description |\n| --- | --- | --- |\n${rows}\n| \`render-paywall-screenshot\` | | Duplicate |\n| \`new-preview-tool\` | | Needs review |\n`,
+    );
+    const result = runDocumented("revenuecat", reference, reference);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output).docs[0]).toMatchObject({
+      documentedTools: 118,
+      added: ["new-preview-tool"],
+      removed: [],
+    });
+  });
+
   it("reads inline names from Cloudflare and Notion's official doc shapes", async () => {
     const directory = await mkdtemp(join(tmpdir(), "connecta-drift-inline-"));
     temporary.push(directory);

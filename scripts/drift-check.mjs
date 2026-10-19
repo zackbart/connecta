@@ -313,10 +313,6 @@ function validateCheck(check, allowUnrecorded) {
           Object.entries(inventory.categories).every(
             ([category, names]) => /^[a-z0-9-]+$/.test(category) && strings(names),
           )), "inventory categories must map category slugs to known tool names");
-      require(inventory.acknowledgedUnclassified === undefined ||
-        strings(
-          inventory.acknowledgedUnclassified,
-        ), "acknowledged unclassified names must be unique non-empty strings");
     }
     return;
   }
@@ -1123,11 +1119,7 @@ async function checkDocumentedProvider(provider, defaults, options) {
   const reviewed = [...runtime.reviewed].sort();
   const reviewedSet = new Set(reviewed);
   const documentedSet = new Set(documented ?? []);
-  const acknowledged = new Set(defaults.inventory?.acknowledgedUnclassified ?? []);
-  const added = (documented ?? []).filter((name) => !reviewedSet.has(name) && !acknowledged.has(name));
-  const intentionallyUnclassified = (documented ?? []).filter(
-    (name) => !reviewedSet.has(name) && acknowledged.has(name),
-  );
+  const added = (documented ?? []).filter((name) => !reviewedSet.has(name));
   const removed = documented === undefined ? [] : reviewed.filter((name) => !documentedSet.has(name));
 
   if (categorized) {
@@ -1154,7 +1146,6 @@ async function checkDocumentedProvider(provider, defaults, options) {
       documentedTools: undefined,
       added: [],
       removed: [],
-      intentionallyUnclassified: [],
       findings: discovery.findings,
       authorizationServer: discovery.authorizationServer,
       advertisedScopes: discovery.advertisedScopes,
@@ -1188,7 +1179,6 @@ async function checkDocumentedProvider(provider, defaults, options) {
     ...(categorized ? { inventoryPages: inventory.pages } : {}),
     added,
     removed,
-    intentionallyUnclassified,
     findings,
     schemaAuthority: "live-tools-list",
     schemasVendored: false,
@@ -1232,9 +1222,6 @@ function printDocs(result) {
   }
   for (const tool of result.removed) {
     console.log(`  not documented ${tool} (kept from release review)`);
-  }
-  for (const tool of result.intentionallyUnclassified) {
-    console.log(`  fail-closed   ${tool} (official access class is blank)`);
   }
   for (const finding of result.findings) {
     console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);

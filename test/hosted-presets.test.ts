@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import linearCatalogGuideChanges from "./fixtures/linear-hosted-catalog-guide-changes.json";
 import { hostedCatalog as linearHostedCatalog } from "../src/providers/linear/fixtures.js";
+import revenuecatReviewGuideChanges from "./fixtures/revenuecat-review-guide-changes.json";
+import revenuecatContracts from "../src/providers/revenuecat/contracts.fixture.json";
 import before from "./fixtures/hosted-presets-abc0d176.json";
 import configChanges from "./fixtures/provider-5d-config-changes.json";
 import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
@@ -57,6 +59,7 @@ function expectedGuide(name: Name, content: string): string {
   // The docs correctness pass corrects argument names and write lists.
   const docsCorrectness = docsCorrectnessGuideChanges as Partial<Record<Name, string[][]>>;
   const linearCatalog = linearCatalogGuideChanges as Partial<Record<Name, string[][]>>;
+  const revenuecatReview = revenuecatReviewGuideChanges as Partial<Record<Name, string[][]>>;
   const changes = Object.hasOwn(configChanges, name) ? [] : guideChanges[name];
   for (const [from, to] of [
     ...changes,
@@ -69,6 +72,7 @@ function expectedGuide(name: Name, content: string): string {
     ...(restAdmission[name] ?? []),
     ...(docsCorrectness[name] ?? []),
     ...(linearCatalog[name] ?? []),
+    ...(revenuecatReview[name] ?? []),
   ])
     content = content.replaceAll(from!, to!);
   return content;
@@ -131,6 +135,13 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
     const fixture = providerFixtures.find((fixture) => fixture.name === name)!;
     const connector = fixture.create("fixture", hostedCase(name));
     const review = catalogReviewOf(connector)!;
+    const expectedVerdicts: Record<string, { verdict: string; schemaDigest?: string }> = structuredClone(
+      recorded.verdicts,
+    );
+    if (name === "revenuecat")
+      Object.assign(expectedVerdicts["validate-app-credentials"]!, {
+        schemaDigest: revenuecatContracts.schemaDigests["validate-app-credentials"],
+      });
     // The later Linear live-catalog review adds digests. Its provider suite
     // verifies them against complete schemas; preserve the historical verdicts here.
     const historical = [...review.tools].filter(([name]) => Object.hasOwn(recorded.verdicts, name));
@@ -142,7 +153,7 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
           return [tool, verdict];
         }),
       ),
-    ).toEqual(recorded.verdicts);
+    ).toEqual(expectedVerdicts);
     expect(Object.isFrozen(classify.tools)).toBe(true);
     expect(connector.classification).toEqual(classify);
     for (const entry of Object.values(classify.tools)) {
@@ -150,7 +161,6 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
       expect(typeof entry === "object" && entry.reason?.trim()).toBeTruthy();
       expect(Object.isFrozen(entry)).toBe(true);
     }
-    if (name === "revenuecat") expect(classify.tools).not.toHaveProperty("render-paywall-screenshot");
   });
 
   it("INV-1: serves the identical complete registry catalog under all recorded annotation shapes", async () => {
@@ -161,7 +171,11 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
       const real = fixture.create("fixture", hostedCase(name));
       const facts = names.map((toolName) => {
         const schema =
-          name === "linear" ? linearHostedCatalog.find((tool) => tool.name === toolName)?.inputSchema : undefined;
+          name === "linear"
+            ? linearHostedCatalog.find((tool) => tool.name === toolName)?.inputSchema
+            : name === "revenuecat"
+              ? revenuecatContracts.tools.find((tool) => tool.name === toolName)?.inputSchema
+              : undefined;
         return { name: toolName, ...(schema ? { inputSchema: schema } : {}), ...(annotations ? { annotations } : {}) };
       });
       const connector = { ...real, listTools: async () => structuredClone(facts) };

@@ -30,9 +30,9 @@ export interface RevenueCatOptions {
    * API v2 `sk_` secret key, which RevenueCat scopes to exactly one project —
    * hence one key, one connector, and no `project` option: checking a declared
    * project against `list-projects` at construction would be the unasked-for
-   * credential test P10 forbids. Nor can Connecta tell a read-only key from a
-   * write-enabled one without spending a call, so every write is offered and a
-   * read-only key's refusal arrives from RevenueCat.
+   * credential test P10 forbids. RevenueCat may omit tools based on key
+   * permissions; Connecta serves the live catalog, not the reviewed superset.
+   * A served tool can still be refused by RevenueCat for missing permissions.
    */
   auth?: RemoteMcpAuth;
   /** Project-specific conventions appended to the maintained provider guide. */
@@ -52,10 +52,9 @@ export interface RevenueCatOptions {
 }
 
 /**
- * Reviewed in #705's provider audit against https://www.revenuecat.com/docs/tools/mcp/tools-reference.
- * Retains the release-reviewed inventory, including names absent from today's
- * public reference. Live annotations were not reverified without credentials.
- * No schema digest is asserted without a captured schema to review.
+ * Re-reviewed 2026-10-19 against RevenueCat's MCP reference and API v2 docs (#343, #703).
+ * This is a superset of permission-gated live catalogs, not a tool allowlist.
+ * Four reviewed schemas are pinned from live discovery; uncaptured schemas stay unpinned.
  */
 const REVENUECAT_CLASSIFICATION: ToolClassification = {
   tools: {
@@ -75,6 +74,12 @@ const REVENUECAT_CLASSIFICATION: ToolClassification = {
     "list-app-public-api-keys": {
       "verdict": "read",
       "reason": "Retrieves RevenueCat app public api keys information without changing vendor state.",
+    },
+    "list-app-subscription-groups": {
+      "verdict": "read",
+      "reason":
+        "Lists App Store Connect subscription groups and products without changing vendor state; official MCP reference and live annotation agree.",
+      "schemaDigest": "sha256:8474bdced405e279ee56a36da289d26e8526ee8dec870aa731a9cc1fa14474c4",
     },
     "list-apps": {
       "verdict": "read",
@@ -163,6 +168,18 @@ const REVENUECAT_CLASSIFICATION: ToolClassification = {
     "list-targeting-rules": {
       "verdict": "read",
       "reason": "Retrieves RevenueCat targeting rules information without changing vendor state.",
+    },
+    "preview-audience": {
+      "verdict": "read",
+      "reason":
+        "Observational POST: previews matching customers without creating an audience; API v2 requires audiences:audiences:read and the live annotation agrees.",
+      "schemaDigest": "sha256:75d926cdc6a2b92ece3b2d8b2fdd21831deed71464024d0004da3d2bde769682",
+    },
+    "render-paywall-screenshot": {
+      "verdict": "read",
+      "reason":
+        "Renders a paywall preview without publishing or editing it; the current official reference explicitly says Read and the live annotation agrees.",
+      "schemaDigest": "sha256:abb9d0e0e8674371fff7503b7c5f215ddbca9ebed12325c5d8b376eec7252294",
     },
     "get-paywall": {
       "verdict": "read",
@@ -283,7 +300,9 @@ const REVENUECAT_CLASSIFICATION: ToolClassification = {
     },
     "validate-app-credentials": {
       "verdict": "write",
-      "reason": "validate app credentials creates or appends RevenueCat state; it has side effects.",
+      "reason":
+        "Kept write conservatively: the MCP reference says Read and promises credentials are unchanged, but the live readOnlyHint is false and API v2 app docs do not establish whether validation results/status persist. No claim that validation mutates credentials.",
+      "schemaDigest": "sha256:680c861273535483ea19c032b4430b7f085fb89d6240853c15ed9284e50672c6",
     },
     "archive-product": {
       "verdict": "destructive",
