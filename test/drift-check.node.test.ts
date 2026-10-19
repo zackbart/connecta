@@ -730,13 +730,24 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(result.added).toEqual(["replacement_tool"]);
   });
 
-  it("reports a captured but unclassified Vercel tool removal after complete count reconciliation", async () => {
+  it("INV-1: reports a captured Vercel tool removal and its stale acknowledgement after complete count reconciliation", async () => {
     const { directory, toolReference, setupReference } = await documentedVercelWorkspace();
     await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("23 tools", "22 tools"));
     const sandboxes = join(directory, "sandboxes.md");
     await writeFile(sandboxes, (await readFile(sandboxes, "utf8")).replace("## `run_session_command`", ""));
     const result = JSON.parse(runDocumented("vercel", toolReference, setupReference).output).docs[0];
-    expect(result).toMatchObject({ documentedTools: 246, added: [], removed: ["run_session_command"], findings: [] });
+    expect(result).toMatchObject({
+      documentedTools: 246,
+      added: [],
+      removed: ["run_session_command"],
+      findings: [
+        {
+          kind: "stale-unclassified-acknowledgement",
+          detail: "run_session_command: acknowledgement no longer applies",
+        },
+      ],
+    });
+    expect(result.intentionallyUnclassified).not.toContain("run_session_command");
   });
 
   it("INV-8 refuses a removal with no known category evidence", async () => {
