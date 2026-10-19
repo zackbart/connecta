@@ -5942,6 +5942,21 @@
         "debugKey",
         "variables.*.value"
       ],
+      "GET /accounts/{account_id}/ai-search/namespaces/{namespace}/instances": [
+        "source_params.web_crawler.parse_options.include_headers{}"
+      ],
+      "POST /accounts/{account_id}/ai-search/namespaces/{namespace}/instances": [
+        "source_params.web_crawler.parse_options.include_headers{}"
+      ],
+      "GET /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
+        "source_params.web_crawler.parse_options.include_headers{}"
+      ],
+      "PUT /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
+        "source_params.web_crawler.parse_options.include_headers{}"
+      ],
+      "DELETE /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
+        "source_params.web_crawler.parse_options.include_headers{}"
+      ],
       "GET /accounts/{account_id}/access/ai-controls/mcp/portals": ["servers.auth_config_summary"],
       "POST /accounts/{account_id}/access/ai-controls/mcp/portals": ["servers.auth_config_summary"],
       "GET /accounts/{account_id}/access/ai-controls/mcp/portals/{id}": ["servers.auth_config_summary"],
@@ -5952,21 +5967,6 @@
       "PUT /accounts/{account_id}/access/ai-controls/mcp/servers/{id}": ["auth_config_summary"],
       "DELETE /accounts/{account_id}/access/ai-controls/mcp/servers/{id}": ["auth_config_summary"],
       "GET /accounts/{account_id}/access/users/{user_id}/last_seen_identity": ["passkeys"],
-      "GET /accounts/{account_id}/ai-search/namespaces/{namespace}/instances": [
-        "source_params.web_crawler.parse_options.include_headers"
-      ],
-      "POST /accounts/{account_id}/ai-search/namespaces/{namespace}/instances": [
-        "source_params.web_crawler.parse_options.include_headers"
-      ],
-      "GET /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
-        "source_params.web_crawler.parse_options.include_headers"
-      ],
-      "PUT /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
-        "source_params.web_crawler.parse_options.include_headers"
-      ],
-      "DELETE /accounts/{account_id}/ai-search/namespaces/{namespace}/instances/{id}": [
-        "source_params.web_crawler.parse_options.include_headers"
-      ],
       "POST /accounts/{account_id}/ai/tomarkdown": ["tokens"],
       "GET /accounts/{account_id}/billable/usage/billable-metrics": ["DimensionKeys"],
       "POST /accounts/{account_id}/browser-rendering/accessibilityTree": ["meta.headers", "meta.redirectChain.headers"],

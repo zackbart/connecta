@@ -12,7 +12,7 @@
           "method": "GET",
           "path": "/v2/teams",
           "specRevision": "0.0.1",
-          "contract": "sha256:b0467ca728708f0882c741e319956137f694e6c9b6e89f772651a91a45a42190"
+          "contract": "sha256:6179e51e4282c81b7b8a7fef94e6b51130b529df3161ad3442d6d912cf3eec93"
         },
         {
           "method": "GET",

@@ -19,12 +19,20 @@
     [
       "and every environment or plain-text binding value",
       "and application setup form defaults and every environment or plain-text binding value"
+    ],
+    [
+      "probe and custom-provider headers",
+      "probe, custom-provider, and AI Search crawler headers (every `include_headers` map value; names stay)"
     ]
   ],
   "vercel": [
     [
       "the args and values of every header, cookie, and query rule (route transforms and conditions, firewall conditions),",
       "the args and values of every header, cookie, and query rule (route transforms and conditions, firewall conditions), conditional firewall bypass compiled `condition` expressions and their credential match values,"
+    ],
+    [
+      "drain and webhook headers and signing secrets",
+      "daemon liveness-probe header values and internal endpoint ciphertext, drain and webhook headers and signing secrets"
     ]
   ]
 }

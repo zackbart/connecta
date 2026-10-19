@@ -314,14 +314,16 @@ function validateCheck(check, allowUnrecorded) {
             ([category, names]) => /^[a-z0-9-]+$/.test(category) && strings(names),
           )), "inventory categories must map category slugs to known tool names");
       require(inventory.acknowledgedRemoved === undefined ||
-        (inventory.format === "vercel-categories" && strings(inventory.acknowledgedRemoved) &&
+        (inventory.format === "vercel-categories" &&
+          strings(inventory.acknowledgedRemoved) &&
           inventory.acknowledgedRemoved.every((name) =>
             check.reviewed.includes(name),
           )), "acknowledged removed names must be unique reviewed names");
       require(inventory.acknowledgedUnclassified === undefined ||
-        (inventory.format === "vercel-categories" && strings(
-          inventory.acknowledgedUnclassified,
-        )), "acknowledged unclassified names must be unique non-empty strings");
+        (inventory.format === "vercel-categories" &&
+          strings(
+            inventory.acknowledgedUnclassified,
+          )), "acknowledged unclassified names must be unique non-empty strings");
     }
     return;
   }

@@ -901,6 +901,23 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
   [`GET ${A}/urlscanner/v2/har/{scan_id}`]: refuse(CAPTURE),
   [`GET ${A}/urlscanner/v2/dom/{scan_id}`]: refuse(CAPTURE),
   [`GET ${A}/urlscanner/v2/responses/{response_id}`]: refuse(CAPTURE),
+  // Custom crawler headers may authenticate under any name. Withhold every
+  // value in stored or echoed instance configuration, preserving header names.
+  ...Object.fromEntries(
+    [
+      `GET ${A}/ai-search/namespaces/{namespace}/instances`,
+      `POST ${A}/ai-search/namespaces/{namespace}/instances`,
+      `GET ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
+      `PUT ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
+      `DELETE ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
+    ].map((key) => [
+      key,
+      reviewed(
+        "Crawler include_headers stores custom request header values that can authenticate under arbitrary names.",
+        ["source_params.web_crawler.parse_options.include_headers{}"],
+      ),
+    ]),
+  ),
   // Reviewed safe: the flagged field is metadata, a header name list, a count, or third-party data the operation exists to return.
   ...Object.fromEntries(
     (
@@ -915,26 +932,6 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
         [`PUT ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
         [`DELETE ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
         [`GET ${A}/access/users/{user_id}/last_seen_identity`, "passkeys"],
-        [
-          `GET ${A}/ai-search/namespaces/{namespace}/instances`,
-          "source_params.web_crawler.parse_options.include_headers",
-        ],
-        [
-          `POST ${A}/ai-search/namespaces/{namespace}/instances`,
-          "source_params.web_crawler.parse_options.include_headers",
-        ],
-        [
-          `GET ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
-          "source_params.web_crawler.parse_options.include_headers",
-        ],
-        [
-          `PUT ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
-          "source_params.web_crawler.parse_options.include_headers",
-        ],
-        [
-          `DELETE ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
-          "source_params.web_crawler.parse_options.include_headers",
-        ],
         [`POST ${A}/ai/tomarkdown`, "tokens"],
         [`GET ${A}/basin-catalog/{bucket_name}/maintenance-configs`, ""],
         [`GET ${A}/billable/usage/billable-metrics`, "DimensionKeys"],

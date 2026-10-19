@@ -1,6 +1,6 @@
 {
   "format": 5,
-  "digest": "sha256:5a702fd2dc76b4bef328551d3e091657a542eeca5312e5b726efb11a497f6ed1",
+  "digest": "sha256:553c2cccefb195234a4773d0360df6e5cb15a30912fefe86a6b1e6c6ceaf5566",
   "options": {
     "operationWords": "global-config"
   },
@@ -550,6 +550,10 @@
         "tracing.samplingRules[].env",
         "usageStatus.bypassThrottleUntil"
       ],
+      "named": false
+    },
+    "GET /v1/projects/{idOrName}/daemons": {
+      "fields": ["daemons[].config.livenessProbe.httpGet.httpHeaders"],
       "named": false
     },
     "DELETE /v1/projects/{idOrName}/env": {
@@ -1453,6 +1457,10 @@
         "projects[].protectionBypass@keys",
         "projects[].security.firewallBypassIps",
         "projects[].usageStatus.bypassThrottleUntil"
+      ],
+      "GET /v1/projects/{idOrName}/daemons": [
+        "daemons.config.livenessProbe.httpGet.httpHeaders.value",
+        "daemons.replicas.items.iroh.publicKeyCiphertext"
       ],
       "POST /v1/projects/{idOrName}/avatar": [
         "dismissedToasts[].value",

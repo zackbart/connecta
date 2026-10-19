@@ -242,6 +242,16 @@ const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
     under(["projects[]"], PROJECT_ALLOW),
   ),
   "POST /v1/projects/traces/session": refuse("mints a trace session token for a deployment."),
+  "GET /v1/projects/{idOrName}/daemons": redact(
+    "Daemon liveness probes store custom HTTP header values that may authenticate under arbitrary names; encrypted internal endpoint data is also withheld.",
+    ["daemons.config.livenessProbe.httpGet.httpHeaders.value", "daemons.replicas.items.iroh.publicKeyCiphertext"],
+  ),
+  "PUT /v1/projects/{idOrName}/daemons/{daemonName}/instances": safe(
+    "Returns only an ok boolean after scaling instances.",
+  ),
+  "POST /v1/projects/{idOrName}/daemons/{daemonName}/instances/{instanceId}/restart": safe(
+    "Returns only an ok boolean after accepting an instance restart.",
+  ),
   "POST /v1/projects/{idOrName}/avatar": redact(PROJECT_REASON, PROJECT, PROJECT_ALLOW),
   "DELETE /v1/projects/{idOrName}/avatar": redact(PROJECT_REASON, PROJECT, PROJECT_ALLOW),
   "DELETE /v1/projects/{idOrName}/env": redact(ENV_REASON, PROJECT_ENV),

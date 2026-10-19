@@ -15,7 +15,7 @@ describeValueSafety("Vercel", {
   source,
   candidates,
   absent,
-  counts: { refuse: 25, redact: 55, safe: 66 },
+  counts: { refuse: 25, redact: 56, safe: 68 },
   connector: () => vercel("hosting", { purpose: "Apps", auth: { type: "token" } }),
   ctx: () => ({
     ...connectorContext(),

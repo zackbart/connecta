@@ -18,7 +18,7 @@ describeValueSafety("Cloudflare", {
   source,
   candidates,
   absent,
-  counts: { refuse: 61, redact: 263, safe: 487 },
+  counts: { refuse: 61, redact: 268, safe: 482 },
   // The tools return the v4 envelope's `result`; its paging and messages are not data.
   dataPath: (field) => {
     if (/^(?:result_info|messages|errors|success)\b/.test(field)) return undefined;

@@ -1193,6 +1193,66 @@ describe("cloudflare() over a key", () => {
   describe("value safety (round 1, findings 2–4)", () => {
     // The table's completeness, coverage, keeps, and refusal sweep run in the
     // shared harness (value-safety.node.test.ts); these are the regressions.
+    it("INV-5: withholds every AI Search crawler header value in object/list and echoed configuration before select (#890)", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      const path = `/accounts/${ACCOUNT}/ai-search/namespaces/default/instances`;
+      const headerPath = "source_params.web_crawler.parse_options.include_headers";
+      const instance = {
+        id: "crawler",
+        source_params: {
+          web_crawler: {
+            parse_options: {
+              include_headers: { "X-Proof": "stored-crawl-credential-marker", Accept: "ordinary-header-marker" },
+            },
+          },
+        },
+      };
+      for (const [method, suffix, body] of [
+        ["GET", "", undefined],
+        ["GET", "/crawler", undefined],
+        ["POST", "", { id: "crawler", source: "web-crawler", source_params: instance.source_params }],
+        ["PUT", "/crawler", { source_params: instance.source_params }],
+        ["DELETE", "/crawler", undefined],
+      ] as const) {
+        const tool = method === "GET" ? "cloudflare_api_read" : "cloudflare_api_write";
+        for (const select of [undefined, [headerPath]]) {
+          respond = () => envelope(method === "GET" && !suffix ? [instance] : instance);
+          const result = (await connector.callTool(
+            tool,
+            { method, path: path + suffix, ...(body ? { body } : {}), ...(select ? { select } : {}) },
+            token(),
+          )) as any;
+          const data = Array.isArray(result.data) ? result.data[0] : result.data;
+          expect(data.source_params.web_crawler.parse_options.include_headers).toEqual({
+            "X-Proof": "[redacted]",
+            Accept: "[redacted]",
+          });
+          expect(JSON.stringify(result)).not.toMatch(/stored-crawl-credential-marker|ordinary-header-marker/);
+        }
+        // A vendor failure can echo the submitted config in its message or
+        // structured error fields. Reviewed operations withhold both.
+        respond = () =>
+          Response.json(
+            {
+              success: false,
+              errors: [
+                {
+                  code: 1001,
+                  message: JSON.stringify(instance),
+                  config: instance,
+                },
+              ],
+            },
+            { status: 400 },
+          );
+        const error = await refusal(
+          connector.callTool(tool, { method, path: path + suffix, ...(body ? { body } : {}) }, token()),
+        );
+        expect(JSON.stringify(error)).not.toMatch(/stored-crawl-credential-marker|ordinary-header-marker/);
+        expect(error.message).not.toMatch(/stored-crawl-credential-marker|ordinary-header-marker/);
+      }
+    });
+
     it("refuses credential producers before sending, in the generic and upload tools", async () => {
       const connector = cloudflare("cf", TOKEN);
       const producers: Array<[string, Record<string, unknown>]> = [
