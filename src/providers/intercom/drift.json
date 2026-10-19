@@ -86,7 +86,7 @@
       "rationale": "Review the 14 core tools and five optional Fin Operator tools against catalog.review.md and the classification table. Official docs describe parameters but omit complete JSON input schemas; anonymous tools/list returns 401 in both regions. Schema digests remain unpinned. No authenticated listing or operational tool calls were made.",
       "evidence": {
         "reviewedAt": "2026-10-19",
-        "additionalOfficialSource": "https://developers.intercom.com/docs/guides/fin-operator-mcp.md",
+        "additionalOfficialSource": "https://developers.intercom.com/docs/guides/fin-operator-mcp",
         "changelog": "https://developers.intercom.com/docs/build-an-integration/learn-more/rest-apis/unversioned-changes",
         "reviewed": [
           "search",

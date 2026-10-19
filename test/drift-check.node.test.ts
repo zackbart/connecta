@@ -835,6 +835,68 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(quiet.intentionallyUnclassified).toContain("preview");
   });
 
+  it("INV-1: checks Intercom-style Access tables without weakening required columns or write verdicts", async () => {
+    const evidence = await documentedEvidence("intercom");
+    const { intercom } = await import("../src/providers/intercom/index.js");
+    const reviewedAccess = Object.fromEntries(
+      Object.entries(intercom.definition.classify!.tools).map(([name, entry]) => [
+        name,
+        (typeof entry === "string" ? entry : entry.verdict) === "read" ? "read" : "write",
+      ]),
+    );
+    const records = await recordWorkspace({
+      intercom: {
+        version: 1,
+        provider: "intercom",
+        checks: [
+          {
+            ...evidence,
+            inventory: { url: evidence.setup, format: "table", accessColumn: "Access" },
+            reviewedAccess,
+          },
+        ],
+      },
+    });
+    const reference = join(records, "intercom.md");
+    const run = () =>
+      reportFor(records, [
+        "--docs",
+        "--strict",
+        "--tool-reference",
+        `intercom=${reference}`,
+        "--setup-reference",
+        `intercom=${reference}`,
+      ]);
+    // Credential-free fixture, not a claim the current public docs have this table.
+    const text =
+      `# MCP\nOAuth ${evidence.endpoints.join(" ")}\n\n| Description | Access | Tool |\n| --- | --- | --- |\n` +
+      Object.entries(reviewedAccess)
+        .map(([name, access]) => `| Documented behavior | **${access}** | \`${name}\` |`)
+        .join("\n");
+    await writeFile(reference, text);
+    const clean = run();
+    expect(clean.status).toBe(0);
+    expect(JSON.parse(clean.output).docs[0]).toMatchObject({
+      documentedTools: 19,
+      findings: [],
+      added: [],
+      removed: [],
+    });
+    await writeFile(
+      reference,
+      text.replace("| **write** | `send_operator_message`", "| Read | `send_operator_message`"),
+    );
+    const drifted = run();
+    expect(drifted.status).toBe(1);
+    expect(JSON.parse(drifted.output).docs[0].findings).toEqual([
+      { kind: "documented-access-changed", detail: "send_operator_message: docs declare read, reviewed write" },
+    ]);
+    await writeFile(reference, text.replace("| Description | Access | Tool |", "| Description | Permissions | Tool |"));
+    expect(JSON.parse(run().output).docs[0].findings).toEqual([
+      expect.objectContaining({ kind: "parser-error", detail: expect.stringContaining("no longer contains Access") }),
+    ]);
+  });
+
   it.each([
     [
       "| Tool | Access |\n| --- | --- |\n| `get-app` | Read |\n\n## Changed table\n\n| Tool | Permissions |\n| --- | --- |\n| `validate-app-credentials` | Read |",

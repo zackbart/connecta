@@ -126,7 +126,9 @@ Support allowlist entry for the deployment's redirect URI before authorization
 can complete. Alternatively, set `auth: { type: "credential" }` and connect an
 API token through the [shared credential procedure](./auth.md#connect-a-shared-credential);
 token auth defaults to shared ownership. Fin Operator tools require OAuth,
-workspace availability and teammate permission. Article operations, internal
+workspace availability and teammate permission. Their expected absence adds no
+missing-tool drift; missing core tools still do. Schema coverage reports all
+present reviewed tools as unpinned. Article operations, internal
 notes and Operator actions can write; a note can reopen a snoozed conversation.
 Use a read-only endpoint when writes are unwanted. Catalog review is based on
 [Intercom's docs](https://developers.intercom.com/docs/guides/mcp), with unpinned

@@ -58,24 +58,31 @@ const CLASSIFICATION: ToolClassification = {
       verdict: "destructive",
       reason: "Appends a teammate-only note and may unsnooze an existing conversation, changing its state to open.",
     },
+    // Fin tools are OAuth-only and gated by workspace availability and teammate
+    // permission: https://developers.intercom.com/docs/guides/fin-operator-mcp#how-permissions-work
     send_operator_message: {
+      optional: true,
       verdict: "destructive",
       reason:
         "Starts asynchronous Operator work and consumes usage; Intercom explicitly marks this destructive and non-idempotent.",
     },
     get_operator_response: {
+      optional: true,
       verdict: "read",
       reason: "Reads the current Operator chat response without starting work.",
     },
     get_proposal_details: {
+      optional: true,
       verdict: "read",
       reason: "Reads pending proposals and their before/after content without applying them.",
     },
     apply_proposals: {
+      optional: true,
       verdict: "destructive",
       reason: "Creates, overwrites, publishes or deletes live workspace configuration; some changes cannot be undone.",
     },
     reject_proposals: {
+      optional: true,
       verdict: "destructive",
       reason:
         "Discards pending proposals. Conservatively treats deletion of proposal state as destructive despite Intercom's non-destructive hint.",

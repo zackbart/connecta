@@ -4,11 +4,15 @@ Contributor evidence, not a vendored MCP schema. Runtime names, descriptions,
 input/output schemas and results come from Intercom's live `tools/list`.
 
 Sources: [current MCP Markdown](https://developers.intercom.com/docs/guides/mcp.md),
-[Fin Operator Markdown](https://developers.intercom.com/docs/guides/fin-operator-mcp.md),
+[Fin Operator Markdown](https://developers.intercom.com/docs/guides/fin-operator-mcp),
 [October 2026 permissions change](https://developers.intercom.com/docs/build-an-integration/learn-more/rest-apis/unversioned-changes).
 The indexed MCP HTML was stale; the current Markdown lists 14 core tools plus
 five optional Operator tools and both US/EU regions. This is the documented
-superset, not a claim every workspace exposes exactly 19 tools.
+superset, not a claim every workspace exposes exactly 19 tools. The five Fin
+entries carry `optional: true`: their absence adds no missing-tool drift; a
+missing core tool still does. Present Fin tools retain their reviewed verdicts
+and annotation checks. Schema coverage counts only present reviewed tools:
+0 pinned/14 unpinned for core-only catalogs, 0 pinned/19 unpinned with Fin.
 
 ## Schema evidence and per-tool verdicts
 

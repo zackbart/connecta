@@ -44,6 +44,14 @@ const READS = [
   "get_operator_response",
   "get_proposal_details",
 ];
+const FIN_TOOLS = [
+  "send_operator_message",
+  "get_operator_response",
+  "get_proposal_details",
+  "apply_proposals",
+  "reject_proposals",
+];
+const CORE_CATALOG = hostedCatalog.filter((tool) => !FIN_TOOLS.includes(tool.name));
 const DESTRUCTIVE = [
   "update_article",
   "add_internal_note",
@@ -172,6 +180,12 @@ describe("intercom()", () => {
     expect(hostedCatalog.map((tool) => tool.name).sort()).toEqual(Object.keys(reviewed).sort());
     for (const tool of hostedCatalog) expect(tool).not.toHaveProperty("inputSchema");
     for (const entry of Object.values(reviewed)) expect(entry).not.toHaveProperty("schemaDigest");
+    expect(
+      Object.entries(reviewed)
+        .filter(([, entry]) => typeof entry === "object" && entry.optional)
+        .map(([name]) => name)
+        .sort(),
+    ).toEqual([...FIN_TOOLS].sort());
     for (const check of drift.checks.filter((check) => check.type !== "manual")) {
       expect([...required(check.reviewed)].sort()).toEqual(Object.keys(reviewed).sort());
     }
@@ -186,6 +200,58 @@ describe("intercom()", () => {
       unservedTools: 0,
       schemaChanges: 0,
       annotationConflicts: 0,
+      schemaCoverage: { pinned: 0, unpinned: 19 },
+      verification: "complete",
+    });
+  });
+
+  it.each([
+    { label: "bearer", options: { auth: { type: "credential" as const } } },
+    { label: "non-Fin OAuth", options: {} },
+  ])("INV-1: accepts a core-only $label catalog while reporting unpinned schema coverage", async ({ options }) => {
+    const connector = connection(options);
+    mocks.listTools.mockResolvedValue(structuredClone(CORE_CATALOG));
+    const tools = await servedTools(connector);
+    expect(tools).toHaveLength(14);
+    expect(tools.filter((tool) => classifyTool(tool) === "read")).toHaveLength(11);
+    expect(tools.filter((tool) => classifyTool(tool) === "write")).toHaveLength(3);
+    expect(observedCatalogDrift(connector)).toMatchObject({
+      unclassifiedTools: 0,
+      unservedTools: 0,
+      schemaChanges: 0,
+      annotationConflicts: 0,
+      schemaCoverage: { pinned: 0, unpinned: 14 },
+      verification: "complete",
+    });
+  });
+
+  it.each(CORE_CATALOG.map((tool) => tool.name))(
+    "INV-1: still reports a missing required core tool %s",
+    async (missing) => {
+      const connector = connection({ auth: { type: "credential" } });
+      mocks.listTools.mockResolvedValue(structuredClone(CORE_CATALOG.filter((tool) => tool.name !== missing)));
+      await servedTools(connector);
+      expect(observedCatalogDrift(connector)).toMatchObject({
+        unservedTools: 1,
+        schemaCoverage: { pinned: 0, unpinned: 13 },
+      });
+    },
+  );
+
+  it("INV-1: checks annotations and classification of optional Fin reads when present", async () => {
+    const connector = connection();
+    mocks.listTools.mockResolvedValue(
+      hostedCatalog.map((tool) => ({
+        ...tool,
+        ...(tool.name === "get_operator_response" ? { annotations: { readOnlyHint: false } } : {}),
+      })),
+    );
+    const tools = await servedTools(connector);
+    expect(classifyTool(required(tools.find((tool) => tool.name === "get_operator_response")))).toBe("write");
+    expect(observedCatalogDrift(connector)).toMatchObject({
+      unservedTools: 0,
+      annotationConflicts: 1,
+      schemaCoverage: { pinned: 0, unpinned: 19 },
     });
   });
 
