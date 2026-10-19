@@ -1,7 +1,7 @@
 {
-  "url": "https://raw.githubusercontent.com/cloudflare/api-schemas/3fad73eb27c381031c09ccdfa28ef9352029cd5a/openapi.json",
-  "revision": "3fad73eb27c381031c09ccdfa28ef9352029cd5a",
-  "digest": "sha256:4f142b047af2c8469e4572092bf42ffab31954fef0cc2c8b7bbb79b11df577ef",
+  "url": "https://raw.githubusercontent.com/cloudflare/api-schemas/843eae2fbf4fe774ef9c91021dd34017ac9c970a/openapi.json",
+  "revision": "843eae2fbf4fe774ef9c91021dd34017ac9c970a",
+  "digest": "sha256:128d27e93f42fd16e70c69b09c6deb4c0bbf0539c7b46a3e4cc65dbb6a6e1f81",
   "latest": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json",
   "options": {
     "depth": 2,

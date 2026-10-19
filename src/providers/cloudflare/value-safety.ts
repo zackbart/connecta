@@ -4,7 +4,8 @@
 // `value-safety.node.test.ts` runs the shared harness over it.
 //
 // - `refuse`: the operation exists to mint, rotate, or hand back a credential
-//   (or move money through a payment secret); nothing is sent.
+//   (or move money through a payment secret), or lacks a reviewed response
+//   contract; nothing is sent.
 // - `redact`: the operation is useful, and these field paths carry a
 //   credential or stored secret; they are replaced before the result is
 //   returned, on every method. A path ending in `#url` keeps only the URL's
@@ -16,7 +17,7 @@
 // or the whole body when it is not an envelope); lists are traversed
 // implicitly and `*` matches every key of an object.
 // Embedded URL verdict (#812): reviewed paths + global signing parameters.
-// Evidence: digest-verified schema revision 3fad73eb27c381031c09ccdfa28ef9352029cd5a:
+// Evidence: digest-verified schema revision 843eae2fbf4fe774ef9c91021dd34017ac9c970a:
 // builds_BuildLogsResponse.lines (timestamp/log-message tuples),
 // pages_deployment_log.data.line and workers-observability_query_results
 // events.events and invocations.* -> telemetry_event.$metadata.message/error
@@ -30,7 +31,10 @@
 // JavaScript served as application/javascript) are not decoded or scanned.
 // Recording/download/upload capabilities retain their structured-field rules.
 // The review found no documented Cloudflare-minted links embedded in other
-// free text and justifies no Cloudflare/R2/S3-wide file-host policy.
+// free text, including AI Search item/job logs, and justifies no
+// Cloudflare/R2/S3-wide file-host policy. The new Cloudforce match responses
+// omit schemas; both operations are refused until their response contracts
+// can be reviewed, including their error bodies.
 
 import {
   redact as reviewed,
@@ -52,6 +56,8 @@ const ACTS = "This GET acts rather than reads (it completes a connection or an u
 const INTERNAL = "An internal Cloudflare test route; it is not part of the supported API.";
 const CAPTURE =
   "A URL scan's captured session (cookies, request and response headers, response bodies, DOM) can carry credentials, so Connecta does not return it. Read scan verdicts with GET /accounts/{account_id}/urlscanner/v2/search.";
+const UNREVIEWED_MATCHES =
+  "Cloudforce match responses have no reviewed response schema; Connecta refuses this operation until its success and error values can be reviewed.";
 
 const METADATA = "Returns names, ids, status, and timestamps; no credential value.";
 const REVOKES = "Revokes or deletes; returns no credential value.";
@@ -254,6 +260,49 @@ const A = "/accounts/{account_id}";
 const Z = "/zones/{zone_id}";
 
 const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
+  [`POST ${A}/ai-gateway/billing/topup/config`]: refuse(
+    "Returns a payment client secret; complete billing setup in the dashboard.",
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/cws/basic-auth-credentials`,
+      `POST ${A}/cws/basic-auth-credentials`,
+      `GET ${A}/cws/basic-auth-credentials/{credential_id}`,
+      `DELETE ${A}/cws/basic-auth-credentials/{credential_id}`,
+      `GET ${A}/cws/basic-auth-credentials/{credential_id}/secrets`,
+      `POST ${A}/cws/basic-auth-credentials/{credential_id}/secrets`,
+      `GET ${A}/cws/basic-auth-credentials/{credential_id}/secrets/{secret_id}`,
+      `DELETE ${A}/cws/basic-auth-credentials/{credential_id}/secrets/{secret_id}`,
+    ].map((key) => [
+      key,
+      safe(
+        "CWS returns only username, ids, and creation/expiry metadata; password input and hashes are never returned.",
+      ),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/devices/policies`,
+      `GET ${A}/devices/policy`,
+      `POST ${A}/devices/policy`,
+      `PATCH ${A}/devices/policy`,
+      `GET ${A}/devices/policy/{policy_id}`,
+      `PATCH ${A}/devices/policy/{policy_id}`,
+      `DELETE ${A}/devices/policy/{policy_id}`,
+    ].map((key) => [
+      key,
+      safe(
+        "Device credential authentication is a boolean reauthentication policy, not a credential.",
+        "enable_device_credential_authentication",
+      ),
+    ]),
+  ),
+  "GET /cws/filter-schema": safe(
+    "Filter-builder fields and advisory operator labels; no credentials.",
+    "policy_fields.operators",
+    "workload_fields.operators",
+  ),
+
   // Access
   [`GET ${A}/access/apps`]: ACCESS_APP,
   [`POST ${A}/access/apps`]: ACCESS_APP,
@@ -419,6 +468,8 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
     "A Mesh node token lets anyone run this connector; Connecta does not return it.",
   ),
   // Cloudforce One
+  [`GET ${A}/cloudforce-one/v2/priority-intelligence/{priority_id}/matches`]: refuse(UNREVIEWED_MATCHES),
+  [`PATCH ${A}/cloudforce-one/v2/priority-intelligence/{priority_id}/matches`]: refuse(UNREVIEWED_MATCHES),
   [`GET ${A}/cloudforce-one/v2/credential-monitor/domains`]: safe(METADATA),
   [`POST ${A}/cloudforce-one/v2/credential-monitor/domains`]: safe(METADATA),
   [`DELETE ${A}/cloudforce-one/v2/credential-monitor/domains/{id}`]: safe(REVOKES),
@@ -850,6 +901,23 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
   [`GET ${A}/urlscanner/v2/har/{scan_id}`]: refuse(CAPTURE),
   [`GET ${A}/urlscanner/v2/dom/{scan_id}`]: refuse(CAPTURE),
   [`GET ${A}/urlscanner/v2/responses/{response_id}`]: refuse(CAPTURE),
+  // Custom crawler headers may authenticate under any name. Withhold every
+  // value in stored or echoed instance configuration, preserving header names.
+  ...Object.fromEntries(
+    [
+      `GET ${A}/ai-search/namespaces/{namespace}/instances`,
+      `POST ${A}/ai-search/namespaces/{namespace}/instances`,
+      `GET ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
+      `PUT ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
+      `DELETE ${A}/ai-search/namespaces/{namespace}/instances/{id}`,
+    ].map((key) => [
+      key,
+      reviewed(
+        "Crawler include_headers stores custom request header values that can authenticate under arbitrary names.",
+        ["source_params.web_crawler.parse_options.include_headers{}"],
+      ),
+    ]),
+  ),
   // Reviewed safe: the flagged field is metadata, a header name list, a count, or third-party data the operation exists to return.
   ...Object.fromEntries(
     (
@@ -864,20 +932,6 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
         [`PUT ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
         [`DELETE ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
         [`GET ${A}/access/users/{user_id}/last_seen_identity`, "passkeys"],
-        [`GET ${A}/ai-search/namespaces/{name}/instances`, "source_params.web_crawler.parse_options.include_headers"],
-        [`POST ${A}/ai-search/namespaces/{name}/instances`, "source_params.web_crawler.parse_options.include_headers"],
-        [
-          `GET ${A}/ai-search/namespaces/{name}/instances/{id}`,
-          "source_params.web_crawler.parse_options.include_headers",
-        ],
-        [
-          `PUT ${A}/ai-search/namespaces/{name}/instances/{id}`,
-          "source_params.web_crawler.parse_options.include_headers",
-        ],
-        [
-          `DELETE ${A}/ai-search/namespaces/{name}/instances/{id}`,
-          "source_params.web_crawler.parse_options.include_headers",
-        ],
         [`POST ${A}/ai/tomarkdown`, "tokens"],
         [`GET ${A}/basin-catalog/{bucket_name}/maintenance-configs`, ""],
         [`GET ${A}/billable/usage/billable-metrics`, "DimensionKeys"],
@@ -1297,10 +1351,10 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       ),
     ]),
   ),
-  [`GET ${A}/one/applications/{application_id}/setup-flows`]: safe(
-    "Setup flows describe the OAuth authorization URL and form fields to fill, not credentials.",
-    "steps.form_fields.name",
-    "steps.form_fields.type",
+  [`GET ${A}/one/applications/{application_id}/setup-flows`]: reviewed(
+    "Setup form defaults may carry credential values; withhold defaults while retaining field names and input types.",
+    ["steps.form_fields.default_value"],
+    ["steps", "steps.form_fields.name", "steps.form_fields.type"],
   ),
   ...Object.fromEntries(
     [
@@ -1539,6 +1593,7 @@ export const CLOUDFLARE_VALUE_SAFETY: ValueSafetyTable = {
           ["amr_matching_session_duration", "A session duration."],
           ["doh_jwt_duration", "A token lifetime setting."],
           ["token_endpoint_auth_method", "An OAuth client authentication method name."],
+          ["leak_reporter", "The secret-scanning partner name, not the leaked token."],
           ["has_rotated_secret", "Whether a client secret was rotated; a flag."],
           ["secret_preview", "A masked preview of a caller-supplied key."],
           ["token_pricing", "Per-token model pricing."],

@@ -20,6 +20,7 @@ import callAdmissionGuideChanges from "./fixtures/cloudflare-lookup-admission-80
 import notionAdmissionGuideChanges from "./fixtures/notion-token-admission-813-guide-changes.json";
 import restAdmissionGuideChanges from "./fixtures/rest-write-admission-812-guide-changes.json";
 import docsCorrectnessGuideChanges from "./fixtures/docs-correctness-guide-changes.json";
+import restContractGuideChanges from "./fixtures/hosted-rest-contract-refresh-343-guide-changes.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
 import mixpanelReviewChanges from "./fixtures/hosted-mixpanel-343-review-changes.json";
 import { classifyTool } from "../src/tool-safety.js";
@@ -63,6 +64,7 @@ function expectedGuide(name: Name, content: string): string {
   const docsCorrectness = docsCorrectnessGuideChanges as Partial<Record<Name, string[][]>>;
   const linearCatalog = linearCatalogGuideChanges as Partial<Record<Name, string[][]>>;
   const revenuecatReview = revenuecatReviewGuideChanges as Partial<Record<Name, string[][]>>;
+  const restContracts = restContractGuideChanges as Partial<Record<Name, string[][]>>;
   const changes = Object.hasOwn(configChanges, name) ? [] : guideChanges[name];
   for (const [from, to] of [
     ...changes,
@@ -78,6 +80,7 @@ function expectedGuide(name: Name, content: string): string {
     ...(revenuecatReview[name] ?? []),
     ...(name === "mixpanel" ? mixpanelReviewChanges.guideChanges : []),
     ...((stripeGuideChanges as Partial<Record<Name, string[][]>>)[name] ?? []),
+    ...(restContracts[name] ?? []),
   ])
     content = content.replaceAll(from!, to!);
   return content;

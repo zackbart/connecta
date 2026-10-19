@@ -1062,7 +1062,7 @@ every vendor ships one reviewed table through one mechanism
    message/error and raw string/object source payloads in both events and
    invocation maps. The shared review harness rejects embedded-URL operation
    keys absent from each vendor's pinned index and invalid path syntax.
-   Vercel's unavailable full pin remains a review limitation.
+   The current Vercel pin was reviewed from its full response document; its unversioned URL does not retain older documents.
    Generic parameters in descriptions, metadata, nicknames, billing footers,
    notes, DNS TXT, KV values and operator HTML retain their original bytes,
    including whole URL strings. Ordinary code/key URLs can be false positives

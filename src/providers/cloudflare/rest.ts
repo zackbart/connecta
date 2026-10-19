@@ -72,6 +72,16 @@ const READ_CAP_MS = 60_000;
  * (`CLOUDFLARE_VALUE_SAFETY`).
  */
 const READ_POSTS: readonly RestReadPost[] = [
+  [
+    "POST",
+    "/accounts/{account_id}/resource-library/applications/lookup",
+    "Looks up application names in a sentence; changes no application or rule.",
+  ],
+  [
+    "POST",
+    "/accounts/{account_id}/data-security/posture/finding_types/validate",
+    "Checks a candidate finding definition without creating or reserving it.",
+  ],
   ["POST", "/accounts/{account_id}/analytics/query/{dataset}/summary", "Analytics query; aggregates only."],
   ["POST", "/accounts/{account_id}/analytics/query/{dataset}/timeseries", "Analytics query; aggregates only."],
   ["POST", "/accounts/{account_id}/analytics/query/{dataset}/top-n", "Analytics query; aggregates only."],
@@ -189,6 +199,15 @@ export const PIN_SAFE_UNSCOPED: ReadonlySet<string> = new Set([
   "POST /zones",
   "GET /memberships",
   "GET /ips",
+  // CWS category definitions and filter-builder schema are global catalogs,
+  // not account policy, credential, or deployment records.
+  "GET /cws/categories/apis",
+  "GET /cws/categories/applications",
+  "GET /cws/categories/applications/{application_key}/versions",
+  "GET /cws/categories/applications/{application_key}/versions/latest",
+  "GET /cws/categories/applications/{application_key}/versions/{version_tag}",
+  "GET /cws/categories/operations",
+  "GET /cws/filter-schema",
   "POST /graphql",
 ]);
 

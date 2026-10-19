@@ -1,0 +1,38 @@
+{
+  "cloudflare": [
+    [
+      "The catalog is Cloudflare's own `search` and `execute`.",
+      "The catalog is Cloudflare's own `docs`, `search`, and `execute`. `docs` searches Cloudflare developer documentation."
+    ],
+    [
+      "A read-only endpoint therefore gets only `search` here.",
+      "A read-only endpoint therefore gets `docs` and `search` here."
+    ],
+    [
+      "telemetry queries, and validation checks.",
+      "telemetry queries, application-name lookup, and validation checks (including custom posture finding types)."
+    ],
+    [
+      "payment client secrets,",
+      "payment client secrets (including AI Gateway top-up configuration), Cloudforce One priority-intelligence match reads and updates (their response schemas are unreviewed),"
+    ],
+    [
+      "and every environment or plain-text binding value",
+      "and application setup form defaults and every environment or plain-text binding value"
+    ],
+    [
+      "probe and custom-provider headers",
+      "probe, custom-provider, and AI Search crawler headers (every `include_headers` map value; names stay)"
+    ]
+  ],
+  "vercel": [
+    [
+      "the args and values of every header, cookie, and query rule (route transforms and conditions, firewall conditions),",
+      "the args and values of every header, cookie, and query rule (route transforms and conditions, firewall conditions), conditional firewall bypass compiled `condition` expressions and their credential match values,"
+    ],
+    [
+      "drain and webhook headers and signing secrets",
+      "daemon liveness-probe header values and internal endpoint ciphertext, drain and webhook headers and signing secrets"
+    ]
+  ]
+}

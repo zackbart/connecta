@@ -1,10 +1,14 @@
 {
   "format": 5,
-  "digest": "sha256:32399b3ed273548c8b14dd4715ff26c7c295399fa0f08bf5c81aee89460cfb90",
+  "digest": "sha256:553c2cccefb195234a4773d0360df6e5cb15a30912fefe86a6b1e6c6ceaf5566",
   "options": {
     "operationWords": "global-config"
   },
   "candidates": {
+    "GET /ai-gateway/budgets/list": {
+      "fields": ["defaultCoveredCounts.api-key"],
+      "named": false
+    },
     "GET /ai-gateway/virtual-model-configs": {
       "fields": [
         "inferenceRegion",
@@ -81,6 +85,7 @@
       "fields": [
         "appTokens",
         "appTokens.crossInstallation",
+        "appTokens.isStaticCredential",
         "appTokens.requiresReinstallation",
         "appTokens.supportsRefinement",
         "appTokens.supportsResources",
@@ -88,6 +93,7 @@
         "supportsRevocation",
         "userTokens",
         "userTokens.crossInstallation",
+        "userTokens.isStaticCredential",
         "userTokens.manualCredentialInput",
         "userTokens.supportsRefinement",
         "userTokens.supportsResources"
@@ -98,6 +104,7 @@
       "fields": [
         "appTokens",
         "appTokens.crossInstallation",
+        "appTokens.isStaticCredential",
         "appTokens.requiresReinstallation",
         "appTokens.supportsRefinement",
         "appTokens.supportsResources",
@@ -105,6 +112,7 @@
         "supportsRevocation",
         "userTokens",
         "userTokens.crossInstallation",
+        "userTokens.isStaticCredential",
         "userTokens.manualCredentialInput",
         "userTokens.supportsRefinement",
         "userTokens.supportsResources"
@@ -115,6 +123,7 @@
       "fields": [
         "appTokens",
         "appTokens.crossInstallation",
+        "appTokens.isStaticCredential",
         "appTokens.requiresReinstallation",
         "appTokens.supportsRefinement",
         "appTokens.supportsResources",
@@ -122,6 +131,7 @@
         "supportsRevocation",
         "userTokens",
         "userTokens.crossInstallation",
+        "userTokens.isStaticCredential",
         "userTokens.manualCredentialInput",
         "userTokens.supportsRefinement",
         "userTokens.supportsResources"
@@ -132,6 +142,7 @@
       "fields": [
         "appTokens",
         "appTokens.crossInstallation",
+        "appTokens.isStaticCredential",
         "appTokens.requiresReinstallation",
         "appTokens.supportsRefinement",
         "appTokens.supportsResources",
@@ -139,6 +150,7 @@
         "supportsRevocation",
         "userTokens",
         "userTokens.crossInstallation",
+        "userTokens.isStaticCredential",
         "userTokens.manualCredentialInput",
         "userTokens.supportsRefinement",
         "userTokens.supportsResources"
@@ -540,6 +552,10 @@
       ],
       "named": false
     },
+    "GET /v1/projects/{idOrName}/daemons": {
+      "fields": ["daemons[].config.livenessProbe.httpGet.httpHeaders"],
+      "named": false
+    },
     "DELETE /v1/projects/{idOrName}/env": {
       "fields": [],
       "named": true
@@ -680,6 +696,18 @@
       "fields": [],
       "named": true
     },
+    "GET /v1/security/firewall/bypass/rules": {
+      "fields": ["conditionGroup[].conditions[].value", "rules[].conditionGroup[].conditions[].value"],
+      "named": true
+    },
+    "POST /v1/security/firewall/bypass/rules": {
+      "fields": ["conditionGroup[].conditions[].value"],
+      "named": true
+    },
+    "DELETE /v1/security/firewall/bypass/rules": {
+      "fields": [],
+      "named": true
+    },
     "GET /v1/security/firewall/config": {
       "fields": [
         "active.conditions[].conditionGroup[].conditions[].value",
@@ -813,6 +841,7 @@
         "[].security.firewallRoutes[].missing[].value",
         "[].security.firewallRoutes[].mitigate.erl.keys",
         "[].security.firewallRoutes[].mitigate.log_headers",
+        "[].security.firewallRoutes[].response_has[].value",
         "[].security.log_headers",
         "[].security.rulesets{}.logHeaders",
         "[].security.rulesets{}.rateLimit.keys",
@@ -862,6 +891,7 @@
         "projects[].security.firewallRoutes[].missing[].value",
         "projects[].security.firewallRoutes[].mitigate.erl.keys",
         "projects[].security.firewallRoutes[].mitigate.log_headers",
+        "projects[].security.firewallRoutes[].response_has[].value",
         "projects[].security.log_headers",
         "projects[].security.rulesets{}.logHeaders",
         "projects[].security.rulesets{}.rateLimit.keys",
@@ -1048,6 +1078,7 @@
       "fields": [
         "connectors[].appTokens",
         "connectors[].appTokens.crossInstallation",
+        "connectors[].appTokens.isStaticCredential",
         "connectors[].appTokens.requiresReinstallation",
         "connectors[].appTokens.supportsRefinement",
         "connectors[].appTokens.supportsResources",
@@ -1055,6 +1086,7 @@
         "connectors[].supportsRevocation",
         "connectors[].userTokens",
         "connectors[].userTokens.crossInstallation",
+        "connectors[].userTokens.isStaticCredential",
         "connectors[].userTokens.manualCredentialInput",
         "connectors[].userTokens.supportsRefinement",
         "connectors[].userTokens.supportsResources"
@@ -1065,6 +1097,7 @@
       "fields": [
         "connector.appTokens",
         "connector.appTokens.crossInstallation",
+        "connector.appTokens.isStaticCredential",
         "connector.appTokens.requiresReinstallation",
         "connector.appTokens.supportsRefinement",
         "connector.appTokens.supportsResources",
@@ -1072,6 +1105,7 @@
         "connector.supportsRevocation",
         "connector.userTokens",
         "connector.userTokens.crossInstallation",
+        "connector.userTokens.isStaticCredential",
         "connector.userTokens.manualCredentialInput",
         "connector.userTokens.supportsRefinement",
         "connector.userTokens.supportsResources"
@@ -1229,6 +1263,10 @@
       "fields": [],
       "named": true
     },
+    "GET /v8/artifacts/status": {
+      "fields": ["readOnly"],
+      "named": false
+    },
     "POST /v9/domains/{domain}/claim": {
       "fields": [],
       "named": true
@@ -1346,6 +1384,15 @@
   },
   "reviewed": {
     "operations": {
+      "GET /ai-gateway/budgets/list": ["defaultCoveredCounts.api-key"],
+      "GET /v8/artifacts/status": ["readOnly"],
+      "GET /v1/security/firewall/bypass/rules": [
+        "condition",
+        "conditionGroup[].conditions[?header].value",
+        "rules[].condition",
+        "rules[].conditionGroup[].conditions[?header].value"
+      ],
+      "POST /v1/security/firewall/bypass/rules": ["condition", "conditionGroup[].conditions[?header].value"],
       "POST /v1/connect/connectors": ["appTokens", "userTokens"],
       "GET /v1/connect/connectors/{connector}": ["appTokens", "userTokens"],
       "POST /v1/connect/connectors/{connector}/managed/eject": ["appTokens", "userTokens"],
@@ -1410,6 +1457,10 @@
         "projects[].protectionBypass@keys",
         "projects[].security.firewallBypassIps",
         "projects[].usageStatus.bypassThrottleUntil"
+      ],
+      "GET /v1/projects/{idOrName}/daemons": [
+        "daemons.config.livenessProbe.httpGet.httpHeaders.value",
+        "daemons.replicas.items.iroh.publicKeyCiphertext"
       ],
       "POST /v1/projects/{idOrName}/avatar": [
         "dismissedToasts[].value",
@@ -1519,6 +1570,7 @@
         "[].security.firewallBypassIps",
         "[].security.firewallRoutes[].has[?header].value",
         "[].security.firewallRoutes[].missing[?header].value",
+        "[].security.firewallRoutes[].response_has[?header].value",
         "projects[].dismissedToasts[].value",
         "projects[].env[].legacyValue",
         "projects[].env[].value",
@@ -1531,6 +1583,7 @@
         "projects[].security.firewallBypassIps",
         "projects[].security.firewallRoutes[].has[?header].value",
         "projects[].security.firewallRoutes[].missing[?header].value",
+        "projects[].security.firewallRoutes[].response_has[?header].value",
         "projects[].usageStatus.bypassThrottleUntil"
       ],
       "POST /v10/projects/{idOrName}/env": [

@@ -186,6 +186,14 @@ provider-local findings; report them alongside other drift and manual review
 requirements. The `mcp-catalog` check compares credential-free public `tools/list` names and
 four behavioral hints against reviewed evidence. Catalog access does not prove
 operational auth or enable a preset. Recording never accepts catalog changes.
+For a categorized documentation inventory, retain the current category/name
+capture in `inventory.categories`. Explicitly reviewed tools absent from the
+current reference may remain in the runtime classification and in `reviewed`;
+name those absences in `inventory.acknowledgedRemoved`. Names deliberately left
+to live annotations belong in `inventory.acknowledgedUnclassified`, with the
+review rationale recorded beside the provider evidence. Neither list accepts
+future names or partial captures; complete category counts remain mandatory.
+
 Never fetch credentials, call operational tools, file issues, or silently accept
 a new baseline. Recording endpoint evidence is an explicit action.
 

@@ -248,6 +248,73 @@ describe("vercel() over an access token", () => {
     expect(JSON.stringify(long)).not.toMatch(/PRIVATE_SIG|PRIVATE_CREDENTIAL/);
   });
 
+  it("INV-5: redacts arbitrary daemon probe header values and internal endpoint ciphertext before select (#890)", async () => {
+    const connector = vercel("hosting", TOKEN);
+    const headerPath = "daemons.config.livenessProbe.httpGet.httpHeaders";
+    const daemon = {
+      name: "worker",
+      config: {
+        livenessProbe: {
+          httpGet: {
+            httpHeaders: [
+              { name: "X-Proof", value: "stored-daemon-credential-marker" },
+              { name: "Accept", value: "ordinary-daemon-header-marker" },
+            ],
+          },
+        },
+      },
+      replicas: { items: [{ id: "instance", iroh: { publicKeyCiphertext: "internal-endpoint-marker" } }] },
+    };
+    for (const select of [undefined, [headerPath]]) {
+      respond = () => Response.json({ daemons: [daemon], pagination: { count: 1 } });
+      const result = await call(connector, "vercel_api_read", {
+        path: "/v1/projects/web/daemons",
+        ...(select ? { select } : {}),
+      });
+      expect(result.data.daemons[0].config.livenessProbe.httpGet.httpHeaders).toEqual([
+        { name: "X-Proof", value: "[redacted]" },
+        { name: "Accept", value: "[redacted]" },
+      ]);
+      expect(JSON.stringify(result)).not.toMatch(
+        /stored-daemon-credential-marker|ordinary-daemon-header-marker|internal-endpoint-marker/,
+      );
+    }
+    respond = () => Response.json({ error: { code: "bad_request", message: JSON.stringify(daemon) } }, { status: 400 });
+    const error = await refusal(call(connector, "vercel_api_read", { path: "/v1/projects/web/daemons" }));
+    expect(error.message).not.toMatch(
+      /stored-daemon-credential-marker|ordinary-daemon-header-marker|internal-endpoint-marker/,
+    );
+  });
+
+  it("INV-1: daemon scaling and restarts require the write tool (#890)", async () => {
+    const connector = vercel("hosting", TOKEN);
+    for (const args of [
+      { method: "PUT", path: "/v1/projects/web/daemons/worker/instances", body: { iad1: 2 } },
+      { method: "POST", path: "/v1/projects/web/daemons/worker/instances/dmni_01k7d0q5w3x8y9z0a1b2c3d4e5/restart" },
+    ]) {
+      expect((await refusal(call(connector, "vercel_api_read", args))).code).toBe("invalid_args");
+    }
+    expect(sent).toEqual([]);
+    respond = () => Response.json({ ok: true });
+    expect(
+      (
+        await call(connector, "vercel_api_write", {
+          method: "PUT",
+          path: "/v1/projects/web/daemons/worker/instances",
+          body: { iad1: 2 },
+        })
+      ).data,
+    ).toEqual({ ok: true });
+    expect(
+      (
+        await call(connector, "vercel_api_write", {
+          method: "POST",
+          path: "/v1/projects/web/daemons/worker/instances/dmni_01k7d0q5w3x8y9z0a1b2c3d4e5/restart",
+        })
+      ).data,
+    ).toEqual({ ok: true });
+  });
+
   it("builds Connecta's REST connector with an operator credential and its own tools", async () => {
     const connector = vercel("hosting", { ...TOKEN, maxResultBytes: 25_000 });
     expect(mocks.remoteMcp).not.toHaveBeenCalled();
@@ -968,6 +1035,71 @@ describe("vercel() over an access token", () => {
     expect(
       (await call(connector, "vercel_api_read", { path: "/v3/teams/team_1/members" })).data.emailInviteCodes,
     ).toEqual([{ id: "inv_1", email: "a@example.com", role: "MEMBER" }]);
+  });
+
+  it("INV-5: withholds conditional-bypass credentials in compiled and structured responses before selection", async () => {
+    const connector = vercel("hosting", TOKEN);
+    const rule = {
+      id: "rule_1",
+      projectId: "prj_1",
+      domain: "app.example.com",
+      condition: 'http.request.headers["x-auth-key"] == "stored-access"',
+      conditionGroup: [
+        {
+          conditions: [
+            { type: "header", key: "X-Auth-Key", op: "eq", value: "stored-access" },
+            { type: "cookie", key: "session", op: "eq", value: ["stored-cookie"] },
+            { type: "query", key: "proof", op: "eq", value: "stored-query" },
+            { type: "ip_address", op: "eq", value: "192.0.2.1" },
+          ],
+        },
+      ],
+    };
+    for (const data of [rule, { rules: [rule] }]) {
+      respond = () => Response.json(data);
+      const result = await call(connector, "vercel_api_read", {
+        path: "/v1/security/firewall/bypass/rules",
+        query: { projectId: "prj_1" },
+      });
+      expect(JSON.stringify(result)).not.toMatch(/stored-access|stored-cookie|stored-query/);
+      expect(JSON.stringify(result)).toContain("192.0.2.1");
+      expect(JSON.stringify(result)).toContain("[redacted]");
+    }
+    respond = () => Response.json(rule);
+    const created = await call(connector, "vercel_api_write", {
+      method: "POST",
+      path: "/v1/security/firewall/bypass/rules",
+      query: { projectId: "prj_1" },
+      body: { domain: "app.example.com", conditionGroup: [{ conditions: [rule.conditionGroup[0]!.conditions[0]!] }] },
+      select: ["condition", "conditionGroup"],
+    });
+    expect(JSON.stringify(created)).not.toMatch(/stored-access|stored-cookie|stored-query/);
+    respond = () =>
+      Response.json({
+        projects: [
+          {
+            security: {
+              firewallRoutes: [
+                { response_has: [{ type: "header", key: "X-Auth-Key", value: "stored-response-match" }] },
+              ],
+            },
+          },
+        ],
+      });
+    expect(JSON.stringify(await call(connector, "vercel_api_read", { path: "/v10/projects" }))).not.toContain(
+      "stored-response-match",
+    );
+  });
+
+  it("accepts sandbox commands without the removed cmdId requirement", async () => {
+    const connector = vercel("hosting", TOKEN);
+    respond = () => Response.json({ id: "cmd_1" });
+    await call(connector, "vercel_api_write", {
+      method: "POST",
+      path: "/v2/sandboxes/sessions/s1/cmd",
+      body: { command: "pwd" },
+    });
+    expect(sent).toHaveLength(1);
   });
 
   it("redacts header, cookie, and query condition values in every firewall config operation", async () => {
