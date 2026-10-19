@@ -1111,6 +1111,83 @@ describe("operator recovery bounds and snapshot ordering", () => {
     },
   );
 
+  it.each([false, true])(
+    "INV-4 INV-10: publishes a displaced full refresh after recovery exhaustion (replacement fails: %s)",
+    async (replacementFails) => {
+      const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
+      const crm = { id: "crm", status: "auth_required", oauth: true, toolCount: 0, tools: [] };
+      const tickets = { id: "tickets", status: "ok", toolCount: 0, tools: [] };
+      const notes = { ...tickets, id: "notes" };
+      const rows = [crm, tickets, notes];
+      configMock.mockImplementation(async () => Response.json(v2(rows, rows)));
+      fetchMock.mockImplementation(async (path: string) => {
+        if (path.endsWith("/notes")) throw new Error("offline");
+        return Response.json(
+          path === "/ui/data" ? { ...uiData("operator"), connectors: rows } : rows.find((row) => path.endsWith(row.id)),
+        );
+      });
+      store.routeChanged("/connectors/crm");
+      vi.useFakeTimers();
+      await store.boot();
+      // Exhaust all four automatic detail-read retries without losing the
+      // signed-in maintainer contract that still permits starting OAuth.
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/connectors/notes")).toHaveLength(5);
+      expect(store.getState().data?.connectors.map((row) => row.status)).toEqual(["auth_required", "ok", "error"]);
+      const slow = deferred<void>();
+      const connected = { ...crm, status: "ok" };
+      const failed = { ...tickets, status: "error", problem: "connector_unavailable" };
+      const updated = [connected, failed, notes];
+      let notesReads = 0;
+      fetchMock.mockClear();
+      configMock.mockClear();
+      configMock.mockImplementation(async (path: string) =>
+        Response.json(v2(rows, path.includes("?connector=") ? [connected] : updated)),
+      );
+      fetchMock.mockImplementation(async (path: string) => {
+        if (path.startsWith("/ui/oauth/")) {
+          return Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" });
+        }
+        if (path === "/ui/data") return Response.json({ ...uiData("operator"), connectors: updated });
+        if (path.endsWith("/notes")) {
+          if (++notesReads === 1) await slow.promise;
+          else if (replacementFails) throw new Error("still offline");
+          return Response.json(notes);
+        }
+        return Response.json(path.endsWith("/tickets") ? failed : connected);
+      });
+      await store.startOAuth("crm", "continue");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(store.getState().data?.connectors.map((row) => row.status)).toEqual(["ok", "ok", "error"]);
+      slow.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      // The owed publication respects the exhausted budget's final backoff.
+      await vi.advanceTimersByTimeAsync(7999);
+      expect(notesReads).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(store.getState().data?.connectors.map((row) => row.status)).toEqual([
+        "ok",
+        "error",
+        replacementFails ? "error" : "ok",
+      ]);
+      expect(store.getState().contract?.live.connectors.map((row) => row.status)).toEqual([
+        "ok",
+        "error",
+        replacementFails ? "error" : "ok",
+      ]);
+      expect(notesReads).toBe(2);
+      const reads = fetchMock.mock.calls.length;
+      const contracts = configMock.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      // One replacement, no authorization replay or renewed failure budget.
+      expect(fetchMock.mock.calls).toHaveLength(reads);
+      expect(configMock.mock.calls).toHaveLength(contracts);
+      expect(configMock.mock.calls.filter(([path]) => path === "/ui/api/config")).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/ui/oauth/"))).toHaveLength(1);
+    },
+  );
+
   it.each(["ok", "error", "network", "refused"])("INV-10: stops OAuth polling on %s", async (terminal) => {
     const { fetchMock, configMock, connector, contract } = await pollingStore();
     fetchMock.mockImplementation(async () => {

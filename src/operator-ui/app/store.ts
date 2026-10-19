@@ -129,6 +129,7 @@ export function navHint(): { activity: boolean } {
 }
 
 function gate(notice: Notice | null = null, session: OperatorState["session"] = "gated"): void {
+  interruptedFullRefresh = false;
   cancelRecoveryRead();
   queryClient.clear();
   forgetNav();
@@ -703,7 +704,6 @@ async function refreshSnapshot(
     // cannot spend the recovery budget superseding every retry in turn.
     if (connectorId) interruptedFullRefresh = true;
   }
-  if (!connectorId) interruptedFullRefresh = false;
   // A new catalog cycle also supersedes any summary that has not landed yet.
   ++dataRevision;
   const identityCurrent = fence();
@@ -738,6 +738,10 @@ async function refreshSnapshot(
     // last confirmed snapshot visible while any matching detail is pending.
     const contract =
       loadedContract && connectorId ? mergeConnectorContract(loadedContract, connectorId) : loadedContract;
+    // Only a current full publication discharges the obligation. A failed
+    // read also publishes an honest unverified state; a superseded cycle cannot.
+    // Clear before detailsPatch stops polling or publication notifies listeners.
+    if (!connectorId) interruptedFullRefresh = false;
     set({
       ...detailsPatch(outcomes, quiet && !connectorId, contract),
       contract,
@@ -1009,7 +1013,6 @@ export function stopOAuthPolling(connector?: string): void {
   oauthPollController?.abort();
   oauthPollController = undefined;
   if (awaitingAuthorization.size === 0 && interruptedFullRefresh) {
-    interruptedFullRefresh = false;
     scheduleRecovery();
   }
 }
@@ -1461,6 +1464,7 @@ function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, expos
     recoveryRead = undefined;
     clearTimeout(cycle.timer);
     set({ recoveryPending: false });
+    if (interruptedFullRefresh) scheduleRecovery();
   });
   return Promise.race([work, released]);
 }
@@ -1478,22 +1482,38 @@ function resetRecovery(cancelRead = true): void {
 /** All passive admission reads share the deadline, budget and in-flight read. */
 function recover(): void {
   const now = Date.now();
-  if (signedOut || recoveryRead || now < recoveryNotBefore || now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
+  if (
+    signedOut ||
+    recoveryRead ||
+    (interruptedFullRefresh && awaitingAuthorization.size > 0) ||
+    now < recoveryNotBefore ||
+    now - lastReturnPass < RETURN_MIN_INTERVAL_MS
+  )
+    return;
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
   lastReturnPass = now;
-  void loadCurrent(true);
+  if (interruptedFullRefresh && state.role === "maintainer" && state.data) {
+    void guardedRecoveryRead((signal) => refreshSnapshot(false, undefined, signal), true);
+  } else {
+    void loadCurrent(true);
+  }
 }
 
 function scheduleRecovery(): void {
-  if (signedOut) return;
+  if (signedOut || (interruptedFullRefresh && awaitingAuthorization.size > 0)) return;
   if (recoveryTimer !== undefined) return;
   // Refusals keep the attempt count. Even after the automatic budget is spent,
   // focus must wait through the final backoff before requesting admission.
   const delay = RECOVERY_DELAYS_MS[Math.min(recoveryAttempt, RECOVERY_DELAYS_MS.length - 1)]!;
   recoveryNotBefore = Math.max(Date.now() + delay, lastReturnPass + RETURN_MIN_INTERVAL_MS);
-  if (recoveryAttempt >= RECOVERY_DELAYS_MS.length) return;
-  recoveryAttempt++;
+  // Replacing a cycle fenced by polling is owed publication, not another
+  // failed-read retry. Coalesce it onto this timer and preserve the failure
+  // budget, including exhaustion. Keep it owed until a full cycle publishes.
+  if (!interruptedFullRefresh) {
+    if (recoveryAttempt >= RECOVERY_DELAYS_MS.length) return;
+    recoveryAttempt++;
+  }
   const current = fence();
   recoveryTimer = setTimeout(() => {
     recoveryTimer = undefined;
