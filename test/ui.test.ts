@@ -1528,10 +1528,13 @@ describe("status UI", () => {
     expect(byId.evil.authorizationUrl).toBeUndefined();
   });
 
-  it("/ui/data carries drift counts only, and omits them until a refresh saw one", async () => {
+  it("INV-6: /ui/data bounds forwarded drift and marks its absent reviewed baseline", async () => {
     const drifting: Connector = {
       id: "drifting",
       description: "Hosted provider",
+      async status() {
+        return { state: "ok" };
+      },
       catalogDrift() {
         return {
           observedAt: "2026-08-12T12:00:00.000Z",
@@ -1562,6 +1565,7 @@ describe("status UI", () => {
     const byId = Object.fromEntries(body.connectors.map((x: any) => [x.id, x]));
     expect(byId.drifting.catalogDrift).toEqual({
       observedAt: "2026-08-12T12:00:00.000Z",
+      reviewedBaseline: false,
       unclassifiedTools: 2,
       unservedTools: 0,
       annotationConflicts: 1,

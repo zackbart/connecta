@@ -193,7 +193,7 @@ describe("linear() before and after defineProvider", () => {
     expect(corrected.sort()).toEqual(cases(["read", "readIdempotent", "readNotDestructive", "readAndDestructive"]));
   });
 
-  it("reports the historical drift counts plus the 15 names from the later catalog review", async () => {
+  it("INV-6: preserves historical drift counts with later required additions and schema coverage", async () => {
     const reviewed = Object.keys(before.verdicts);
     const { connector } = await listThroughLinear([...reviewed.slice(1), "summon_new_thing"], null);
     const { observedAt, ...counts } = observedCatalogDrift(connector) ?? {
@@ -202,8 +202,11 @@ describe("linear() before and after defineProvider", () => {
     expect(observedAt).not.toBe("");
     expect(counts).toEqual({
       ...before.driftAllButFirstPlusOneNew,
-      // The historical listing omits all 15 additions reviewed on 2026-10-19.
-      unservedTools: before.driftAllButFirstPlusOneNew.unservedTools + 15,
+      // The historical listing omits 14 required additions and one optional addition.
+      unservedTools: before.driftAllButFirstPlusOneNew.unservedTools + 14,
+      reviewedBaseline: true,
+      verification: "complete",
+      schemaCoverage: { pinned: reviewed.length - 6, unpinned: 5 },
     });
   });
 });
