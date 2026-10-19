@@ -769,36 +769,59 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
   it("INV-1: detects documented access changes and stale unclassified acknowledgements", async () => {
     const directory = await mkdtemp(join(tmpdir(), "connecta-drift-access-"));
     temporary.push(directory);
-    const reference = join(directory, "revenuecat.md");
+    const records = await recordWorkspace({
+      crm: {
+        version: 1,
+        provider: "crm",
+        checks: [
+          {
+            type: "mcp-docs",
+            setup: "https://crm.example/setup",
+            inventory: {
+              url: "https://crm.example/tools",
+              format: "table",
+              accessColumn: "Access",
+              acknowledgedUnclassified: ["preview"],
+            },
+            endpoints: ["https://crm.example/mcp"],
+            reviewed: ["list"],
+            reviewedAccess: { list: "write" },
+          },
+        ],
+      },
+    });
+    const reference = join(directory, "crm.md");
+    const run = () =>
+      reportFor(records, ["--docs", "--tool-reference", `crm=${reference}`, "--setup-reference", `crm=${reference}`]);
     await writeFile(
       reference,
-      "# MCP\nOAuth https://mcp.revenuecat.ai/mcp\n\n| Tool | Access | Description |\n| --- | --- | --- |\n| `validate-app-credentials` | Read | Checks credentials |\n| `render-paywall-screenshot` | Read | Renders screenshot |\n| `render-paywall-screenshot` | | Duplicate with blank access |\n",
+      "# MCP\nOAuth https://crm.example/mcp\n\n| Tool | Access | Description |\n| --- | --- | --- |\n| `list` | Read | Checks credentials |\n| `preview` | Read | Renders screenshot |\n| `preview` | | Duplicate with blank access |\n",
     );
-    const result = runDocumented("revenuecat", reference, reference);
+    const result = run();
     expect(result.status).toBe(0);
     const report = JSON.parse(result.output).docs[0];
     expect(report.findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: "documented-access-changed",
-          detail: expect.stringContaining("validate-app-credentials"),
+          detail: expect.stringContaining("list"),
         }),
         expect.objectContaining({
           kind: "stale-unclassified-acknowledgement",
-          detail: expect.stringContaining("render-paywall-screenshot"),
+          detail: expect.stringContaining("preview"),
         }),
       ]),
     );
-    expect(report.intentionallyUnclassified).not.toContain("render-paywall-screenshot");
-    expect(report.added).toContain("render-paywall-screenshot");
+    expect(report.intentionallyUnclassified).not.toContain("preview");
+    expect(report.added).toContain("preview");
     // Reordered columns work too; blank access retains its explicit acknowledgement.
     await writeFile(
       reference,
-      "# MCP\nOAuth https://mcp.revenuecat.ai/mcp\n\n| Access | Description | Tool |\n| --- | --- | --- |\n| Write | Checks credentials | `validate-app-credentials` |\n| | Renders screenshot | `render-paywall-screenshot` |\n",
+      "# MCP\nOAuth https://crm.example/mcp\n\n| Access | Description | Tool |\n| --- | --- | --- |\n| Write | Checks credentials | `list` |\n| | Renders screenshot | `preview` |\n",
     );
-    const quiet = JSON.parse(runDocumented("revenuecat", reference, reference).output).docs[0];
+    const quiet = JSON.parse(run().output).docs[0];
     expect(quiet.findings).toEqual([]);
-    expect(quiet.intentionallyUnclassified).toContain("render-paywall-screenshot");
+    expect(quiet.intentionallyUnclassified).toContain("preview");
   });
 
   it.each([

@@ -10,9 +10,7 @@
         "format": "table",
         "accessColumn": "Access"
       },
-      "endpoints": [
-        "https://mcp.revenuecat.ai/mcp"
-      ],
+      "endpoints": ["https://mcp.revenuecat.ai/mcp"],
       "reviewed": [
         "get-account-billing",
         "get-app",

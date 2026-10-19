@@ -65,7 +65,11 @@ const REVENUECAT_CLASSIFICATION: ToolClassification = {
       optional: true,
       "reason": "Retrieves RevenueCat account billing information without changing vendor state.",
     },
-    "get-app": { "verdict": "read", "reason": "Retrieves RevenueCat app information without changing vendor state." },
+    "get-app": {
+      "verdict": "read",
+      optional: true,
+      "reason": "Retrieves RevenueCat app information without changing vendor state.",
+    },
     "get-project-ui-config": {
       "verdict": "read",
       optional: true,
@@ -352,7 +356,11 @@ const REVENUECAT_CLASSIFICATION: ToolClassification = {
       optional: true,
       "reason": "create project creates or appends RevenueCat state; it has side effects.",
     },
-    "update-app": { "verdict": "destructive", "reason": "update app changes existing RevenueCat state or removes it." },
+    "update-app": {
+      "verdict": "destructive",
+      optional: true,
+      "reason": "update app changes existing RevenueCat state or removes it.",
+    },
     "update-project-ui-config": {
       "verdict": "destructive",
       optional: true,
