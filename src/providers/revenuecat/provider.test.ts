@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../../types.js";
-import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
+import {
+  guideOf,
+  itClassifiesLikeARelease,
+  mockRemoteMcp,
+  servedTools,
+} from "../../../test/fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -16,7 +21,12 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 }));
 
 import { REVENUECAT_MCP_ENDPOINT, REVENUECAT_VETTED_CATALOG, revenuecat } from "./index.js";
+import contracts from "./contracts.fixture.json";
+import { detectCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
 import { connectorGuideSummary } from "../../skills.js";
+
+const reviewedTools: ToolDef[] = contracts.tools;
+const projectCatalogNames = contracts.projectCatalog;
 
 const KEY_AUTH = {
   type: "headers",
@@ -172,17 +182,16 @@ describe("revenuecat()", () => {
     );
   });
 
-  it("says a read-only key fails writes at RevenueCat, not in connecta", () => {
+  it("explains permission-gated catalogs and independent read-only endpoint enforcement", () => {
     const guide = guideOf(
       revenuecat("bepresent_ios", {
         purpose: "Subscription state for the BePresent iOS project",
         auth: KEY_AUTH,
       }),
     );
-    expect(guide).toContain(
-      "It does not filter writes for a read-only key: every write is offered, reaches RevenueCat, and fails there in RevenueCat's own words.",
-    );
-    expect(guide).toContain("route the write to a connector configured with a write-enabled key");
+    expect(guide).toContain("RevenueCat can omit tools this key cannot use from its live catalog");
+    expect(guide).toContain("Catalog presence alone does not prove a call is permitted");
+    expect(guide).toContain("A read-only Connecta endpoint independently omits and blocks tools classified as writes");
   });
 
   it("tells two static connectors apart in the one field search returns (P3)", () => {
@@ -228,8 +237,10 @@ describe("revenuecat()", () => {
     expect(guide).toContain("apply-product-store-state-plan");
     expect(guide).toContain("authorize_connector");
     expect(guide).toContain('skills({ name: "usage" })');
-    // The unclassified tool is named rather than left to be discovered.
-    expect(guide).toContain("`render-paywall-screenshot` is unclassified on purpose because");
+    expect(guide).toContain("`render-paywall-screenshot` are reviewed reads");
+    expect(guide).toContain("observational POST");
+    expect(guide).toContain("`validate-app-credentials` stays classified as write conservatively");
+    expect(guide).not.toContain("unclassified on purpose");
   });
 
   it("states RevenueCat's own per-domain rate limits in the guide (P12)", () => {
@@ -256,29 +267,74 @@ describe("revenuecat()", () => {
     }
   });
 
-  it("classifies every documented tool and leaves the undocumented one closed (P5)", () => {
+  it("INV-1: reviews all 117 documented tools, retaining deprecated tools", () => {
     const verdicts = REVENUECAT_VETTED_CATALOG.tools;
     const counts = { "read-only": 0, additive: 0, destructive: 0 };
     for (const { verdict } of verdicts.values()) counts[verdict] += 1;
-    // The 2026-09-21 reading of RevenueCat's tool reference: 115 tools, of
-    // which 114 carry an access column.
-    expect(counts).toEqual({
-      "read-only": 53,
-      additive: 19,
-      destructive: 42,
-    });
-    expect(verdicts.size).toBe(114);
-    expect(verdicts.get("get-refund-request-preferences")?.verdict).toBe("read-only");
-    expect(verdicts.has("render-paywall-screenshot")).toBe(false);
-    // No digests: the scoped live catalog cannot provide a complete set (#351).
-    for (const record of verdicts.values()) {
-      expect(record.schemaDigest).toBeUndefined();
+    expect(counts).toEqual({ "read-only": 56, additive: 19, destructive: 42 });
+    expect(verdicts.size).toBe(117);
+    for (const name of ["list-app-subscription-groups", "preview-audience", "render-paywall-screenshot"])
+      expect(verdicts.get(name)?.verdict).toBe("read-only");
+    const guide = guideOf(revenuecat("crm", { purpose: "Subscription questions" }));
+    for (const name of [
+      "get-product-store-state-operation",
+      "create-product-prices",
+      "equalize-subscription-prices",
+      "set-product-store-state",
+      "upload-product-store-state-screenshot",
+    ]) {
+      expect(verdicts.has(name)).toBe(true);
+      expect(guide).toContain("`" + name + "`");
     }
+    expect(guide).toContain("tools are deprecated");
+  });
+
+  it("INV-1: verifies the four captured schemas and fails closed when a reviewed read changes", async () => {
+    for (const tool of reviewedTools) {
+      expect(await vettedSchemaDigest(tool)).toBe(
+        contracts.schemaDigests[tool.name as keyof typeof contracts.schemaDigests],
+      );
+      expect(REVENUECAT_VETTED_CATALOG.tools.get(tool.name)?.schemaDigest).toBe(await vettedSchemaDigest(tool));
+    }
+    expect([...REVENUECAT_VETTED_CATALOG.tools.values()].filter((t) => t.schemaDigest)).toHaveLength(4);
+    const connector = revenuecat("crm", { purpose: "Subscription questions" });
+    const reads = reviewedTools.filter((t) => t.name !== "validate-app-credentials");
+    mocks.listTools.mockResolvedValue(reads.map((t) => ({ name: t.name, inputSchema: t.inputSchema! })));
+    expect((await servedTools(connector)).map((t) => t.classification)).toEqual(["read", "read", "read"]);
+    mocks.listTools.mockResolvedValue(reads.map((t) => ({ ...t, inputSchema: { type: "object" } })));
+    expect((await servedTools(connector)).map((t) => t.classification)).toEqual(["write", "write", "write"]);
+  });
+
+  it("INV-1: serves a 54-tool permission-gated subset without inventing the 63 absent tools", async () => {
+    const facts: ToolDef[] = projectCatalogNames.map(
+      (name) =>
+        reviewedTools.find((t) => t.name === name) ?? {
+          name,
+          annotations: { readOnlyHint: true, destructiveHint: false },
+        },
+    );
+    mocks.listTools.mockResolvedValue(facts);
+    const served = await servedTools(revenuecat("crm", { purpose: "Subscription questions", auth: KEY_AUTH }));
+    expect(served.map((t) => t.name)).toEqual(projectCatalogNames);
+    expect(served).toHaveLength(54);
+    expect(served.filter((t) => t.classification === "write").map((t) => t.name)).toEqual(["validate-app-credentials"]);
+    expect(await detectCatalogDrift(REVENUECAT_VETTED_CATALOG, facts)).toEqual({
+      unclassifiedTools: 0,
+      unservedTools: 63,
+      annotationConflicts: 0,
+      schemaChanges: 0,
+    });
+    const validation = reviewedTools.find((t) => t.name === "validate-app-credentials")!;
+    // A future Read hint cannot silently widen our conservative review.
+    mocks.listTools.mockResolvedValue([{ ...validation, annotations: { readOnlyHint: true } }]);
+    expect((await servedTools(revenuecat("crm", { purpose: "Subscription questions" })))[0]?.classification).toBe(
+      "write",
+    );
   });
 
   it("keeps the argued borderline verdicts where the release put them", () => {
     const verdictFor = (name: string) => REVENUECAT_VETTED_CATALOG.tools.get(name)?.verdict;
-    // Additive despite reading like a mutation: nothing existing is replaced.
+    // Retained write verdicts; validation is conservative pending persistence evidence.
     expect(verdictFor("equalize-subscription-prices")).toBe("additive");
     expect(verdictFor("validate-app-credentials")).toBe("additive");
     expect(verdictFor("upload-product-store-state-screenshot")).toBe("additive");
@@ -316,7 +372,7 @@ describe("revenuecat()", () => {
     read: ["list-projects", "get-customer", "get-refund-request-preferences"],
     write: "create-offering",
     destructive: "grant-customer-entitlement",
-    unknown: ["render-paywall-screenshot", "list-new-thing", "wreck-new-thing"],
+    unknown: ["new-silent-tool", "list-new-thing", "wreck-new-thing"],
   });
 
   it("declares no operator credential slot or credential test (P10)", () => {

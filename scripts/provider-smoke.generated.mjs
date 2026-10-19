@@ -228,7 +228,7 @@ var options16 = { "purpose": "Audit fixture" };
 var fixture16 = {
   name: "revenuecat",
   options: options16,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "project-key", "options": { "auth": { "type": "headers", "headers": { "Authorization": "Bearer sk_example" } } } }, { "label": "credential", "options": { "auth": { "type": "credential" } } }],
   create(id = "fixture", overrides = {}) {
     return revenuecat(id, { ...options16, ...overrides });
   },

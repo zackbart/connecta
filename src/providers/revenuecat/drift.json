@@ -7,8 +7,7 @@
       "setup": "https://www.revenuecat.com/docs/tools/mcp/setup.md",
       "inventory": {
         "url": "https://www.revenuecat.com/docs/tools/mcp/tools-reference.md",
-        "format": "table",
-        "acknowledgedUnclassified": ["render-paywall-screenshot"]
+        "format": "table"
       },
       "endpoints": ["https://mcp.revenuecat.ai/mcp"],
       "reviewed": [
@@ -125,9 +124,17 @@
         "delete-webhook-integration",
         "update-webhook-integration",
         "create-paywall-ai",
-        "edit-paywall-ai"
+        "edit-paywall-ai",
+        "list-app-subscription-groups",
+        "preview-audience",
+        "render-paywall-screenshot"
       ],
-      "rationale": "The tool reference lists render-paywall-screenshot with a blank Access column. Its classification cannot be inferred from its verb; the acknowledged tool stays fail-closed."
+      "rationale": "Re-reviewed 2026-10-19 against the official MCP reference and API v2 app/audience documentation. The 117 reviewed names are a superset of permission-, plan-, platform-, and beta-gated live catalogs: four project-scoped read-only keys each exposed the same 54 names, all covered here. The reference now has an explicit Read row for render-paywall-screenshot (a duplicate Paywall Editing row still has blank Access). Keep all five documented deprecated store tools. Capture four schema digests from live discovery; other schemas remain unpinned."
+    },
+    {
+      "type": "manual",
+      "source": "https://www.revenuecat.com/docs/api-v2/app",
+      "rationale": "Resolve validate-app-credentials persistence semantics before classifying read: the MCP reference labels Read and says credentials are unchanged, while the 2026-10-19 live catalog has readOnlyHint=false. Unchanged credentials do not prove validation results/status are never persisted; the public API v2 app contract does not document this operation. Keep write conservatively."
     }
   ]
 }
