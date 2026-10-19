@@ -18,20 +18,60 @@
         "stripe_api_read",
         "get_stripe_account_info",
         "get_balance_summary",
-        "list_metrics",
-        "explain_metric",
-        "metric_drilldown",
-        "show_metric_app",
         "list_available_accounts_or_orgs",
         "manage_stripe_accounts",
         "search_stripe_documentation",
         "stripe_api_write",
-        "create_refund",
+        "convert_currency",
+        "send_money",
+        "setup_recipient",
+        "transfer_money",
+        "atlas_company_formation",
         "stripe_implementation_planner",
         "stripe_analytics",
-        "stripe_report",
-        "send_stripe_mcp_feedback"
+        "send_stripe_feedback"
       ]
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.stripe.com/mcp#tools",
+      "rationale": "The hosted OAuth catalog depends on account and preview access. Compare live search/describe with the reviewed tools and schema digests in index.ts and the captured fixtures; public docs omit two live account tools and cannot establish the entire hosted catalog. Never call operational tools for this review.",
+      "evidence": {
+        "reviewedAt": "2026-10-19",
+        "endpoint": "https://mcp.stripe.com/",
+        "hostedTools": [
+          "stripe_api_search",
+          "stripe_api_details",
+          "stripe_api_read",
+          "stripe_api_write",
+          "get_balance_summary",
+          "stripe_implementation_planner",
+          "send_stripe_feedback",
+          "search_stripe_documentation",
+          "stripe_analytics",
+          "convert_currency",
+          "send_money",
+          "transfer_money",
+          "setup_recipient",
+          "atlas_company_formation",
+          "list_available_accounts_or_orgs",
+          "manage_stripe_accounts"
+        ],
+        "liveOnly": ["list_available_accounts_or_orgs", "manage_stripe_accounts"],
+        "documentedOnly": ["get_stripe_account_info"],
+        "retired": [
+          "list_metrics",
+          "explain_metric",
+          "metric_drilldown",
+          "show_metric_app",
+          "create_refund",
+          "stripe_report",
+          "send_stripe_mcp_feedback"
+        ],
+        "analyticsSource": "https://docs.stripe.com/data/analyze-with-ai",
+        "analyticsVerdict": "write: execute_query_run and execute_query_template create asynchronous query runs; retrieval intents do not make the whole tool read-only.",
+        "schemaEvidence": "Complete connecta.describe inputSchema and declared outputSchema snapshots in fixtures.ts; SHA-256 digests in index.ts. No observed output schemas were substituted."
+      }
     },
     {
       "type": "openapi-index",
