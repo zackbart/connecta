@@ -1217,6 +1217,11 @@ reviewing the complete schemas and recording a new versioned digest. Legacy
 pins may still report conservative drift for array reordering until migrated.
 The iterative digest retains the whole-schema node ceiling in both formats.
 
+Contributor evidence: `test/provider-schema-pins.test.ts` checks every provider
+construction case in the generated roster. Every pinned digest requires a
+complete captured schema that passes runtime verification; changed input or
+output schemas must fail it. The guard also exercises both digest prefixes.
+
 The maintainer `scripts/drift-check.mjs` compares published inventories with
 provider evidence. Table inventories can require `inventory.accessColumn` and
 record `reviewedAccess` (`read` or `write`, with destructive verdicts recorded

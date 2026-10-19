@@ -283,7 +283,9 @@ describe("mixpanel()", () => {
     expect(tools.map((tool) => tool.classification)).toEqual(["write", "write"]);
     expect(tools.every((tool) => tool.annotations?.destructiveHint === true)).toBe(true);
     for (const tool of writes) {
-      expect(await vettedSchemaDigest(tool)).toBe(MIXPANEL_VETTED_CATALOG.tools.get(tool.name)?.schemaDigest);
+      const recorded = MIXPANEL_VETTED_CATALOG.tools.get(tool.name)?.schemaDigest;
+      expect(recorded).toBeDefined();
+      expect(await vettedSchemaDigest(tool, recorded!.startsWith("sha256:") ? "legacy" : "sets-v1")).toBe(recorded);
     }
     expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 0 });
   });
