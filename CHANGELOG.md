@@ -2,6 +2,36 @@
 
 All notable changes to this package are documented here.
 
+## 0.34.1 — 2026-10-19
+
+Connecta 0.34.1 is a patch release with a security fix. The Cloudflare provider passed stored AI Search crawler headers through unredacted, including on the routes 0.34.0 already served, so any caller allowed to read those resources could see header values that may carry credentials. 0.34.1 withholds them, along with conditional firewall match credentials, Vercel daemon probe headers, setup-form defaults and payment client secrets, and refuses Cloudforce One match responses that have no published schema before any request is sent. Deployments that use the Cloudflare or Vercel providers should upgrade.
+
+Connectors can now set `readOnly: true` (#895). A read-only connector serves only reviewed reads on every endpoint, maintainers' plain `/mcp` included; write and unclassified tools are hidden from discovery and refused on every call path. It combines with endpoint and pool `readOnly`, and the default is unchanged. The Stripe guide now shows both setups side by side: OAuth to Stripe's hosted MCP, or a secret or restricted key through the REST connector, with or without `readOnly`. A new maintained Intercom provider supports personal OAuth or a shared bearer token in the US or EU region; its schemas are not pinned yet because Intercom's catalog requires authentication to list.
+
+Catalog drift no longer counts as connector health (#867): a drifted connector reads Connected and stays out of Needs attention, while drift details remain on the connector page and in Activity. Connector cards, counts and the attention list keep their last verdict and position while details reload, and the top bar is more compact. Drift detection itself is corrected (#884): reordered schema arrays no longer report false changes for schemas pinned in the new format (existing pins keep their original hashing until re-reviewed), plan-gated tools can be marked optional, schema coverage is reported honestly, failed fingerprints mark verification unavailable instead of keeping a clean report, and per-person connectors keep separate observations. The Linear, Mixpanel, RevenueCat and Stripe reviews are reconciled with their live hosted catalogs and pin schemas; Mixpanel's Get-Events, Get-Dashboard, List-Cohorts and Get-Metric serve as reads again without deployment overrides, so a `classification: { mixpanel: { "Get-Events": "read" } }` override can be removed. Upgrading from 0.34.0 needs no configuration, storage migration or token rotation.
+
+### Added
+
+- Add a maintained Intercom hosted MCP provider with explicit US/EU region selection, personal OAuth or shared bearer-token auth, reviewed tool classifications, and guidance for sensitive support data and optional Fin Operator actions. Permission-gated Fin tools are optional for missing-tool drift while present tools retain classification checks. Schema coverage reports present reviewed tools as unpinned. Schema digests remain unpinned because anonymous catalog discovery requires authentication.
+- Add optional connector-level `readOnly` to every connector and maintained provider, enforcing read-only discovery and calls on every endpoint. Show the policy in the operator UI and clarify Stripe OAuth and API-key setup.
+
+### Fixed
+
+- Correct catalog drift reporting with schema coverage and verification states,
+  identity-partitioned observations, optional gated tools, and versioned schema
+  set canonicalization that preserves existing pins. Detect documented tool
+  access changes and stale unclassified acknowledgements in provider checks.
+  Operator refresh responses include the catalog comparison from that refresh,
+  so hashing failures and changed schemas cannot return an earlier clean report.
+  Provider pin assertions select the stored digest format, and a generated-roster
+  guard verifies every pin against captured schemas and rejects input/output drift.
+- Reconcile the maintained Linear catalog with hosted label lifecycle, inbox, saved view, triage, and diff tools. Preserve plan-gated customer requests, review the documented customer-needs read, and pin the observed hosted schemas so later changes fail closed.
+- Refresh reviewed hosted Mixpanel schemas so Get-Events, Get-Dashboard, List-Cohorts, and Get-Metric remain available to read-only endpoints without deployment overrides. Review the limited-beta Get-Audit-Log as a read, retain Fill-Event-Metadata as a write, and classify Get-Experiment as destructive because its optional computations can persist results and auto-conclude experiments.
+- Keep catalog drift informational, keep each connector's last verdict on every operator view while its details are read again so cards, counts and the attention list stop bouncing, keep attention rows in configuration order as their verdicts settle, safely hold prototype-named connector IDs, keep card and detail headers and Overview attention text on single lines with accessible ellipsis, including long connector ids, auth scopes and Read-only badges, reserve the card action footer and empty tool bar row, and compact the top bar for long deployment names and all page tabs.
+- Refresh Vercel and Cloudflare REST contracts and value-safety reviews, withhold conditional firewall match credentials, stored AI Search crawler headers and daemon probe headers, setup-form defaults, and payment client secrets, refuse schemaless Cloudforce match responses before dispatch, admit two stateless Cloudflare POST reads, classify hosted Cloudflare documentation search as read-only, and reconcile Vercel's complete hosted tool inventory.
+- Review RevenueCat subscription-group listing, audience preview, and paywall screenshot rendering as reads, pin four live schemas, and clarify permission-gated catalogs and conservative credential-validation routing.
+- Refresh Stripe hosted MCP tool reviews for money movement, recipient setup, Atlas formation, and renamed feedback; remove retired reviews, pin captured schemas for drift detection, and document account, mode, and human-confirmation requirements.
+
 ## 0.34.0 — 2026-10-16
 
 Connecta 0.34.0 rebuilds the operator UI around an Overview with connector health, endpoints, people and agents, a Needs attention list with fix prompts, and a connection map (#867). Maintainers now land on Overview at `/`; Endpoints moves to `/endpoints`, and `/access` redirects there. Update bookmarks, links and browser automation that expected Endpoints at `/`. Members still get their member page on every operator page path. The upgrade steps are in `documentation/migration-0.34.md`.
