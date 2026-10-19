@@ -22,11 +22,26 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 }));
 
 import { LINEAR_MCP_ENDPOINTS, LINEAR_VETTED_CATALOG, linear } from "./index.js";
+import { hostedCatalog } from "./fixtures.js";
+import drift from "./drift.json";
+import { observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
 import { connectorGuideSummary } from "../../skills.js";
 
 describe("linear()", () => {
   beforeEach(() => {
     mockRemoteMcp(mocks);
+    const construct = required(mocks.remoteMcp.getMockImplementation());
+    mocks.remoteMcp.mockImplementation((id, options) => {
+      const connector = construct(id, options);
+      // Annotation-only cases still supply the reviewed vendor schemas. An
+      // explicit schema on a case overrides the capture for drift regressions.
+      connector.listTools = async () =>
+        (await mocks.listTools()).map((tool) => ({
+          inputSchema: hostedCatalog.find((captured) => captured.name === tool.name)?.inputSchema,
+          ...tool,
+        }));
+      return connector;
+    });
   });
 
   it("owns the endpoint, OAuth default, purpose, and provider guidance", () => {
@@ -51,6 +66,10 @@ describe("linear()", () => {
     expect(guideOf(connector)).toContain("ENG-123");
     expect(guideOf(connector)).toContain("upsert");
     expect(guideOf(connector)).toContain("create_issue_label");
+    expect(guideOf(connector)).toContain("save_project_label");
+    expect(guideOf(connector)).toContain("children retired separately");
+    expect(guideOf(connector)).toContain("mark_notification");
+    expect(guideOf(connector)).toContain("Combined updates can partially succeed");
     expect(guideOf(connector)).toContain("authorize_connector");
     expect(guideOf(connector)).toContain("cursor");
     // Real markdown, not a diff hunk: agents read this string verbatim.
@@ -295,6 +314,93 @@ describe("linear()", () => {
     expect(tools[6]?.annotations).toMatchObject({ readOnlyHint: true });
     expect(tools[7]?.annotations).toMatchObject({ destructiveHint: true });
     expect(tools[8]?.annotations).toMatchObject({ destructiveHint: true });
+  });
+
+  it("INV-1: reviews all 76 hosted tools, pins complete schemas, and retains only the six customer superset entries", async () => {
+    const connector = linear("tracker", { purpose: "Delivery planning", access: "read-write" });
+    const reviewed = required(linear.definition.classify).tools;
+    expect(hostedCatalog).toHaveLength(76);
+    expect(Object.keys(reviewed)).toHaveLength(82);
+    const observedNames = new Set(hostedCatalog.map((tool) => tool.name));
+    const absent = Object.keys(reviewed)
+      .filter((name) => !observedNames.has(name))
+      .sort();
+    expect(absent).toEqual([
+      "delete_customer",
+      "delete_customer_need",
+      "list_customer_needs",
+      "list_customers",
+      "save_customer",
+      "save_customer_need",
+    ]);
+    expect(new Set(drift.checks[0]?.reviewed)).toEqual(new Set(Object.keys(reviewed)));
+    for (const tool of hostedCatalog) {
+      const entry = reviewed[tool.name];
+      expect(entry, tool.name).toBeDefined();
+      expect(entry).toMatchObject({ schemaDigest: await vettedSchemaDigest(tool) });
+      expect(entry).toMatchObject({
+        verdict: tool.annotations?.readOnlyHint ? "read" : tool.annotations?.destructiveHint ? "destructive" : "write",
+      });
+    }
+    mocks.listTools.mockResolvedValue(structuredClone([...hostedCatalog]));
+    expect((await servedTools(connector)).map((tool) => tool.annotations)).toEqual(
+      hostedCatalog.map((tool) => tool.annotations),
+    );
+    expect(observedCatalogDrift(connector)).toMatchObject({
+      unclassifiedTools: 0,
+      unservedTools: 6,
+      annotationConflicts: 0,
+      schemaChanges: 0,
+    });
+    // These entries are documentation/prior-review evidence, never invented schemas.
+    for (const name of absent) expect(reviewed[name]).not.toHaveProperty("schemaDigest");
+  });
+
+  it("INV-1: keeps every new label, notification and diff write closed despite a read-only claim", async () => {
+    const destructive = [
+      "save_issue_label",
+      "save_project_label",
+      "save_initiative_label",
+      "retire_issue_label",
+      "restore_issue_label",
+      "retire_project_label",
+      "restore_project_label",
+      "retire_initiative_label",
+      "restore_initiative_label",
+      "update_diff",
+    ];
+    const writes = ["mark_notification", "create_issue_label", "create_initiative_label"];
+    mocks.listTools.mockResolvedValue(
+      [...destructive, ...writes].map((name) => ({ name, annotations: { readOnlyHint: true } })),
+    );
+    const tools = await servedTools(linear("tracker", { purpose: "Delivery planning", access: "read-write" }));
+    expect(
+      tools
+        .slice(0, destructive.length)
+        .every((tool) => tool.annotations?.readOnlyHint === false && tool.annotations.destructiveHint === true),
+    ).toBe(true);
+    expect(
+      tools
+        .slice(destructive.length)
+        .every((tool) => tool.annotations?.readOnlyHint === false && tool.annotations.destructiveHint !== true),
+    ).toBe(true);
+  });
+
+  it("INV-1: classifies silent new reads and fails closed after a reviewed read schema changes", async () => {
+    const reads = ["list_custom_views", "get_notifications", "get_triage_responsibility", "list_customer_needs"];
+    mocks.listTools.mockResolvedValue(reads.map((name) => ({ name })));
+    const connector = linear("tracker", { purpose: "Delivery planning", access: "read-write" });
+    expect((await servedTools(connector)).every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+    mocks.listTools.mockResolvedValue([
+      {
+        name: "get_notifications",
+        inputSchema: { type: "object", properties: { markRead: { type: "boolean" } } },
+        annotations: { readOnlyHint: true },
+      },
+      { name: "get_triage_responsibility", inputSchema: {}, annotations: { readOnlyHint: true } },
+    ]);
+    expect((await servedTools(connector)).every((tool) => tool.annotations?.readOnlyHint === false)).toBe(true);
+    expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 2 });
   });
 
   it("INV-1: keeps its reviewed verdicts when the definition is written to", async () => {
