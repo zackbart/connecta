@@ -40,18 +40,18 @@ export function steadyHealth(state: HealthState, previous: SteadyHealth | null):
   const same = previous?.generation === state.generation ? previous : null;
   const contract = state.contract?.role === "maintainer" && state.data ? state.contract : null;
   // No contract on screen: keep what was shown until the next one arrives.
-  if (!contract || !state.data) return same ?? { generation: state.generation, rows: {} };
+  if (!contract || !state.data) return same ?? { generation: state.generation, rows: Object.create(null) };
   const reading = new Set(state.data.connectors.filter((c) => c.status === "loading").map((c) => c.id));
-  const held = same?.rows ?? {};
-  const rows: Record<string, HealthEvidence> = {};
+  const held: Readonly<Record<string, HealthEvidence>> = same?.rows ?? Object.create(null);
+  const rows: Record<string, HealthEvidence> = Object.create(null);
   let changed = !same || Object.keys(held).length !== contract.live.connectors.length;
   for (const live of contract.live.connectors) {
-    const before = held[live.id];
+    const before = Object.hasOwn(held, live.id) ? held[live.id] : undefined;
     if (before && reading.has(live.id)) {
       rows[live.id] = before;
       continue;
     }
-    const failed = Boolean(state.connectorFailures[live.id]);
+    const failed = Object.hasOwn(state.connectorFailures, live.id) && Boolean(state.connectorFailures[live.id]);
     if (before?.live === live && before.failed === failed) rows[live.id] = before;
     else {
       rows[live.id] = { live, failed };
@@ -63,11 +63,11 @@ export function steadyHealth(state: HealthState, previous: SteadyHealth | null):
 
 /** The contract each view renders health from, with every live row replaced by its steady evidence. */
 export function shownHealth(contract: OperatorUiContractV2 | null, health: SteadyHealth): ConnectorHealth {
-  const signals: Record<string, ConnectorSignals> = {};
+  const signals: Record<string, ConnectorSignals> = Object.create(null);
   if (!contract) return { contract, signals };
   let replaced = false;
   const connectors = contract.live.connectors.map((live) => {
-    const row = health.rows[live.id];
+    const row = Object.hasOwn(health.rows, live.id) ? health.rows[live.id] : undefined;
     if (row?.failed) signals[live.id] = { failed: true };
     if (!row || row.live === live) return live;
     replaced = true;

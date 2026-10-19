@@ -102,7 +102,9 @@ empty catalog counts zero.
 `test/browser/operator-overview.spec.ts` covers the Overview on the frozen v2
 fixtures: the status pill, stat labels and numbers, map columns, dashed read-only grants and dotted
 tokenless access; attention rows with their fix links, a copied fix prompt equal
-to the catalogue's text and a failing connector sorted first; the hover
+to the catalogue's text, config order through a staggered full refresh, prototype-named
+connector IDs during loading and failure, and stable single-card height when
+its catalog empties; the hover
 sentence replacing the legend, and dimming; keyboard focus in column order with each node's sentence
 as its accessible name, Enter opening an endpoint's row and a connector; the
 narrow list, whose caller chips link where their map nodes do; an empty deployment; and a member at `/` getting the member page

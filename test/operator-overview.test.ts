@@ -40,7 +40,7 @@ describe("overview attention list", () => {
     });
   });
 
-  it("lists failing connectors first, then failed reads, with the matching actions", () => {
+  it("lists connectors in config order regardless of severity, with the matching actions", () => {
     const contract = maintainer();
     const gmail = contract.live.connectors.find((c) => c.id === "gmail")!;
     gmail.status = "error";
@@ -49,13 +49,13 @@ describe("overview attention list", () => {
     const items = attentionItems(contract, { signals: { drive: { failed: true } } });
     expect(items.map((item) => [item.key, item.tone, item.action?.label, item.fix?.kind ?? null])).toEqual([
       ["connector:gmail", "danger", "Inspect", "connector_unavailable"],
-      ["connector:slack", "danger", "Replace key", "credential_mismatch"],
       ["connector:drive", "warn", "Inspect", null],
+      ["connector:slack", "danger", "Replace key", "credential_mismatch"],
       ["connector:notion", "warn", "Connect", "credential_required"],
       ["agent:triage", "warn", undefined, null],
     ]);
     expect(items[0]!.problem).toBe("is unavailable");
-    expect(items[2]!.body).toBe("Affects /mcp and /mcp/support");
+    expect(items[1]!.body).toBe("Affects /mcp and /mcp/support");
   });
 
   it("keeps a problem's row and fix prompt when the detail read also failed", () => {

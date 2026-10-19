@@ -161,6 +161,10 @@
   gap: 0.375rem var(--space-3);
   grid-template-columns: auto 1fr;
 }
+.connector-card > .tool-split {
+  /* Reserve the bar and its gap even when the catalog has no tools. */
+  grid-template-rows: auto 0.375rem;
+}
 .tool-split-total {
   color: var(--text);
   font-weight: var(--weight-semibold);

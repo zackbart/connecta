@@ -48,6 +48,76 @@ function failedLocally(contract: OperatorUiContractV2, id: string): OperatorUiCo
 }
 
 describe("steady connector health", () => {
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])(
+    "holds, settles and prunes own evidence for connector id %s",
+    (id) => {
+      const contract = maintainer();
+      contract.config!.connectors = [{ ...contract.config!.connectors[0]!, id }];
+      contract.live.connectors = [{ ...contract.live.connectors[0]!, id }];
+      const initial = page(contract, { reading: [id] });
+      const first = steadyHealth(initial, null);
+      expect(shown(initial, first).labels[id]).toBe("Connected");
+      expect(Object.keys(first.rows)).toEqual([id]);
+      expect(Object.getPrototypeOf(first.rows)).toBeNull();
+      expect(Object.getPrototypeOf(shownHealth(contract, first).signals)).toBeNull();
+      // An inherited name in the store's empty failures record is not a failure.
+      expect(first.rows[id]!.failed).toBe(false);
+      const failed = page(failedLocally(structuredClone(contract), id), { failed: [id] });
+      const settled = steadyHealth(failed, first);
+      expect(shown(failed, settled).labels[id]).toBe("Couldn't load");
+      const rereading = page(contract, { reading: [id] });
+      const held = steadyHealth(rereading, settled);
+      expect(held).toBe(settled);
+      expect(shown(rereading, held).labels[id]).toBe("Couldn't load");
+      const done = page(contract);
+      expect(shown(done, steadyHealth(done, held)).labels[id]).toBe("Connected");
+      const otherIdentity = page(contract, { reading: [id], generation: 2 });
+      expect(shown(otherIdentity, steadyHealth(otherIdentity, held)).labels[id]).toBe("Connected");
+      const removed = structuredClone(contract);
+      removed.config!.connectors = [];
+      removed.live.connectors = [];
+      expect(Object.keys(steadyHealth(page(removed), held).rows)).toEqual([]);
+    },
+  );
+
+  it("keeps attention rows in config order through each publication of a full refresh", () => {
+    const old = maintainer();
+    for (const id of ["github", "gmail"]) {
+      Object.assign(
+        old.live.connectors.find((row) => row.id === id)!,
+        {
+          status: "error",
+          problem: "catalog_failed",
+        },
+      );
+    }
+    const start = page(old);
+    let health = steadyHealth(start, null);
+    const order = shown(start, health).attention;
+    expect(order).toEqual(["connector:github", "connector:gmail", "connector:notion", "agent:triage"]);
+    const next = structuredClone(old);
+    for (const id of ["github", "gmail"]) {
+      Object.assign(
+        next.live.connectors.find((row) => row.id === id)!,
+        {
+          status: "auth_required",
+          problem: "oauth_required",
+        },
+      );
+    }
+    for (const reading of [["github", "gmail"], ["gmail"], []]) {
+      const state = page(next, { reading });
+      health = steadyHealth(state, health);
+      expect(shown(state, health).attention).toEqual(order);
+      expect(shown(state, health).labels.github).toBe(
+        reading.includes("github") ? "Catalog failed" : "Authorization needed",
+      );
+      expect(shown(state, health).labels.gmail).toBe(
+        reading.includes("gmail") ? "Catalog failed" : "Authorization needed",
+      );
+    }
+  });
+
   it("keeps a connector's last verdict while its detail is read again", () => {
     const failed = page(failedLocally(maintainer(), "gmail"), { failed: ["gmail"] });
     const before = steadyHealth(failed, null);

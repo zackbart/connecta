@@ -130,20 +130,138 @@ test("catalog drift stays informational across health, filters and endpoints", a
   await expect(page.getByRole("button", { name: /Copy fix prompt for GitHub/ })).toBeVisible();
 });
 
-test("connector cards reserve the action footer when health changes", async ({ page }) => {
+for (const empty of [false, true]) {
+  test(`connector cards keep their height when health changes${empty ? " and the catalog empties" : ""}`, async ({
+    page,
+  }) => {
+    const contract = maintainer();
+    // One card: grid siblings must not mask a height change in this card.
+    contract.config!.connectors = contract.config!.connectors.filter((c) => c.id === "github");
+    contract.live.connectors = contract.live.connectors.filter((c) => c.id === "github");
+    const served = structuredClone(data);
+    served.connectors = served.connectors.filter((c) => c.id === "github");
+    await install(page, contract, served);
+    await page.goto(VISUAL_ORIGIN + "/connectors");
+    const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "GitHub", exact: true }) });
+    await expect(card).toContainText("Connected");
+    await page.evaluate("document.fonts.ready");
+    await expect(card.locator(".tool-split-bar")).toHaveCount(1);
+    const before = (await card.boundingBox())!.height;
+    const live = contract.live.connectors.find((c) => c.id === "github")!;
+    live.status = empty ? "error" : "auth_required";
+    live.problem = empty ? "catalog_failed" : "auth_required";
+    if (empty) {
+      live.tools = [];
+      Object.assign(served.connectors[0]!, { status: "error", tools: [], toolCount: 0 });
+    }
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(
+      card.getByRole("link", { name: `${empty ? "Inspect" : "Connect"} GitHub`, exact: true }),
+    ).toBeVisible();
+    if (empty) await expect(card.locator(".tool-split")).toHaveText("No tools");
+    expect((await card.boundingBox())!.height).toBe(before);
+  });
+}
+
+test("a full refresh keeps surviving attention rows in config order as each detail settles", async ({ page }) => {
   const contract = maintainer();
+  const ids = ["github", "gmail"];
+  for (const id of ids) {
+    Object.assign(
+      contract.live.connectors.find((c) => c.id === id)!,
+      { status: "error", problem: "catalog_failed" },
+    );
+  }
   await install(page, contract);
-  await page.goto(VISUAL_ORIGIN + "/connectors");
-  const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "GitHub", exact: true }) });
-  await expect(card).toContainText("Connected");
-  const before = (await card.boundingBox())!.height;
-  const live = contract.live.connectors.find((c) => c.id === "github")!;
-  live.status = "auth_required";
-  live.problem = "auth_required";
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(card.getByRole("link", { name: "Connect GitHub", exact: true })).toBeVisible();
-  expect((await card.boundingBox())!.height).toBe(before);
+  const initialDetails = Promise.all(ids.map((id) => page.waitForResponse(`${VISUAL_ORIGIN}/ui/connectors/${id}`)));
+  await page.goto(VISUAL_ORIGIN + "/");
+  await initialDetails;
+  const headings = page.locator(".attention-item h3");
+  const old = [
+    "GitHub couldn't load its tools",
+    "Gmail couldn't load its tools",
+    "Notion needs a credential",
+    "triage has no token",
+  ];
+  await expect(headings).toHaveText(old);
+  const order = await page
+    .locator(".attention-item")
+    .evaluateAll((rows) => rows.map((r) => r.getAttribute("data-attention")));
+  const releases: Array<() => void> = [];
+  const requested = new Set<string>();
+  for (const id of ids) {
+    const barrier = new Promise<void>((resolve) => releases.push(resolve));
+    await page.route(`${VISUAL_ORIGIN}/ui/connectors/${id}`, async (route) => {
+      requested.add(id);
+      await barrier;
+      await route.fulfill({ json: data.connectors.find((c) => c.id === id) });
+    });
+    Object.assign(
+      contract.live.connectors.find((c) => c.id === id)!,
+      { status: "auth_required", problem: "oauth_required" },
+    );
+  }
+  try {
+    // Overview refreshes the whole snapshot on focus when a connector is in
+    // error, using the same incremental publication as the Refresh control.
+    await page.evaluate('window.dispatchEvent(new Event("focus"))');
+    await expect.poll(() => requested.size).toBe(2);
+    await expect(headings).toHaveText(old);
+    releases[0]!();
+    await expect(headings).toHaveText(["GitHub needs authorization", ...old.slice(1)]);
+    expect(
+      await page.locator(".attention-item").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-attention"))),
+    ).toEqual(order);
+    releases[1]!();
+    await expect(headings).toHaveText(["GitHub needs authorization", "Gmail needs authorization", ...old.slice(2)]);
+    expect(
+      await page.locator(".attention-item").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-attention"))),
+    ).toEqual(order);
+  } finally {
+    releases.forEach((release) => release());
+  }
+  await checks(page);
 });
+
+for (const id of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+  test(`connector id ${id} renders during initial loading and after a failed detail read`, async ({ page }) => {
+    const contract = maintainer();
+    contract.config!.connectors = [{ ...contract.config!.connectors[0]!, id, title: id }];
+    contract.live.connectors = [{ ...contract.live.connectors[0]!, id }];
+    contract.matrix = contract.matrix
+      .filter((c) => c.connectorId === "github" && c.pool === null)
+      .map((c) => ({ ...c, connectorId: id }));
+    contract.pools = [];
+    contract.agents = [];
+    const served = {
+      ...data,
+      connectors: [{ ...data.connectors.find((c) => c.id === "github")!, id, status: "loading" as const }],
+    };
+    await install(page, contract, served);
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(`${VISUAL_ORIGIN}/ui/connectors/${id}`, async (route) => {
+      await barrier;
+      await route.abort();
+    });
+    try {
+      await page.goto(VISUAL_ORIGIN + "/connectors");
+      const card = page.locator(".connector-card");
+      await expect(card).toContainText("Connected");
+      release();
+      await expect(card).toContainText("Couldn't load");
+      await page.getByRole("link", { name: "Overview", exact: true }).click();
+      await expect(page.locator(".attention-item h3")).toHaveText(`${id} didn't load on this page`);
+      await page.getByRole("link", { name: "Endpoints", exact: true }).click();
+      await expect(page.locator(".endpoint-toggle").first()).toBeVisible();
+      await checks(page);
+    } finally {
+      release();
+    }
+  });
+}
 
 test("each problem row links to its existing fix and copies its fixed prompt", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: VISUAL_ORIGIN });
@@ -163,7 +281,7 @@ test("each problem row links to its existing fix and copies its fixed prompt", a
   await expect(page.getByRole("heading", { name: "Notion", exact: true }).first()).toBeVisible();
 });
 
-test("a failing connector comes first and turns its links red", async ({ page }) => {
+test("a failing connector keeps config order and turns its links red", async ({ page }) => {
   const contract = maintainer();
   const gmail = contract.live.connectors.find((c) => c.id === "gmail")!;
   gmail.status = "error";

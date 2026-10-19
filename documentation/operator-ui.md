@@ -68,15 +68,16 @@ parameters such as signed handoffs. A pool member sees the
   marks; a tokenless agent's mark is hollow). A dot legend counts each segment
   kind; the first two tiles link to their pages. At 760px and below the tiles
   sit two up, with People · Agents as one row across both.
-- **Needs attention.** One row per connector whose health is not ok, failing
-  first, then one per agent in a pool whose token is missing or revoked. A
+- **Needs attention.** One row per connector whose health is not ok, in
+  configuration order, then one per agent in a pool whose token is missing or revoked. A
   row names the problem ("crm needs authorization"), the endpoints it
   affects ("Affects /mcp and /mcp/team") or the agent URL it can't connect at,
   and links to the existing fix: Connect, Replace key or Inspect on
   the connector's Connection tab, or Issue token on Tokens. A row with a
   problem code also has Copy fix prompt. A problem keeps its row and
   prompt when the connector's detail read failed, prefixed "Details didn't
-  load". With no rows it reads "All clear".
+  load". Surviving connector rows retain their order as individual reads settle,
+  even when their severity changes. With no rows it reads "All clear".
 - **Who reaches what.** The [connection map](#connection-map).
 
 ### Connection map
@@ -154,8 +155,8 @@ details" or an in-between verdict. A connector with no earlier verdict shows
 its contract status. Each connector changes only when its own read settles,
 so one slow read never holds back the others and no row moves for an
 in-between verdict. A new signed-in identity starts fresh. Cards reserve the action footer
-even when no action is needed, so a card's height does not change with its
-verdict.
+even when no action is needed and the tool bar row even when the catalog is
+empty, so their height stays stable across verdict and catalog changes.
 
 The top bar uses an icon-only Search button (⌘K or Ctrl+K opens the palette).
 Deployment names stay on one line with ellipsis and their full name on hover;

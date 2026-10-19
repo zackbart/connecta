@@ -5,7 +5,7 @@ import { followLink, Pill, pillStatus } from "./parts.js";
 
 /** A connector's verdict from what this page knows: its steady live row, and a failed detail read. */
 export function verdictFor(id: string, live: OperatorConnectorOverlay, health: ConnectorHealth): ConnectorVerdict {
-  return connectorVerdict(live, health.signals[id]);
+  return connectorVerdict(live, Object.hasOwn(health.signals, id) ? health.signals[id] : undefined);
 }
 
 /** The one way forward for a connector that needs attention: a link to its Connection tab. */
