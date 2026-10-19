@@ -1666,6 +1666,97 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(configMock).toHaveBeenCalledTimes(3);
   });
 
+  it.each(["refresh", "quiet", "retry"])(
+    "INV-4 INV-10: keeps known health until all connector details settle (%s)",
+    async (mode) => {
+      const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
+      const rows = ["crm", "tickets"].map((id) => ({ id, status: "ok", toolCount: 0, tools: [] }));
+      const snapshot = (status: string) =>
+        v2(
+          rows,
+          rows.map((row) => ({ ...row, status })),
+        );
+      configMock.mockImplementation(async () => Response.json(snapshot("ok")));
+      fetchMock.mockImplementation(async (path: string) =>
+        Response.json(
+          path === "/ui/data" ? { ...uiData("operator"), connectors: rows } : rows.find((row) => path.endsWith(row.id)),
+        ),
+      );
+      await store.boot();
+      const pending = rows.map(() => deferred<Response>());
+      configMock.mockImplementation(async () => Response.json(snapshot("auth_required")));
+      fetchMock.mockImplementation((path: string) =>
+        path === "/ui/data"
+          ? Promise.resolve(
+              Response.json({ ...uiData("operator"), connectors: rows.map((row) => ({ ...row, status: "loading" })) }),
+            )
+          : pending[rows.findIndex((row) => path.endsWith(row.id))]!.promise,
+      );
+      const seen: string[] = [];
+      const stop = store.subscribe(() => {
+        const state = store.getState();
+        seen.push(
+          `${state.contract?.live.connectors.map((c) => c.status).join(",")}/${state.data?.connectors.map((c) => c.status).join(",")}`,
+        );
+      });
+      const refresh = mode === "retry" ? store.retryLoad() : store.refreshConnector("crm", mode === "quiet");
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(mode === "retry" ? 6 : 5));
+      expect(store.getState().data?.connectors.map((c) => c.status)).toEqual(["ok", "ok"]);
+      pending[0]!.resolve(Response.json({ ...rows[0], status: "auth_required" }));
+      await vi.waitFor(() => expect(store.getState().contractPhase).toBe(mode === "quiet" ? "ready" : "loading"));
+      expect(store.getState().contract?.live.connectors.map((c) => c.status)).toEqual(["ok", "ok"]);
+      expect(store.getState().data?.connectors.map((c) => c.status)).toEqual(["ok", "ok"]);
+      pending[1]!.resolve(Response.json({ ...rows[1], status: "auth_required" }));
+      await refresh;
+      stop();
+      expect(store.getState().data?.connectors.map((c) => c.status)).toEqual(["auth_required", "auth_required"]);
+      expect(new Set(seen)).toEqual(
+        new Set(["ok,ok/ok,ok", "auth_required,auth_required/auth_required,auth_required"]),
+      );
+    },
+  );
+
+  it.each(["contract", "retry", "passive"])(
+    "INV-4 INV-10: %s recovery keeps the contract hidden until matching details settle",
+    async (mode) => {
+      const { store, fetchMock, configMock, paths } = await loadStore({ id: "a", getToken: async () => "a" });
+      vi.useFakeTimers();
+      let status = "auth_required";
+      const row = () => ({ id: "crm", status, toolCount: 0, tools: [] });
+      configMock.mockImplementation(async () => Response.json(v2([row()], [row()])));
+      fetchMock.mockImplementation(async (path: string) =>
+        Response.json(
+          path === "/ui/data" ? { ...uiData("operator"), connectors: [{ ...row(), status: "loading" }] } : row(),
+        ),
+      );
+      await store.boot();
+      configMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
+      await store.loadOperatorContract();
+      expect(store.getState().contract).toBeNull();
+      const detailReads = paths.filter((path) => path === "/ui/connectors/crm").length;
+      status = "ok";
+      const pending = deferred<Response>();
+      fetchMock.mockImplementation((path: string) =>
+        path === "/ui/data"
+          ? Promise.resolve(Response.json({ ...uiData("operator"), connectors: [{ ...row(), status: "loading" }] }))
+          : pending.promise,
+      );
+      const refresh = mode === "contract" ? store.loadOperatorContract() : mode === "retry" ? store.retryLoad() : null;
+      if (mode === "passive") await vi.advanceTimersByTimeAsync(2000);
+      await vi.waitFor(() =>
+        expect(paths.filter((path) => path === "/ui/connectors/crm")).toHaveLength(detailReads + 1),
+      );
+      expect(store.getState()).toMatchObject({ contract: null, contractPhase: "loading" });
+      expect(store.getState().data?.connectors[0]?.status).toBe("auth_required");
+      pending.resolve(Response.json(row()));
+      if (refresh) await refresh;
+      else await vi.advanceTimersByTimeAsync(0);
+      expect(paths.filter((path) => path === "/ui/data")).toHaveLength(mode === "contract" ? 1 : 2);
+      expect(store.getState().contract?.live.connectors[0]?.status).toBe("ok");
+      expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+    },
+  );
+
   it("INV-4 INV-10: publishes one catalog/auth revision and drops a late older refresh", async () => {
     const { store, fetchMock, configMock } = await loadStore({
       id: "a",

@@ -7,7 +7,7 @@ import { connectorVerdict, type ConnectorSignals } from "./view.js";
 
 /**
  * The Overview's headline and its "Needs attention" list, from operator
- * contract v2 and the page's own drift and failed-read signals. Pure, like
+ * contract v2 and the page's own failed-read signals. Pure, like
  * the map beside it: a test reads what each row says and links to without a
  * browser.
  */
@@ -113,14 +113,6 @@ export function attentionItems(
         problem: verdict.label === "Authorization needed" ? "needs authorization" : "isn't connected",
         body: affects(paths),
         fix: null,
-      });
-    } else {
-      // Healthy but drifted: the live tool list differs from the reviewed one.
-      connectors.push({
-        ...base,
-        problem: "has a changed tool list",
-        body: affects(paths),
-        fix: { kind: "catalog_drift", connectorId: config.id },
       });
     }
   }

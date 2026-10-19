@@ -226,7 +226,7 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
             className={local ? "btn primary" : "btn quiet"}
             type="button"
             aria-label={`Refresh ${name}`}
-            disabled={connector.status === "loading"}
+            disabled={connector.status === "loading" || state.contractPhase === "loading"}
             onClick={() => void refreshConnector(id)}
           >
             <Icon name="refresh" size={14} />

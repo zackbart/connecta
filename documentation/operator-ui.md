@@ -72,9 +72,9 @@ parameters such as signed handoffs. A pool member sees the
   first, then one per agent in a pool whose token is missing or revoked. A
   row names the problem ("crm needs authorization"), the endpoints it
   affects ("Affects /mcp and /mcp/team") or the agent URL it can't connect at,
-  and links to the existing fix: Connect, Replace key, Inspect or Review on
+  and links to the existing fix: Connect, Replace key or Inspect on
   the connector's Connection tab, or Issue token on Tokens. A row with a
-  problem code or drift also has Copy fix prompt. A problem keeps its row and
+  problem code also has Copy fix prompt. A problem keeps its row and
   prompt when the connector's detail read failed, prefixed "Details didn't
   load". With no rows it reads "All clear".
 - **Who reaches what.** The [connection map](#connection-map).
@@ -137,12 +137,22 @@ One card per connector: title and id, one status pill, a Shared or Per person
 badge, a Read-only badge when connector `readOnly` is enabled, its tool count over a read and write bar, and when it was last called.
 All, Needs attention and Healthy filter the cards, with counts, beside a
 search field. A connector that is not fine adds one action (Connect, Replace
-key, Inspect, or Review for drift) that opens its Connection tab.
+key or Inspect) that opens its Connection tab.
 
 Every view shares one verdict per connector: the server's problem code first
 (a failed catalog reads "Catalog failed", never "Connected"), then a failed
-detail read ("Couldn't load", with no fix prompt), then a non-ok status, then
-catalog drift.
+detail read ("Couldn't load", with no fix prompt), then a non-ok status.
+Catalog drift is informational: it stays in the connector's Connection panel
+with its fix prompt and in Activity, and never affects health or attention.
+
+During a refresh, known statuses stay visible until the matching catalog and
+auth detail reads settle together. Health counts and attention rows update
+once per cycle. Cards reserve the action footer even when no action is needed.
+
+The top bar uses an icon-only Search button (⌘K or Ctrl+K opens the palette).
+Deployment names stay on one line with ellipsis and their full name on hover;
+a name matching the product label is omitted. Tabs scroll horizontally when
+needed, moving to a second row on narrow screens.
 
 A List / Matrix toggle (`?view=matrix`) switches to a table of connectors by
 endpoint, `/mcp` first. A row header is the connector's monogram and name, plus
@@ -288,13 +298,13 @@ red when the calls span more than a minute.
 
 The top bar is one row: the mark, branding and deployment name, the section
 links (Overview, Endpoints, Connectors, Activity, Tokens, Settings), then
-Search (the command palette, also ⌘K or Ctrl+K), Appearance, and Account
+icon-only Search (the command palette, also ⌘K or Ctrl+K), Appearance, and Account
 (the signed-in account with Sign out or Change token). The mark is connecta's
 drawn "C" only when no product name, owner or favicon is configured; with
 `branding.favicon.svg` it is that SVG; otherwise there is none. The sign-in
 gate shows the same mark above "Sign in". Below 820px the section links move
 to a second row that scrolls sideways and keeps the current section in view,
-and Search shrinks to its icon. A member's top bar has only branding and
+with Search remaining an icon. A member's top bar has only branding and
 Account. The command palette searches visible pages, connectors and tools,
 opening connector results on Tools.
 
@@ -531,9 +541,11 @@ cancel pending retries and fence out responses from the previous identity.
 Queued focus callbacks carry the same identity fence. Explicit sign-out
 suppresses passive reads until an intentional sign-in or a new Clerk session.
 
-Catalog and connector auth details share one revisioned refresh cycle. Each
-completed connector publishes its catalog facts and auth controls together,
-while a slow provider leaves other rows usable.
+Catalog and connector auth details share one revisioned refresh cycle. The
+completed cycle publishes all catalog facts and auth controls together;
+previously known statuses and controls stay visible while its reads are pending.
+A failed or refused contract closes controls immediately. Recovery confirms
+the role for its detail reads without reopening controls until those reads settle.
 Catalog refresh, connector refresh, and mutation follow-up reads update both
 consumers together. A later refresh or mutation invalidates an older cycle's publication fence
 without aborting its read, and a failed contract read clears its old snapshot;

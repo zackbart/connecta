@@ -491,10 +491,18 @@ async function loadData(signal: AbortSignal): Promise<void> {
     return resetRecovery(false);
   }
   // A maintainer's page waits for `/ui/data` too.
-  set({ ...contractSlotsRefreshed(contract), contract, role: "maintainer", contractPhase: "loading" });
-  // Withheld: the role became unknown or changed; its own state says so.
-  const sent = send("/ui/data", { signal, headers: requestHeaders(token), credentials: "same-origin" });
-  if (!sent) return;
+  set({
+    ...contractSlotsRefreshed(contract),
+    // A same-identity reread keeps the last catalog/auth pair until the new
+    // cycle settles. Initial admission and recovery have no pair to retain.
+    contract: state.contract ?? (state.data ? null : contract),
+    role: "maintainer",
+    contractPhase: "loading",
+  });
+  // This admission has just confirmed a maintainer. Keep that contract
+  // private during recovery while reading its matching summary and details.
+  if (!current() || state.role !== "maintainer") return;
+  const sent = fetch("/ui/data", { signal, headers: requestHeaders(token), credentials: "same-origin" });
   let res: Response;
   try {
     res = await sent;
@@ -515,8 +523,15 @@ async function loadData(signal: AbortSignal): Promise<void> {
   if (!current()) return;
   if (!data || !Array.isArray(data.connectors)) return unreachable("server");
   rememberNav(data);
+  const previous = state.data;
   set({
-    data,
+    data: {
+      ...data,
+      connectors: data.connectors.map(
+        (connector) =>
+          previous?.connectors.find((known) => known.id === connector.id && known.status !== "loading") ?? connector,
+      ),
+    },
     session: "ready",
     gate: null,
     refreshing: false,
@@ -700,26 +715,20 @@ async function refreshSnapshot(
   if (!current()) return;
   const outcomes = new Map<string, DetailOutcome>();
   let loadedContract: OperatorUiContractV2 | null | undefined = preloaded;
+  // Only this cycle's read-only details may use a freshly admitted contract
+  // before publication. Other maintainer reads and controls stay gated.
+  const detailsAdmitted = () =>
+    current() &&
+    state.role === "maintainer" &&
+    loadedContract !== null &&
+    (loadedContract?.role === "maintainer" || maintainerNow());
   const publish = () => {
     if (!current() || loadedContract === undefined) return;
     if (connectorId && loadedContract && !outcomes.has(connectorId)) return;
-    // Publish each completed connector with its matching catalog facts. A slow
-    // provider leaves other rows usable; pending rows retain their last pair.
-    const refreshed =
+    // Health, catalog facts and auth controls settle once per cycle. Keep the
+    // last confirmed snapshot visible while any matching detail is pending.
+    const contract =
       loadedContract && connectorId ? mergeConnectorContract(loadedContract, connectorId) : loadedContract;
-    const contract = refreshed
-      ? {
-          ...refreshed,
-          live: {
-            ...refreshed.live,
-            connectors: refreshed.live.connectors.map((live) =>
-              outcomes.has(live.id)
-                ? live
-                : (state.contract?.live.connectors.find((previous) => previous.id === live.id) ?? live),
-            ),
-          },
-        }
-      : null;
     set({
       ...detailsPatch(outcomes, quiet && !connectorId, contract),
       contract,
@@ -741,15 +750,14 @@ async function refreshSnapshot(
   const worker = async () => {
     while (next < connectors.length && current()) {
       const connector = connectors[next++]!;
-      const outcome = await readConnector(connector.id, token, revision, pollSignal);
+      const outcome = await readConnector(connector.id, token, revision, detailsAdmitted, pollSignal);
       if (current()) {
         outcomes.set(connector.id, outcome);
-        publish();
       }
     }
   };
   const contractRead = preloaded
-    ? Promise.resolve(publish())
+    ? Promise.resolve()
     : queryClient
         .fetchQuery({
           queryKey: ["operator-config", state.generation, revision],
@@ -775,13 +783,16 @@ async function refreshSnapshot(
             loadedContract = outcome.kind === "contract" ? outcome.contract : null;
             // A full contract speaks for every agent's slot; a scoped OAuth poll's does not.
             if (loadedContract && !connectorId) set(contractSlotsRefreshed(loadedContract));
-            publish();
+            // A refused or failed contract closes controls immediately, even
+            // while the matching details are still outstanding.
+            if (!loadedContract) set({ contract: null, contractPhase: "error" });
           }
         });
   if (!preloaded && !state.contract) await contractRead;
-  const workers = maintainerNow() ? Array.from({ length: Math.min(4, connectors.length) }, worker) : [];
+  const workers = detailsAdmitted() ? Array.from({ length: Math.min(4, connectors.length) }, worker) : [];
   await Promise.all([contractRead, ...workers]);
   if (!current()) return;
+  publish();
   // OAuth recovery has its own cap and cancellation. Never turn a failed poll
   // into a deployment-wide retry through the general recovery backoff.
   if (connectorId) return;
@@ -1583,12 +1594,14 @@ async function readConnector(
   id: string,
   token: string | null | undefined,
   revision: number,
+  admitted: () => boolean,
   pollSignal?: AbortSignal,
 ): Promise<DetailOutcome> {
   try {
     return await queryClient.fetchQuery({
       queryKey: ["connector", state.generation, id, revision],
-      queryFn: ({ signal }) => fetchConnector(id, token, pollSignal ? AbortSignal.any([signal, pollSignal]) : signal),
+      queryFn: ({ signal }) =>
+        fetchConnector(id, token, pollSignal ? AbortSignal.any([signal, pollSignal]) : signal, admitted),
     });
   } catch (error) {
     return { kind: "local", failure: isCancelledError(error) ? "session" : "network" };
@@ -1599,14 +1612,16 @@ async function fetchConnector(
   id: string,
   token: string | null | undefined,
   signal: AbortSignal,
+  admitted: () => boolean,
 ): Promise<DetailOutcome> {
-  const sent = send(`/ui/connectors/${encodeURIComponent(id)}`, {
+  // This read has its own cycle-local admission: recovery must not expose a
+  // half-refreshed contract merely to enable fetching its matching details.
+  if (!admitted() || signal.aborted) return { kind: "local", failure: "session" };
+  const sent = fetch(`/ui/connectors/${encodeURIComponent(id)}`, {
     signal,
     headers: requestHeaders(token),
     credentials: "same-origin",
   });
-  // Withheld: the cycle that asked is fenced or about to be.
-  if (!sent) return { kind: "local", failure: "session" };
   let response: Response;
   try {
     response = await sent;
@@ -1707,16 +1722,6 @@ function detailsPatch(
 /** Refreshes never replay the mutation that caused them. */
 export function refreshConnector(id: string, quiet = false): Promise<void> {
   if (!maintainerNow() || !state.data?.connectors.some((connector) => connector.id === id)) return Promise.resolve();
-  if (!quiet && state.data)
-    set({
-      data: {
-        ...state.data,
-        connectors: state.data.connectors.map((connector) =>
-          connector.id === id ? { ...connector, status: "loading" } : connector,
-        ),
-      },
-      connectorFailures: withoutKey(state.connectorFailures, id),
-    });
   return guardedRecoveryRead((signal) => refreshSnapshot(quiet, undefined, signal));
 }
 

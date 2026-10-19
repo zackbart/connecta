@@ -1,12 +1,11 @@
 import type { OperatorConnectorOverlay } from "../contract.js";
-import { connectorVerdict, driftState, type ConnectorVerdict, type OperatorState } from "../view.js";
+import { connectorVerdict, type ConnectorVerdict, type OperatorState } from "../view.js";
 import { followLink, Pill, pillStatus } from "./parts.js";
 
-/** A connector's verdict from what this page knows: its live row, a failed detail read, and catalog drift. */
+/** A connector's verdict from what this page knows: its live row, and a failed detail read. */
 export function verdictFor(id: string, live: OperatorConnectorOverlay, state: OperatorState): ConnectorVerdict {
   return connectorVerdict(live, {
     failed: Boolean(state.connectorFailures[id]),
-    drift: driftState(state.data?.connectors.find((c) => c.id === id)?.catalogDrift) === "warning",
   });
 }
 

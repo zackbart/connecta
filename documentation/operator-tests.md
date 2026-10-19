@@ -61,7 +61,7 @@ pool member, who gets the member page, with no tabs, on every path.
 | Activity             | No calls                             | Activity              | Member page, no activity request    |
 | Settings             | Snapshot without connectors or pools | Config                | Member page, no configuration facts |
 
-Populated Overview has a failing connector, drift, auth and credential problems
+Populated Overview has a failing connector, auth and credential problems
 and a tokenless agent in its attention list. Populated Endpoints shows who can use each endpoint; populated Tokens has one
 agent per slot state, with pools and last seen.
 

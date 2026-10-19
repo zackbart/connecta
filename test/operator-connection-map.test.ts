@@ -237,7 +237,6 @@ describe("connection map helpers", () => {
   it("reads health with the Connectors list's verdict, joins lists and shortens names", () => {
     const live = maintainer().live.connectors[0]!;
     expect(connectorVerdict(live)).toEqual({ tone: "ok", label: "Connected", action: null });
-    expect(connectorVerdict(live, { drift: true })).toEqual({ tone: "warn", label: "Catalog drift", action: "Review" });
     expect(connectorVerdict(live, { failed: true })).toEqual({
       tone: "warn",
       label: "Couldn't load",

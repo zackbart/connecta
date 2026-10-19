@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { connectionMap, type MapNode } from "../connection-map.js";
 import { attentionItems, overviewHeadline, type AttentionItem, type OverviewHeadline } from "../overview.js";
-import { driftState, type ConnectorSignals, type OperatorState } from "../view.js";
+import { type ConnectorSignals, type OperatorState } from "../view.js";
 import { fixPrompt } from "../fix-prompts.js";
 import { ContractState, maintainerContract } from "./contract-state.js";
 import { ConnectionMapView } from "./connection-map.js";
@@ -16,13 +16,10 @@ import { Card } from "./primitives.js";
  * owns it, or the fixed fix prompt for a coding agent.
  */
 
-/** Drift from `/ui/data` and per-connector read failures, the two facts the contract does not carry. */
+/** Per-connector read failures, which the contract does not carry. */
 function connectorSignals(state: OperatorState): Record<string, ConnectorSignals> {
   const signals: Record<string, ConnectorSignals> = {};
-  for (const connector of state.data?.connectors ?? []) {
-    if (driftState(connector.catalogDrift) === "warning") signals[connector.id] = { drift: true };
-  }
-  for (const id of Object.keys(state.connectorFailures)) signals[id] = { ...signals[id], failed: true };
+  for (const id of Object.keys(state.connectorFailures)) signals[id] = { failed: true };
   return signals;
 }
 

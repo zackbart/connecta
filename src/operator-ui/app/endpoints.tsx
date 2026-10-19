@@ -10,7 +10,7 @@ import {
   type EndpointGroup,
   type EndpointRow,
 } from "../endpoints.js";
-import { connectorVerdict, driftState, type OperatorState, type Tone } from "../view.js";
+import { connectorVerdict, type OperatorState, type Tone } from "../view.js";
 import { clientServerName, clientSetupCommands, type ClientSetupCommand } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
 import { CopyButton, MemberMark, Pill, StateBlock } from "./parts.js";
@@ -119,7 +119,6 @@ function connectorProblem(group: EndpointGroup, state: OperatorState): { label: 
   const { config, live } = group;
   const verdict = connectorVerdict(live, {
     failed: Boolean(state.connectorFailures[config.id]),
-    drift: driftState(state.data?.connectors.find((c) => c.id === config.id)?.catalogDrift) === "warning",
   });
   return verdict.tone === "ok" ? null : { label: verdict.label, tone: verdict.tone };
 }

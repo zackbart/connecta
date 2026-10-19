@@ -102,6 +102,49 @@ test("the overview is the maintainer's landing page, with health, attention and 
   await checks(page);
 });
 
+test("catalog drift stays informational across health, filters and endpoints", async ({ page }) => {
+  const served = structuredClone(data);
+  served.connectors.find((c) => c.id === "github")!.catalogDrift = {
+    observedAt: VISUAL_NOW,
+    unclassifiedTools: 2,
+    unservedTools: 0,
+    annotationConflicts: 0,
+    schemaChanges: 0,
+  };
+  await install(page, maintainer(), served);
+  await page.goto(VISUAL_ORIGIN + "/");
+  await expect(page.locator(".overview-title .badge")).toHaveText("2 need attention");
+  await expect(page.locator(".stat-number").first()).toHaveText("5/6");
+  await expect(page.locator(".attention-item h3")).toHaveText(["Notion needs a credential", "triage has no token"]);
+  await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "GitHub", exact: true }) });
+  await expect(card).toContainText("Connected");
+  await expect(card).not.toHaveClass(/attention/);
+  await expect(card.locator(".problem-action")).toHaveCount(0);
+  await page.getByRole("button", { name: /Needs attention/ }).click();
+  await expect(card).toHaveCount(0);
+  await page.getByRole("link", { name: "Endpoints", exact: true }).click();
+  await expect(page.getByText("Catalog drift", { exact: true })).toHaveCount(0);
+  await page.goto(VISUAL_ORIGIN + "/connectors/github#connection");
+  await expect(page.locator("#drift-github")).toHaveAttribute("data-drift", "warning");
+  await expect(page.getByRole("button", { name: /Copy fix prompt for GitHub/ })).toBeVisible();
+});
+
+test("connector cards reserve the action footer when health changes", async ({ page }) => {
+  const contract = maintainer();
+  await install(page, contract);
+  await page.goto(VISUAL_ORIGIN + "/connectors");
+  const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "GitHub", exact: true }) });
+  await expect(card).toContainText("Connected");
+  const before = (await card.boundingBox())!.height;
+  const live = contract.live.connectors.find((c) => c.id === "github")!;
+  live.status = "auth_required";
+  live.problem = "auth_required";
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(card.getByRole("link", { name: "Connect GitHub", exact: true })).toBeVisible();
+  expect((await card.boundingBox())!.height).toBe(before);
+});
+
 test("each problem row links to its existing fix and copies its fixed prompt", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: VISUAL_ORIGIN });
   await install(page, maintainer());

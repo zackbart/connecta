@@ -40,24 +40,22 @@ describe("overview attention list", () => {
     });
   });
 
-  it("lists failing connectors first, then drift and failed reads, with the matching actions", () => {
+  it("lists failing connectors first, then failed reads, with the matching actions", () => {
     const contract = maintainer();
     const gmail = contract.live.connectors.find((c) => c.id === "gmail")!;
     gmail.status = "error";
     gmail.problem = "connector_unavailable";
     contract.live.connectors.find((c) => c.id === "slack")!.problem = "credential_mismatch";
-    const items = attentionItems(contract, { signals: { github: { drift: true }, drive: { failed: true } } });
+    const items = attentionItems(contract, { signals: { drive: { failed: true } } });
     expect(items.map((item) => [item.key, item.tone, item.action?.label, item.fix?.kind ?? null])).toEqual([
       ["connector:gmail", "danger", "Inspect", "connector_unavailable"],
       ["connector:slack", "danger", "Replace key", "credential_mismatch"],
-      ["connector:github", "warn", "Review", "catalog_drift"],
       ["connector:drive", "warn", "Inspect", null],
       ["connector:notion", "warn", "Connect", "credential_required"],
       ["agent:triage", "warn", undefined, null],
     ]);
     expect(items[0]!.problem).toBe("is unavailable");
-    expect(items[2]!.problem).toBe("has a changed tool list");
-    expect(items[3]!.body).toBe("Affects /mcp and /mcp/support");
+    expect(items[2]!.body).toBe("Affects /mcp and /mcp/support");
   });
 
   it("keeps a problem's row and fix prompt when the detail read also failed", () => {
