@@ -145,14 +145,17 @@ detail read ("Couldn't load", with no fix prompt), then a non-ok status.
 Catalog drift is informational: it stays in the connector's Connection panel
 with its fix prompt and in Activity, and never affects health or attention.
 
-During a refresh, known statuses stay visible until the matching catalog and
-auth detail reads settle together. Health counts and attention rows update
-once per cycle. Cards reserve the action footer even when no action is needed.
-A scoped OAuth poll never discards a pending full refresh: the poll publishes
-only its connector's row, and the full refresh still publishes every other row
-when it settles, keeping the poll's newer row. A newer full refresh fences an
-older one and any poll still pending. Only failed reads schedule retries,
-through the existing recovery backoff and budget.
+Health does not bounce while details load. A connector whose detail read is
+in flight (its `/ui/data` row is `loading`, during sign-in, Retry or a
+connector's Refresh) keeps the verdict the page last showed for it on every
+view (cards, filter counts, the Overview headline, bar, attention list and map,
+Endpoints and the connector page) until that read settles, never "Loading
+details" or an in-between verdict. A connector with no earlier verdict shows
+its contract status. Each connector changes only when its own read settles,
+so one slow read never holds back the others and no row moves for an
+in-between verdict. A new signed-in identity starts fresh. Cards reserve the action footer
+even when no action is needed, so a card's height does not change with its
+verdict.
 
 The top bar uses an icon-only Search button (⌘K or Ctrl+K opens the palette).
 Deployment names stay on one line with ellipsis and their full name on hover;
@@ -546,19 +549,16 @@ cancel pending retries and fence out responses from the previous identity.
 Queued focus callbacks carry the same identity fence. Explicit sign-out
 suppresses passive reads until an intentional sign-in or a new Clerk session.
 
-Catalog and connector auth details share one revisioned refresh cycle. The
-completed cycle publishes all catalog facts and auth controls together;
-previously known statuses and controls stay visible while its reads are pending.
-A failed or refused contract closes controls immediately. Recovery confirms
-the role for its detail reads without reopening controls until those reads settle.
+Catalog and connector auth details share one revisioned refresh cycle. Each
+completed connector publishes its catalog facts and auth controls together,
+while a slow provider leaves other rows usable.
 Catalog refresh, connector refresh, and mutation follow-up reads update both
-consumers together. A later full refresh or mutation invalidates an older cycle's publication
-fence, including a pending scoped poll's, without aborting its read, and a failed contract read clears its old snapshot;
+consumers together. A later refresh or mutation invalidates an older cycle's publication fence
+without aborting its read, and a failed contract read clears its old snapshot;
 the next refresh then reads the contract before any connector detail. After an explicit OAuth
 start, visible tabs poll only that connector's read-only catalog and auth facts
 every two seconds for up to 30 seconds. The scoped result replaces only that
-connector's matching live row and auth controls; a full cycle pending meanwhile
-still publishes and keeps that row. Success, a failed read or status,
+connector's matching live row and auth controls. Success, a failed read or status,
 disconnect, navigation away from the connector, unmount, or identity reset ends
 polling and aborts its in-flight reads. The deadline also aborts a stalled read.
 A later focus return can request another status read. Recovery never starts OAuth

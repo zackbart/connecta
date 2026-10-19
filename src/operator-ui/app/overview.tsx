@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { connectionMap, type MapNode } from "../connection-map.js";
 import { attentionItems, overviewHeadline, type AttentionItem, type OverviewHeadline } from "../overview.js";
-import { type ConnectorSignals, type OperatorState } from "../view.js";
+import type { OperatorState } from "../view.js";
 import { fixPrompt } from "../fix-prompts.js";
-import { ContractState, maintainerContract } from "./contract-state.js";
+import { ContractState } from "./contract-state.js";
 import { ConnectionMapView } from "./connection-map.js";
+import { useConnectorHealth } from "./health.js";
 import { Icon } from "./icons.js";
 import { CopyButton, followLink, MemberMark, Pill } from "./parts.js";
 import { Card } from "./primitives.js";
@@ -15,13 +16,6 @@ import { Card } from "./primitives.js";
  * who reaches what. Read-only; every action here is a link to the page that
  * owns it, or the fixed fix prompt for a coding agent.
  */
-
-/** Per-connector read failures, which the contract does not carry. */
-function connectorSignals(state: OperatorState): Record<string, ConnectorSignals> {
-  const signals: Record<string, ConnectorSignals> = {};
-  for (const id of Object.keys(state.connectorFailures)) signals[id] = { failed: true };
-  return signals;
-}
 
 /** A count with its dot, under a stat's bar. Zero counts drop out. */
 function Legend({ entries }: { entries: Array<[tone: string, count: number, label: string]> }) {
@@ -209,9 +203,10 @@ function Status({ items }: { items: AttentionItem[] }) {
 }
 
 export function OverviewPage({ state }: { state: OperatorState }) {
-  const contract = maintainerContract(state);
+  // Steady health: the headline, bar, attention list and map change only when
+  // a connector's own read settles, never to an in-between verdict.
+  const { contract, signals } = useConnectorHealth(state);
   const tokensPage = state.data?.accessTokenManagement === "available";
-  const signals = connectorSignals(state);
   const map = contract ? connectionMap(contract, { signals, tokensPage }) : null;
   const items = contract ? attentionItems(contract, { signals, tokensPage }) : [];
   const headline = contract && map ? overviewHeadline(contract, map, items, signals) : null;

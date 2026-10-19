@@ -727,18 +727,21 @@ function holdDetails(id: string): () => void {
   return release;
 }
 
-test("settles matching connector details together after a slow provider", async ({ page }) => {
+test("shows connections and usable controls while one provider is still loading", async ({ page }) => {
   const release = holdDetails("drifted");
   await openAuthenticated(page);
+  const vaulted = await openRow(page, "Vaulted service");
+  await expect(vaulted.getByRole("button", { name: "Add credential" })).toBeVisible();
+  const crm = await openRow(page, "CRM");
+  await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
   const slow = await openRow(page, "Hosted proxy");
   await expect(slow.getByText("Loading authentication details…")).toBeVisible();
   release();
   await expect(slow.getByText("Loading authentication details…")).toHaveCount(0);
   await expect(slow.getByRole("button", { name: "Refresh Hosted proxy" })).toBeEnabled();
-  const vaulted = await openRow(page, "Vaulted service");
-  await expect(vaulted.getByRole("button", { name: "Add credential" })).toBeVisible();
-  const crm = await openRow(page, "CRM");
-  await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
+  // Navigation cancels the old view's pending read, then bounded recovery
+  // must fetch again so that the destination's auth details can still land.
+  expect(requests.filter((request) => request.path === "/ui/data").length).toBeGreaterThan(1);
 });
 
 test("acknowledges a credential save before its refreshed details arrive", async ({ page }) => {
@@ -785,6 +788,21 @@ test("retries a failed connection without reloading the list", async ({ page }) 
   await expect(row.locator(".conn-head")).toContainText("Connected");
   await expect(row.locator("[data-problem]")).toHaveCount(0);
   expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(1);
+});
+
+test("keeps a connector's verdict while its refresh is in flight", async ({ page }) => {
+  await page.route("**/ui/connectors/drifted", (route) => route.abort());
+  await openAuthenticated(page);
+  const row = await openRow(page, "Hosted proxy");
+  await expect(row.locator(".conn-head")).toContainText("Couldn't load");
+  const release = holdDetails("drifted");
+  await page.unroute("**/ui/connectors/drifted");
+  await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
+  await expect(row.getByText("Loading authentication details…")).toBeVisible();
+  // Not "Unavailable" or "Loading details": the last verdict until the read settles.
+  await expect(row.locator(".conn-head")).toContainText("Couldn't load");
+  release();
+  await expect(row.locator(".conn-head")).toContainText("Connected");
 });
 
 test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {
@@ -1269,7 +1287,7 @@ test("never sends the tab to a non-http authorization URL", async ({ page }) => 
   await expect(crm.getByRole("link", { name: /authoriz/i })).toHaveCount(0);
 });
 
-test("backs out of a confirm with Escape and preserves controls during refresh", async ({ page }) => {
+test("backs out of a confirm with Escape, and keeps focus when its trigger is gone", async ({ page }) => {
   await openAuthenticated(page);
   const crm = await openRow(page, "CRM");
   await crm.getByRole("button", { name: "Disconnect CRM" }).click();
@@ -1279,17 +1297,16 @@ test("backs out of a confirm with Escape and preserves controls during refresh",
   await expect(confirm).toHaveCount(0);
   await expect(crm.getByRole("button", { name: "Disconnect CRM" })).toBeFocused();
 
-  // A refresh keeps known controls in place while the confirm is open.
+  // A refresh takes the row's controls away while the confirm is open.
   await crm.getByRole("button", { name: "Reconnect CRM" }).click();
   const release = holdDetails("oauth");
   await crm.getByRole("button", { name: "Refresh CRM" }).click();
-  await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
-  await expect(crm.getByRole("button", { name: "Refresh CRM" })).toBeDisabled();
+  await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toHaveCount(0);
   await crm
     .getByRole("group", { name: /Reconnect CRM\?/ })
     .getByRole("button", { name: "Cancel" })
     .click();
-  await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toBeFocused();
+  await expect(page.locator("#auth-oauth")).toBeFocused();
   release();
 });
 

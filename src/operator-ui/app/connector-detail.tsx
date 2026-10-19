@@ -5,7 +5,8 @@ import { activityReadable } from "../view.js";
 import { Pill, pillStatus, StateBlock } from "./parts.js";
 import { Button, Card, Tabs } from "./primitives.js";
 import { Icon } from "./icons.js";
-import { ContractState, maintainerContract } from "./contract-state.js";
+import { ContractState } from "./contract-state.js";
+import { useConnectorHealth } from "./health.js";
 import { BadgeRow, StatTiles } from "./config-tiles.js";
 import { connectorSummary, type ConnectorSummary } from "../config-summary.js";
 import { Catalog } from "./catalog.js";
@@ -22,14 +23,15 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
   const id = location.pathname.split("/").pop() ?? "";
   useEffect(() => () => stopConnectorReads(id), [id]);
   const tab = TABS.includes(location.hash) ? location.hash : "tools";
-  const contract = maintainerContract(state);
+  const health = useConnectorHealth(state);
+  const contract = health.contract;
   const config = contract?.config?.connectors.find((c) => c.id === id);
   const live = contract?.live.connectors.find((c) => c.id === id);
   // Auth permissions come from the connector's own /ui/data detail.
   const rawAuth = state.data?.connectors.find((c) => c.id === id);
   const auth = rawAuth ? { ...rawAuth } : undefined;
   if (auth && !auth.permissions?.manageSharedAuth && !auth.permissions?.connectPersonal) delete auth.credential;
-  const verdict = live ? verdictFor(id, live, state) : null;
+  const verdict = live ? verdictFor(id, live, health) : null;
   return (
     <section id="connectorView">
       <a href="/connectors" className="back-link">

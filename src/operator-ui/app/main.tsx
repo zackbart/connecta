@@ -32,6 +32,7 @@ import { ActivityPage } from "./activity.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
 import { MemberPage } from "./member.js";
 import { ContractState } from "./contract-state.js";
+import { HealthProvider } from "./health.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import { Icon } from "./icons.js";
 import {
@@ -416,7 +417,9 @@ function OperatorApp() {
     <>
       {recovering ? <RecoveryBanner state={state} /> : null}
       <div id="app" inert={recovering} className={recovering ? "stale" : undefined}>
-        <CurrentPage state={state} />
+        <HealthProvider state={state}>
+          <CurrentPage state={state} />
+        </HealthProvider>
       </div>
     </>
   ) : state.session === "denied" ? (

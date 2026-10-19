@@ -1,12 +1,11 @@
 import type { OperatorConnectorOverlay } from "../contract.js";
-import { connectorVerdict, type ConnectorVerdict, type OperatorState } from "../view.js";
+import type { ConnectorHealth } from "../health.js";
+import { connectorVerdict, type ConnectorVerdict } from "../view.js";
 import { followLink, Pill, pillStatus } from "./parts.js";
 
-/** A connector's verdict from what this page knows: its live row, and a failed detail read. */
-export function verdictFor(id: string, live: OperatorConnectorOverlay, state: OperatorState): ConnectorVerdict {
-  return connectorVerdict(live, {
-    failed: Boolean(state.connectorFailures[id]),
-  });
+/** A connector's verdict from what this page knows: its steady live row, and a failed detail read. */
+export function verdictFor(id: string, live: OperatorConnectorOverlay, health: ConnectorHealth): ConnectorVerdict {
+  return connectorVerdict(live, health.signals[id]);
 }
 
 /** The one way forward for a connector that needs attention: a link to its Connection tab. */
@@ -32,17 +31,17 @@ export function ConnectorStatus({
   id,
   name,
   live,
-  state,
+  health,
   compact,
 }: {
   id: string;
   name: string;
   live: OperatorConnectorOverlay;
-  state: OperatorState;
+  health: ConnectorHealth;
   /** Only a dot, and only when something needs fixing: the dot is the action's link. */
   compact?: boolean;
 }) {
-  const verdict = verdictFor(id, live, state);
+  const verdict = verdictFor(id, live, health);
   const href = `/connectors/${encodeURIComponent(id)}#connection`;
   if (compact) {
     return verdict.action ? (

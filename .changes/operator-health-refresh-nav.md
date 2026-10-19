@@ -2,4 +2,4 @@
 type: fixed
 ---
 
-Keep catalog drift informational, settle operator health updates together without clearing known statuses, and compact the top bar for long deployment names and all page tabs. A scoped OAuth poll no longer discards a pending full refresh, so unrelated connector failures still update without extra retries.
+Keep catalog drift informational, keep each connector's last verdict on every operator view while its details are read again so cards, counts and the attention list stop bouncing, reserve the card action footer, and compact the top bar for long deployment names and all page tabs.

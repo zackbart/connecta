@@ -10,6 +10,7 @@ import {
   type MatrixCell,
   type MatrixColumn,
 } from "../endpoints.js";
+import type { ConnectorHealth } from "../health.js";
 import type { OperatorState } from "../view.js";
 import { ConnectorStatus } from "./problems.js";
 import { useCloseOnRecovery } from "./contract-state.js";
@@ -201,11 +202,13 @@ export function ConnectorMatrix({
   contract,
   rows,
   state,
+  health,
   link,
 }: {
   contract: OperatorUiContractV2;
   rows: MatrixRow[];
   state: OperatorState;
+  health: ConnectorHealth;
   link: (row: MatrixRow) => ReactNode;
 }) {
   const [open, setOpen] = useState<OpenCell | null>(null);
@@ -243,7 +246,7 @@ export function ConnectorMatrix({
                         <Monogram id={row.id} title={row.title} size="sm" />
                         {link(row)}
                         {row.readOnly ? <span className="badge tag accent">Read-only</span> : null}
-                        <ConnectorStatus id={row.id} name={row.title} live={row} state={state} compact />
+                        <ConnectorStatus id={row.id} name={row.title} live={row} health={health} compact />
                       </span>
                     </th>
                     {columns.map((column) => {

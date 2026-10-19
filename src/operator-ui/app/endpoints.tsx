@@ -10,12 +10,14 @@ import {
   type EndpointGroup,
   type EndpointRow,
 } from "../endpoints.js";
+import type { ConnectorHealth } from "../health.js";
 import { connectorVerdict, type OperatorState, type Tone } from "../view.js";
 import { clientServerName, clientSetupCommands, type ClientSetupCommand } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
 import { CopyButton, MemberMark, Pill, StateBlock } from "./parts.js";
 import { Button, Dialog, SegmentedControl } from "./primitives.js";
-import { ContractState, maintainerContract, useCloseOnRecovery } from "./contract-state.js";
+import { ContractState, useCloseOnRecovery } from "./contract-state.js";
+import { useConnectorHealth } from "./health.js";
 import { Icon } from "./icons.js";
 import { Monogram, SplitBar } from "./marks.js";
 
@@ -115,17 +117,15 @@ export function ClientSetupDialog({
  * Connector health lives on Connectors. Here a connector that is not fine
  * gets a dot and a link to its Connection tab; a healthy one gets neither.
  */
-function connectorProblem(group: EndpointGroup, state: OperatorState): { label: string; tone: Tone } | null {
+function connectorProblem(group: EndpointGroup, health: ConnectorHealth): { label: string; tone: Tone } | null {
   const { config, live } = group;
-  const verdict = connectorVerdict(live, {
-    failed: Boolean(state.connectorFailures[config.id]),
-  });
+  const verdict = connectorVerdict(live, health.signals[config.id]);
   return verdict.tone === "ok" ? null : { label: verdict.label, tone: verdict.tone };
 }
 
-function ConnectorName({ group, state }: { group: EndpointGroup; state: OperatorState }) {
+function ConnectorName({ group, health }: { group: EndpointGroup; health: ConnectorHealth }) {
   const { config } = group;
-  const problem = connectorProblem(group, state);
+  const problem = connectorProblem(group, health);
   const id = encodeURIComponent(config.id);
   const title = config.title ?? config.id;
   return (
@@ -195,7 +195,7 @@ function WhoCanUse({ endpoint }: { endpoint: EndpointRow }) {
 /** How many connectors the row shows as monograms before "+N". */
 const MONOGRAM_LIMIT = 4;
 
-function ConnectorMarks({ endpoint, state }: { endpoint: EndpointRow; state: OperatorState }) {
+function ConnectorMarks({ endpoint, health }: { endpoint: EndpointRow; health: ConnectorHealth }) {
   if (!endpoint.groups.length) return <span className="endpoint-monograms meta">None</span>;
   const shown = endpoint.groups.slice(0, MONOGRAM_LIMIT);
   const rest = endpoint.groups.length - shown.length;
@@ -203,7 +203,7 @@ function ConnectorMarks({ endpoint, state }: { endpoint: EndpointRow; state: Ope
     <ul className="endpoint-monograms" aria-label={`Connectors on ${endpoint.path}`}>
       {shown.map((group) => {
         const title = group.config.title ?? group.config.id;
-        const problem = connectorProblem(group, state);
+        const problem = connectorProblem(group, health);
         return (
           <li key={group.config.id} title={problem ? `${title} · ${problem.label}` : title}>
             <Monogram id={group.config.id} title={title} />
@@ -253,7 +253,7 @@ export function RunsAs({ label }: { label: string }) {
   );
 }
 
-function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: OperatorState }) {
+function EndpointTools({ endpoint, health }: { endpoint: EndpointRow; health: ConnectorHealth }) {
   return (
     <>
       {endpoint.access.length ? (
@@ -279,7 +279,7 @@ function EndpointTools({ endpoint, state }: { endpoint: EndpointRow; state: Oper
             {endpoint.groups.map((group) => (
               <tr key={group.config.id}>
                 <td>
-                  <ConnectorName group={group} state={state} />
+                  <ConnectorName group={group} health={health} />
                 </td>
                 <td className="endpoint-runs-as">
                   <RunsAs
@@ -325,7 +325,8 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
   const linked = endpointFromHash(useLocation().hash);
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(linked ? [linked] : []));
   const returnFocus = useRef<HTMLElement | null>(null);
-  const contract = maintainerContract(state);
+  const health = useConnectorHealth(state);
+  const contract = health.contract;
   const endpoints = contract ? endpointRows(contract) : [];
   const linkedReady = Boolean(linked && endpoints.some((endpoint) => endpoint.path === linked));
   useEffect(() => {
@@ -403,7 +404,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                     ) : null}
                   </div>
                   <WhoCanUse endpoint={endpoint} />
-                  <ConnectorMarks endpoint={endpoint} state={state} />
+                  <ConnectorMarks endpoint={endpoint} health={health} />
                   <ToolSummary endpoint={endpoint} />
                   <Button
                     size="sm"
@@ -424,7 +425,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                   </Button>
                 </div>
                 <div id={panel} className="endpoint-details" hidden={!expanded}>
-                  {expanded ? <EndpointTools endpoint={endpoint} state={state} /> : null}
+                  {expanded ? <EndpointTools endpoint={endpoint} health={health} /> : null}
                 </div>
               </section>
             );
