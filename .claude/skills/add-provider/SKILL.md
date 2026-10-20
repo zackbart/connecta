@@ -16,8 +16,11 @@ proposed) designs the Effect provider kit that `api` providers are built on.
 provider folder, and `test/provider-conventions.test.ts` applies S on both
 runtimes. `PENDING` in `test/provider-standard.ts` lists the providers that
 have not landed step 1 or step 2. Names leave that list and `test/provider-pending-baseline.json` together;
-none join either. The Node suite compares the baseline against the committed
-merge base, so editing both files cannot add or reinsert exemptions.
+none join either. The Node suite compares against the committed pre-push version
+on main pushes, the PR base on PR merge checkouts, and the `origin/main` merge
+base locally, so editing both files cannot add or reinsert exemptions. See
+AGENTS.md Verification for `CONNECTA_STANDARD_BASE`, the first-parent fallback,
+and fail-closed history requirements.
 
 ## Which rules apply
 

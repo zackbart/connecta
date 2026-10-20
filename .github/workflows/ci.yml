@@ -79,11 +79,23 @@ jobs:
     if: needs.changes.outputs.planning != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # PR checkout is a merge commit whose first parent is the PR base.
+      # Pushes must compare before the entire push, even after main advances.
+      CONNECTA_STANDARD_BASE: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # The provider exemption ratchet compares its committed merge base.
-          fetch-depth: 0
+          fetch-depth: 2
+      - name: Fetch the provider exemption comparison commit if needed
+        run: |
+          if [[ -z "$CONNECTA_STANDARD_BASE" || "$CONNECTA_STANDARD_BASE" =~ ^0+$ ]]; then
+            echo "CONNECTA_STANDARD_BASE must be a real base SHA; first pushes fail closed." >&2
+            exit 1
+          fi
+          if ! git cat-file -e "$CONNECTA_STANDARD_BASE^{commit}"; then
+            git fetch --no-tags --depth=1 origin "$CONNECTA_STANDARD_BASE"
+          fi
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:

@@ -543,11 +543,14 @@ guide, served names and classification, and `describe()`.
   passes the step it is excused from (the ratchet), and when a listed name
   has no folder. `test/provider-pending-baseline.json` records the remaining
   names per step and must match `PENDING` exactly. The Node suite compares it
-  with its committed `origin/main` merge-base version, rejecting additions
-  and reinsertions even if both files are edited together. On this PR, whose
-  merge base has no baseline yet, a frozen initial digest authenticates the
-  23-name lists. CI fetches full history for that comparison. Unlike a count
-  alone, the name comparison also catches replacements.
+  with its committed pre-push version on main pushes and the PR base version
+  on PR merge checkouts; local runs use the `origin/main` merge base. This
+  rejects additions and reinsertions even if both files are edited together.
+  A base equal to HEAD falls back to HEAD's first parent; missing refs/history
+  fail closed. On this PR, whose base has no baseline yet, a frozen initial
+  digest authenticates the 23-name lists. CI supplies `CONNECTA_STANDARD_BASE`
+  and fetches only the needed comparison history (AGENTS.md Verification).
+  Unlike a count alone, the name comparison also catches replacements.
 - **The surface on both runtimes.** `provider-conventions.test.ts` applies S1–S6
   to every standard `api()` surface on Node and workerd. Every `api`/`dual`
   provider (including pending providers and today's `composed` GitHub) must

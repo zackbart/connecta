@@ -91,6 +91,13 @@ comparisons keep two CI retries. A browser run with any failed attempt uploads
 the `playwright-report` artifact (HTML report, diffs, traces). The advisory
 Provider drift workflow scans only the providers a PR changes
 (`scripts/ci-drift-providers.mjs`); the weekly and manual runs scan all of them.
+The Node job sets `CONNECTA_STANDARD_BASE` to the pre-push SHA on main pushes
+or the PR base SHA (the merge checkout's base parent). Its depth-two checkout
+fetches only that commit at depth one if missing. The provider exemption ratchet
+fails closed on missing history or an all-zero first-push SHA. Local runs without
+this variable compare against the `origin/main` merge base; if either comparison
+base equals HEAD, they use HEAD's first parent. Fetch the base SHA and sufficient
+history (increase CI `fetch-depth`) if the guard reports missing history.
 Local `pnpm run check` remains the full core and browser gate.
 
 ## Source map

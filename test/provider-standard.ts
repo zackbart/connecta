@@ -72,7 +72,7 @@ export const PENDING = {
   ]),
 } as const;
 
-/** The committed remaining exemptions, compared with the merge base by the Node suite. */
+/** The committed remaining exemptions, compared with the pre-push/PR base (merge base locally) by the Node suite. */
 export interface PendingBaseline {
   readonly step1: readonly string[];
   readonly step2: readonly string[];
