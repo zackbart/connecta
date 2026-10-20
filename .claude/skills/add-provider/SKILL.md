@@ -15,7 +15,9 @@ proposed) designs the Effect provider kit that `api` providers are built on.
 `test/provider-standard.node.test.ts` enforces L, E, D, G and S on every
 provider folder, and `test/provider-conventions.test.ts` applies S on both
 runtimes. `PENDING` in `test/provider-standard.ts` lists the providers that
-have not landed step 1 or step 2. Names leave that list; none join it.
+have not landed step 1 or step 2. Names leave that list and `test/provider-pending-baseline.json` together;
+none join either. The Node suite compares the baseline against the committed
+merge base, so editing both files cannot add or reinsert exemptions.
 
 ## Which rules apply
 
@@ -74,6 +76,11 @@ There is no `composed` kind; GitHub's step 1 removes it.
   public provider.
 - A Node-only suite starts with `// Node-only: <reason>`. Tests and fixtures do
   not ship; generated skill strings do.
+- Every `api`/`dual` fixture exports `createAuthored()` returning a connector
+  whose nonempty catalog contains every Connecta-authored tool, offline on
+  both runtimes. This is required even without H-convention metadata; hosted
+  tools remain vendor-owned. Today's `composed` GitHub supplies its REST
+  complement until step 1 folds it into `dual`.
 - Characterization goldens live in `test/goldens/<name>/`, never in the
   provider folder. `goldens:update [provider]` rewrites them on Node.
 
@@ -97,13 +104,21 @@ Humans write sources, reasons, and dates; tools write lists and digests.
 
 - `version: 2` and `provider: "<name>"`.
 - `generated` (`operations` from `manifest(vendor)`, `hosted` from the
-  reviewed classification, and one `sha256` per hashed evidence file) is
+  served hosted classification, and one `sha256` per hashed evidence file) is
   written by `providers:generate`. Never edit it.
 - `checks` keep the types `scripts/drift-check.mjs` knows. A `manual` check
   needs an https `source`, a one-paragraph `reason` (why it cannot be
   automated, and what to compare), and `lastVerified` (`YYYY-MM-DD`).
   `evidence` holds facts only (URLs, digests, counts, names); narrative goes
   to `evidence/review.md`.
+- Every `mcp-catalog` check declares `catalog: "evidence/catalog.json"`. That
+  capture preserves names and all four behavioral hints/annotations, including
+  absent hints, independently of served classification. The five Google `api`
+  providers with hosted observations keep those captures while
+  `generated.hosted` is empty. Forms retains its manual hosted-absence check
+  and review narrative, without inventing a catalog. `generated.evidence`
+  hashes captures; drift compares names AND hints.
+  Accept catalog changes only by explicit review, never by `--record`.
 - No hand-kept lists: no `reviewed` names, and `endpoints` entries are keyed
   by an `operation` from `generated.operations`, with digests written by
   `providers:check --record`.
@@ -157,7 +172,10 @@ within 120 bytes, and never restates a schema (H13).
   record; hatch calls return `{ status, data, page? }`. Size cuts are
   reported as `truncated: string[]` (dot paths).
 - **S4 errors:** the closed taxonomy and the write-outcome rules of 0010 B.3
-  and #902, from the kit's `VendorErrors`. A write is never resent or
+  and #902, from the kit's `VendorErrors`. Reviewed bounded body-fact and
+  allowlisted-header rules run before the vendor status table and fallback
+  defaults (Google revision-guarded batchUpdate 400 precondition and Stripe
+  429 lock_timeout are `conflict`). A write is never resent or
   advertised as retryable once it may have reached the vendor.
 - **S5 `fields`:** every named read and `_api_read`/`_api_write` take
   `fields`, dot paths that only narrow.
@@ -166,7 +184,12 @@ within 120 bytes, and never restates a schema (H13).
   deployment's `sensitiveFields: "drop" | "return"` option.
 
 Names stay snake_case `verb_object`, with the safety class as the verb (H2),
-and every hand-written convention H1–H14 still applies.
+and H1–H14 otherwise apply. After step 2, S6 replaces H9's recoverable
+`raw: true` access: widen the projection or supply S1's hatch through the same
+privacy boundary. S1 replaces H14's GET-only read hatch with explicit reviewed
+read verdicts (including read-only POST); writes remain destructive regardless
+of method. H9's projection/truncation and H14's confinement and safety split
+still apply.
 
 ## Value safety
 
@@ -251,10 +274,13 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    file), convert evidence to its format, and rewrite `drift.json` as
    version 2 (`rationale` → `reason`, `reviewedAt` → `lastVerified`).
 3. Run `pnpm run providers:generate`, then remove the provider from
-   `PENDING.step1`.
-4. `test/goldens/<name>/catalog.json` and `calls.json` must not change.
-   `failures.json` may change only where a kit write-outcome rule (INV-9)
-   forces it; name each case in the PR. For providers without goldens (the
+   `PENDING.step1` and its committed baseline entry.
+4. ALL three goldens (`catalog.json`, `calls.json`, AND `failures.json`) must
+   stay byte-identical. Back-port safety/write-outcome changes into today's
+   code first: A.2 (#902) covers write 5xx, OAuth replay, redirects and privacy;
+   regenerate goldens when it merges, then migrate. Only an impractical
+   back-port permits an exception: individually list each case and why its
+   back-port is impractical, and obtain reviewer approval in this step-1 PR. For providers without goldens (the
    `mcp` providers and the hosted half of `dual`), capture connector
    metadata, the guide, served names and classifications, and `describe()`
    before and after, and compare the serialized bytes for every mode.
@@ -271,7 +297,11 @@ Follow 0011's batch order; Tithe.ly goes first (0010's B.5).
    envelope, errors, guide.
 4. Add a `.changes/` fragment marked `breaking: true` that maps every renamed
    tool and argument, plus the release's migration entry.
-5. Remove the provider from `PENDING.step2`.
+5. Rerun this provider's relevant eval tasks in EVERY step-2 PR, record fresh
+   before/after results, and update affected eval fixtures/baselines and tool
+   references in maintained guidance. Tithe.ly's results do not validate
+   Planning Center joins, CCB search routing or Google batch edits.
+6. Remove the provider from `PENDING.step2` and its committed baseline entry.
 
 ## Changing a provider that has not migrated (transitional)
 

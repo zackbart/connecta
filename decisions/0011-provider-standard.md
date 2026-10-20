@@ -138,22 +138,22 @@ GitHub's step 1 removes `"composed"` from `ProviderKind` and from
 
 ### L. Folder layout
 
-| Path                       | Kinds         | Holds                                                                                                         |
-| -------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
-| `index.ts`                 | all           | The one definition: options, kind, guide context, and wiring. No tools, no transport.                         |
-| `api.ts`                   | `api`, `dual` | The vendor: operations, `VendorErrors`, authentication, `result`, probe, page size, hatch index and verdicts. |
-| `tools.ts`                 | `api`, `dual` | Kit tools and their projections. It may import area modules from `lib/`.                                      |
-| `hosted.ts`                | `mcp`, `dual` | `remoteMcp()` configuration, the reviewed classification, and the hosted half of an `owners` map.             |
-| `safety.ts`                | `api`, `dual` | Optional: the reviewed value-safety table with its `absent` acknowledgements and embedded-URL review.         |
-| `SKILL.md`                 | all           | Agent-facing domain guidance (G).                                                                             |
-| `drift.json`               | all           | Version 2 (D).                                                                                                |
-| `evidence/`                | all           | Fixed names (E).                                                                                              |
-| `fixtures.ts`              | all           | The test fixture the generated lists import.                                                                  |
-| `provider.test.ts`         | all           | The provider suite (`provider.node.test.ts` if Node is required).                                             |
-| `provider.<topic>.test.ts` | all           | Optional further suites, such as `provider.safety.node.test.ts`.                                              |
-| `skill.generated.ts`       | all           | Generated from `SKILL.md` and the definition.                                                                 |
-| `openapi.generated.ts`     | `api`, `dual` | Generated from `evidence/openapi.json` by `providers:spec`.                                                   |
-| `lib/*.ts`                 | all           | Other implementation, such as GitHub's App signing or Cloudflare's GraphQL guard.                             |
+| Path                       | Kinds         | Holds                                                                                                                                   |
+| -------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`                 | all           | The one definition: options, kind, guide context, and wiring. No tools, no transport.                                                   |
+| `api.ts`                   | `api`, `dual` | The vendor: operations, `VendorErrors`, authentication, `result`, probe, page size, hatch index and verdicts.                           |
+| `tools.ts`                 | `api`, `dual` | Kit tools and their projections. It may import area modules from `lib/`.                                                                |
+| `hosted.ts`                | `mcp`, `dual` | `remoteMcp()` configuration, the reviewed classification, and the hosted half of an `owners` map.                                       |
+| `safety.ts`                | `api`, `dual` | Optional: the reviewed value-safety table with its `absent` acknowledgements and embedded-URL review.                                   |
+| `SKILL.md`                 | all           | Agent-facing domain guidance (G).                                                                                                       |
+| `drift.json`               | all           | Version 2 (D).                                                                                                                          |
+| `evidence/`                | all           | Fixed names (E).                                                                                                                        |
+| `fixtures.ts`              | all           | Offline fixtures; `api`/`dual` also export `createAuthored()` for every Connecta-authored tool, independently of H-convention metadata. |
+| `provider.test.ts`         | all           | The provider suite (`provider.node.test.ts` if Node is required).                                                                       |
+| `provider.<topic>.test.ts` | all           | Optional further suites, such as `provider.safety.node.test.ts`.                                                                        |
+| `skill.generated.ts`       | all           | Generated from `SKILL.md` and the definition.                                                                                           |
+| `openapi.generated.ts`     | `api`, `dual` | Generated from `evidence/openapi.json` by `providers:spec`.                                                                             |
+| `lib/*.ts`                 | all           | Other implementation, such as GitHub's App signing or Cloudflare's GraphQL guard.                                                       |
 
 - **L1.** The root holds only the names above; everything else is under
   `evidence/` or `lib/`, and `lib/` holds TypeScript only.
@@ -204,31 +204,36 @@ reviewed table in `safety.ts`, as an `absent` field with its `reason`.
 `scripts/value-safety.mjs` already imports that module. Absences are review
 decisions, and review decisions stay as code (0009).
 
-Every existing file has a home:
+The mapping below was checked against the tracked provider tree at `8f367235`.
+Every existing evidence or implementation file named here has a home:
 
-| Today                                                       | Provider                                             | Moves to                                                                                                                                                             |
-| ----------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `catalog.fixture.json`                                      | Linear, Mixpanel                                     | `evidence/catalog.json` (`tools/list`)                                                                                                                               |
-| `catalog.fixture.json`                                      | Intercom                                             | `evidence/catalog.json` (`documentation`)                                                                                                                            |
-| `hosted-schemas.fixture.json`                               | Mixpanel                                             | merged into `evidence/catalog.json`                                                                                                                                  |
-| `contracts.fixture.json`                                    | RevenueCat (hosted capture)                          | `evidence/catalog.json`; its four-key verification note goes to `evidence/review.md`                                                                                 |
-| `contracts.fixture.json`                                    | Mixpanel (Query API subset)                          | `evidence/openapi.document.json`, pinned by `evidence/openapi.json` with `vendored: true`; the `manual` check that records its URL and digest today becomes that pin |
-| `catalog.review.md`                                         | Intercom                                             | `evidence/review.md`                                                                                                                                                 |
-| `mcp-catalog-2026-10-15.md`                                 | Notion                                               | tools to `evidence/catalog.json`, prose to `evidence/review.md`                                                                                                      |
-| `openapi.source.json`                                       | Cloudflare, Notion, Stripe, Vercel                   | `evidence/openapi.json`, same keys                                                                                                                                   |
-| `openapi.generated.ts`                                      | Cloudflare, Notion, Stripe, Vercel                   | stays: generated runtime code                                                                                                                                        |
-| `operations.ts`                                             | Mixpanel                                             | `api.ts`                                                                                                                                                             |
-| `value-safety.ts`                                           | Cloudflare, Mixpanel, Notion, Stripe, Vercel         | `safety.ts`                                                                                                                                                          |
-| `value-safety.candidates.json`                              | the same five                                        | `evidence/value-safety.json`                                                                                                                                         |
-| `value-safety.absent.json`                                  | Cloudflare, Vercel                                   | `absent` in `safety.ts`                                                                                                                                              |
-| `value-safety.node.test.ts`                                 | the same five                                        | `provider.safety.node.test.ts`                                                                                                                                       |
-| `inventory-fixtures/*.md`, `recording.json`                 | Vercel                                               | `evidence/pages/`                                                                                                                                                    |
-| `inventory-fixtures/drift.json`, `unavailable.json`         | Vercel                                               | inline in `provider.inventory.node.test.ts` (parser inputs, not evidence)                                                                                            |
-| `inventory.node.test.ts`, `api.test.ts`, `security.test.ts` | Vercel, Mixpanel, Infisical                          | `provider.inventory.node.test.ts`, `provider.api.test.ts`, `provider.security.test.ts`                                                                               |
-| `rest.ts`                                                   | Cloudflare, GitHub, Mixpanel, Notion, Stripe, Vercel | `api.ts` and `tools.ts`                                                                                                                                              |
-| `hosted.ts`                                                 | GitHub                                               | stays; Mixpanel, Notion, Stripe, Vercel, Cloudflare and the five `mcp` providers gain one                                                                            |
-| `auth.ts`, `key.ts`, `scope.ts`                             | GitHub                                               | `lib/`                                                                                                                                                               |
-| `graphql.ts`                                                | Cloudflare                                           | `lib/`                                                                                                                                                               |
+| Today                                                                    | Provider                                             | Moves to                                                                                                                                                             |
+| ------------------------------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog.fixture.json`                                                   | Linear, Mixpanel                                     | `evidence/catalog.json` (`tools/list`)                                                                                                                               |
+| `catalog.fixture.json`                                                   | Intercom                                             | `evidence/catalog.json` (`documentation`)                                                                                                                            |
+| `hosted-schemas.fixture.json`                                            | Mixpanel                                             | merged into `evidence/catalog.json`                                                                                                                                  |
+| `contracts.fixture.json`                                                 | RevenueCat (hosted capture)                          | `evidence/catalog.json`; its four-key verification note goes to `evidence/review.md`                                                                                 |
+| `contracts.fixture.json`                                                 | Mixpanel (Query API subset)                          | `evidence/openapi.document.json`, pinned by `evidence/openapi.json` with `vendored: true`; the `manual` check that records its URL and digest today becomes that pin |
+| `drift.json` `mcp-catalog.reviewed`                                      | Docs, Drive, Gmail, Sheets, Slides                   | names and all four annotations to `evidence/catalog.json` (`tools/list`); observation-only, independent of runtime classification                                    |
+| `drift.json` manual hosted-absence review                                | Forms                                                | keep the `manual` check; narrative to `evidence/review.md`, no fabricated catalog                                                                                    |
+| `catalog.review.md`                                                      | Intercom                                             | `evidence/review.md`                                                                                                                                                 |
+| `mcp-catalog-2026-10-15.md`                                              | Notion                                               | tools to `evidence/catalog.json`, prose to `evidence/review.md`                                                                                                      |
+| `openapi.source.json`                                                    | Cloudflare, Notion, Stripe, Vercel                   | `evidence/openapi.json`, same keys                                                                                                                                   |
+| `openapi.generated.ts`                                                   | Cloudflare, Notion, Stripe, Vercel                   | stays: generated runtime code                                                                                                                                        |
+| `operations.ts`                                                          | Mixpanel                                             | `api.ts`                                                                                                                                                             |
+| `value-safety.ts`                                                        | Cloudflare, Mixpanel, Notion, Stripe, Vercel         | `safety.ts`                                                                                                                                                          |
+| `value-safety.candidates.json`                                           | the same five                                        | `evidence/value-safety.json`                                                                                                                                         |
+| `value-safety.absent.json`                                               | Cloudflare, Vercel                                   | `absent` in `safety.ts`                                                                                                                                              |
+| `value-safety.node.test.ts`                                              | the same five                                        | `provider.safety.node.test.ts`                                                                                                                                       |
+| `inventory-fixtures/recording.json` and the 29 Markdown files it lists   | Vercel                                               | `evidence/pages/`                                                                                                                                                    |
+| `inventory-fixtures/incomplete.md`, `unparseable.md`, `unavailable.json` | Vercel                                               | inline test fixtures in `provider.inventory.node.test.ts` (synthetic failures, never recorded evidence)                                                              |
+| `inventory-fixtures/drift.json`                                          | Vercel                                               | inline historical review baseline in `provider.inventory.node.test.ts` (this tracked file exists; it is not a vendor recording)                                      |
+| `inventory-fixtures/README.md`                                           | Vercel                                               | recording narrative to `evidence/review.md`; synthetic-input notes to `provider.inventory.node.test.ts`                                                              |
+| `inventory.node.test.ts`, `api.test.ts`, `security.test.ts`              | Vercel, Mixpanel, Infisical                          | `provider.inventory.node.test.ts`, `provider.api.test.ts`, `provider.security.test.ts`                                                                               |
+| `rest.ts`                                                                | Cloudflare, GitHub, Mixpanel, Notion, Stripe, Vercel | `api.ts` and `tools.ts`                                                                                                                                              |
+| `hosted.ts`                                                              | GitHub                                               | stays; Mixpanel, Notion, Stripe, Vercel, Cloudflare and the five `mcp` providers gain one                                                                            |
+| `auth.ts`, `key.ts`, `scope.ts`                                          | GitHub                                               | `lib/`                                                                                                                                                               |
+| `graphql.ts`                                                             | Cloudflare                                           | `lib/`                                                                                                                                                               |
 
 `spec/provider-reviews/` keeps reviews that span providers.
 
@@ -263,8 +268,22 @@ Humans write sources, reasons and dates. Tools write lists and digests.
   becomes `lastVerified`. `evidence` holds facts (URLs, digests, counts,
   names). Narrative goes in `evidence/review.md`.
 - **D4.** No list is typed by hand. A check names no `reviewed` tools:
-  `generated.hosted` carries them, from the same classification the connector
-  serves (P13). `endpoints` entries are keyed by an `operation` from
+  `generated.hosted` carries only served hosted names, from the same
+  classification the connector serves (P13). Each `mcp-catalog` check instead
+  declares `catalog: "evidence/catalog.json"`: its comparison baseline is the
+  captured names and all four behavioral hints (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`) under each tool's
+  `annotations`. Missing hints remain missing, never inferred from a runtime
+  verdict. Five of the six Google `api` providers retain those observation-only
+  captures even though `generated.hosted` is empty; Forms retains its manual
+  evidence of hosted-server absence in `evidence/review.md` and its `manual`
+  check, without inventing a catalog. Moving a provider to `dual` does not
+  erase its observation baseline.
+  `providers:generate` hashes the capture into `generated.evidence`, and
+  `providers:check` compares names AND annotations against that file. Changing
+  the baseline requires an explicit reviewed capture; `--record` never accepts
+  new catalog facts. Runtime classification and observed hosted contracts are
+  separate evidence. `endpoints` entries are keyed by an `operation` from
   `generated.operations`, never a hand-typed `method` and `path`.
   `providers:check --record` writes their digests, and a manifest operation
   without an entry is a finding.
@@ -421,8 +440,14 @@ Infisical's `metadataOmitted` (withheld values) and Drive's
 - `VendorErrors` declares what 401, 403 and 404 mean. `not_found` only where
   the vendor tells absence from reach. `conflict` only where the vendor
   documents it; 409 has no default.
-- 400 and 422 are `invalid_args`. 429 is `rate_limited`, and a 5xx on a read
-  is `unavailable`, both with `retryAfterMs` when the vendor states a wait.
+- Reviewed vendor-fact rules run first, in declaration order, using bounded
+  structured body facts and allowlisted headers, never error prose. The
+  vendor status table follows; status defaults are FALLBACKS only: 400 and
+  422 → `invalid_args`, 429 → `rate_limited`, and 5xx on a read →
+  `unavailable`, with `retryAfterMs` when the vendor states a wait. For
+  example, Google revision-guarded `batchUpdate` with HTTP 400 and a
+  structured precondition reason → `conflict`; Stripe HTTP 429 with
+  `code: "lock_timeout"` → `conflict`. Neither is overridden by the fallback.
 - A write is never resent and never advertised as retryable once it may have
   reached the vendor. A 5xx or a connection lost after sending is a
   non-retryable `connector_call_failed` whose outcome is unknown, unless the
@@ -469,11 +494,17 @@ provider's step 2.
 - `asProviderFactory` and `composed` go.
 - It leaves `PENDING.step1`.
 
-Byte-identical means `catalog.json` and `calls.json` under
-`test/goldens/<name>/` do not change. `failures.json` changes only in cases a
-kit safety rule forces (0010's write-outcome rules, INV-9), each one named in
-the PR. That is how 0010's B.5 already records Tithe.ly's 401 and 5xx write
-cases. `SKILL.md` does not change. Construction errors may reword under
+Byte-identical means ALL three files under `test/goldens/<name>/` stay
+byte-identical: `catalog.json`, `calls.json` AND `failures.json`. Safety and
+write-outcome differences are back-ported into today's code first. A.2
+([#902](https://github.com/zackbart/connecta/pull/902)) covers write 5xx,
+OAuth replay, redirects and privacy; regenerate the goldens after it merges,
+then migrate against those bytes. Only an impractical back-port permits an
+exception: individually list each differing case, why its back-port is
+impractical, and obtain reviewer approval in that step-1 PR. Routine kit
+safety differences are not exceptions. This owner ruling governs step 1 even
+where draft 0010 B.5 describes different prototype failure bytes.
+`SKILL.md` does not change. Construction errors may reword under
 `defineProvider`'s common validation; operators see those, agents do not.
 
 Providers without goldens compare serialized bytes before and after instead,
@@ -490,6 +521,11 @@ guide, served names and classification, and `describe()`.
 - A `.changes/` fragment marked `breaking: true` that maps every renamed tool
   and argument, plus the migration entry for the release that ships it.
   Deployment `instructions` and agent programs naming an old tool break.
+- Rerun the relevant eval tasks for this provider, record fresh before/after
+  results in the PR, and update affected eval fixtures/baselines and tool
+  references in maintained guidance. Tithe.ly's eval cannot validate Planning
+  Center joins, CCB search routing or Google batch edits. This applies to
+  EVERY step-2 PR, including hosted guide changes.
 - The provider leaves `PENDING.step2`.
 
 ### Enforcement
@@ -505,9 +541,18 @@ guide, served names and classification, and `describe()`.
   legacy shapes, and proves the rules accept a synthetic standard one.
 - **The list only shrinks.** The suite fails while a listed provider already
   passes the step it is excused from (the ratchet), and when a listed name
-  has no folder.
+  has no folder. `test/provider-pending-baseline.json` records the remaining
+  names per step and must match `PENDING` exactly. The Node suite compares it
+  with its committed `origin/main` merge-base version, rejecting additions
+  and reinsertions even if both files are edited together. On this PR, whose
+  merge base has no baseline yet, a frozen initial digest authenticates the
+  23-name lists. CI fetches full history for that comparison. Unlike a count
+  alone, the name comparison also catches replacements.
 - **The surface on both runtimes.** `provider-conventions.test.ts` applies S1–S6
-  to every standard `api()` surface on Node and workerd. It also proves on
+  to every standard `api()` surface on Node and workerd. Every `api`/`dual`
+  provider (including pending providers and today's `composed` GitHub) must
+  supply a nonempty offline `createAuthored()` fixture; omission fails,
+  independently of whether H-convention metadata exists. It also proves on
   today's Tithe.ly catalog that the rules catch real legacy shapes.
 - **Generation.** From S.1 on, `providers:generate` refuses a G or D violation
   in a provider that is not pending. `check:providers-generated` refuses a
@@ -528,8 +573,8 @@ separate worktrees.
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------ | ----------------- |
 | S.0 | This record, the add-provider skill, `PENDING` and the suites                                                                                                                                                                                                                    | —                                                                               | —                                                      | —                 |
 | S.1 | Tooling: `drift.json` v2 in `drift-check.mjs` and the generator; evidence names in `providers:spec` and `value-safety.mjs`; when-blocks and the Conventions renderer; generator refusals for G and D. Kit facts (`manifest`, `pageSize`, hatch verdicts) fill in when B.4 lands. | —                                                                               | —                                                      | S.0               |
-| 1   | **Tithe.ly**, the gate                                                                                                                                                                                                                                                           | 0010's B.5                                                                      | the first standard surface, with the eval (Q2)         | S.1, B.4          |
-| 2   | Hosted-only: Basecamp, Intercom, Linear, RevenueCat, Wispr Flow                                                                                                                                                                                                                  | `hosted.ts`, `evidence/catalog.json`, `drift.json` v2; no kit                   | guide, Conventions, docs                               | Tithe.ly's step 2 |
+| 1   | **Tithe.ly**, the gate                                                                                                                                                                                                                                                           | 0010's B.5                                                                      | the first standard surface, with fresh affected evals  | S.1, B.4          |
+| 2   | Hosted-only: Basecamp, Intercom, Linear, RevenueCat, Wispr Flow                                                                                                                                                                                                                  | `hosted.ts`, `evidence/catalog.json`, `drift.json` v2; no kit                   | guide, Conventions, docs; affected evals               | Tithe.ly's step 2 |
 | 3   | 0009 C.1–C.4: Breeze, Overflow, Planning Center, CCB                                                                                                                                                                                                                             | kit                                                                             | surface; CCB's `search_records`                        | Tithe.ly's step 2 |
 | 4   | 0009 C.5: Infisical                                                                                                                                                                                                                                                              | kit; login renewal becomes a `Grant`                                            | surface                                                | batch 3           |
 | 5   | 0009 C.6: Stripe, Vercel, Cloudflare, Notion, Mixpanel                                                                                                                                                                                                                           | the family's index decision first, then the kit, `hosted.ts`, `safety.ts`       | surface; `select` → `fields`; Notion's `integration_*` | batch 4           |
@@ -540,18 +585,17 @@ separate worktrees.
 Batch 2 never touches the kit. It waits for Tithe.ly's step 2 only so the G
 rules are proven on one provider before they are applied to five.
 
-### Open questions, with recommended answers
+### Resolved review questions
 
-1. **Kit safety rules in step 1.** Is a `failures.json` change that INV-9
-   forces allowed in step 1? Recommended: yes, as above and as 0010's B.5
-   records. Back-porting each write-outcome rule into a transport that step 1
-   deletes is throwaway work. The exception can be checked by eye: only write
-   rows change, only to a non-retryable unknown outcome, and `catalog.json`
-   and `calls.json` never change.
-2. **Evals for the shape.** 0009 requires evals for agent-surface changes.
-   Recommended: one eval in Tithe.ly's step 2. It runs a fixed task set
-   against the before and after catalogs and gates S1–S6 themselves. Later
-   step-2 PRs cite it and rerun it only when they ask for an S exception.
+1. **Kit safety rules in step 1 — decided.** Back-port first, regenerate all
+   three goldens, then migrate byte-identically. Only an impractical back-port
+   can justify individually listed, reviewer-approved step-1 exceptions.
+2. **Evals for the shape — decided.** Every step-2 PR runs its affected eval
+   tasks with fresh results and updates affected fixtures, baselines and
+   maintained guidance. The first Tithe.ly eval proves only its own tasks.
+
+### Remaining open questions, with recommended answers
+
 3. **`items` or a named key.** Recommended: `items`. Programs get one
    `outputKeys` shape and one loop, the tool name already names the noun, and
    0009 anticipated it.

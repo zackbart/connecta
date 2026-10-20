@@ -11,10 +11,12 @@
 /**
  * Providers that have not landed a step yet. Each list only shrinks: a
  * migration PR removes its provider, and `provider-standard.node.test.ts`
- * fails while a listed provider already passes, so an exemption cannot
+ * checks the committed baseline and fails while a listed provider already passes, so an exemption cannot
  * outlive its reason. A name never joins these lists. A provider folder
  * created after them meets the whole standard from its first commit.
  */
+import type { Connector, ConnectorContext } from "../src/types.js";
+
 export const PENDING = {
   /** Not yet on the kit and the standard layout, evidence and drift record. */
   step1: new Set([
@@ -69,6 +71,35 @@ export const PENDING = {
     "wispr-flow",
   ]),
 } as const;
+
+/** The committed remaining exemptions, compared with the merge base by the Node suite. */
+export interface PendingBaseline {
+  readonly step1: readonly string[];
+  readonly step2: readonly string[];
+}
+
+export function pendingAdditions(current: PendingBaseline, previous: PendingBaseline): string[] {
+  return (["step1", "step2"] as const).flatMap((step) =>
+    current[step]
+      .filter((name) => !previous[step].includes(name))
+      .map((name) => `${step}: added or reinserted ${name}`),
+  );
+}
+
+/** Independent of optional H-convention metadata; omission must never skip the S checks. */
+export async function authoredTools(
+  kind: string,
+  fixture: { readonly name: string; readonly createAuthored?: () => Pick<Connector, "listTools"> } | undefined,
+  context: ConnectorContext,
+): Promise<readonly ToolFacts[] | undefined> {
+  if (kind === "mcp") return undefined;
+  if (!fixture?.createAuthored)
+    throw new Error(`S: ${fixture?.name ?? kind} needs an offline createAuthored() fixture`);
+  const tools = await fixture.createAuthored().listTools(context);
+  if (!tools.length)
+    throw new Error(`S: ${fixture.name} createAuthored() must expose every authored tool, not an empty catalog`);
+  return tools;
+}
 
 /** What the rules read about one provider folder. */
 export interface ProviderFacts {
@@ -231,6 +262,21 @@ export function evidenceViolations(provider: ProviderFacts, today: string): stri
       found.push("E3: evidence/catalog.json needs capturedAt, method, source, and tools sorted by unique name");
     }
   }
+  const catalog = parse(provider.read("evidence/catalog.json"));
+  if (record(catalog) && Array.isArray(catalog["tools"])) {
+    for (const tool of catalog["tools"]) {
+      if (!record(tool) || tool["annotations"] === undefined) continue;
+      const annotations = tool["annotations"];
+      if (
+        !record(annotations) ||
+        ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"].some(
+          (hint) => hint in annotations && typeof annotations[hint] !== "boolean",
+        )
+      ) {
+        found.push(`E3: evidence/catalog.json ${tool["name"]} behavioral hints must be booleans when present`);
+      }
+    }
+  }
   if (has("evidence/openapi.json")) {
     const pin = parse(provider.read("evidence/openapi.json"));
     if (
@@ -301,8 +347,11 @@ export function driftViolations(provider: ProviderFacts, today: string): string[
     if (provider.kind !== "mcp" && !(sortedUnique(operations) && operations.every((key) => OPERATION.test(key)))) {
       found.push('D2: generated.operations lists the kit manifest as sorted "METHOD /path" keys');
     }
-    if (provider.kind !== "api" && !(sortedUnique(generated["hosted"]) && generated["hosted"].length > 0)) {
-      found.push("D2: generated.hosted lists the reviewed hosted tool names, sorted");
+    const hosted = generated["hosted"];
+    if (!sortedUnique(hosted) || (provider.kind === "api" ? hosted.length !== 0 : hosted.length === 0)) {
+      found.push(
+        "D2: generated.hosted lists served hosted names, sorted; api observations stay in evidence/catalog.json",
+      );
     }
     const evidence = generated["evidence"];
     const expected = HASHED_EVIDENCE.filter((name) => provider.files.includes(`evidence/${name}`));
@@ -340,7 +389,14 @@ export function driftViolations(provider: ProviderFacts, today: string): string[
         found.push(`D3: ${at} manual check needs lastVerified as a past YYYY-MM-DD date`);
       }
     }
-    if (keys.has("reviewed")) found.push(`D4: ${at} hand-keeps a reviewed list; generated.hosted carries it`);
+    if (keys.has("reviewed"))
+      found.push(`D4: ${at} hand-keeps a reviewed list; use generated.hosted or evidence/catalog.json`);
+    if (check["type"] === "mcp-catalog") {
+      const catalog = parse(provider.read("evidence/catalog.json"));
+      if (check["catalog"] !== "evidence/catalog.json" || !record(catalog) || catalog["method"] !== "tools/list") {
+        found.push(`D4: ${at} compares hosted names and annotations against evidence/catalog.json (tools/list)`);
+      }
+    }
     if (check["type"] === "endpoints" || check["type"] === "versioned-endpoints") {
       const entries = Array.isArray(check["endpoints"]) ? check["endpoints"] : [];
       if (
@@ -431,6 +487,19 @@ function properties(schema: unknown): Json {
   return record(schema) && record(schema["properties"]) ? schema["properties"] : {};
 }
 
+function hasType(schema: unknown, type: string): boolean {
+  return record(schema) && schema["type"] === type;
+}
+
+function stringArray(schema: unknown): boolean {
+  return hasType(schema, "array") && record(schema) && hasType(schema["items"], "string");
+}
+
+function required(schema: unknown, ...names: string[]): boolean {
+  const fields = record(schema) ? schema["required"] : undefined;
+  return Array.isArray(fields) && names.every((name) => fields.includes(name));
+}
+
 /** S: one agent-facing shape across api() surfaces. */
 export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
   const found: string[] = [];
@@ -463,37 +532,107 @@ export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
   for (const tool of tools) {
     const input = properties(tool.inputSchema);
     const output = properties(tool.outputSchema);
-    const isHatch = HATCH.test(tool.name);
+    const match = HATCH.exec(tool.name);
+    const isHatch = match !== null;
+    const hatchCall = isHatch && ["read", "write", "upload"].includes(match[2]!);
     for (const name of Object.keys(input)) {
       if (RETIRED_PAGING.has(name)) found.push(`S2: ${tool.name} takes ${name}; page with limit and cursor`);
       if (PRIVACY_ARGUMENTS.has(name)) found.push(`S6: ${tool.name} takes ${name}; privacy is deployment config`);
     }
+    if ("limit" in input && !hasType(input["limit"], "integer")) {
+      found.push(`S2: ${tool.name} limit is an integer`);
+    }
+    if ("cursor" in input && !hasType(input["cursor"], "string")) {
+      found.push(`S2: ${tool.name} cursor is a string`);
+    }
     const rows = !isHatch && /^(?:list|search)_/.test(tool.name);
-    if (rows && "page" in output && !("cursor" in input && "limit" in input)) {
-      found.push(`S2: ${tool.name} pages with limit and cursor`);
+    if (rows && "page" in output) {
+      if (!("cursor" in input && "limit" in input)) {
+        found.push(`S2: ${tool.name} pages with limit and cursor`);
+      }
+      const limit = input["limit"];
+      if (
+        !record(limit) ||
+        !Number.isInteger(limit["default"]) ||
+        !Number.isInteger(limit["maximum"]) ||
+        Number(limit["default"]) < 1 ||
+        Number(limit["maximum"]) < Number(limit["default"])
+      ) {
+        found.push(`S2: ${tool.name} limit declares a positive default and maximum`);
+      }
     }
     if ("page" in output) {
-      const page = properties(output["page"]);
-      if (!("hasMore" in page) || !("nextCursor" in page)) {
-        found.push(`S2: ${tool.name} reports page as { hasMore, nextCursor }`);
+      const schema = output["page"];
+      const page = properties(schema);
+      if (
+        !hasType(schema, "object") ||
+        !hasType(page["hasMore"], "boolean") ||
+        !hasType(page["nextCursor"], "string") ||
+        !required(schema, "hasMore") ||
+        ("total" in page && !hasType(page["total"], "integer"))
+      ) {
+        found.push(`S2: ${tool.name} page requires hasMore: boolean, with nextCursor?: string and total?: integer`);
+      }
+      const allowed = new Set(["hasMore", "nextCursor", "total", ...(hatchCall ? ["param", "in"] : [])]);
+      for (const name of Object.keys(page)) {
+        if (!allowed.has(name)) found.push(`S2: ${tool.name} page reports retired key ${name}`);
+      }
+      if (
+        hatchCall &&
+        (!hasType(page["param"], "string") || !hasType(page["in"], "string") || !required(schema, "param", "in"))
+      ) {
+        found.push(`S2: ${tool.name} hatch page requires param and in strings`);
       }
     }
-    if (rows && !("items" in output && "page" in output)) found.push(`S3: ${tool.name} returns { items, page }`);
+    if (
+      rows &&
+      (!hasType(tool.outputSchema, "object") ||
+        !hasType(output["items"], "array") ||
+        !("page" in output) ||
+        !required(tool.outputSchema, "items", "page"))
+    ) {
+      found.push(`S3: ${tool.name} returns { items, page }`);
+    }
+    if (
+      hatchCall &&
+      (!hasType(tool.outputSchema, "object") ||
+        !hasType(output["status"], "integer") ||
+        !("data" in output) ||
+        !required(tool.outputSchema, "status", "data") ||
+        "result" in output)
+    ) {
+      found.push(`S3: ${tool.name} returns { status: integer, data, page? }, with status and data required`);
+    }
+    if (
+      isHatch &&
+      match[2] === "search" &&
+      (!hasType(tool.outputSchema, "object") ||
+        !hasType(output["operations"], "array") ||
+        !hasType(output["revision"], "string") ||
+        !required(tool.outputSchema, "operations", "revision"))
+    ) {
+      found.push(`S3: ${tool.name} returns required operations: array and revision: string`);
+    }
     for (const name of Object.keys(output)) {
       if (RETIRED_TRUNCATION.has(name)) found.push(`S3: ${tool.name} reports ${name}; report cut fields in truncated`);
-    }
-    if ("truncated" in output) {
-      const truncated = output["truncated"];
-      if (!record(truncated) || truncated["type"] !== "array") {
-        found.push(`S3: ${tool.name} truncated lists the dot paths it cut`);
+      if (
+        name !== "page" &&
+        (RETIRED_PAGING.has(name) || ["nextCursor", "nextPage", "nextOffset", "hasMore", "totalCount"].includes(name))
+      ) {
+        found.push(`S2: ${tool.name} reports ${name} outside page`);
       }
+    }
+    if ("truncated" in output && !stringArray(output["truncated"])) {
+      found.push(`S3: ${tool.name} truncated is a string array of the dot paths it cut`);
     }
     if ("select" in input) found.push(`S5: ${tool.name} takes select; the projection argument is fields`);
     const read = tool.annotations?.readOnlyHint === true;
     const named = !isHatch && /^(?:list|get|search)_/.test(tool.name);
-    const hatchCall = /_api_(?:read|write)$/.test(tool.name);
-    if (((read && named) || (isHatch && hatchCall)) && !("fields" in input)) {
+    const projects = isHatch && /_api_(?:read|write)$/.test(tool.name);
+    if (((read && named) || projects) && !("fields" in input)) {
       found.push(`S5: ${tool.name} takes fields to narrow its result`);
+    } else if ("fields" in input && !stringArray(input["fields"])) {
+      found.push(`S5: ${tool.name} fields is a string array of dot paths`);
     }
   }
   return found;

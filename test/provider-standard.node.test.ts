@@ -5,20 +5,24 @@
 // step it has not landed, and must still fail that step, so the list only
 // shrinks. Every other folder, including any created after the list, meets
 // the whole standard.
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import baseline from "./provider-pending-baseline.json";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { providerFixtures } from "./providers.generated.js";
+import { authoredFixtures } from "./providers.generated.js";
 import {
   PENDING,
+  pendingAdditions,
+  authoredTools,
   driftViolations,
   evidenceViolations,
   guideViolations,
   layoutViolations,
   surfaceViolations,
   type ProviderFacts,
-  type ToolFacts,
 } from "./provider-standard.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { silentLogger } from "./helpers.js";
@@ -66,9 +70,8 @@ const folders = await Promise.all(
       read: (path) => (files.includes(path) ? readFileSync(join(directory, path), "utf8") : undefined),
     };
     // Hosted tools are the vendor's (P1); the S rules read surfaces connecta authors.
-    const fixture = providerFixtures.find((candidate) => candidate.name === name);
-    const tools: readonly ToolFacts[] | undefined =
-      fixture?.conventions === undefined ? undefined : await fixture.create().listTools(CONTEXT);
+    const createAuthored = authoredFixtures[name];
+    const tools = await authoredTools(facts.kind, { name, ...(createAuthored ? { createAuthored } : {}) }, CONTEXT);
     return { facts, tools };
   }),
 );
@@ -83,6 +86,22 @@ const stepTwo = ({ facts, tools }: (typeof folders)[number]) =>
   );
 
 describe("the provider standard (decision 0011)", () => {
+  it("rejects additions and reinsertions even when PENDING and its baseline change together", () => {
+    const cwd = fileURLToPath(new URL("../", import.meta.url));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const base = git("merge-base", "origin/main", "HEAD");
+    const path = "test/provider-pending-baseline.json";
+    if (git("ls-tree", "--name-only", base, "--", path)) {
+      expect(pendingAdditions(baseline, JSON.parse(git("show", `${base}:${path}`)))).toEqual([]);
+    } else {
+      // Initial PR only: its base predates the baseline. Freeze names AND count
+      // through a digest, so adding a name to both files still fails this PR.
+      expect(createHash("sha256").update(JSON.stringify(baseline)).digest("hex")).toBe(
+        "4dda1a450b4cefae1a2da67ee3a83ce13976a243907d2e246a6b5920ab45d9e7",
+      );
+    }
+    expect(baseline).toEqual({ step1: [...PENDING.step1].sort(), step2: [...PENDING.step2].sort() });
+  });
   it("keeps one shrinking list of providers that have not landed a step", () => {
     for (const name of PENDING.step1) expect(PENDING.step2.has(name), `${name} pending step 1`).toBe(true);
     for (const name of PENDING.step2) expect(names, `${name} is listed but has no folder`).toContain(name);
@@ -198,11 +217,6 @@ function standard(): ProviderFacts {
   };
 }
 
-const object = (properties: Record<string, unknown>) => ({ type: "object", properties });
-const READ = { readOnlyHint: true };
-const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true };
-const PAGE = object({ hasMore: { type: "boolean" }, nextCursor: { type: "string" } });
-
 describe("the provider standard's rules", () => {
   it("excuses no provider created after the list", () => {
     expect(PENDING.step1.has("acme")).toBe(false);
@@ -255,6 +269,48 @@ describe("the provider standard's rules", () => {
     ]).toEqual([]);
   });
 
+  it("retains observation-only Google hosted names and four annotations independently of api classification", () => {
+    const folder = standard();
+    const drift = JSON.parse(folder.read("drift.json")!);
+    const catalog = JSON.parse(folder.read("evidence/catalog.json")!);
+    const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+    catalog.tools = [
+      { name: "read_doc", annotations },
+      { name: "update_doc", annotations: { ...annotations, readOnlyHint: false } },
+    ];
+    drift.generated.hosted = [];
+    drift.checks.push({
+      type: "mcp-catalog",
+      endpoint: "https://docsmcp.googleapis.com/mcp/v1",
+      catalog: "evidence/catalog.json",
+    });
+    const observation: ProviderFacts = {
+      ...folder,
+      kind: "api",
+      read: (path) =>
+        path === "drift.json"
+          ? JSON.stringify(drift)
+          : path === "evidence/catalog.json"
+            ? JSON.stringify(catalog)
+            : folder.read(path),
+    };
+    expect(evidenceViolations(observation, today)).toEqual([]);
+    expect(driftViolations(observation, today)).toEqual([]);
+    drift.generated.hosted = ["read_doc", "update_doc"];
+    expect(driftViolations(observation, today)).toContain(
+      "D2: generated.hosted lists served hosted names, sorted; api observations stay in evidence/catalog.json",
+    );
+    drift.generated.hosted = [];
+    delete drift.checks.at(-1).catalog;
+    expect(driftViolations(observation, today)).toContain(
+      "D4: checks[2] compares hosted names and annotations against evidence/catalog.json (tools/list)",
+    );
+    catalog.tools[0].annotations.readOnlyHint = "true";
+    expect(evidenceViolations(observation, today)).toContain(
+      "E3: evidence/catalog.json read_doc behavioral hints must be booleans when present",
+    );
+  });
+
   it("names the drift record's renamed and hand-kept fields", () => {
     const folder = standard();
     const drift = JSON.parse(folder.read("drift.json")!);
@@ -276,44 +332,5 @@ describe("the provider standard's rules", () => {
         expect.stringMatching(/^D4: checks\[2\] entries are keyed by an operation/),
       ]),
     );
-  });
-
-  it("rejects today's legacy agent-facing shapes (S)", () => {
-    const tools: ToolFacts[] = [
-      { name: "acme_api_get", annotations: READ, inputSchema: object({ path: {}, query: {} }) },
-      { name: "acme_api_mutate", annotations: DESTRUCTIVE, inputSchema: object({ path: {} }) },
-      {
-        name: "list_charges",
-        annotations: READ,
-        inputSchema: object({ perPage: {}, offset: {}, raw: {} }),
-        outputSchema: object({ charges: {}, page: object({ hasMore: {}, nextOffset: {} }), truncatedFields: {} }),
-      },
-      { name: "acme_api_read", annotations: READ, inputSchema: object({ path: {}, select: {} }) },
-    ];
-    const found = surfaceViolations(tools);
-    for (const rule of ["S1", "S2", "S3", "S5", "S6"]) {
-      expect(
-        found.some((finding) => finding.startsWith(`${rule}:`)),
-        rule,
-      ).toBe(true);
-    }
-  });
-
-  it("accepts the standard agent-facing shape", () => {
-    const tools: ToolFacts[] = [
-      { name: "acme_api_search", annotations: READ, inputSchema: object({ query: {}, limit: {} }) },
-      { name: "acme_api_details", annotations: READ, inputSchema: object({ method: {}, path: {} }) },
-      { name: "acme_api_read", annotations: READ, inputSchema: object({ path: {}, query: {}, fields: {} }) },
-      { name: "acme_api_write", annotations: DESTRUCTIVE, inputSchema: object({ method: {}, path: {}, fields: {} }) },
-      {
-        name: "list_charges",
-        annotations: READ,
-        inputSchema: object({ limit: {}, cursor: {}, fields: {} }),
-        outputSchema: object({ items: { type: "array" }, page: PAGE, truncated: { type: "array" } }),
-      },
-      { name: "get_charge", annotations: READ, inputSchema: object({ chargeId: {}, fields: {} }) },
-      { name: "refund_charge", annotations: DESTRUCTIVE, inputSchema: object({ chargeId: {} }) },
-    ];
-    expect(surfaceViolations(tools)).toEqual([]);
   });
 });

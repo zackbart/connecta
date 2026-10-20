@@ -46,6 +46,7 @@
 //       presentation noise dropped — and surfaces what it dropped, including a
 //       provider's own truncation and the id needed to fetch the rest. `raw:
 //       true` exists wherever the projection loses something recoverable.
+//       After step 2, S6 replaces raw with a wider projection or S1 hatch.
 //   H10 One pagination convention per connector: an explicit page argument, an
 //       opaque cursor passed back verbatim, a default page size below the
 //       provider maximum, and exactly one branchable `hasMore`-shaped signal.
@@ -74,7 +75,8 @@
 //       class: read-only GET, always-destructive JSON mutation, and
 //       always-destructive upload, with connecta owning the method, host, auth,
 //       and framing. A *named* tool earns its permanent catalog bytes only by
-//       beating the hatch on schema, projection, or safety routing; the split is
+//       beating the hatch on schema, projection, or safety routing. After step
+//       2, S1 permits reviewed read-only POST too. The split is
 //       mechanical, that judgment is review-only.
 //
 // Hosted-MCP proxies (the downstream owns names, descriptions, schemas, result
@@ -164,8 +166,8 @@
 // still owed, and the Node-only `provider-standard.node.test.ts` holds the
 // folder rules and keeps that list shrinking.
 import { describe, expect, it } from "vitest";
-import { providerFixtures } from "./providers.generated.js";
-import { PENDING, surfaceViolations } from "./provider-standard.js";
+import { providerFixtures, providerKinds, authoredFixtures } from "./providers.generated.js";
+import { PENDING, authoredTools, surfaceViolations } from "./provider-standard.js";
 import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, compactDiscoverySchema } from "../src/catalog.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { validateToolInput } from "../src/validate.js";
@@ -432,12 +434,28 @@ describe("Notion splits its guarded raw access by safety class (H14)", () => {
   });
 });
 
+// The H metadata filter above never decides S coverage. Kinds come from the
+// actual definitions, and every authored surface has its own offline fixture.
+const authoredProviders = await Promise.all(
+  providerFixtures.map(async (fixture) => ({
+    name: fixture.name,
+    tools: await authoredTools(
+      providerKinds[fixture.name]!,
+      {
+        name: fixture.name,
+        ...(authoredFixtures[fixture.name] ? { createAuthored: authoredFixtures[fixture.name]! } : {}),
+      },
+      CONTEXT,
+    ),
+  })),
+);
+
 describe("standard api() surfaces share one agent-facing shape (decision 0011, S1–S6)", () => {
   it("holds every provider past its step-2 PR to the S rules, on this runtime", () => {
     // Empty until the first step-2 PR lands; each later one joins by leaving PENDING.step2.
-    const found = providers
-      .filter(({ name }) => !PENDING.step2.has(name))
-      .flatMap(({ name, tools }) => surfaceViolations(tools).map((finding) => `${name} ${finding}`));
+    const found = authoredProviders
+      .filter(({ name, tools }) => tools !== undefined && !PENDING.step2.has(name))
+      .flatMap(({ name, tools }) => surfaceViolations(tools!).map((finding) => `${name} ${finding}`));
     expect(found).toEqual([]);
   });
 
