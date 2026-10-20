@@ -1,0 +1,426 @@
+[
+  {
+    "label": "stripe_api_search",
+    "tool": "stripe_api_search",
+    "args": {
+      "query": "refund",
+      "method": "POST",
+      "limit": 3
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "POST",
+            "path": "/v1/refunds",
+            "operationId": "PostRefunds",
+            "summary": "Create a refund",
+            "tag": "refunds",
+            "tool": "stripe_api_write"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/refunds/{refund}",
+            "operationId": "PostRefundsRefund",
+            "summary": "Update a refund",
+            "tag": "refunds",
+            "tool": "stripe_api_write"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/terminal/refunds",
+            "operationId": "PostTerminalRefunds",
+            "summary": "Create a refund using a Terminal-supported device.",
+            "tag": "terminal",
+            "tool": "stripe_api_write"
+          }
+        ],
+        "revision": "v2555"
+      }
+    }
+  },
+  {
+    "label": "stripe_api_details",
+    "tool": "stripe_api_details",
+    "args": {
+      "method": "GET",
+      "path": "/v1/payment_intents/pi_123",
+      "param": "expand"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "GET",
+        "path": "/v1/payment_intents/{intent}",
+        "operationId": "GetPaymentIntentsIntent",
+        "summary": "Retrieve a PaymentIntent",
+        "parameters": [
+          {
+            "name": "expand",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "tool": "stripe_api_read",
+        "revision": "v2555"
+      }
+    }
+  },
+  {
+    "label": "stripe_api_read",
+    "tool": "stripe_api_read",
+    "args": {
+      "path": "/v1/charges",
+      "query": {
+        "customer": "cus_1",
+        "expand": [
+          "data.customer"
+        ],
+        "created": {
+          "gte": 10
+        },
+        "limit": 2
+      },
+      "select": [
+        "data.id",
+        "data.amount"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.stripe.com/v1/charges?customer=cus_1&expand%5B0%5D=data.customer&created%5Bgte%5D=10&limit=2",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "data": [
+            {
+              "id": "ch_1",
+              "amount": 500
+            },
+            {
+              "id": "ch_2",
+              "amount": 600
+            }
+          ]
+        },
+        "page": {
+          "hasMore": true,
+          "next": "ch_2",
+          "param": "starting_after"
+        }
+      }
+    }
+  },
+  {
+    "label": "stripe_api_read reviewed POST",
+    "tool": "stripe_api_read",
+    "args": {
+      "method": "POST",
+      "path": "/v1/invoices/create_preview",
+      "body": {
+        "customer": "cus_1"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.stripe.com/v1/invoices/create_preview",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/x-www-form-urlencoded",
+            "stripe-version": "2026-09-30.endive"
+          },
+          "body": {
+            "form": [
+              [
+                "customer",
+                "cus_1"
+              ]
+            ]
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "object": "invoice",
+          "customer": "cus_1",
+          "amount_due": 2500,
+          "currency": "usd",
+          "lines": {
+            "object": "list",
+            "data": [
+              {
+                "id": "il_1",
+                "amount": 2500,
+                "description": "Gold plan"
+              }
+            ],
+            "has_more": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "stripe_api_write",
+    "tool": "stripe_api_write",
+    "args": {
+      "method": "POST",
+      "path": "/v1/customers/cus_1",
+      "body": {
+        "email": "alice@example.com",
+        "metadata": {
+          "tier": "gold",
+          "stale": ""
+        },
+        "invoice_settings": {
+          "custom_fields": [
+            {
+              "name": "PO",
+              "value": "42"
+            }
+          ],
+          "default_payment_method": null
+        },
+        "preferred_locales": []
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.stripe.com/v1/customers/cus_1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/x-www-form-urlencoded",
+            "idempotency-key": "00000000-0000-4000-8000-000000000001",
+            "stripe-version": "2026-09-30.endive"
+          },
+          "body": {
+            "form": [
+              [
+                "email",
+                "alice@example.com"
+              ],
+              [
+                "metadata[tier]",
+                "gold"
+              ],
+              [
+                "metadata[stale]",
+                ""
+              ],
+              [
+                "invoice_settings[custom_fields][0][name]",
+                "PO"
+              ],
+              [
+                "invoice_settings[custom_fields][0][value]",
+                "42"
+              ],
+              [
+                "invoice_settings[default_payment_method]",
+                ""
+              ],
+              [
+                "preferred_locales",
+                ""
+              ]
+            ]
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": "cus_1",
+          "object": "customer",
+          "email": "alice@example.com",
+          "name": "Alice",
+          "livemode": false,
+          "metadata": {
+            "tier": "gold"
+          }
+        },
+        "idempotencyKey": "00000000-0000-4000-8000-000000000001"
+      }
+    }
+  },
+  {
+    "label": "stripe_api_write DELETE",
+    "tool": "stripe_api_write",
+    "args": {
+      "method": "DELETE",
+      "path": "/v1/customers/cus_1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "DELETE",
+          "url": "https://api.stripe.com/v1/customers/cus_1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": "cus_1",
+          "object": "customer",
+          "deleted": true
+        }
+      }
+    }
+  },
+  {
+    "label": "get_stripe_account_info",
+    "tool": "get_stripe_account_info",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.stripe.com/v1/account",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "accountId": "acct_1",
+        "name": "Grace Co",
+        "country": "US",
+        "defaultCurrency": "usd",
+        "mode": "sandbox",
+        "livemode": false,
+        "connectedAccount": null,
+        "chargesEnabled": true,
+        "payoutsEnabled": false
+      }
+    }
+  },
+  {
+    "label": "get_balance_summary",
+    "tool": "get_balance_summary",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.stripe.com/v1/balance",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "livemode": false,
+        "available": [
+          {
+            "amount": 1099,
+            "currency": "usd"
+          }
+        ],
+        "pending": [
+          {
+            "amount": 0,
+            "currency": "usd"
+          }
+        ],
+        "instantAvailable": [
+          {
+            "amount": 500,
+            "currency": "usd"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "stripe_api_read echoes sent secrets",
+    "tool": "stripe_api_read",
+    "args": {
+      "path": "/v1/customers/cus_1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.stripe.com/v1/customers/cus_1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": "cus_1",
+          "object": "customer",
+          "description": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
+        }
+      }
+    }
+  }
+]

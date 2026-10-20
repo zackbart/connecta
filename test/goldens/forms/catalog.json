@@ -1,0 +1,757 @@
+{
+  "id": "forms",
+  "kind": "api",
+  "title": "Google Forms",
+  "description": "Google Forms as the signed-in Workspace user: read and edit forms, read responses — Event registration",
+  "guide": {
+    "summary": "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
+    "content": "# Google Forms usage\n\nActs as the signed-in person in Google Forms through Workspace delegation: read and edit their forms, read responses, never submit or delete.\n\nConnection purpose: Event registration\n\n## Whose forms\n\nEvery call reaches only the forms the Workspace user deployment config maps\nthe caller to can open; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names a user. A call with none mapped fails `auth_required`; only an operator can change\nthat. A form id\nthat does not exist and one not shared with that user fail alike, as\n`connector_call_failed`: Google does not say which.\n\n## Finding forms\n\nThere is no list or search here: the Forms API has none. Find a form in\nDrive, or take its id from an edit URL (`/forms/d/<formId>/edit`). The\n`/forms/d/e/…` responder link is not the form id.\n\n## Reading\n\n- Every result stays inside 192 KiB, so it crosses into\n  `execute_code` whole. A page that would outgrow that ends early with\n  `page.hasMore`; follow `page.nextCursor` rather than raising `limit`.\n- `get_form` lists items with their `questions`: one for a question,\n  one per row for a grid, none for sections and media. Answers are keyed by\n  those `questionId`s. A large form pages its items (`itemCount` is the\n  total), and a grid too large for one page continues on the next: the item\n  repeats with `questionsFrom`, the index of its first row there, and\n  `moreQuestions` counts rows still to come. A cursor from a form that has\n  since changed fails `conflict`.\n  Long text is cut with a marker; `raw: true` returns Google's whole Form\n  resource, or refuses one too large for a result.\n- `list_responses` labels each answer with its question's title, in form\n  order; an answer to a since-deleted question has no title. Answers longer\n  than 2000 characters end with a truncation marker; `get_response`\n  reads one whole. Page with `page.nextCursor` and the same\n  `submittedAfter`. To read only new responses, pass the newest\n  `lastSubmittedTime` already seen as `submittedAfter`. A cursor\n  continues after the last response it returned; if Google's page has\n  changed since (new, deleted, or reordered responses), it fails\n  `conflict` — start again, or use `submittedAfter`.\n- A response too large for one result comes back cut, with the answers left\n  out named in `omittedQuestionIds`; pass them to `get_response` as\n  `questionIds`.\n\n## Editing\n\n- `create_form` makes an empty form: Google takes only its title and Drive\n  file name at creation. Add a description and questions afterwards.\n- `update_form_info` replaces the title or description.\n- `batch_update_form` is the escape hatch for everything else, and always\n  needs approval. It takes Google's own Request objects, applied all or none,\n  with the form's current `revisionId` as `requiredRevisionId`: a form\n  someone changed since you read it is refused as `conflict`, so re-read it\n  and rebuild the edit. Its reply carries the new `revisionId` and each created item's id.\n  A reply too large to return whole comes back with `truncated: true`: the\n  batch still applied; read the rest with `get_form`. An `updateItem` needs an `updateMask`; read `raw: true` first so the\n  item it replaces keeps its grading, images, and navigation.\n- Publishing, sharing, deleting, and watches are not in this connection; the\n  owner does those in Forms or Drive. Responses are read-only.\n"
+  },
+  "tools": [
+    {
+      "name": "get_form",
+      "description": "Get one Google Form: title, description, quiz and publish state, revisionId, and its items with question ids, types, and options, paged when large. Never lists forms.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Form id: the part after /forms/d/ in its edit URL, a Drive file id, or create_form's formId. Not the /forms/d/e/… responder link."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Google's untouched Form resource (grading, images, section navigation) instead of the projection; read it before an updateItem that must keep them. Not paged: a form too large for one result is refused."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same formId."
+          }
+        },
+        "required": [
+          "formId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "The projection; with raw: true, Google's Form resource (formId, info, settings, publishSettings, items, revisionId), empty fields omitted.",
+        "properties": {
+          "formId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "documentTitle": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "responderUri": {
+            "type": "string"
+          },
+          "editUrl": {
+            "type": "string"
+          },
+          "linkedSheetId": {
+            "type": "string"
+          },
+          "isQuiz": {
+            "type": "boolean"
+          },
+          "emailCollection": {
+            "type": "string"
+          },
+          "published": {
+            "type": "boolean"
+          },
+          "acceptingResponses": {
+            "type": "boolean"
+          },
+          "itemCount": {
+            "type": "integer"
+          },
+          "questionCount": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "itemId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "gridType": {
+                  "type": "string"
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "moreOptions": {
+                  "type": "integer"
+                },
+                "hasOther": {
+                  "type": "boolean"
+                },
+                "questions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "questionId": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "rowTitle": {
+                        "type": "string"
+                      },
+                      "required": {
+                        "type": "boolean"
+                      },
+                      "points": {
+                        "type": "integer"
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "moreOptions": {
+                        "type": "integer"
+                      },
+                      "hasOther": {
+                        "type": "boolean"
+                      },
+                      "scale": {
+                        "type": "object",
+                        "properties": {
+                          "low": {
+                            "type": "integer"
+                          },
+                          "high": {
+                            "type": "integer"
+                          },
+                          "lowLabel": {
+                            "type": "string"
+                          },
+                          "highLabel": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "includesYear": {
+                        "type": "boolean"
+                      },
+                      "includesTime": {
+                        "type": "boolean"
+                      },
+                      "duration": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                },
+                "questionsFrom": {
+                  "type": "integer"
+                },
+                "moreQuestions": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "formId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "create_form",
+      "description": "Create an empty Google Form with a title in the user's Drive. Google sets only the title here: add questions and a description with batch_update_form.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "Title responders see."
+          },
+          "documentTitle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "File name in Drive; defaults to the title. It cannot be changed through this connection later."
+          },
+          "unpublished": {
+            "type": "boolean",
+            "description": "Create it not accepting responses. This connection cannot publish it later; the owner does, in Forms. Omit to publish."
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "documentTitle": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "responderUri": {
+            "type": "string"
+          },
+          "editUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "formId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "list_responses",
+      "description": "List a Google Form's submitted responses, each answer labeled with its question's title in form order. Long answers are cut; get_response reads one whole.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Form id: the part after /forms/d/ in its edit URL, a Drive file id, or create_form's formId. Not the /forms/d/e/… responder link."
+          },
+          "submittedAfter": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$",
+            "description": "Only responses submitted after this UTC instant (exclusive), e.g. 2026-10-01T00:00:00Z or the newest lastSubmittedTime already read."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Responses per page, 1 to 100; defaults to 25. Connecta's cap, far below Google's 5,000; page with the cursor."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same formId and submittedAfter."
+          }
+        },
+        "required": [
+          "formId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string"
+          },
+          "responses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "responseId": {
+                  "type": "string"
+                },
+                "createTime": {
+                  "type": "string"
+                },
+                "lastSubmittedTime": {
+                  "type": "string"
+                },
+                "respondentEmail": {
+                  "type": "string"
+                },
+                "totalScore": {
+                  "type": "number"
+                },
+                "omittedQuestionIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "answers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "questionId": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "values": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "fileId": {
+                              "type": "string"
+                            },
+                            "fileName": {
+                              "type": "string"
+                            },
+                            "mimeType": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "correct": {
+                        "type": "boolean"
+                      },
+                      "feedback": {
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          },
+                          "links": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "uri": {
+                                  "type": "string"
+                                },
+                                "displayText": {
+                                  "type": "string"
+                                },
+                                "video": {
+                                  "type": "boolean"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "formId",
+          "responses",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_response",
+      "description": "Get one Google Form response whole, each answer labeled with its question's title, plus file ids, quiz grades, and feedback. questionIds narrows a large one.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Form id: the part after /forms/d/ in its edit URL, a Drive file id, or create_form's formId. Not the /forms/d/e/… responder link."
+          },
+          "responseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Response id from list_responses."
+          },
+          "questionIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "description": "Question id from get_form, or from omittedQuestionIds."
+            },
+            "description": "Return only these questions' answers, for a response too large to read whole in one result."
+          }
+        },
+        "required": [
+          "formId",
+          "responseId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "responseId": {
+            "type": "string"
+          },
+          "createTime": {
+            "type": "string"
+          },
+          "lastSubmittedTime": {
+            "type": "string"
+          },
+          "respondentEmail": {
+            "type": "string"
+          },
+          "totalScore": {
+            "type": "number"
+          },
+          "omittedQuestionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "answers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "questionId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "values": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "fileId": {
+                        "type": "string"
+                      },
+                      "fileName": {
+                        "type": "string"
+                      },
+                      "mimeType": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "score": {
+                  "type": "number"
+                },
+                "correct": {
+                  "type": "boolean"
+                },
+                "feedback": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "uri": {
+                            "type": "string"
+                          },
+                          "displayText": {
+                            "type": "string"
+                          },
+                          "video": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "responseId",
+          "answers"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "update_form_info",
+      "description": "Replace a Google Form's title, description, or both; what is omitted is kept. The old text is gone. Questions and settings need batch_update_form.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Form id: the part after /forms/d/ in its edit URL, a Drive file id, or create_form's formId. Not the /forms/d/e/… responder link."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "New title responders see; omit to keep it."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 20000,
+            "description": "New description; an empty string clears it. Omit to keep it."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^\\S+$",
+            "description": "Optional. revisionId from get_form, create_form, or the previous edit. Google refuses the edit if the form changed since; re-read it and retry."
+          }
+        },
+        "required": [
+          "formId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "formId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "batch_update_form",
+      "description": "Apply Forms API batchUpdate requests to a Google Form, all or none: create, update, move, or delete items, and change info or quiz settings. Always needs approval.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Form id: the part after /forms/d/ in its edit URL, a Drive file id, or create_form's formId. Not the /forms/d/e/… responder link."
+          },
+          "requests": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 1,
+              "additionalProperties": false,
+              "properties": {
+                "createItem": {
+                  "type": "object",
+                  "description": "{ item, location: { index } }"
+                },
+                "updateItem": {
+                  "type": "object",
+                  "description": "{ item, location: { index }, updateMask }"
+                },
+                "deleteItem": {
+                  "type": "object",
+                  "description": "{ location: { index } }"
+                },
+                "moveItem": {
+                  "type": "object",
+                  "description": "{ originalLocation, newLocation }"
+                },
+                "updateFormInfo": {
+                  "type": "object",
+                  "description": "{ info: { title?, description? }, updateMask }"
+                },
+                "updateSettings": {
+                  "type": "object",
+                  "description": "{ settings: { quizSettings?, emailCollectionType? }, updateMask }"
+                }
+              }
+            },
+            "description": "1 to 100 Forms API Request objects, each exactly one kind, applied in order as Google documents them. Locations are item indexes."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^\\S+$",
+            "description": "revisionId from get_form, create_form, or the previous edit. Google refuses the edit if the form changed since; re-read it and retry."
+          }
+        },
+        "required": [
+          "formId",
+          "requests",
+          "requiredRevisionId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "replies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "createdItemId": {
+                  "type": "string"
+                },
+                "createdQuestionIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          },
+          "replyCount": {
+            "type": "integer"
+          },
+          "createdItemCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "formId",
+          "replies"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,2921 @@
+{
+  "id": "church",
+  "kind": "api",
+  "title": "Pushpay ChMS (CCB)",
+  "description": "Church Community Builder (Pushpay ChMS) — Production church data, church-wide under one administrator-approved grant (System Auth), reads plus approval-gated writes: Pastoral care and group shepherding",
+  "guide": {
+    "summary": "Production CCB, church-wide: id resolution, sensitive data, paging, rate limits, hatches.",
+    "content": "# Church Community Builder (Pushpay ChMS)\n\nProduction church data, church-wide under one administrator-approved grant (System Auth), reads plus approval-gated writes: Pastoral care and group shepherding\n\n## Resolve ids before acting\n\n- Every record is addressed by an integer id. Read it from a list tool and\n  pass it back; never guess one. `list_individuals` finds people by partial\n  name, phone, or email; `familyId`, `groupId`, `eventId`, form, process,\n  queue, and category ids come from their own list tools.\n- Events are series with dated occurrences. `list_events` returns\n  `eventId` plus `occurrence`; the attendance tools need both.\n- Campus and membership-type ids resolve through `ccb_api_get` on\n  `/campuses` and `/church/membership_types`.\n\n## Sensitive data stays out of results\n\nProjections drop allergies, giving numbers and dates, attendance prayer\nrequests and leader notes, and form payment details; `raw: true` returns\nCCB's full row. Notes, pledges, giving metrics, background checks, and\nfinancial settings are pastoral or financial: read them inside\n`execute_code` and return only the reduced answer the task needs.\n\nGiving in v2 is counts per period (`get_giving_metrics`), pledges, scheduled\ngifts, and financial settings. Transactions, batches, and amounts per gift\nlive only in CCB's legacy v1 XML API, which this connector does not reach.\n\n## Paging\n\nLists take `page` (1-based) and `perPage` (25, 50, 75, or 100 only) and\nreturn `page.hasMore`, `page.nextPage`, and `page.total`. Field names are\nCCB's snake_case turned camelCase.\n\n## Rate limits\n\nCCB allows each endpoint about one call a second after a burst of 60, per API\nclient. This connector keeps a per-runtime 60-per-minute window per endpoint\n— an approximation, not an enforcement. `get_individual` (1/s),\n`list_schedules` (1 per 2 s), and individuals advanced search (1 per 5 s)\nallow no burst: page a list instead of looping a get, and space those calls.\nA `rate_limited` failure carries CCB's wait.\n\n## Raw access\n\n`ccb_api_get` reaches any GET path; `ccb_api_search` runs advanced searches,\nwhich CCB serves as POST but are reads. `ccb_api_mutate` reaches every POST, PUT, PATCH, and DELETE and always needs approval. Paths are below the API origin, such as `/church/membership_types`.\nGranted scopes: read:advanced_searches read:campuses read:church read:event_attendance read:events read:forms read:group_members read:groups read:individual_groups read:individual_notes read:individual_pledges read:individuals read:individuals_metrics read:process_queues read:queue_individuals read:scheduling write:event_attendance write:events write:form_responses write:group_members write:groups write:individual_groups write:individual_notes write:individuals write:notes write:queue_individuals write:scheduling. A call outside them fails with 403.\n"
+  },
+  "tools": [
+    {
+      "name": "get_me",
+      "description": "Get the CCB individual the access token belongs to. Under Identity Auth that is the signed-in person whose permissions every call carries.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "familyId": {
+            "type": "integer"
+          },
+          "campusId": {
+            "type": "integer"
+          },
+          "userTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_individuals",
+      "description": "Find CCB individuals by partial name, phone, or email. Returns lean profiles with family and campus ids; not the advanced search.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Partial name, phone number, or email. Omit to page everyone."
+          },
+          "includeInactive": {
+            "type": "boolean",
+            "description": "Include inactive individuals."
+          },
+          "includeDeceased": {
+            "type": "boolean",
+            "description": "Include deceased individuals."
+          },
+          "campusScope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "current",
+              "other"
+            ],
+            "description": "Campuses to search relative to the connection's own."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "individuals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "firstName": {
+                  "type": "string"
+                },
+                "lastName": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "phones": {
+                  "type": "object",
+                  "properties": {
+                    "mobile": {
+                      "type": "string"
+                    },
+                    "home": {
+                      "type": "string"
+                    },
+                    "work": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "birthday": {
+                  "type": "string"
+                },
+                "familyId": {
+                  "type": "integer"
+                },
+                "familyPosition": {
+                  "type": "string"
+                },
+                "campusId": {
+                  "type": "integer"
+                },
+                "membershipTypeId": {
+                  "type": "integer"
+                },
+                "active": {
+                  "type": "boolean"
+                },
+                "deceased": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "individuals",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_individual",
+      "description": "Get one CCB individual's profile: contact, addresses, membership, and custom fields. CCB allows one call a second; prefer list_individuals for many people.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "individualId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Individual id from list_individuals."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "individualId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phones": {
+            "type": "object",
+            "properties": {
+              "mobile": {
+                "type": "string"
+              },
+              "home": {
+                "type": "string"
+              },
+              "work": {
+                "type": "string"
+              }
+            }
+          },
+          "birthday": {
+            "type": "string"
+          },
+          "familyId": {
+            "type": "integer"
+          },
+          "familyPosition": {
+            "type": "string"
+          },
+          "campusId": {
+            "type": "integer"
+          },
+          "membershipTypeId": {
+            "type": "integer"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "deceased": {
+            "type": "string"
+          },
+          "gender": {
+            "type": "string"
+          },
+          "maritalStatus": {
+            "type": "string"
+          },
+          "homeAddress": {
+            "type": "object",
+            "properties": {
+              "street": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "zip": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              }
+            }
+          },
+          "mailingAddress": {
+            "type": "object",
+            "properties": {
+              "street": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "zip": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              }
+            }
+          },
+          "campusName": {
+            "type": "string"
+          },
+          "membershipTypeName": {
+            "type": "string"
+          },
+          "membershipDate": {
+            "type": "string"
+          },
+          "baptized": {
+            "type": "boolean"
+          },
+          "lastAttendedDate": {
+            "type": "string"
+          },
+          "listed": {
+            "type": "boolean"
+          },
+          "customFields": {
+            "type": "object"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_families",
+      "description": "Find CCB families by partial last name, email, or mobile phone. Returns family ids and addresses; get_family lists the members.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "lastName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Partial last name."
+          },
+          "email": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Partial email."
+          },
+          "phone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "description": "Partial mobile phone."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "families": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "lastName": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": "object",
+                  "properties": {
+                    "street": {
+                      "type": "string"
+                    },
+                    "city": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "zip": {
+                      "type": "string"
+                    },
+                    "country": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "members": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "firstName": {
+                        "type": "string"
+                      },
+                      "lastName": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      },
+                      "phones": {
+                        "type": "object",
+                        "properties": {
+                          "mobile": {
+                            "type": "string"
+                          },
+                          "home": {
+                            "type": "string"
+                          },
+                          "work": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "birthday": {
+                        "type": "string"
+                      },
+                      "familyId": {
+                        "type": "integer"
+                      },
+                      "familyPosition": {
+                        "type": "string"
+                      },
+                      "campusId": {
+                        "type": "integer"
+                      },
+                      "membershipTypeId": {
+                        "type": "integer"
+                      },
+                      "active": {
+                        "type": "boolean"
+                      },
+                      "deceased": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "families",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_family",
+      "description": "Get one CCB family with every member's lean profile and family position.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "familyId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Family id from an individual's familyId or list_families."
+          },
+          "includeInactive": {
+            "type": "boolean",
+            "description": "Include inactive members."
+          },
+          "includeDeceased": {
+            "type": "boolean",
+            "description": "Include deceased members."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "familyId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "street": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "zip": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              }
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "firstName": {
+                  "type": "string"
+                },
+                "lastName": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "phones": {
+                  "type": "object",
+                  "properties": {
+                    "mobile": {
+                      "type": "string"
+                    },
+                    "home": {
+                      "type": "string"
+                    },
+                    "work": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "birthday": {
+                  "type": "string"
+                },
+                "familyId": {
+                  "type": "integer"
+                },
+                "familyPosition": {
+                  "type": "string"
+                },
+                "campusId": {
+                  "type": "integer"
+                },
+                "membershipTypeId": {
+                  "type": "integer"
+                },
+                "active": {
+                  "type": "boolean"
+                },
+                "deceased": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_groups",
+      "description": "List or search CCB groups by partial name, optionally for one campus. Returns group type, leader, and membership mode.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Partial group name."
+          },
+          "campusId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Only groups at this campus."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "campusId": {
+                  "type": "integer"
+                },
+                "inactive": {
+                  "type": "boolean"
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "interactionType": {
+                  "type": "string"
+                },
+                "membershipType": {
+                  "type": "string"
+                },
+                "mainLeader": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "departmentId": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "groups",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_group",
+      "description": "Get one CCB group: description, member count, meeting day, time, area, and address.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "groupId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Group id from list_groups."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "groupId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "campusId": {
+            "type": "integer"
+          },
+          "inactive": {
+            "type": "boolean"
+          },
+          "groupType": {
+            "type": "string"
+          },
+          "interactionType": {
+            "type": "string"
+          },
+          "membershipType": {
+            "type": "string"
+          },
+          "mainLeader": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "departmentId": {
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "memberCount": {
+            "type": "integer"
+          },
+          "childcare": {
+            "type": "boolean"
+          },
+          "listed": {
+            "type": "boolean"
+          },
+          "full": {
+            "type": "boolean"
+          },
+          "meetDay": {
+            "type": "string"
+          },
+          "meetTime": {
+            "type": "string"
+          },
+          "area": {
+            "type": "string"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "street": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "zip": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_group_members",
+      "description": "List one CCB group's participants with role and date added. Filter by leader or member status, or partial name.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "groupId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Group id from list_groups."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "all",
+              "leader",
+              "member"
+            ],
+            "description": "Participant role filter."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Partial participant name."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "groupId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "groupId": {
+                  "type": "integer"
+                },
+                "individualId": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "dateAdded": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "phones": {
+                  "type": "object",
+                  "properties": {
+                    "mobile": {
+                      "type": "string"
+                    },
+                    "home": {
+                      "type": "string"
+                    },
+                    "work": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "groupName": {
+                  "type": "string"
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "groupInactive": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "members",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_individual_groups",
+      "description": "List the CCB groups one individual belongs to, with their role. Defaults to member and leader roles.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "individualId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Individual id."
+          },
+          "includeInactive": {
+            "type": "boolean",
+            "description": "List inactive groups instead of active ones."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "individualId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "groupId": {
+                  "type": "integer"
+                },
+                "individualId": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "dateAdded": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "phones": {
+                  "type": "object",
+                  "properties": {
+                    "mobile": {
+                      "type": "string"
+                    },
+                    "home": {
+                      "type": "string"
+                    },
+                    "work": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "groupName": {
+                  "type": "string"
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "groupInactive": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "groups",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_events",
+      "description": "List CCB event occurrences by name and time range. Each row's eventId and occurrence feed the attendance tools.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Partial event name."
+          },
+          "range": {
+            "type": "string",
+            "enum": [
+              "ALL",
+              "PAST",
+              "CURRENT",
+              "FUTURE"
+            ],
+            "description": "Time range relative to now."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "occurrences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "integer"
+                },
+                "occurrence": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "campusId": {
+                  "type": "integer"
+                },
+                "recurs": {
+                  "type": "boolean"
+                },
+                "groupId": {
+                  "type": "integer"
+                },
+                "groupName": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "occurrences",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_event",
+      "description": "Get one CCB event's details, optionally for one occurrence with its attendance totals.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Event id from list_events."
+          },
+          "occurrence": {
+            "type": "string",
+            "pattern": "^\\d{4}-?\\d{2}-?\\d{2}$",
+            "description": "Occurrence date, YYYYMMDD or YYYY-MM-DD. Omit for the series."
+          },
+          "withAttendance": {
+            "type": "boolean",
+            "description": "Add attendance totals for the occurrence."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "eventId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "campusId": {
+            "type": "integer"
+          },
+          "start": {
+            "type": "string"
+          },
+          "end": {
+            "type": "string"
+          },
+          "recurs": {
+            "type": "boolean"
+          },
+          "recurEndDate": {
+            "type": "string"
+          },
+          "approvalStatus": {
+            "type": "string"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "street": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "zip": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              }
+            }
+          },
+          "guestCounts": {
+            "type": "object"
+          },
+          "group": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "attendance": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "totalAttendance": {
+                "type": "integer"
+              },
+              "visitors": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_event_attendance",
+      "description": "Get one CCB event occurrence's attendance summary: met or not, totals, visitors, topic. Drops leader notes and prayer requests unless raw.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Event id from list_events."
+          },
+          "occurrence": {
+            "type": "string",
+            "pattern": "^\\d{4}-?\\d{2}-?\\d{2}$",
+            "description": "Occurrence date, YYYYMMDD or YYYY-MM-DD, from list_events."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "eventId",
+          "occurrence"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "integer"
+          },
+          "occurrence": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "totalAttendance": {
+            "type": "integer"
+          },
+          "visitors": {
+            "type": "integer"
+          },
+          "topic": {
+            "type": "string"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_event_attendees",
+      "description": "List who attended one CCB event occurrence. Returns individual ids and names.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Event id from list_events."
+          },
+          "occurrence": {
+            "type": "string",
+            "pattern": "^\\d{4}-?\\d{2}-?\\d{2}$",
+            "description": "Occurrence date, YYYYMMDD or YYYY-MM-DD, from list_events."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "eventId",
+          "occurrence"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "attendees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "individualId": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "familyId": {
+                  "type": "integer"
+                },
+                "occurrenceDate": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "attendees",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_forms",
+      "description": "List or search CCB forms by partial title, status, or campus. Returns form ids for list_form_responses.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Partial form title."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "SCHEDULED",
+              "UNPUBLISHED",
+              "EXPIRED",
+              "ARCHIVED"
+            ],
+            "description": "Form status."
+          },
+          "campusId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Only forms at this campus."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "forms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "campusId": {
+                  "type": "integer"
+                },
+                "start": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "public": {
+                  "type": "boolean"
+                },
+                "url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "forms",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_form_responses",
+      "description": "List one CCB form's responses with answers by question id and payment status. Drops payment details unless raw.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Form id from list_forms."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "formId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "responses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "formId": {
+                  "type": "integer"
+                },
+                "individualId": {
+                  "type": "integer"
+                },
+                "created": {
+                  "type": "string"
+                },
+                "paymentStatus": {
+                  "type": "string"
+                },
+                "answers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "questionId": {
+                        "type": "integer"
+                      },
+                      "answer": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "responses",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_processes",
+      "description": "List CCB processes (assimilation and follow-up pipelines) by name or status. Returns process ids for list_queues.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Process name search."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "HIDDEN",
+              "ACTIVE",
+              "ARCHIVED"
+            ],
+            "description": "Process status."
+          },
+          "managedByMe": {
+            "type": "boolean",
+            "description": "Only processes the connection's individual manages."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "processes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "campusId": {
+                  "type": "integer"
+                },
+                "ownerId": {
+                  "type": "integer"
+                },
+                "hidden": {
+                  "type": "boolean"
+                },
+                "archived": {
+                  "type": "boolean"
+                },
+                "managers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "processes",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_queues",
+      "description": "List CCB process queues, optionally for one process, with assigned and unassigned counts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "processId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Only queues in this process."
+          },
+          "search": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Queue name search."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "queues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "processId": {
+                  "type": "integer"
+                },
+                "processName": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "assignedCount": {
+                  "type": "integer"
+                },
+                "unassignedCount": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "queues",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_queue_individuals",
+      "description": "List people in CCB process queues the connection can see, by status or assignment. CCB offers no per-queue filter here; filter on queueId.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "NOT_STARTED",
+              "WAITING",
+              "IN_PROCESS",
+              "DONE"
+            ],
+            "description": "Queue status."
+          },
+          "assignment": {
+            "type": "string",
+            "enum": [
+              "ASSIGNED_TO_ME",
+              "UNASSIGNED"
+            ],
+            "description": "Omit for both."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "queueIndividuals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "queueIndividualId": {
+                  "type": "integer"
+                },
+                "queueId": {
+                  "type": "integer"
+                },
+                "queueName": {
+                  "type": "string"
+                },
+                "processId": {
+                  "type": "integer"
+                },
+                "processName": {
+                  "type": "string"
+                },
+                "individualId": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "due": {
+                  "type": "string"
+                },
+                "created": {
+                  "type": "string"
+                },
+                "completed": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "queueIndividuals",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_scheduling_categories",
+      "description": "List CCB scheduling categories (serving ministries) with teams and organizer. Category ids feed list_schedules.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Category name search."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "ARCHIVED",
+              "ACTIVE_AND_ARCHIVED"
+            ],
+            "description": "Defaults to CCB's own (active)."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "campus": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "organizer": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "archived": {
+                  "type": "boolean"
+                },
+                "teams": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "categories"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_schedules",
+      "description": "List one CCB scheduling category's schedules with events and assignment metrics. CCB allows one call per two seconds here.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "categoryId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Category id from list_scheduling_categories."
+          },
+          "after": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Only schedules ending after this date, YYYY-MM-DD."
+          },
+          "before": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Only schedules ending before this date, YYYY-MM-DD."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "categoryId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "schedules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "categoryId": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "needed": {
+                  "type": "integer"
+                },
+                "events": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "start": {
+                        "type": "string"
+                      },
+                      "end": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "metrics": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "schedules",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_individual_assignments",
+      "description": "List one CCB individual's serving assignments with status, schedule, and event ids.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "individualId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Individual id."
+          },
+          "startDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Earliest assignment date, YYYY-MM-DD."
+          },
+          "endDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Latest assignment date, YYYY-MM-DD."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "individualId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "assignments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "categoryId": {
+                  "type": "integer"
+                },
+                "scheduleId": {
+                  "type": "integer"
+                },
+                "eventId": {
+                  "type": "integer"
+                },
+                "eventPositionId": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "statusReason": {
+                  "type": "string"
+                },
+                "dateNotified": {
+                  "type": "string"
+                },
+                "individualId": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "assignments",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_individual_notes",
+      "description": "List the notes on one CCB individual that the connection may read, with sharing level and context. Pastoral content; reduce before returning.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "individualId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Individual id."
+          },
+          "context": {
+            "type": "string",
+            "enum": [
+              "GROUP",
+              "DEPARTMENT",
+              "PROCESS_QUEUE",
+              "GENERAL"
+            ],
+            "description": "Only notes in this context."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "individualId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "individualId": {
+                  "type": "integer"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "sharingLevel": {
+                  "type": "string"
+                },
+                "context": {
+                  "type": "string"
+                },
+                "contextId": {
+                  "type": "integer"
+                },
+                "creator": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "notes",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_giving_metrics",
+      "description": "Get gift counts by period for one CCB individual or family, over at most 12 months. Counts only; v2 exposes no amounts or transactions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "individualId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Individual id. Exactly one of individualId or familyId."
+          },
+          "familyId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Family id. Exactly one of individualId or familyId."
+          },
+          "start": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Start date, YYYY-MM-DD. CCB caps the range at 12 months."
+          },
+          "end": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "End date, YYYY-MM-DD."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "periods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "members": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "individualId": {
+                        "type": "integer"
+                      },
+                      "count": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_individual_pledges",
+      "description": "List one CCB individual's pledges: fund, pledged, paid, and expected amounts, and recurrence.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "individualId": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Individual id."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return CCB's untouched rows, including the fields the projection drops."
+          }
+        },
+        "required": [
+          "individualId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "pledges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "campusId": {
+                  "type": "integer"
+                },
+                "fund": {
+                  "type": "string"
+                },
+                "pledged": {
+                  "type": "number"
+                },
+                "paid": {
+                  "type": "number"
+                },
+                "expected": {
+                  "type": "number"
+                },
+                "total": {
+                  "type": "number"
+                },
+                "frequency": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "pledges",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "ccb_api_get",
+      "description": "Call any CCB v2 GET endpoint and return its untouched body. Use named reads first; they project and page for you.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 512,
+            "pattern": "^/[^?#]*$",
+            "description": "Path below the API origin beginning with '/', such as /campuses. No query string; no /oauth paths."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters by name, one value each, such as { per_page: 50 }.",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "description": "CCB's untouched response body, or null when empty."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "ccb_api_search",
+      "description": "Run a CCB advanced search (POST /search/{domain}/results) and return untouched rows. Read-only; individuals allows one call per five seconds.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "pattern": "^[a-z_]{1,40}$",
+            "description": "Search domain: assignments, categories, department_detail, groups, individual_event_attendance, individual_groups, individuals, organizers, positions, schedules, schedules_totals, scheduling_files, scheduling_individuals, songs, volunteers."
+          },
+          "body": {
+            "type": "object",
+            "description": "Search body as CCB documents it for the domain, e.g. { configuration, filters }."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number; pass page.nextPage from the previous result."
+          },
+          "perPage": {
+            "type": "integer",
+            "enum": [
+              25,
+              50,
+              75,
+              100
+            ],
+            "description": "Rows per page. CCB accepts only these values; defaults to 25."
+          }
+        },
+        "required": [
+          "domain",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "description": "CCB's untouched response body, or null when empty."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "ccb_api_mutate",
+      "description": "Call any CCB v2 JSON POST, PUT, PATCH, or DELETE endpoint. The approval-gated hatch for every write; no file uploads.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "HTTP method the endpoint documents."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 512,
+            "pattern": "^/[^?#]*$",
+            "description": "Path below the API origin beginning with '/', such as /campuses. No query string; no /oauth paths."
+          },
+          "query": {
+            "type": "object",
+            "description": "Query parameters by name, one value each, such as { per_page: 50 }.",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "body": {
+            "type": [
+              "object",
+              "array",
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ],
+            "description": "JSON body exactly as CCB documents it. Omit when the endpoint takes none."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "description": "CCB's untouched response body, or null when empty."
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextPage": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    }
+  ]
+}

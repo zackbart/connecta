@@ -1,0 +1,650 @@
+{
+  "read": {
+    "tool": "get_person",
+    "args": {
+      "personId": "157857"
+    },
+    "cases": {
+      "400": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Breeze rejected the request (HTTP 400). Breeze said: Golden 400 failure",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure An operator must replace it with the key from this church's Extensions → API page.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.get_person",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry church.get_person after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Breeze rejected the configured API key (HTTP 403). Breeze said: Golden 403 failure An operator must replace it with the key from this church's Extensions → API page.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.get_person",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry church.get_person after the operator completes recovery."
+          }
+        }
+      },
+      "404": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "not_found",
+            "message": "Breeze has no such endpoint or record (HTTP 404). Check the path against the API reference, or re-read the id from its list tool.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Breeze request failed (HTTP 409). Breeze said: Golden 409 failure",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Breeze rejected the request (HTTP 422). Breeze said: Golden 422 failure",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "Breeze is throttling requests (HTTP 429). Breeze said: Golden 429 failure Breeze publishes no limit; slow the fan-out before retrying.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Breeze is failing upstream (HTTP 500).",
+            "retryable": true
+          }
+        }
+      },
+      "401 echo": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure: rejected [redacted] An operator must replace it with the key from this church's Extensions → API page.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.get_person",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry church.get_person after the operator completes recovery."
+          }
+        }
+      },
+      "network": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the Breeze API.",
+            "retryable": true,
+            "details": {
+              "host": "https://gracechurch.breezechms.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"church.get_person\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://gracechurch.breezechms.com",
+              "code": "timeout",
+              "operation": "church.get_person",
+              "stage": "downstream",
+              "elapsedMs": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  "write": {
+    "tool": "add_person",
+    "args": {
+      "firstName": "Jiminy",
+      "lastName": "Cricket"
+    },
+    "cases": {
+      "400": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Breeze rejected the request (HTTP 400). Breeze said: Golden 400 failure",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure An operator must replace it with the key from this church's Extensions → API page.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.add_person",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Breeze rejected the configured API key (HTTP 403). Breeze said: Golden 403 failure An operator must replace it with the key from this church's Extensions → API page.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.add_person",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "404": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "not_found",
+            "message": "Breeze has no such endpoint or record (HTTP 404). Check the path against the API reference, or re-read the id from its list tool.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Breeze request failed (HTTP 409). Breeze said: Golden 409 failure",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Breeze rejected the request (HTTP 422). Breeze said: Golden 422 failure",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "Breeze is throttling requests (HTTP 429). Breeze said: Golden 429 failure Breeze publishes no limit; slow the fan-out before retrying.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Breeze is failing upstream (HTTP 500).",
+            "retryable": true
+          }
+        }
+      },
+      "401 echo": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure: rejected [redacted] An operator must replace it with the key from this church's Extensions → API page.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.add_person",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "network": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the Breeze API.",
+            "retryable": true,
+            "details": {
+              "host": "https://gracechurch.breezechms.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "steps": [
+          [
+            {
+              "after": 0,
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
+            }
+          ]
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"church.add_person\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://gracechurch.breezechms.com",
+              "code": "timeout",
+              "operation": "church.add_person",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "church",
+            "operation": "church.add_person",
+            "uncertainCall": {
+              "address": "church.add_person",
+              "args": {
+                "firstName": "Jiminy",
+                "lastName": "Cricket"
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
+          }
+        }
+      }
+    }
+  }
+}

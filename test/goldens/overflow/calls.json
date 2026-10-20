@@ -1,0 +1,1240 @@
+[
+  {
+    "label": "overflow_api_get",
+    "tool": "overflow_api_get",
+    "args": {
+      "path": "/refunds/9910f34fd5061afeec3eab01",
+      "query": [
+        {
+          "name": "statusBucket[]",
+          "value": "PENDING"
+        },
+        {
+          "name": "statusBucket[]",
+          "value": "FAILED"
+        },
+        {
+          "name": "limit",
+          "value": 5
+        }
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01?statusBucket%5B%5D=PENDING&statusBucket%5B%5D=FAILED&limit=5",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": {
+            "id": "9910f34fd5061afeec3eab01",
+            "contributionId": "6710f34fd5061afeec3eab57",
+            "status": "SUCCEEDED",
+            "reason": "requested_by_customer",
+            "amountInCents": 5000,
+            "netValueInCents": 4825,
+            "feeValueInCents": 175,
+            "depositId": null,
+            "createdAt": "2025-01-05T00:00:00.000Z",
+            "updatedAt": "2025-01-05T00:00:00.000Z"
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "overflow_api_get text",
+    "tool": "overflow_api_get",
+    "args": {
+      "path": "/health"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/health",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": "ok"
+      }
+    }
+  },
+  {
+    "label": "overflow_api_mutate",
+    "tool": "overflow_api_mutate",
+    "args": {
+      "method": "POST",
+      "path": "/subscriptions",
+      "body": {
+        "donorId": "6710f34fd5061afeec3eab50",
+        "amount": 25,
+        "frequency": "monthly",
+        "campaignId": "7710f34fd5061afeec3eab78"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://server.overflow.co/api/v3/subscriptions",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          },
+          "body": {
+            "json": {
+              "donorId": "6710f34fd5061afeec3eab50",
+              "amount": 25,
+              "frequency": "monthly",
+              "campaignId": "7710f34fd5061afeec3eab78"
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": {
+            "id": "5510f34fd5061afeec3eab11",
+            "donorId": "6710f34fd5061afeec3eab50",
+            "status": "active",
+            "amount": 25,
+            "frequency": "monthly",
+            "startDate": "2025-01-01",
+            "nextPaymentDate": "2025-02-01",
+            "anonymous": false,
+            "donorCoveredFees": true,
+            "paymentMethod": {
+              "id": "pm1",
+              "holderName": "Alice Doe",
+              "type": "card",
+              "last4": "4242",
+              "expiration": "12/30"
+            },
+            "campaign": {
+              "id": "7710f34fd5061afeec3eab78",
+              "name": "Mission 2025"
+            },
+            "subcampaign": null,
+            "locationId": "6710f34fd5061afeec3eab58",
+            "metadata": null,
+            "createdAt": "2025-01-01",
+            "updatedAt": "2025-01-01"
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "overflow_api_mutate DELETE",
+    "tool": "overflow_api_mutate",
+    "args": {
+      "method": "DELETE",
+      "path": "/subscriptions/6710f34fd5061afeec3eab50/5510f34fd5061afeec3eab11",
+      "body": {
+        "cancellationReason": "Donor request"
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "DELETE",
+          "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50/5510f34fd5061afeec3eab11",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          },
+          "body": {
+            "json": {
+              "cancellationReason": "Donor request"
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": null
+      }
+    }
+  },
+  {
+    "label": "list_contributions",
+    "tool": "list_contributions",
+    "args": {
+      "statusBucket": [
+        "PENDING",
+        "CONFIRMED"
+      ],
+      "locationIds": [
+        "6710f34fd5061afeec3eab58"
+      ],
+      "minimumUpdatedDate": "2025-01-01",
+      "campaignId": "7710f34fd5061afeec3eab78"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/contributions?minimumUpdatedDate=2025-01-01&statusBucket%5B%5D=PENDING&statusBucket%5B%5D=CONFIRMED&campaignId=7710f34fd5061afeec3eab78&locationIds%5B%5D=6710f34fd5061afeec3eab58&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "contributions": [
+          {
+            "id": "6710f34fd5061afeec3eab57",
+            "type": "CASH",
+            "status": "PAID_OUT",
+            "amount": 5000,
+            "frequency": "one-time",
+            "contributionDate": "2025-01-01T00:00:00.000Z",
+            "donor": {
+              "id": "6710f34fd5061afeec3eab50",
+              "firstName": "Alice",
+              "lastName": "Doe"
+            },
+            "anonymous": false,
+            "donorCoveredFees": false,
+            "campaign": {
+              "id": "7710f34fd5061afeec3eab78",
+              "name": "Mission 2025"
+            },
+            "locationId": "6710f34fd5061afeec3eab58",
+            "depositId": "8810f34fd5061afeec3eab67",
+            "paymentMethod": {
+              "type": "Card",
+              "last4": "4242"
+            },
+            "createdAt": "2025-01-01T00:00:00.000Z",
+            "updatedAt": "2025-01-02T00:00:00.000Z"
+          },
+          {
+            "id": "6710f34fd5061afeec3eab5a",
+            "type": "STOCK",
+            "status": "PENDING",
+            "amount": 12000,
+            "frequency": "one-time",
+            "contributionDate": "2025-01-01T00:00:00.000Z",
+            "donor": {
+              "id": "6710f34fd5061afeec3eab50",
+              "firstName": "Alice",
+              "lastName": "Doe"
+            },
+            "anonymous": false,
+            "donorCoveredFees": false,
+            "campaign": {
+              "id": "7710f34fd5061afeec3eab78",
+              "name": "Mission 2025"
+            },
+            "locationId": "6710f34fd5061afeec3eab58",
+            "stocks": {
+              "quantity": 10,
+              "tickers": [
+                "AAPL"
+              ]
+            },
+            "dedication": "In memory of Bob",
+            "metadata": {
+              "source": "golden"
+            },
+            "createdAt": "2025-01-01T00:00:00.000Z",
+            "updatedAt": "2025-01-02T00:00:00.000Z"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 60,
+          "hasMore": true
+        }
+      }
+    }
+  },
+  {
+    "label": "list_contributions raw without totalCount",
+    "tool": "list_contributions",
+    "args": {
+      "raw": true,
+      "page": 3,
+      "limit": 1
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/contributions?page=3&limit=1",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "contributions": [
+          {
+            "id": "6710f34fd5061afeec3eab57",
+            "type": "CASH",
+            "status": "PAID_OUT",
+            "amount": 5000
+          }
+        ],
+        "page": {
+          "page": 3,
+          "limit": 1,
+          "totalCount": 3,
+          "hasMore": true
+        }
+      }
+    }
+  },
+  {
+    "label": "get_contribution",
+    "tool": "get_contribution",
+    "args": {
+      "contributionId": "6710f34fd5061afeec3eab57"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "6710f34fd5061afeec3eab57",
+        "type": "CASH",
+        "status": "PAID_OUT",
+        "amount": 5000,
+        "frequency": "one-time",
+        "contributionDate": "2025-01-01T00:00:00.000Z",
+        "donor": {
+          "id": "6710f34fd5061afeec3eab50",
+          "firstName": "Alice",
+          "lastName": "Doe"
+        },
+        "anonymous": false,
+        "donorCoveredFees": false,
+        "campaign": {
+          "id": "7710f34fd5061afeec3eab78",
+          "name": "Mission 2025"
+        },
+        "locationId": "6710f34fd5061afeec3eab58",
+        "depositId": "8810f34fd5061afeec3eab67",
+        "paymentMethod": {
+          "type": "Card",
+          "last4": "4242"
+        },
+        "createdAt": "2025-01-01T00:00:00.000Z",
+        "updatedAt": "2025-01-02T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "label": "list_deposits",
+    "tool": "list_deposits",
+    "args": {
+      "types": [
+        "AUTOMATED"
+      ],
+      "reconciled": false,
+      "minimumAmountInCents": 1000,
+      "sortDirection": "ASC"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/deposits?types%5B%5D=AUTOMATED&reconciled=false&minimumEstimatedValueInCents=1000&sortDirection=ASC&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "deposits": [
+          {
+            "id": "8810f34fd5061afeec3eab67",
+            "status": "PAID",
+            "type": "AUTOMATED",
+            "amountInCents": 125000,
+            "arrivalAt": "2026-01-15T00:00:00.000Z",
+            "bankName": "First Bank",
+            "bankLast4": "6789",
+            "statementDescriptor": "OVERFLOW",
+            "paymentMethodTypes": [
+              "card",
+              "ach"
+            ],
+            "reconciledAt": null,
+            "createdAt": "2026-01-13T00:00:00.000Z",
+            "updatedAt": "2026-01-15T00:00:00.000Z"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "get_deposit",
+    "tool": "get_deposit",
+    "args": {
+      "depositId": "8810f34fd5061afeec3eab67"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/deposits/8810f34fd5061afeec3eab67",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "8810f34fd5061afeec3eab67",
+        "status": "PAID",
+        "type": "AUTOMATED",
+        "amountInCents": 125000,
+        "arrivalAt": "2026-01-15T00:00:00.000Z",
+        "bankName": "First Bank",
+        "bankLast4": "6789",
+        "statementDescriptor": "OVERFLOW",
+        "paymentMethodTypes": [
+          "card",
+          "ach"
+        ],
+        "reconciledAt": null,
+        "createdAt": "2026-01-13T00:00:00.000Z",
+        "updatedAt": "2026-01-15T00:00:00.000Z",
+        "lineItems": [
+          {
+            "type": "payment",
+            "grossValueInCents": 5000,
+            "grossFeeValueInCents": 175,
+            "referenceId": "6710f34fd5061afeec3eab57",
+            "description": "Alice Doe gift"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "get_deposit_summary",
+    "tool": "get_deposit_summary",
+    "args": {
+      "depositId": "8810f34fd5061afeec3eab67"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/deposits/8810f34fd5061afeec3eab67/summary",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "depositId": "8810f34fd5061afeec3eab67",
+        "contributions": {
+          "count": 30,
+          "grossInCents": 130000,
+          "feesInCents": 5000,
+          "totalInCents": 125000
+        },
+        "refunds": {
+          "count": 0,
+          "grossInCents": 0,
+          "feesInCents": 0,
+          "totalInCents": 0
+        },
+        "chargebacks": {
+          "count": 0,
+          "grossInCents": 0,
+          "feesInCents": 0,
+          "totalInCents": 0
+        },
+        "adjustments": {
+          "count": 0,
+          "grossInCents": 0,
+          "feesInCents": 0,
+          "totalInCents": 0
+        }
+      }
+    }
+  },
+  {
+    "label": "list_refunds",
+    "tool": "list_refunds",
+    "args": {
+      "contributionId": "6710f34fd5061afeec3eab57",
+      "sortDirection": "DESC"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/refunds?contributionId=6710f34fd5061afeec3eab57&sortDirection=DESC&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "refunds": [
+          {
+            "id": "9910f34fd5061afeec3eab01",
+            "contributionId": "6710f34fd5061afeec3eab57",
+            "status": "SUCCEEDED",
+            "reason": "requested_by_customer",
+            "amountInCents": 5000,
+            "netValueInCents": 4825,
+            "feeValueInCents": 175,
+            "createdAt": "2025-01-05T00:00:00.000Z",
+            "updatedAt": "2025-01-05T00:00:00.000Z"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "list_chargebacks",
+    "tool": "list_chargebacks",
+    "args": {
+      "minimumUpdatedDate": "2025-01-01",
+      "limit": 10
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/chargebacks?minimumUpdatedDate=2025-01-01&page=1&limit=10",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "chargebacks": [
+          {
+            "id": "9910f34fd5061afeec3eab02",
+            "contributionId": "6710f34fd5061afeec3eab57",
+            "status": "pending",
+            "type": "dispute",
+            "reason": "fraudulent",
+            "amountInCents": 5000,
+            "netValueInCents": -5000,
+            "feeValueInCents": 1500,
+            "depositId": "8810f34fd5061afeec3eab67",
+            "createdAt": "2025-01-06T00:00:00.000Z",
+            "updatedAt": "2025-01-06T00:00:00.000Z"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 10,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "list_donors",
+    "tool": "list_donors",
+    "args": {
+      "sortBy": "totalContributionsCount",
+      "sortDirection": "DESC"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/donors?sortBy=totalContributionsCount&sortDirection=DESC&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "donors": [
+          {
+            "id": "6710f34fd5061afeec3eab50",
+            "firstName": "Alice",
+            "lastName": "Doe",
+            "email": "alice@example.com",
+            "locationIds": [
+              "6710f34fd5061afeec3eab58"
+            ],
+            "totalContributionsCount": 12,
+            "activeRecurringCount": 1,
+            "latestContributionDate": "2025-01-01T00:00:00.000Z",
+            "createdAt": "2024-06-01T00:00:00.000Z",
+            "updatedAt": "2025-01-02T00:00:00.000Z"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "get_donor",
+    "tool": "get_donor",
+    "args": {
+      "donorId": "6710f34fd5061afeec3eab50"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/donors/6710f34fd5061afeec3eab50",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "6710f34fd5061afeec3eab50",
+        "firstName": "Alice",
+        "lastName": "Doe",
+        "email": "alice@example.com",
+        "phone": "+15555550100",
+        "address": {
+          "line1": "1 Main St",
+          "city": "Springfield",
+          "state": "IL",
+          "zip": "62701"
+        },
+        "locationIds": [
+          "6710f34fd5061afeec3eab58"
+        ],
+        "totalContributionsCount": 12,
+        "activeRecurringCount": 1,
+        "latestContributionDate": "2025-01-01T00:00:00.000Z",
+        "createdAt": "2024-06-01T00:00:00.000Z",
+        "updatedAt": "2025-01-02T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "label": "list_subscriptions",
+    "tool": "list_subscriptions",
+    "args": {
+      "donorId": "6710f34fd5061afeec3eab50",
+      "status": [
+        "active",
+        "paused"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50?status%5B%5D=active&status%5B%5D=paused&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "subscriptions": [
+          {
+            "id": "5510f34fd5061afeec3eab11",
+            "donorId": "6710f34fd5061afeec3eab50",
+            "status": "active",
+            "amount": 25,
+            "frequency": "monthly",
+            "startDate": "2025-01-01",
+            "nextPaymentDate": "2025-02-01",
+            "anonymous": false,
+            "donorCoveredFees": true,
+            "campaign": {
+              "id": "7710f34fd5061afeec3eab78",
+              "name": "Mission 2025"
+            },
+            "locationId": "6710f34fd5061afeec3eab58",
+            "paymentMethod": {
+              "id": "pm1",
+              "type": "card",
+              "last4": "4242",
+              "expiration": "12/30"
+            },
+            "createdAt": "2025-01-01",
+            "updatedAt": "2025-01-01"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "list_subscriptions all donors",
+    "tool": "list_subscriptions",
+    "args": {
+      "sortBy": "nextContributionAt"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/subscriptions?sortBy=nextContributionAt&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "subscriptions": [
+          {
+            "id": "5510f34fd5061afeec3eab11",
+            "donorId": "6710f34fd5061afeec3eab50",
+            "status": "active",
+            "amount": 25,
+            "frequency": "monthly",
+            "startDate": "2025-01-01",
+            "nextPaymentDate": "2025-02-01",
+            "anonymous": false,
+            "donorCoveredFees": true,
+            "campaign": {
+              "id": "7710f34fd5061afeec3eab78",
+              "name": "Mission 2025"
+            },
+            "locationId": "6710f34fd5061afeec3eab58",
+            "paymentMethod": {
+              "id": "pm1",
+              "type": "card",
+              "last4": "4242",
+              "expiration": "12/30"
+            },
+            "createdAt": "2025-01-01",
+            "updatedAt": "2025-01-01"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "list_payment_methods",
+    "tool": "list_payment_methods",
+    "args": {
+      "donorId": "6710f34fd5061afeec3eab50",
+      "showExpired": true
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/payment-methods/6710f34fd5061afeec3eab50?showExpired=true",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "paymentMethods": [
+          {
+            "id": "pm1",
+            "type": "card",
+            "last4": "4242",
+            "expirationDate": "12/30",
+            "isExpired": false,
+            "updatedAt": "2025-01-01"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_campaigns",
+    "tool": "list_campaigns",
+    "args": {
+      "parentCampaignId": "7710f34fd5061afeec3eab78",
+      "search": "Mission"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/campaigns?isSubcampaign=true&parentCampaignId=7710f34fd5061afeec3eab78&search=Mission&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "campaigns": [
+          {
+            "id": "7710f34fd5061afeec3eab78",
+            "name": "Mission 2025",
+            "status": "active",
+            "isSubcampaign": false,
+            "isActive": true,
+            "startDate": "2025-01-01",
+            "endDate": null,
+            "hideFromDonors": false,
+            "locationIds": [
+              "6710f34fd5061afeec3eab58"
+            ],
+            "subcampaigns": [
+              {
+                "id": "7710f34fd5061afeec3eab79",
+                "name": "Youth trip"
+              }
+            ],
+            "totalContributionCount": 30,
+            "totalContributionValue": 130000,
+            "uniqueDonorCount": 18
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "list_locations",
+    "tool": "list_locations",
+    "args": {
+      "sortBy": "name"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/locations?sortBy=name&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "locations": [
+          {
+            "id": "6710f34fd5061afeec3eab58",
+            "name": "Main Campus",
+            "isDefaultLocation": true,
+            "hideFromDonors": false,
+            "archivedAt": null,
+            "createdAt": "2024-01-01T00:00:00.000Z",
+            "updatedAt": "2024-01-01T00:00:00.000Z"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "list_tap_events",
+    "tool": "list_tap_events",
+    "args": {
+      "groupIds": [
+        "6710f34fd5061afeec3eab58"
+      ],
+      "startDate": "2026-05-01"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/tap/events?startDate=2026-05-01&groupIds%5B%5D=6710f34fd5061afeec3eab58&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "events": [
+          {
+            "id": "t1",
+            "createdAt": "2026-05-01T10:00:00.000Z",
+            "deviceId": "d1",
+            "deviceSerialNumber": 12345,
+            "groupId": "g1",
+            "groupName": "Sunday",
+            "destinationId": "x1",
+            "destinationName": "Give",
+            "destinationType": "web"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "list_webhooks",
+    "tool": "list_webhooks",
+    "args": {
+      "status": "enabled"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks?status=enabled&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "webhooks": [
+          {
+            "id": "6710f34fd5061afeec3eab99",
+            "name": "CRM sync",
+            "destinationUrl": "https://hooks.example/overflow",
+            "enabledEvents": [
+              "contribution.approved",
+              "donor.updated"
+            ],
+            "status": "enabled",
+            "createdAt": "2025-01-01T00:00:00.000Z",
+            "updatedAt": "2025-01-01T00:00:00.000Z"
+          }
+        ],
+        "page": {
+          "page": 1,
+          "limit": 25,
+          "totalCount": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "list_webhook_event_logs",
+    "tool": "list_webhook_event_logs",
+    "args": {
+      "webhookId": "6710f34fd5061afeec3eab99",
+      "status": "failed"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?status=failed&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "attempts": [
+          {
+            "id": "a1",
+            "eventId": "e1",
+            "webhookEventName": "contribution.approved",
+            "status": "failed",
+            "attemptNumber": 2,
+            "deliverySource": "automated",
+            "originatedAt": "2026-01-01T00:00:00.000Z",
+            "attemptedAt": "2026-01-01T00:00:05.000Z",
+            "url": "https://hooks.example/overflow",
+            "responseCode": 500,
+            "responseDurationMs": 120,
+            "errorMessage": "Internal Server Error"
+          }
+        ],
+        "nextCursor": "c2"
+      }
+    }
+  },
+  {
+    "label": "list_webhook_event_logs last page raw",
+    "tool": "list_webhook_event_logs",
+    "args": {
+      "webhookId": "6710f34fd5061afeec3eab99",
+      "cursor": "c2",
+      "raw": true
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?cursor=c2&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "attempts": [
+          {
+            "id": "a1",
+            "eventId": "e1",
+            "webhookEventName": "contribution.approved",
+            "subscriptionId": "6710f34fd5061afeec3eab99",
+            "status": "failed",
+            "attemptNumber": 2,
+            "deliverySource": "automated",
+            "originatedAt": "2026-01-01T00:00:00.000Z",
+            "attemptedAt": "2026-01-01T00:00:05.000Z",
+            "request": {
+              "url": "https://hooks.example/overflow",
+              "body": "{\"donor\":{\"email\":\"alice@example.com\"}}"
+            },
+            "response": {
+              "code": 500,
+              "body": "boom",
+              "durationMs": 120,
+              "errorMessage": "Internal Server Error"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "overflow_api_get echoes sent secrets",
+    "tool": "overflow_api_get",
+    "args": {
+      "path": "/refunds/9910f34fd5061afeec3eab01"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": {
+            "id": "9910f34fd5061afeec3eab01",
+            "contributionId": "6710f34fd5061afeec3eab57",
+            "status": "SUCCEEDED",
+            "reason": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]",
+            "amountInCents": 5000,
+            "netValueInCents": 4825,
+            "feeValueInCents": 175,
+            "depositId": null,
+            "createdAt": "2025-01-05T00:00:00.000Z",
+            "updatedAt": "2025-01-05T00:00:00.000Z"
+          }
+        }
+      }
+    }
+  }
+]
