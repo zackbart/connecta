@@ -1,0 +1,2255 @@
+{
+  "id": "giving",
+  "kind": "api",
+  "title": "Overflow (production)",
+  "description": "Overflow nonprofit giving, production: Grace Church giving and deposits",
+  "credential": {
+    "label": "Overflow API credentials",
+    "description": "The client id and API key Overflow issued for this environment (Overflow dashboard, or Overflow's developer team). Staging and production credentials are separate and not interchangeable. Server-side only: connecta sends them to Overflow's API and nowhere else.",
+    "fields": [
+      {
+        "name": "clientId",
+        "label": "Client ID",
+        "description": "Overflow's public client identifier, sent as x-client-id.",
+        "placeholder": "c77c8d57-7e1c-4a7e-ad46-e756e5f8dabd",
+        "inputType": "text"
+      },
+      {
+        "name": "apiKey",
+        "label": "API key",
+        "description": "The secret key paired with that client id, sent as x-api-key.",
+        "placeholder": "Paste Overflow API key",
+        "inputType": "password"
+      }
+    ]
+  },
+  "guide": {
+    "summary": "Overflow production: money units per field, final statuses, deposits, donor-PII care, and writes via mutate.",
+    "content": "# Overflow usage\n\nOverflow **production**: live nonprofit giving data, real donors, and real money.\n\nNonprofit purpose: Grace Church giving and deposits\n\n## Money, units, and status\n\nOverflow does not use one money unit, so read the unit per field:\n\n- Fields named `…InCents` are cents: deposits and their line items and\n  totals, refunds, chargebacks, and the authorize body.\n- Recurring-gift `amount` is dollars: Overflow's create and update bodies\n  say so, and its subscription reads carry the same field.\n- Contribution `amount` states no unit in Overflow's schema. Check one known\n  gift before reporting totals.\n- `status` is per asset type. A gift is final at `PAID_OUT` (cash),\n  `CONFIRMED` (manual cash, crypto), `CONTRIBUTION_RECEIVED` or `BILLED`\n  (stock), and `CONTRIBUTION_RECEIVED` (DAF). `statusBucket` filters by\n  Overflow's coarser PENDING / CONFIRMED / FAILED / CANCELED.\n- There is no funds endpoint. A gift reports its campaign and subcampaign;\n  `fundId` and `subFundId` appear only in the payment-authorize body.\n- Poll for changes with `minimumUpdatedDate`; `minimumInitiatedDate` is\n  when the donor gave.\n\n## Reconcile a deposit\n\n`list_deposits` → `get_deposit_summary` for totals → `get_deposit` for the\nline items, whose `referenceId` names the contribution, refund, or\nchargeback. Contributions also carry their `depositId`.\n\n## Donor data is sensitive\n\nGiving history and donor contact details are personal data. Reduce inside\n`execute_code` — aggregate, count, or keep ids — and return names, emails,\nphones, or addresses only when the task needs them. Contribution rows carry\nonly the donor's id and name; `list_donors` includes email but omits phone and\naddress; `get_donor` is the deliberate full-contact lookup.\n\n## Writes go through `overflow_api_mutate`\n\nEvery Overflow write moves money or changes a donor record, so none has a\nnamed tool. Each is one approval-gated `overflow_api_mutate` call with\nOverflow's documented body:\n\n- `POST /contributions` charges a saved payment method. Its `amount`\n  states no unit; confirm it against a known gift of the same donor before\n  charging. `POST /payments/authorize` takes `amountInCents` and\n  authorizes a new method (`0` only saves it).\n- `POST /contributions/{id}/initiate-refund` (under $1,000 only).\n- `POST` / `PATCH` / `DELETE /subscriptions/{donorId}[/{subscriptionId}]`\n  creates, changes, or cancels a recurring gift. Its `amount` is dollars,\n  not cents: a $50.00 monthly gift is `amount: 50`. Cancel takes a\n  `cancellationReason` body.\n- `POST /donors`, `PATCH /donors/{id}`.\n\nResolve every id first — donors, payment methods (`list_payment_methods`),\ncampaigns, locations — and never guess one. A write that fails with HTTP 5xx\nmay still have happened: read before retrying.\n\n## Hatches, pages, and limits\n\n- `overflow_api_get` reaches the reads without a named tool: single refunds,\n  chargebacks, campaigns, locations, webhooks, and recurring gifts\n  (`/subscriptions/{donorId}/{id}`), and Tap devices, groups, and\n  destinations (`/tap/devices`, `/tap/groups`, `/tap/destinations`). Paths\n  are below `/api/v3`; array filters repeat a `name[]` query pair.\n- Lists page by number: pass `page` while `page.hasMore` is true.\n  `list_webhook_event_logs` pages by cursor instead.\n- Overflow allows 120 requests per minute per API client. This connection\n  admits the same per runtime, four at a time, which approximates rather than\n  enforces it; a `rate_limited` failure carries the wait.\n"
+  },
+  "tools": [
+    {
+      "name": "overflow_api_get",
+      "description": "Call any Overflow v3 GET endpoint and return its untouched body. Prefer a named read; this covers single refunds, chargebacks, campaigns, and Tap devices.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path below /api/v3 beginning with '/', e.g. /refunds/<id>. No query string."
+          },
+          "query": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Query parameters as name/value pairs; repeat a name to send several values.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Parameter name, e.g. statusBucket[]."
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ],
+                  "description": "Parameter value."
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "description": "Overflow's untouched response body."
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "overflow_api_mutate",
+      "description": "Send a JSON POST, PATCH, or DELETE to Overflow v3. Every Overflow write — charges, refunds, recurring gifts, donor edits — goes here, behind approval.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "description": "Mutation method the Overflow endpoint requires."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path below /api/v3 beginning with '/', e.g. /refunds/<id>. No query string."
+          },
+          "query": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Query parameters as name/value pairs; repeat a name to send several values.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Parameter name, e.g. statusBucket[]."
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ],
+                  "description": "Parameter value."
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON body exactly as Overflow documents it. Units differ: subscription `amount` is dollars, /payments/authorize takes `amountInCents`, /contributions `amount` states none. Omit when the endpoint takes none."
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "description": "Overflow's untouched response body, or null when it sent none."
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "list_contributions",
+      "description": "List gifts (cash, stock, crypto, DAF, manual) with status, amount, campaign, deposit, and donor name. Donor contact details stay in get_donor.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "minimumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or after; ISO date or date-time."
+          },
+          "maximumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or before; ISO date or date-time."
+          },
+          "minimumInitiatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Initiated on or after; ISO date or date-time."
+          },
+          "maximumInitiatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Initiated on or before; ISO date or date-time."
+          },
+          "statusBucket": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "CONFIRMED",
+                "FAILED",
+                "CANCELED"
+              ],
+              "description": "Status bucket."
+            },
+            "description": "Overflow's coarse status buckets; matches any."
+          },
+          "campaignId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_campaigns."
+          },
+          "subcampaignId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_campaigns with isSubcampaign."
+          },
+          "locationIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "description": "Id from list_locations."
+            },
+            "description": "Ids from list_locations; matches any."
+          },
+          "givingLinkId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Giving link id."
+          },
+          "pledgeId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Pledge id."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "contributions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "frequency": {
+                  "type": "string"
+                },
+                "contributionDate": {
+                  "type": "string"
+                },
+                "donor": {
+                  "type": "object"
+                },
+                "campaign": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "subcampaign": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "locationId": {
+                  "type": "string"
+                },
+                "depositId": {
+                  "type": "string"
+                },
+                "subscriptionId": {
+                  "type": "string"
+                },
+                "paymentMethod": {
+                  "type": "object"
+                },
+                "stocks": {
+                  "type": "object"
+                },
+                "crypto": {
+                  "type": "object"
+                },
+                "metadata": {
+                  "type": "object"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "status",
+                "amount"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "contributions",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_contribution",
+      "description": "Get one contribution by id with its status, amount, campaign, deposit, and donor name. Refunds and chargebacks are separate lists.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contributionId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_contributions."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [
+          "contributionId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "contributionDate": {
+            "type": "string"
+          },
+          "donor": {
+            "type": "object"
+          },
+          "campaign": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "subcampaign": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "locationId": {
+            "type": "string"
+          },
+          "depositId": {
+            "type": "string"
+          },
+          "subscriptionId": {
+            "type": "string"
+          },
+          "paymentMethod": {
+            "type": "object"
+          },
+          "stocks": {
+            "type": "object"
+          },
+          "crypto": {
+            "type": "object"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "status",
+          "amount"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_deposits",
+      "description": "List deposits (payouts from Overflow to the nonprofit's bank) with status, net amount in cents, arrival date, and reconciliation state.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "startDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Arrived on or after; ISO date or date-time."
+          },
+          "endDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Arrived on or before; ISO date or date-time."
+          },
+          "types": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "AUTOMATED",
+                "MANUAL",
+                "IMPORT"
+              ],
+              "description": "Deposit type."
+            },
+            "description": "Deposit types; matches any."
+          },
+          "reconciled": {
+            "type": "boolean",
+            "description": "Filter by reconciliation state."
+          },
+          "minimumAmountInCents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Net amount at least this, in cents."
+          },
+          "maximumAmountInCents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Net amount at most this, in cents."
+          },
+          "search": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Overflow's free-text search across deposit fields."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Arrival-date order. Defaults to DESC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "deposits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "amountInCents": {
+                  "type": "number"
+                },
+                "arrivalAt": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "bankName": {
+                  "type": "string"
+                },
+                "bankLast4": {
+                  "type": "string"
+                },
+                "paymentMethodTypes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "reconciledAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "lineItems": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "amountInCents"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "deposits",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_deposit",
+      "description": "Get one deposit with its line items: each payment, refund, chargeback, adjustment, or transfer it settled, in cents. Totals are get_deposit_summary.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "depositId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_deposits."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [
+          "depositId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "amountInCents": {
+            "type": "number"
+          },
+          "arrivalAt": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "bankName": {
+            "type": "string"
+          },
+          "bankLast4": {
+            "type": "string"
+          },
+          "paymentMethodTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reconciledAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lineItems": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "amountInCents"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_deposit_summary",
+      "description": "Get one deposit's totals by kind — contributions, refunds, chargebacks, adjustments — as count, gross, fees, and net in cents.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "depositId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_deposits."
+          }
+        },
+        "required": [
+          "depositId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "depositId": {
+            "type": "string"
+          },
+          "contributions": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "number"
+              },
+              "grossInCents": {
+                "type": "number"
+              },
+              "feesInCents": {
+                "type": "number"
+              },
+              "totalInCents": {
+                "type": "number"
+              }
+            }
+          },
+          "refunds": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "number"
+              },
+              "grossInCents": {
+                "type": "number"
+              },
+              "feesInCents": {
+                "type": "number"
+              },
+              "totalInCents": {
+                "type": "number"
+              }
+            }
+          },
+          "chargebacks": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "number"
+              },
+              "grossInCents": {
+                "type": "number"
+              },
+              "feesInCents": {
+                "type": "number"
+              },
+              "totalInCents": {
+                "type": "number"
+              }
+            }
+          },
+          "adjustments": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "number"
+              },
+              "grossInCents": {
+                "type": "number"
+              },
+              "feesInCents": {
+                "type": "number"
+              },
+              "totalInCents": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "required": [
+          "depositId",
+          "contributions",
+          "refunds",
+          "chargebacks",
+          "adjustments"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_refunds",
+      "description": "List refunds with status, reason, amount, and net in cents, optionally for one contribution. Reads only; issuing a refund is a mutate call.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contributionId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_contributions."
+          },
+          "minimumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or after; ISO date or date-time."
+          },
+          "maximumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or before; ISO date or date-time."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Created-date order. Defaults to DESC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "refunds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "contributionId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "amountInCents": {
+                  "type": "number"
+                },
+                "netValueInCents": {
+                  "type": "number"
+                },
+                "feeValueInCents": {
+                  "type": "number"
+                },
+                "depositId": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "contributionId",
+                "status",
+                "amountInCents"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "refunds",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_chargebacks",
+      "description": "List chargebacks (card disputes and ACH returns) with status — pending, won, lost — and amounts in cents, optionally for one contribution.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contributionId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_contributions."
+          },
+          "minimumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or after; ISO date or date-time."
+          },
+          "maximumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or before; ISO date or date-time."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Created-date order. Defaults to DESC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "chargebacks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "contributionId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "amountInCents": {
+                  "type": "number"
+                },
+                "netValueInCents": {
+                  "type": "number"
+                },
+                "depositId": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "contributionId",
+                "status",
+                "amountInCents"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "chargebacks",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_donors",
+      "description": "List donors with name, email, gift count, and recurring count. Cannot search by name or email; omits phone and address, which get_donor returns.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "locationIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "description": "Id from list_locations."
+            },
+            "description": "Ids from list_locations; matches any."
+          },
+          "minimumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or after; ISO date or date-time."
+          },
+          "maximumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or before; ISO date or date-time."
+          },
+          "sortBy": {
+            "type": "string",
+            "enum": [
+              "updatedAt",
+              "createdAt",
+              "lastName",
+              "firstName",
+              "email",
+              "totalContributionsCount"
+            ],
+            "description": "Sort field. Defaults to updatedAt."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Defaults to DESC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "donors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "firstName": {
+                  "type": "string"
+                },
+                "lastName": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": "object"
+                },
+                "locationIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "totalContributionsCount": {
+                  "type": "number"
+                },
+                "activeRecurringCount": {
+                  "type": "number"
+                },
+                "latestContributionDate": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "donors",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_donor",
+      "description": "Get one donor's full profile: contact details, mailing address, locations, and giving counts. Their gifts are list_contributions rows.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "donorId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_donors or a contribution's donor.id."
+          }
+        },
+        "required": [
+          "donorId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "address": {
+            "type": "object"
+          },
+          "locationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "totalContributionsCount": {
+            "type": "number"
+          },
+          "activeRecurringCount": {
+            "type": "number"
+          },
+          "latestContributionDate": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_subscriptions",
+      "description": "List recurring gifts with status, amount, frequency, next payment date, and campaign — for the nonprofit or, given donorId, one donor.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "donorId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_donors; omit for every donor."
+          },
+          "status": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "active",
+                "paused",
+                "pending",
+                "failed",
+                "inactive",
+                "recreated"
+              ],
+              "description": "Recurring-gift status."
+            },
+            "description": "Statuses; matches any."
+          },
+          "locationIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "description": "Id from list_locations."
+            },
+            "description": "Ids from list_locations; matches any."
+          },
+          "minimumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or after; ISO date or date-time."
+          },
+          "maximumUpdatedDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "Updated on or before; ISO date or date-time."
+          },
+          "sortBy": {
+            "type": "string",
+            "enum": [
+              "createdAt",
+              "amount",
+              "frequency",
+              "nextContributionAt"
+            ],
+            "description": "Sort field. Defaults to createdAt."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Defaults to DESC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "donorId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "frequency": {
+                  "type": "string"
+                },
+                "startDate": {
+                  "type": "string"
+                },
+                "nextPaymentDate": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "campaign": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "subcampaign": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "locationId": {
+                  "type": "string"
+                },
+                "paymentMethod": {
+                  "type": "object"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "donorId",
+                "status",
+                "amount",
+                "frequency"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "subscriptions",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_payment_methods",
+      "description": "List one donor's saved payment methods (type, last 4, expiry) and their ids. Unpaginated. Never returns account or card numbers.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "donorId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_donors."
+          },
+          "showExpired": {
+            "type": "boolean",
+            "description": "Include expired methods. Defaults to false."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [
+          "donorId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "paymentMethods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "last4": {
+                  "type": "string"
+                },
+                "expirationDate": {
+                  "type": "string"
+                },
+                "isExpired": {
+                  "type": "boolean"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "last4"
+              ]
+            }
+          }
+        },
+        "required": [
+          "paymentMethods"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_campaigns",
+      "description": "List campaigns or subcampaigns with status, dates, and giving totals. Ids feed the campaignId filters and gift bodies.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "isSubcampaign": {
+            "type": "boolean",
+            "description": "True lists subcampaigns instead. Defaults to false."
+          },
+          "parentCampaignId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_campaigns; lists its subcampaigns."
+          },
+          "search": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Campaign-name search."
+          },
+          "includeArchived": {
+            "type": "boolean",
+            "description": "Include archived campaigns."
+          },
+          "excludeInactive": {
+            "type": "boolean",
+            "description": "Exclude campaigns that have ended."
+          },
+          "sortBy": {
+            "type": "string",
+            "enum": [
+              "startDate",
+              "endDate",
+              "name",
+              "displayOrder",
+              "totalContributionCount",
+              "totalContributionValue",
+              "uniqueDonorCount"
+            ],
+            "description": "Sort field. Defaults to startDate."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Defaults to DESC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "campaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "isSubcampaign": {
+                  "type": "boolean"
+                },
+                "isActive": {
+                  "type": "boolean"
+                },
+                "startDate": {
+                  "type": "string"
+                },
+                "endDate": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "locationIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "parentCampaigns": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "subcampaigns": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "totalContributionCount": {
+                  "type": "number"
+                },
+                "totalContributionValue": {
+                  "type": "number"
+                },
+                "uniqueDonorCount": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "status"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "campaigns",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_locations",
+      "description": "List the nonprofit's locations (campuses) with names and ids for the locationIds filters. The default location is flagged.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "includeArchived": {
+            "type": "boolean",
+            "description": "Include archived locations."
+          },
+          "sortBy": {
+            "type": "string",
+            "enum": [
+              "displayOrder",
+              "name",
+              "createdAt"
+            ],
+            "description": "Sort field. Defaults to displayOrder."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Defaults to ASC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "isDefaultLocation": {
+                  "type": "boolean"
+                },
+                "hideFromDonors": {
+                  "type": "boolean"
+                },
+                "archivedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "locations",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_tap_events",
+      "description": "List Tap-to-give taps with the device, group, and destination each hit. Taps are engagement, not gifts; giving is list_contributions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "startDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "On or after; ISO date or date-time."
+          },
+          "endDate": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}",
+            "description": "On or before; ISO date or date-time."
+          },
+          "groupIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "description": "Id from a tap event's groupId."
+            },
+            "description": "Ids from a tap event's groupId; matches any."
+          },
+          "destinationIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "description": "Id from a tap event's destinationId."
+            },
+            "description": "Ids from a tap event's destinationId; matches any."
+          },
+          "deviceIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "description": "Id from a tap event's deviceId."
+            },
+            "description": "Ids from a tap event's deviceId; matches any."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Time order. Defaults to DESC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "deviceId": {
+                  "type": "string"
+                },
+                "deviceSerialNumber": {
+                  "type": "number"
+                },
+                "groupId": {
+                  "type": "string"
+                },
+                "groupName": {
+                  "type": "string"
+                },
+                "destinationId": {
+                  "type": "string"
+                },
+                "destinationName": {
+                  "type": "string"
+                },
+                "destinationType": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "createdAt"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "events",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_webhooks",
+      "description": "List the nonprofit's webhook subscriptions with destination URL, enabled events, and status. Delivery history is list_webhook_event_logs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "enabled",
+              "disabled"
+            ],
+            "description": "Subscription status."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Created-date order. Defaults to DESC."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based page number. Defaults to 1."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, up to Overflow's cap of 100. Defaults to 25."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "destinationUrl": {
+                  "type": "string"
+                },
+                "enabledEvents": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "status": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "status"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean",
+                "description": "True when page + 1 exists."
+              }
+            },
+            "required": [
+              "page",
+              "limit",
+              "totalCount",
+              "hasMore"
+            ]
+          }
+        },
+        "required": [
+          "webhooks",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_webhook_event_logs",
+      "description": "List delivery attempts for one webhook with status, response code, and error. Omits event payloads unless raw. Pages by cursor, not page.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhookId": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{24}$",
+            "description": "24-hex id from list_webhooks."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "delivered",
+              "failed",
+              "pending"
+            ],
+            "description": "Delivery status."
+          },
+          "webhookEventName": {
+            "type": "string",
+            "pattern": "^(\\*|[a-z_]+\\.[a-z_]+)$",
+            "description": "Event name, e.g. contribution.approved or donor.updated."
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "DESC"
+            ],
+            "description": "Attempt order. Defaults to DESC."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "This tool pages by cursor: pass nextCursor back unchanged."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "Attempts per page, up to Overflow's cap of 50 for this endpoint. Defaults to 25."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Overflow's untouched rows instead of the lean projection."
+          }
+        },
+        "required": [
+          "webhookId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "eventId": {
+                  "type": "string"
+                },
+                "webhookEventName": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "attemptNumber": {
+                  "type": "number"
+                },
+                "attemptedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "responseCode": {
+                  "type": "number"
+                },
+                "errorMessage": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "status"
+              ]
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when more attempts exist; no page object."
+          }
+        },
+        "required": [
+          "attempts"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    }
+  ]
+}

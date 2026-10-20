@@ -1,0 +1,1918 @@
+{
+  "id": "decks",
+  "kind": "api",
+  "title": "Google Slides",
+  "description": "Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — Sermon slides",
+  "guide": {
+    "summary": "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
+    "content": "# Google Slides usage\n\nActs as the signed-in person in Google Slides through Workspace delegation: read, create, and edit the decks they can open.\n\nConnection purpose: Sermon slides\n\n## Whose decks\n\nEvery call acts as the Workspace account deployment config maps the caller\nto, and reaches exactly the decks that person can open; an agent acts as the\nowner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names an account. A call with\nnone mapped fails `auth_required`; only an operator can change that. A deck the person cannot see and one that does not exist\nfail alike — Google does not say which.\n\n## Finding a deck\n\nSlides cannot list or search decks; that is Google Drive's job. Take the id\nfrom a Drive search or from a URL (`/presentation/d/<id>/`).\n\n## Reading\n\n- `get_presentation` returns each slide's text in reading order (top to\n  bottom, then left to right), speaker notes, and alt text for images,\n  videos, and charts. Empty placeholders are listed with their id and type;\n  lines and other empty shapes are counted in `omittedElements`. `index`\n  is 0-based, the numbering `create_slide` takes.\n- Nothing is cut without a way back. Text past `maxCharsPerSlide`, or past\n  what one result can carry (about 192 KB), ends with a marker, and its\n  element's `textCursor` (the slide's `notesCursor` for notes) is a\n  `get_page` cursor that continues from the cut; pass it with the page it came\n  from (the slide's `notesPageId` for a `notesCursor`). A slide too crowded to\n  list whole gives `elementsNotShown` and an `elementsCursor`.\n- `get_page` reads any page by objectId — a slide, a layout (its\n  placeholders' types and indexes, for `placeholderIdMappings`), a master,\n  a notes page (`notesPageId`), or the notes master (`notesMasterId`) —\n  listing every element, groups opened,\n  and continuing long text across pages from `page.nextCursor`.\n- `list_layouts` lists masters and their layouts; `get_presentation`\n  previews them, and `layoutsCursor` continues where the preview stops.\n- `raw: true` returns Slides' own JSON: `get_presentation` a page of\n  slides, `get_page` the page and its top-level elements. One too large\n  for a result is named (`rawNotShown`) or sent in `rawJson` chunks;\n  join the chunks' `json` in order and parse.\n- Every cursor is bound to the deck and the revision it was read at. A\n  `conflict` on a cursor means the deck changed: start again without one.\n  A page may hold fewer rows than `limit`; follow `page.nextCursor`.\n- `get_slide_thumbnail` returns a link, never the image. The link opens as\n  this person for about 30 minutes; do not share it.\n\n## Writing\n\n- `create_presentation` and `create_slide` are additive. A new slide is\n  empty: fill it with `batch_update_presentation` (`insertText` into its\n  placeholders, after reading their ids with `get_presentation`).\n- `replace_all_text` changes every literal match, case-sensitive unless\n  `matchCase: false`. Pass `requiredRevisionId` to refuse a deck that\n  changed since you read it.\n- `batch_update_presentation` takes Slides' own Request objects and always\n  requires `requiredRevisionId`: the `revisionId` from the read the requests\n  were built on. All\n  requests apply or none do, except comment changes (below). Each write\n  returns the new `revisionId` for the next one. A `conflict` means the\n  deck changed since that read: re-read it, rebuild the requests, and send\n  them with the new `revisionId`. Its replies keep every id at every depth\n  whole, in every reply; text is cut first, and a large reply's other fields\n  are named in `cut`. Ids too many for this tool's 192 KiB budget are all\n  returned anyway, without text; past 256 KiB, more than a program can\n  receive, call the tool directly and page with `connecta.result`. A batch\n  whose ids pass even that returns its comment state and `repliesNotShown`;\n  read what it made with `list_comments`, `get_presentation`, or\n  `get_page`, and do not send it again.\n- An id or revision too long to copy into a result is left out and flagged\n  (`revisionIdNotShown`), never cut. A failure that says the write\n  applied means Google answered 2xx: do not repeat it; re-read instead.\n- Nothing here shares, moves, or deletes a deck.\n\n## Comments\n\n- `list_comments` lists the deck's threads, or one page's with\n  `pageObjectId` (a speaker-notes comment is on the notes page). Each has\n  its `commentId`, `status` (OPEN or RESOLVED), where it is anchored\n  (`pageObjectIds`, `objectIds`), the `quote` it was made on, its\n  `headPost`, and `replies`. A post's `author.user` (`users/…`) is\n  the stable id; `displayName` is only a name. Slides gives no `user`\n  for an anonymous or imported post. Text too long for one result continues\n  on the next page: a row with `continued` picks up its thread where the\n  last stopped, and `repliesOffset` counts the replies before it. Its\n  cursor is bound to the threads and their anchors as well as the revision,\n  so a comment added or moved between pages is a `conflict` too. Reading\n  comments needs comment access; a view-only account is refused.\n- The projection leaves out each post's HTML (`contentHtml`), whether it\n  came from a copied deck, and the text and cell ranges an anchor covers.\n  `raw: true` returns each thread as Slides sends it, with\n  `commentAnchors` added (its anchors, each with its `pageObjectId`),\n  in `rawJson` chunks when one is too large.\n- `create_comment` and `create_comment_reply` are additive and return\n  every new id whole. `update_comment_thread` resolves, reopens, or\n  reassigns a thread (one at a time; a reassignment needs `content`),\n  replacing its status or assignee, and is destructive,\n  like `update_comment_post`, `delete_comment`, and\n  `delete_comment_reply`; Slides allows the last three only to the\n  post's author. Comments notify people the way the Slides editor does.\n- Slides saves comment changes apart from the rest of a write. When it does\n  not confirm they saved, the result carries `commentUpdateState` — for\n  example `ALL_FAILED_UNKNOWN_REASON` — and the write's other changes may\n  still have applied. Do not repeat it: re-read with `list_comments`, then\n  decide.\n"
+  },
+  "tools": [
+    {
+      "name": "get_presentation",
+      "description": "Read a Google Slides deck: title, page size, revisionId, layouts, and each slide's text in reading order with speaker notes, capped per slide. Cannot find decks; that is Drive's job.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Slides per page, 1 to 100; defaults to 20. A page also ends before ~192 KB."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor, or a textCursor-style cursor, this connection returned. Pass it back unchanged."
+          },
+          "maxCharsPerSlide": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50000,
+            "description": "Text kept per slide (notes apart), 0 to 50000; defaults to 4000. A cut gives a get_page cursor for the rest."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return this page's slides as Slides sends them, every style and transform, in place of the projection. No layouts or masters."
+          }
+        },
+        "required": [
+          "presentationId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "pageSize": {
+            "type": "object",
+            "properties": {
+              "width": {
+                "type": "object",
+                "properties": {
+                  "magnitude": {
+                    "type": "number"
+                  },
+                  "unit": {
+                    "type": "string"
+                  }
+                }
+              },
+              "height": {
+                "type": "object",
+                "properties": {
+                  "magnitude": {
+                    "type": "number"
+                  },
+                  "unit": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "slideCount": {
+            "type": "integer"
+          },
+          "notesMasterId": {
+            "type": "string"
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "objectId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "master",
+                    "layout"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "masterId": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "layoutsNotShown": {
+            "type": "integer"
+          },
+          "layoutsCursor": {
+            "type": "string"
+          },
+          "slides": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "objectId": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "layout": {
+                  "type": "string"
+                },
+                "layoutId": {
+                  "type": "string"
+                },
+                "skipped": {
+                  "type": "boolean"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "elements": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "objectId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "shape",
+                          "table",
+                          "wordArt",
+                          "image",
+                          "video",
+                          "chart",
+                          "line",
+                          "other"
+                        ]
+                      },
+                      "placeholder": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      },
+                      "textCursor": {
+                        "type": "string"
+                      },
+                      "altText": {
+                        "type": "string"
+                      },
+                      "spreadsheetId": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "omittedElements": {
+                  "type": "integer"
+                },
+                "elementsNotShown": {
+                  "type": "integer"
+                },
+                "elementsCursor": {
+                  "type": "string"
+                },
+                "notesPageId": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "notesCursor": {
+                  "type": "string"
+                },
+                "truncated": {
+                  "type": "boolean"
+                },
+                "rawNotShown": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "presentationId",
+          "slides",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_page",
+      "description": "Read one page by objectId — slide, layout, master, or notes page — every element in reading order, with placeholder ids and text continued across pages.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "pageObjectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_:-]*$",
+            "description": "A slide's, layout's, master's, or notes page's objectId."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "description": "Elements per page, 1 to 500; defaults to 50. A page also ends before ~192 KB."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor, or a textCursor-style cursor, this connection returned. Pass it back unchanged."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "The page and its top-level elements as Slides sends them; one too large is sent in JSON chunks."
+          }
+        },
+        "required": [
+          "presentationId",
+          "pageObjectId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "pageObjectId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "pageType": {
+            "type": "string"
+          },
+          "layoutId": {
+            "type": "string"
+          },
+          "masterId": {
+            "type": "string"
+          },
+          "notesPageId": {
+            "type": "string"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "speakerNotesObjectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "elementCount": {
+            "type": "integer"
+          },
+          "properties": {
+            "type": "object"
+          },
+          "propertiesJson": {
+            "type": "object",
+            "properties": {
+              "json": {
+                "type": "string"
+              },
+              "offset": {
+                "type": "integer"
+              },
+              "length": {
+                "type": "integer"
+              }
+            }
+          },
+          "elements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "objectId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "shape",
+                    "table",
+                    "wordArt",
+                    "image",
+                    "video",
+                    "chart",
+                    "line",
+                    "other"
+                  ]
+                },
+                "groupId": {
+                  "type": "string"
+                },
+                "placeholder": {
+                  "type": "string"
+                },
+                "placeholderIndex": {
+                  "type": "integer"
+                },
+                "placeholderParentId": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "textOffset": {
+                  "type": "integer"
+                },
+                "textLength": {
+                  "type": "integer"
+                },
+                "truncated": {
+                  "type": "boolean"
+                },
+                "altText": {
+                  "type": "string"
+                },
+                "spreadsheetId": {
+                  "type": "string"
+                },
+                "rawJson": {
+                  "type": "object",
+                  "properties": {
+                    "json": {
+                      "type": "string"
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "length": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "presentationId",
+          "pageObjectId",
+          "elements",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_layouts",
+      "description": "List a deck's masters, each followed by its layouts, with the ids create_slide and get_page take. Names only; get_page reads a layout's placeholders.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "description": "Masters and layouts per page, 1 to 500; defaults to 100. A page also ends before ~192 KB."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor, or a textCursor-style cursor, this connection returned. Pass it back unchanged."
+          }
+        },
+        "required": [
+          "presentationId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "notesMasterId": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "objectId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "master",
+                    "layout"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "masterId": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "presentationId",
+          "layouts",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_comments",
+      "description": "List a deck's comment threads, or one page's: anchor, status, quoted text, head post, and replies, each author by user id. Long text continues across pages.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "pageObjectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_:-]*$",
+            "description": "Only this slide's or notes page's threads; omit for the whole deck."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "description": "Threads per page, 1 to 500; defaults to 50. A page also ends before ~192 KB."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor, or a textCursor-style cursor, this connection returned. Pass it back unchanged."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Each thread as Slides sends it, HTML and copy flags kept, with its anchors' ranges; one too large is sent in JSON chunks."
+          }
+        },
+        "required": [
+          "presentationId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "pageObjectId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "threads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "commentId": {
+                  "type": "string"
+                },
+                "anchorId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "pageObjectIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "objectIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "replyCount": {
+                  "type": "integer"
+                },
+                "quote": {
+                  "type": "string"
+                },
+                "quoteOffset": {
+                  "type": "integer"
+                },
+                "quoteLength": {
+                  "type": "integer"
+                },
+                "headPost": {
+                  "type": "object",
+                  "properties": {
+                    "postId": {
+                      "type": "string"
+                    },
+                    "author": {
+                      "type": "object",
+                      "properties": {
+                        "user": {
+                          "type": "string"
+                        },
+                        "displayName": {
+                          "type": "string"
+                        },
+                        "me": {
+                          "type": "boolean"
+                        },
+                        "anonymous": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "contentOffset": {
+                      "type": "integer"
+                    },
+                    "contentLength": {
+                      "type": "integer"
+                    },
+                    "commentAction": {
+                      "type": "string"
+                    },
+                    "assigneeEmail": {
+                      "type": "string"
+                    },
+                    "createTime": {
+                      "type": "string"
+                    },
+                    "updateTime": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean"
+                    },
+                    "imported": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "replies": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "postId": {
+                        "type": "string"
+                      },
+                      "author": {
+                        "type": "object",
+                        "properties": {
+                          "user": {
+                            "type": "string"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "me": {
+                            "type": "boolean"
+                          },
+                          "anonymous": {
+                            "type": "boolean"
+                          }
+                        }
+                      },
+                      "content": {
+                        "type": "string"
+                      },
+                      "contentOffset": {
+                        "type": "integer"
+                      },
+                      "contentLength": {
+                        "type": "integer"
+                      },
+                      "commentAction": {
+                        "type": "string"
+                      },
+                      "assigneeEmail": {
+                        "type": "string"
+                      },
+                      "createTime": {
+                        "type": "string"
+                      },
+                      "updateTime": {
+                        "type": "string"
+                      },
+                      "deleted": {
+                        "type": "boolean"
+                      },
+                      "imported": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                },
+                "repliesOffset": {
+                  "type": "integer"
+                },
+                "continued": {
+                  "type": "boolean"
+                },
+                "truncated": {
+                  "type": "boolean"
+                },
+                "idsNotShown": {
+                  "type": "boolean"
+                },
+                "rawJson": {
+                  "type": "object",
+                  "properties": {
+                    "json": {
+                      "type": "string"
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "length": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "presentationId",
+          "total",
+          "threads",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_slide_thumbnail",
+      "description": "Get a PNG thumbnail link for one slide: a URL valid about 30 minutes that opens as the user, plus its size. Never downloads the image.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "slideObjectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_:-]*$",
+            "description": "Slide objectId from get_presentation."
+          },
+          "size": {
+            "type": "string",
+            "enum": [
+              "SMALL",
+              "MEDIUM",
+              "LARGE",
+              "WIDTH2000_PX"
+            ],
+            "description": "Width: SMALL 200px, MEDIUM 800px, LARGE 1600px, WIDTH2000_PX 2000px; Slides chooses when omitted."
+          }
+        },
+        "required": [
+          "presentationId",
+          "slideObjectId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "contentUrl": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contentUrl"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "create_presentation",
+      "description": "Create an empty Google Slides deck with one title slide in the user's My Drive root. It cannot place the deck in a folder or copy a template.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "The deck's title, as Drive shows it."
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "slideObjectIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "slideObjectIdsNotShown": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "presentationId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "create_slide",
+      "description": "Add one empty slide to a deck, from a predefined layout or one of its own layouts, at an index or the end. Adds no text; nothing existing changes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "layout": {
+            "type": "string",
+            "enum": [
+              "BLANK",
+              "CAPTION_ONLY",
+              "TITLE",
+              "TITLE_AND_BODY",
+              "TITLE_AND_TWO_COLUMNS",
+              "TITLE_ONLY",
+              "SECTION_HEADER",
+              "SECTION_TITLE_AND_DESCRIPTION",
+              "ONE_COLUMN_TEXT",
+              "MAIN_POINT",
+              "BIG_NUMBER"
+            ],
+            "description": "Predefined layout; the deck's theme must have it. Omit both layout and layoutId for BLANK."
+          },
+          "layoutId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_:-]*$",
+            "description": "A layouts[].objectId from get_presentation, instead of layout."
+          },
+          "insertionIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "0-based position, as get_presentation numbers slides; omit to append."
+          }
+        },
+        "required": [
+          "presentationId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "slideObjectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "presentationId",
+          "slideObjectId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "replace_all_text",
+      "description": "Replace every occurrence of literal text across a deck's slides, or the slides named, in one atomic write. No regex; formatting of the replaced text is kept.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "replacements": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "Applied in order, 1 to 50 (connecta's bound).",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "find",
+                "replace"
+              ],
+              "description": "One find-and-replace.",
+              "properties": {
+                "find": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000,
+                  "description": "Literal text to find."
+                },
+                "replace": {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Replacement; empty deletes the match."
+                },
+                "matchCase": {
+                  "type": "boolean",
+                  "description": "Case-sensitive; defaults to true."
+                }
+              }
+            }
+          },
+          "slideObjectIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 500,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9_][A-Za-z0-9_:-]*$",
+              "description": "A slide objectId."
+            },
+            "description": "Limit to these slides; omit for every slide."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[^\\s]+$",
+            "description": "revisionId from get_presentation; the write is refused, unapplied, if the deck changed since."
+          }
+        },
+        "required": [
+          "presentationId",
+          "replacements"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "occurrencesChanged": {
+            "type": "integer"
+          },
+          "replacements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "find": {
+                  "type": "string"
+                },
+                "occurrencesChanged": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "presentationId",
+          "occurrencesChanged",
+          "replacements"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "create_comment",
+      "description": "Comment on a slide, a notes page, an element, a range of its text, or a table cell, optionally assigning it. Adds a thread; Slides notifies as in the editor.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "objectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_:-]*$",
+            "description": "The page or element to comment on: the shape or table, for text or a cell."
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "Plain text; Slides' cap is 2048 UTF-8 bytes."
+          },
+          "textRange": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "startIndex",
+              "endIndex"
+            ],
+            "description": "Anchor to this text of the shape, or of the cell: 0-based, end exclusive.",
+            "properties": {
+              "startIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000000,
+                "description": "First character."
+              },
+              "endIndex": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000000,
+                "description": "One past the last."
+              }
+            }
+          },
+          "cell": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "rowIndex",
+              "columnIndex"
+            ],
+            "description": "A table cell, 0-based: with textRange, that text in it; else the whole cell.",
+            "properties": {
+              "rowIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "description": "Row."
+              },
+              "columnIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "description": "Column."
+              }
+            }
+          },
+          "assigneeEmail": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320,
+            "pattern": "^[^\\s@]+@[^\\s@]+$",
+            "description": "Assign the thread to this address; Slides notifies them."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[^\\s]+$",
+            "description": "Refuse, unapplied, if the deck changed since this revision."
+          }
+        },
+        "required": [
+          "presentationId",
+          "objectId",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "commentUpdateState": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "commentId": {
+            "type": "string"
+          },
+          "anchorId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "quote": {
+            "type": "string"
+          },
+          "headPost": {
+            "type": "object",
+            "properties": {
+              "postId": {
+                "type": "string"
+              },
+              "author": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "string"
+                  },
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "me": {
+                    "type": "boolean"
+                  },
+                  "anonymous": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "content": {
+                "type": "string"
+              },
+              "contentOffset": {
+                "type": "integer"
+              },
+              "contentLength": {
+                "type": "integer"
+              },
+              "commentAction": {
+                "type": "string"
+              },
+              "assigneeEmail": {
+                "type": "string"
+              },
+              "createTime": {
+                "type": "string"
+              },
+              "updateTime": {
+                "type": "string"
+              },
+              "deleted": {
+                "type": "boolean"
+              },
+              "imported": {
+                "type": "boolean"
+              }
+            }
+          },
+          "replies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "postId": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "me": {
+                      "type": "boolean"
+                    },
+                    "anonymous": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "content": {
+                  "type": "string"
+                },
+                "contentOffset": {
+                  "type": "integer"
+                },
+                "contentLength": {
+                  "type": "integer"
+                },
+                "commentAction": {
+                  "type": "string"
+                },
+                "assigneeEmail": {
+                  "type": "string"
+                },
+                "createTime": {
+                  "type": "string"
+                },
+                "updateTime": {
+                  "type": "string"
+                },
+                "deleted": {
+                  "type": "boolean"
+                },
+                "imported": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "idsNotShown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "presentationId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "create_comment_reply",
+      "description": "Reply to a comment thread. Adds a post and changes no existing one; to resolve, reopen, or reassign, use update_comment_thread.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "commentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\S+$",
+            "description": "commentId from list_comments or create_comment."
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "Plain text, up to 2048 UTF-8 bytes."
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "commentUpdateState": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "commentId": {
+            "type": "string"
+          },
+          "post": {
+            "type": "object",
+            "properties": {
+              "postId": {
+                "type": "string"
+              },
+              "author": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "string"
+                  },
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "me": {
+                    "type": "boolean"
+                  },
+                  "anonymous": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "content": {
+                "type": "string"
+              },
+              "contentOffset": {
+                "type": "integer"
+              },
+              "contentLength": {
+                "type": "integer"
+              },
+              "commentAction": {
+                "type": "string"
+              },
+              "assigneeEmail": {
+                "type": "string"
+              },
+              "createTime": {
+                "type": "string"
+              },
+              "updateTime": {
+                "type": "string"
+              },
+              "deleted": {
+                "type": "boolean"
+              },
+              "imported": {
+                "type": "boolean"
+              }
+            }
+          },
+          "idsNotShown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "update_comment_thread",
+      "description": "Resolve, reopen, or reassign a comment thread with a post. Pass exactly one of status or assigneeEmail; reassignment requires content. Replaces its status or assignee; Slides notifies an assignee.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "commentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\S+$",
+            "description": "commentId from list_comments or create_comment."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RESOLVED",
+              "OPEN"
+            ],
+            "description": "Resolve the thread, or reopen it."
+          },
+          "assigneeEmail": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320,
+            "pattern": "^[^\\s@]+@[^\\s@]+$",
+            "description": "Reassign an assigned thread instead; needs content."
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "Note posted with it, up to 2048 UTF-8 bytes; required to reassign."
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "commentUpdateState": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "commentId": {
+            "type": "string"
+          },
+          "post": {
+            "type": "object",
+            "properties": {
+              "postId": {
+                "type": "string"
+              },
+              "author": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "string"
+                  },
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "me": {
+                    "type": "boolean"
+                  },
+                  "anonymous": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "content": {
+                "type": "string"
+              },
+              "contentOffset": {
+                "type": "integer"
+              },
+              "contentLength": {
+                "type": "integer"
+              },
+              "commentAction": {
+                "type": "string"
+              },
+              "assigneeEmail": {
+                "type": "string"
+              },
+              "createTime": {
+                "type": "string"
+              },
+              "updateTime": {
+                "type": "string"
+              },
+              "deleted": {
+                "type": "boolean"
+              },
+              "imported": {
+                "type": "boolean"
+              }
+            }
+          },
+          "idsNotShown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "update_comment_post",
+      "description": "Replace the text of one post in a comment thread, the head post or a reply. Only its author can; the old text is gone.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "commentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\S+$",
+            "description": "commentId from list_comments or create_comment."
+          },
+          "postId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\S+$",
+            "description": "postId of the post, from list_comments."
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "The new plain text, up to 2048 UTF-8 bytes."
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId",
+          "postId",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "commentUpdateState": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "commentId": {
+            "type": "string"
+          },
+          "postId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId",
+          "postId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "delete_comment",
+      "description": "Delete a whole comment thread, every reply with it. Only the author of its head post can, and the API cannot restore it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "commentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\S+$",
+            "description": "commentId from list_comments or create_comment."
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "commentUpdateState": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "commentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "delete_comment_reply",
+      "description": "Delete one reply from a comment thread. Only its author can, and not a reply that resolved, reopened, or assigned the thread.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "commentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\S+$",
+            "description": "commentId from list_comments or create_comment."
+          },
+          "postId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^\\S+$",
+            "description": "postId of the reply, from list_comments."
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId",
+          "postId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "commentUpdateState": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "commentId": {
+            "type": "string"
+          },
+          "postId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "presentationId",
+          "commentId",
+          "postId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "batch_update_presentation",
+      "description": "Send raw Slides batchUpdate requests to a deck at the revision it was read at; all apply or none, comments apart. Always destructive. Returns every new id; past 256 KiB, only a direct call can page them.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Presentation id: the part after /presentation/d/ in its URL, or from Drive."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[^\\s]+$",
+            "description": "revisionId from get_presentation; the write is refused, unapplied, if the deck changed since."
+          },
+          "requests": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Slides Request objects, applied in order, all or none but comments; 1 to 100 (connecta's bound).",
+            "items": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 1,
+              "description": "One Request with one key, as the Slides reference defines it: {\"insertText\": {...}}."
+            }
+          }
+        },
+        "required": [
+          "presentationId",
+          "requiredRevisionId",
+          "requests"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "revisionIdNotShown": {
+            "type": "boolean"
+          },
+          "replies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cut": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "repliesNotShown": {
+            "type": "integer"
+          },
+          "commentUpdateState": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "presentationId",
+          "replies"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    }
+  ]
+}
