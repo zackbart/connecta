@@ -756,3 +756,53 @@ it("INV-7: aborted agent verification settles its pending storage read and start
     read.mockRestore();
   }
 });
+
+it.each([1, 2, 3])(
+  "INV-7: an agent deadline at storage read %i refuses promptly and starts no later read",
+  async (stage) => {
+    vi.useFakeTimers();
+    const { authenticate } = await import("../src/auth-admission.js");
+    const storage = memoryStorage();
+    const manager = new AccessTokenManager(storage, { agents: ["assistant"] });
+    const { token } = await manager.rotate("assistant");
+    const nativeGet = storage.get.bind(storage);
+    let release!: () => void;
+    let count = 0;
+    let settlement: Promise<unknown> | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const get = vi.spyOn(storage, "get").mockImplementation(async (key) => {
+      if (++count === stage) await held;
+      return nativeGet(key);
+    });
+    const caller = new AbortController();
+    const pending = authenticate(
+      manager.auth,
+      new Request(request(token), { signal: caller.signal }),
+      BASE,
+      undefined,
+      { info() {}, warn() {}, error() {}, debug() {} },
+      (work) => {
+        settlement = work;
+      },
+    );
+    try {
+      await vi.waitFor(() => expect(count).toBe(stage));
+      await vi.advanceTimersByTimeAsync(5_000);
+      const result = await pending;
+      expect(result.admitted).toBe(true);
+      if (result.admitted) expect(result.result.ok).toBe(false);
+      release();
+      await settlement;
+      expect(get).toHaveBeenCalledTimes(stage);
+    } finally {
+      caller.abort();
+      release();
+      await pending;
+      await settlement;
+      get.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);

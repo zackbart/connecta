@@ -145,7 +145,7 @@ describe("cloudflareAccessAuth", () => {
     }
   });
 
-  it("INV-4 INV-7: retains an unavailable native Access lookup until settlement and never admits its late result", async () => {
+  it("INV-4 INV-7: returns at the native Access deadline and never admits its late result", async () => {
     vi.useFakeTimers();
     try {
       let resolve!: (identity: Record<string, unknown>) => void;
@@ -159,19 +159,13 @@ describe("cloudflareAccessAuth", () => {
         },
       });
       await vi.advanceTimersByTimeAsync(5001);
-      let settled = false;
-      void Promise.resolve(pending).then(() => {
-        settled = true;
-      });
-      await Promise.resolve();
-      expect(settled).toBe(false);
-      resolve({ user_uuid: "late-human" });
       const result = await pending;
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.response.status).toBe(503);
         expect(result.response.headers.get("Cache-Control")).toBe("no-store");
       }
+      resolve({ user_uuid: "late-human" });
     } finally {
       vi.useRealTimers();
     }

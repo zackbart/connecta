@@ -126,6 +126,7 @@ const STATES: ReadonlySet<string> = new Set([...STATUS_STATES, "failed"]);
 
 /** Inbound denial facts, never identity text or provider diagnostics. */
 export type AuthDenialReason =
+  | "authentication_abandoned_saturated"
   | "authentication_busy"
   | "authentication_failed"
   | "authorization_header_invalid"
@@ -149,6 +150,7 @@ export type AuthDenialReason =
   | "not_pool_member";
 
 const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
+  "authentication_abandoned_saturated",
   "authentication_busy",
   "authentication_failed",
   "authorization_header_invalid",

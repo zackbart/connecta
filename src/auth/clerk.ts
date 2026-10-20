@@ -708,9 +708,10 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * The domain half of admission. Fails CLOSED on every uncertainty — no
    * primary email, an unverified one, a malformed address, or the lookup
    * itself failing — because "we could not tell" and "they belong here" must
-   * not be the same answer for a membership rule.
+   * not be the same answer for a membership rule. A failed or cancelled
+   * lookup is `undefined`, not a verdict, so it refuses without being cached.
    */
-  const checkDomain = async (userId: string, clerk: ClerkGateClient): Promise<boolean> => {
+  const checkDomain = async (userId: string, clerk: ClerkGateClient): Promise<boolean | undefined> => {
     if (!allowedDomains) return true;
     let email: string | undefined;
     try {
@@ -721,7 +722,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       }
     } catch (error) {
       logDenial("email_lookup_failed", error);
-      return false;
+      return undefined;
     }
     const domain = email ? emailDomain(email) : null;
     if (!domain) {
@@ -822,18 +823,23 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * operator gate code. One cached verdict covers both, so composing them costs
    * no more Clerk calls than `gate` alone did.
    */
-  const checkGate = async (userId: string, clerk: ClerkGateClient): Promise<boolean> => {
+  const checkGate = async (userId: string, clerk: ClerkGateClient, signal: AbortSignal): Promise<boolean> => {
     if (!opts.gate && !allowedDomains) return true;
     const hit = readIdentityCache(gateCache, userId);
     if (hit) return hit.allowed;
-    let allowed = false;
+    let allowed: boolean;
     try {
       const domainAllowed = await checkDomain(userId, clerk);
+      if (domainAllowed === undefined) return false;
+      signal.throwIfAborted();
       allowed = domainAllowed && (opts.gate ? await opts.gate(userId, clerk) : true);
+      // `clerk` is bound to this signal; a gate may turn its cancelled
+      // lookup into `false`. Only a completed, uncancelled verdict is cached.
+      signal.throwIfAborted();
       if (domainAllowed && !allowed) logDenial("gate_denied");
     } catch {
       logDenial("gate_failed");
-      allowed = false;
+      return false;
     }
     writeIdentityCache(gateCache, userId, {
       allowed,
@@ -1020,7 +1026,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         }
         const membership = await checkOrganization(userId, signal);
         if (membership instanceof Response) return { ok: false, response: membership };
-        if (!membership || !(await checkGate(userId, clerk))) {
+        if (!membership || !(await checkGate(userId, clerk, signal))) {
           return { ok: false, response: forbidden() };
         }
         signal.throwIfAborted();

@@ -226,7 +226,7 @@ An open deployment with connectors warns at construction.
 
 ### Authentication capacity and ingress limiting
 
-Connecta admits at most **16 in-progress inbound adapter authorizations** per
+Connecta admits at most **16 active inbound adapter authorizations** per
 loaded core in a process or Worker isolate. Human MCP endpoints, agent endpoints,
 operator APIs, connection starts (`/connect/<connector>`), and OAuth callbacks
 share this fixed bound, including network calls made inside an adapter's SDK.
@@ -237,9 +237,36 @@ The operator log records only the checked `authentication_busy` reason, never
 credentials or identity-provider diagnostics. Retry after the indicated delay;
 Connecta does not automatically retry the authentication.
 
-A slot lasts until the underlying adapter work settles, including cancellation
-cleanup. A caller leaving does not release capacity while its verifier is still
-running. Clerk creates a client per authorization: SDK verification (opaque
+Underlying work stays charged until it settles, including cancellation cleanup.
+A caller leaving alone never releases capacity. After an authorization's hard
+deadline plus **one second of settlement grace**, unfinished work moves from the
+active pool to a separate **abandoned allowance of 16 operations**. The native
+Access lookup and agent-token verification have five-second deadlines; Clerk's
+deadline is ten seconds, and custom adapters share that ten-second threshold.
+The allowance equals the active limit, so one full wave of stalled operations
+can recover while normal authentication continues, and at most **32
+authorizations** are ever outstanding per loaded core. While the allowance is
+full, no authorization starts, even when active slots are free. Overdue work
+that finds the allowance full keeps its active slot until an abandoned
+operation actually settles and makes room. Each settlement decrements exactly
+one count. A binding that never settles therefore fills the allowance and fails
+closed instead of accumulating I/O.
+
+A request refused because the allowance is full receives the same 503
+`authentication_busy` response and headers. The operator log records the
+checked reason `authentication_abandoned_saturated` instead. `GET /health`
+reports `admission.authentication` with `active`, `limit`, `abandoned`,
+`abandonedLimit`, and `abandonedSaturated`, for example:
+
+```json
+{ "active": 0, "limit": 16, "abandoned": 16, "abandonedLimit": 16, "abandonedSaturated": true }
+```
+
+That state refuses all new authentication until an underlying operation
+settles. Investigate the identity binding or token storage; restarting the
+process or isolate clears its local accounting.
+
+Clerk creates a client per authorization: SDK verification (opaque
 access tokens, JWT/JWKS, browser handshakes and session refresh), domain checks,
 and gate-client lookups all use that request's signal and a ten-second
 authentication deadline. Its transport reads at most 1 MiB per SDK response,
@@ -252,11 +279,15 @@ as in the installed Worker example. Its `waitUntil` keeps only that request's
 already-running authorization and cleanup runnable after disconnect, so an
 aborted upstream settles before its slot is released. No other request shares
 its promise or I/O. Custom adapters must honor `request.signal` and settle only
-after their work ends; code that ignores cancellation keeps occupying capacity.
+after their work ends; ignoring cancellation consumes the bounded abandoned allowance.
 The current adapters cannot cheaply establish a fully authenticated cache hit
 before verification, so every adapter invocation counts, including one that
 later uses a cached membership or policy verdict. Cache hits finish their slots
 quickly; a cached policy verdict never bypasses credential verification.
+Domain/gate and organization caches store only completed verdicts, never a
+lookup failure, cancellation, or timeout. A `gate` that returns `false` after
+its request was cancelled is not cached either. The JWKS cache stores only
+signing keys from a completed fetch.
 An adapter returning a synchronous local verdict releases before yielding;
 it consumes no pending slot between requests.
 
@@ -275,10 +306,12 @@ separate operations, with their existing limits; this bound covers the inbound
 authentication that admits their caller. Cloudflare Access edge authentication
 runs before the Worker; its in-Worker identity lookup is covered. Access uses
 only the trusted runtime binding, with no JWT/JWKS fetch. That native binding
-and token storage expose no cancellation API: an abandoned pending operation
-keeps occupying admission until it settles; agent verification starts no further
-storage read after its request aborts. Access refuses a verdict after its
-five-second deadline, but waits for the underlying lookup to settle.
+and token storage expose no cancellation API. Both answer promptly on caller
+cancellation or their five-second deadline and keep the unfinished operation
+in active or abandoned accounting until it settles. The five-second agent
+deadline covers hashing and every verification read together, and returns the
+machine `401` challenge; no further storage read starts after cancellation or
+timeout. A late native result never admits its original caller.
 
 This is a concurrency bound, **not a rate limit or a shared provider quota**.
 Require ingress rate limiting for public deployments across all authenticated
@@ -286,7 +319,7 @@ paths, including `/agent/*`, `/ui/*`, `/connect/*`, and `/oauth/callback/*`.
 For example, a deployment at `https://assistant.example.com` using Clerk must
 budget all isolates and deployments sharing its Clerk secret key together.
 Fast invalid tokens and repeated cache misses can exhaust a provider's request
-budget without ever exceeding 16 concurrent authentications. Set ingress limits
+budget without ever exceeding 16 active authentications. Set ingress limits
 to that provider's quota and expected traffic; increasing MCP concurrency does
 not increase authentication capacity.
 

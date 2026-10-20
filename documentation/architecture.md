@@ -132,13 +132,20 @@ An admitted non-preflight `/mcp` request then takes five steps in
    and held until the response _body_ completes, the caller leaves, or its
    configured lifetime ends, not until the handler returns.
 2. **Authorize.** Every adapter invocation passes the independent fixed
-   16-authorization bound in `src/auth-admission.ts`, including header-named
+   16-active-authorization bound in `src/auth-admission.ts`, including header-named
    listens, SDK-owned auth, agent-token storage, and operator/connection routes
-   outside the MCP pool. Only a plain counter is shared per loaded core;
-   there is no queue or shared promise. Saturation returns retryable 503
-   `authentication_busy` with `Retry-After: 1` and a checked payload-free log.
-   Each request releases exactly once after the adapter and its cancellation
-   cleanup settle; abort alone does not release capacity. The request's
+   outside the MCP pool. Shared state is counters and bounded plain charge
+   records, never request I/O; there is no queue or shared promise. Saturation
+   returns retryable 503 `authentication_busy` with `Retry-After: 1` and a
+   checked payload-free log. Each request releases exactly once after the
+   adapter and its cancellation cleanup settle; abort alone does not release
+   capacity. At its hard deadline plus one second of grace, unfinished work
+   moves to a separate allowance of 16 abandoned operations, or stays active
+   while that allowance is full. A full allowance refuses all new work, logged
+   as `authentication_abandoned_saturated`; only real settlement decrements it
+   and promotes an overdue active charge. Health exposes both counters. Access
+   and agent verification race five-second deadlines while registering their
+   uncancellable native work with the invocation's charge. The request's
    `ctx.waitUntil` keeps that same settlement continuation runnable on Worker
    disconnects. No other request touches its promise, signal or I/O. Clerk
    uses a client per authorization, with its signal and a ten-second deadline

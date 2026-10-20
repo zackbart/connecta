@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { authenticate } from "../src/auth-admission.js";
+import { authenticate, authenticationSnapshot } from "../src/auth-admission.js";
 import { authorize, authorizeAgent } from "../src/routes/shared.js";
-import { accessTokens } from "../src/access-tokens.js";
+import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
+import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { activityHistory } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthResult, InboundAuth } from "../src/types.js";
@@ -210,4 +211,158 @@ describe("inbound authentication admission", () => {
       await Promise.all(pending);
     }
   });
+});
+
+// These promises model a native binding/storage operation that has no cancel
+// argument. The adapter must return promptly without releasing the real work.
+it.each(["access", "agent"] as const)(
+  "INV-6 INV-7: %s hard deadlines recover partial stalls and bound permanent abandonment",
+  async (kind) => {
+    vi.useFakeTimers();
+    const finishes: Array<() => void> = [];
+    const storage = memoryStorage();
+    const manager = new AccessTokenManager(storage, { agents: ["assistant"] });
+    const { token } = await manager.rotate("assistant");
+    const get = vi
+      .spyOn(storage, "get")
+      .mockImplementation(() => new Promise((resolve) => finishes.push(() => resolve(null))));
+    const provider = kind === "access" ? cloudflareAccessAuth() : manager.auth;
+    const warn = vi.fn();
+    const context =
+      kind === "access"
+        ? {
+            access: {
+              aud: "app",
+              getIdentity: () =>
+                new Promise<Record<string, unknown>>((resolve) => finishes.push(() => resolve({ user_uuid: "late" }))),
+            },
+          }
+        : undefined;
+    const callers: AbortController[] = [];
+    const waits: Promise<unknown>[] = [];
+    const pending: Promise<unknown>[] = [];
+    const start = () => {
+      const caller = new AbortController();
+      callers.push(caller);
+      const req = new Request(`${BASE}/mcp`, {
+        signal: caller.signal,
+        ...(kind === "agent" ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+      });
+      const result = authenticate(provider, req, BASE, context, { ...silentLogger, warn }, (work) => waits.push(work));
+      pending.push(result);
+      return result;
+    };
+    const snapshot = (active: number, abandoned: number) =>
+      expect(authenticationSnapshot()).toEqual({
+        active,
+        abandoned,
+        limit: 16,
+        abandonedLimit: 16,
+        abandonedSaturated: abandoned === 16,
+      });
+    try {
+      const first = start();
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(finishes).toHaveLength(1));
+      callers[0]!.abort();
+      expect((await first).admitted).toBe(true);
+      snapshot(1, 0);
+      await vi.advanceTimersByTimeAsync(6_000);
+      snapshot(0, 1);
+      // One stuck operation no longer prevents the normal pool accepting 16.
+      const wave = Array.from({ length: 16 }, start);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(finishes).toHaveLength(17));
+      snapshot(16, 1);
+      expect((await start()).admitted).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      for (const result of await Promise.all(wave)) {
+        expect(result.admitted).toBe(true);
+        if (result.admitted) expect(result.result.ok).toBe(false);
+      }
+      snapshot(16, 1); // caller deadline did not release any native work
+      await vi.advanceTimersByTimeAsync(1_000);
+      snapshot(1, 16); // the extra overdue charge cannot overflow the allowance
+      // Callers keep one retryable contract; only the log names saturation.
+      const saturated = await start();
+      expect(saturated.admitted).toBe(false);
+      if (!saturated.admitted) await expectBusy(saturated.response);
+      expect(warn.mock.calls.at(-1)).toEqual([
+        "[connecta] Authentication admission refused",
+        { reason: "authentication_abandoned_saturated" },
+      ]);
+      expect(finishes).toHaveLength(17);
+      finishes.shift()!();
+      await vi.advanceTimersByTimeAsync(0);
+      snapshot(0, 16); // real settlement promotes the waiting overdue charge
+      finishes.shift()!();
+      await vi.advanceTimersByTimeAsync(0);
+      snapshot(0, 15);
+      const recovered = start();
+      await vi.waitFor(() => expect(finishes).toHaveLength(16));
+      snapshot(1, 15);
+      finishes.splice(0).forEach((finish) => finish());
+      await recovered;
+      await Promise.all(waits);
+      snapshot(0, 0);
+      // No double release after abort, timeout, promotion, and late settlement.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      callers.forEach((caller) => caller.abort());
+      finishes.splice(0).forEach((finish) => finish());
+      await Promise.all(pending);
+      await Promise.all(waits);
+      get.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("INV-7: a custom adapter ignoring cancellation moves to the allowance at ten seconds plus grace", async () => {
+  vi.useFakeTimers();
+  let reject!: (error: Error) => void;
+  const provider: InboundAuth = {
+    kind: "custom",
+    authorize: () =>
+      new Promise<AuthResult>((_resolve, fail) => {
+        reject = fail;
+      }),
+  };
+  const caller = new AbortController();
+  const waits: Promise<unknown>[] = [];
+  const pending = authenticate(provider, request(caller.signal), BASE, undefined, silentLogger, (work) =>
+    waits.push(work),
+  );
+  try {
+    caller.abort();
+    await vi.advanceTimersByTimeAsync(10_999);
+    expect(authenticationSnapshot()).toMatchObject({ active: 1, abandoned: 0 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 1 });
+    const app = createTestConnecta({ connectors: [calcConnector], logger: silentLogger });
+    try {
+      const health = (await (await app.fetch(new Request(`${BASE}/health`))).json()) as {
+        admission: { authentication: unknown };
+      };
+      expect(health.admission.authentication).toEqual({
+        active: 0,
+        limit: 16,
+        abandoned: 1,
+        abandonedLimit: 16,
+        abandonedSaturated: false,
+      });
+    } finally {
+      await app.close();
+    }
+    reject(new Error("late"));
+    await expect(pending).rejects.toThrow("late");
+    await Promise.all(waits);
+    // A late rejection decrements the abandoned charge exactly once.
+    expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    reject(new Error("late"));
+    await pending.catch(() => {});
+    vi.useRealTimers();
+  }
 });
