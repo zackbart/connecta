@@ -30,7 +30,7 @@ consumer, contrarian) found the duplication, plus defects that come from it:
   MCP writes are already covered by tests; this path is not.
 - **Context copies can drop call state.** Caller, admission permit, recovery
   facts and sent secrets live in side tables keyed on the context object, and
-  ten sites copy it with `{...ctx}`. Most are credential probes; A.2 states
+  twelve sites copy it with `{...ctx}`. Most are credential probes; A.2 states
   which state each one actually loses.
 - **Agents can switch off the privacy projection.** CCB's `raw: true`,
   `ccb_api_get` and `ccb_api_search` all return rows with the sensitive fields
@@ -160,7 +160,8 @@ this record instead of GitHub issues.
 2. Fix the audit defects: write-5xx retryability, the `api()` OAuth 401 write
    replay and its regression tests, CCB's privacy boundary on every access path
    (with any opt-in set in deployment config, never by agent arguments), the
-   `{...ctx}` copies, and a decision on confining `ctx.fetch`.
+   `{...ctx}` copies with a per-site account of the state each one loses, and a
+   decision on confining `ctx.fetch`.
 3. Characterization goldens for every `api()` provider. Each golden captures the
    catalog bytes (names, schemas, annotations), the requests sent for fixture
    arguments, and the mapped success and failure results.
