@@ -1,0 +1,745 @@
+{
+  "read": {
+    "tool": "get_spreadsheet",
+    "args": {
+      "spreadsheetId": "sheet-budget-1"
+    },
+    "cases": {
+      "400": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Google Sheets: Golden 400 failure",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          },
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Google Sheets: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "retryable": false,
+            "connector": "sheets",
+            "operation": "sheets.get_spreadsheet",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "sheets"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry sheets.get_spreadsheet after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "provider_permission_denied",
+            "message": "Google Sheets: Golden 403 failure Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.",
+            "retryable": false,
+            "connector": "sheets",
+            "operation": "sheets.get_spreadsheet",
+            "retry": "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access."
+          }
+        }
+      },
+      "404": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Google Sheets: Golden 404 failure The id is unknown or not visible to this account; Google does not distinguish them.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Google Sheets: Golden 409 failure",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Google Sheets: Golden 422 failure",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "Google Sheets: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Google Sheets: Golden 500 failure Google is failing upstream.",
+            "retryable": true
+          }
+        }
+      },
+      "network": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "GET",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the Google Sheets API.",
+            "retryable": true,
+            "details": {
+              "host": "https://sheets.googleapis.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      }
+    }
+  },
+  "write": {
+    "tool": "update_values",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "range": "Summary!A1",
+      "values": [
+        [
+          "Item",
+          1200
+        ]
+      ],
+      "valueInputOption": "RAW"
+    },
+    "cases": {
+      "400": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Google Sheets: Golden 400 failure",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          },
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Google Sheets: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "retryable": false,
+            "connector": "sheets",
+            "operation": "sheets.update_values",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "sheets"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "provider_permission_denied",
+            "message": "Google Sheets: Golden 403 failure Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.",
+            "retryable": false,
+            "connector": "sheets",
+            "operation": "sheets.update_values",
+            "retry": "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access."
+          }
+        }
+      },
+      "404": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Google Sheets: Golden 404 failure The id is unknown or not visible to this account; Google does not distinguish them.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Google Sheets: Golden 409 failure",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Google Sheets: Golden 422 failure",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "Google Sheets: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Google Sheets: Golden 500 failure Google is failing upstream.",
+            "retryable": true
+          }
+        }
+      },
+      "network": {
+        "requests": [
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://oauth2.googleapis.com/token"
+          },
+          {
+            "method": "POST",
+            "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "valueInputOption": "RAW",
+                "data": [
+                  {
+                    "range": "Summary!A1",
+                    "majorDimension": "ROWS",
+                    "values": [
+                      [
+                        "Item",
+                        1200
+                      ]
+                    ]
+                  }
+                ],
+                "includeValuesInResponse": false
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Google Sheets was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it.",
+            "retryable": false
+          }
+        }
+      }
+    }
+  }
+}

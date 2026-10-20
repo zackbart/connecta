@@ -1,0 +1,910 @@
+{
+  "read": {
+    "tool": "search_scoped",
+    "args": {
+      "terms": "widget",
+      "kind": "repositories",
+      "scopes": [
+        {
+          "repo": "other/one"
+        }
+      ]
+    },
+    "cases": {
+      "400": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "The GitHub API request failed; downstream error text is withheld.",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
+            "retryable": false,
+            "connector": "github",
+            "operation": "github.search_scoped",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "github"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry github.search_scoped after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
+            "retryable": false,
+            "connector": "github",
+            "operation": "github.search_scoped",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "github"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry github.search_scoped after the operator completes recovery."
+          }
+        }
+      },
+      "404": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "GitHub returned 404; the resource may be absent or inaccessible to this installation.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "conflict",
+            "message": "GitHub rejected a stale version. Read the current state before resubmitting.",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "The GitHub API request failed; downstream error text is withheld.",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "GitHub rate limit reached. Honor the retry timing before trying again.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "The GitHub API request failed; downstream error text is withheld.",
+            "retryable": true
+          }
+        }
+      },
+      "network": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "GET",
+            "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_metadata-read_repos-201",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the GitHub API.",
+            "retryable": true,
+            "details": {
+              "host": "https://api.github.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      }
+    }
+  },
+  "write": {
+    "tool": "create_release",
+    "args": {
+      "owner": "other",
+      "repo": "one",
+      "tag_name": "v1.2.0"
+    },
+    "cases": {
+      "400": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "The GitHub API request failed; downstream error text is withheld.",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
+            "retryable": false,
+            "connector": "github",
+            "operation": "github.create_release",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "github"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
+            "retryable": false,
+            "connector": "github",
+            "operation": "github.create_release",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "github"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "404": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "GitHub returned 404; the resource may be absent or inaccessible to this installation.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "conflict",
+            "message": "GitHub rejected a stale version. Read the current state before resubmitting.",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "The GitHub API request failed; downstream error text is withheld.",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "GitHub rate limit reached. Honor the retry timing before trying again.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "The GitHub API request failed; downstream error text is withheld.",
+            "retryable": true
+          }
+        }
+      },
+      "network": {
+        "requests": [
+          {
+            "auxiliary": "installations",
+            "method": "GET",
+            "url": "https://api.github.com/app/installations?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "auxiliary": "repository-resolution",
+            "method": "GET",
+            "url": "https://api.github.com/installation/repositories?per_page=100&page=1"
+          },
+          {
+            "auxiliary": "installation-token",
+            "method": "POST",
+            "url": "https://api.github.com/app/installations/22/access_tokens"
+          },
+          {
+            "method": "POST",
+            "url": "https://api.github.com/repos/other/one/releases",
+            "headers": {
+              "accept": "application/vnd.github+json",
+              "authorization": "Bearer ghs_golden_22_contents-write_repos-201",
+              "content-type": "application/json",
+              "user-agent": "connecta",
+              "x-github-api-version": "2022-11-28"
+            },
+            "body": {
+              "json": {
+                "tag_name": "v1.2.0"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the GitHub API.",
+            "retryable": true,
+            "details": {
+              "host": "https://api.github.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      }
+    }
+  }
+}

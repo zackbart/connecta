@@ -1,0 +1,566 @@
+[
+  {
+    "label": "get_form",
+    "tool": "get_form",
+    "args": {
+      "formId": "form-1"
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "GET",
+        "url": "https://forms.googleapis.com/v1/forms/form-1",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "formId": "form-1",
+        "title": "Retreat sign-up",
+        "documentTitle": "Retreat sign-up (2026)",
+        "description": "Fall retreat.",
+        "revisionId": "00000042",
+        "responderUri": "https://docs.google.com/forms/d/e/1FAIpQ/viewform",
+        "editUrl": "https://docs.google.com/forms/d/form-1/edit",
+        "linkedSheetId": "sheet-9",
+        "isQuiz": false,
+        "emailCollection": "VERIFIED",
+        "published": true,
+        "acceptingResponses": true,
+        "itemCount": 5,
+        "questionCount": 5,
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "items": [
+          {
+            "itemId": "i1",
+            "title": "Which session?",
+            "kind": "question",
+            "questions": [
+              {
+                "questionId": "q1",
+                "required": true,
+                "type": "radio",
+                "options": [
+                  "Morning",
+                  "Evening"
+                ],
+                "hasOther": true
+              }
+            ]
+          },
+          {
+            "itemId": "i2",
+            "title": "Dietary needs",
+            "description": "Anything we should know.",
+            "kind": "question",
+            "questions": [
+              {
+                "questionId": "q2",
+                "required": false,
+                "type": "paragraph"
+              }
+            ]
+          },
+          {
+            "itemId": "i3",
+            "title": "Logistics",
+            "kind": "page_break"
+          },
+          {
+            "itemId": "i5",
+            "title": "Availability",
+            "kind": "question_group",
+            "gridType": "checkbox",
+            "options": [
+              "Fri",
+              "Sat"
+            ],
+            "questions": [
+              {
+                "questionId": "q4",
+                "rowTitle": "Adults",
+                "required": true,
+                "type": "grid_row"
+              },
+              {
+                "questionId": "q5",
+                "rowTitle": "Children",
+                "required": false,
+                "type": "grid_row"
+              }
+            ]
+          },
+          {
+            "itemId": "i7",
+            "title": "Arrival date",
+            "kind": "question",
+            "questions": [
+              {
+                "questionId": "q6",
+                "required": false,
+                "type": "date",
+                "includesYear": true,
+                "includesTime": false
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "create_form",
+    "tool": "create_form",
+    "args": {
+      "title": "Volunteer roster",
+      "documentTitle": "Roster"
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://forms.googleapis.com/v1/forms",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "info": {
+              "title": "Volunteer roster",
+              "documentTitle": "Roster"
+            }
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "formId": "new-1",
+        "title": "Volunteer roster",
+        "documentTitle": "Roster",
+        "revisionId": "00000001",
+        "responderUri": "https://docs.google.com/forms/d/e/1FAIpNew/viewform",
+        "editUrl": "https://docs.google.com/forms/d/new-1/edit"
+      }
+    }
+  },
+  {
+    "label": "create_form unpublished",
+    "tool": "create_form",
+    "args": {
+      "title": "Draft survey",
+      "unpublished": true
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://forms.googleapis.com/v1/forms?unpublished=true",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "info": {
+              "title": "Draft survey"
+            }
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "formId": "new-2",
+        "title": "Draft survey",
+        "documentTitle": "Draft survey",
+        "revisionId": "00000001",
+        "responderUri": "https://docs.google.com/forms/d/e/1FAIpDraft/viewform",
+        "editUrl": "https://docs.google.com/forms/d/new-2/edit"
+      }
+    }
+  },
+  {
+    "label": "list_responses",
+    "tool": "list_responses",
+    "args": {
+      "formId": "form-1",
+      "submittedAfter": "2026-09-30T00:00:00Z",
+      "limit": 5
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "GET",
+        "url": "https://forms.googleapis.com/v1/forms/form-1",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      },
+      {
+        "method": "GET",
+        "url": "https://forms.googleapis.com/v1/forms/form-1/responses?filter=timestamp+%3E+2026-09-30T00%3A00%3A00Z&pageSize=5",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "formId": "form-1",
+        "responses": [
+          {
+            "responseId": "r1",
+            "createTime": "2026-10-01T12:00:00.000Z",
+            "lastSubmittedTime": "2026-10-01T12:05:00.000Z",
+            "respondentEmail": "bob@example.com",
+            "answers": [
+              {
+                "questionId": "q1",
+                "title": "Which session?",
+                "values": [
+                  "Evening"
+                ]
+              },
+              {
+                "questionId": "q2",
+                "title": "Dietary needs",
+                "values": [
+                  "No nuts, please."
+                ],
+                "score": 0,
+                "correct": false,
+                "feedback": {
+                  "text": "See the allergy guide.",
+                  "links": [
+                    {
+                      "uri": "https://example.com/allergies",
+                      "displayText": "Allergy guide"
+                    }
+                  ]
+                }
+              },
+              {
+                "questionId": "q5",
+                "title": "Availability [Children]",
+                "values": [
+                  "Fri",
+                  "Sat"
+                ]
+              },
+              {
+                "questionId": "q9",
+                "files": [
+                  {
+                    "fileId": "f1",
+                    "fileName": "waiver.pdf",
+                    "mimeType": "application/pdf"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJkIjoiMUxZY0ZId1pHYjFMd1d5Z0xhS0gtZyIsInQiOiJwYWdlLTIiLCJhIjpudWxsLCJoIjpudWxsLCJuIjo1fQ"
+        }
+      }
+    }
+  },
+  {
+    "label": "get_response",
+    "tool": "get_response",
+    "args": {
+      "formId": "form-1",
+      "responseId": "r1"
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "GET",
+        "url": "https://forms.googleapis.com/v1/forms/form-1",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      },
+      {
+        "method": "GET",
+        "url": "https://forms.googleapis.com/v1/forms/form-1/responses/r1",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "responseId": "r1",
+        "createTime": "2026-10-01T12:00:00.000Z",
+        "lastSubmittedTime": "2026-10-01T12:05:00.000Z",
+        "respondentEmail": "bob@example.com",
+        "totalScore": 3,
+        "answers": [
+          {
+            "questionId": "q1",
+            "title": "Which session?",
+            "values": [
+              "Evening"
+            ],
+            "score": 3,
+            "correct": true
+          },
+          {
+            "questionId": "q2",
+            "title": "Dietary needs",
+            "values": [
+              "No nuts, please."
+            ],
+            "score": 0,
+            "correct": false,
+            "feedback": {
+              "text": "See the allergy guide.",
+              "links": [
+                {
+                  "uri": "https://example.com/allergies",
+                  "displayText": "Allergy guide"
+                }
+              ]
+            }
+          },
+          {
+            "questionId": "q5",
+            "title": "Availability [Children]",
+            "values": [
+              "Fri",
+              "Sat"
+            ]
+          },
+          {
+            "questionId": "q9",
+            "files": [
+              {
+                "fileId": "f1",
+                "fileName": "waiver.pdf",
+                "mimeType": "application/pdf"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "update_form_info",
+    "tool": "update_form_info",
+    "args": {
+      "formId": "form-1",
+      "title": "Retreat 2026",
+      "description": "Bring a coat.",
+      "requiredRevisionId": "00000042"
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "requests": [
+              {
+                "updateFormInfo": {
+                  "info": {
+                    "title": "Retreat 2026",
+                    "description": "Bring a coat."
+                  },
+                  "updateMask": "title,description"
+                }
+              }
+            ],
+            "writeControl": {
+              "requiredRevisionId": "00000042"
+            }
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "formId": "form-1",
+        "revisionId": "00000043"
+      }
+    }
+  },
+  {
+    "label": "batch_update_form",
+    "tool": "batch_update_form",
+    "args": {
+      "formId": "form-1",
+      "requiredRevisionId": "00000043",
+      "requests": [
+        {
+          "createItem": {
+            "item": {
+              "title": "Phone number",
+              "questionItem": {
+                "question": {
+                  "required": true,
+                  "textQuestion": {}
+                }
+              }
+            },
+            "location": {
+              "index": 0
+            }
+          }
+        },
+        {
+          "deleteItem": {
+            "location": {
+              "index": 4
+            }
+          }
+        },
+        {
+          "updateSettings": {
+            "settings": {
+              "quizSettings": {
+                "isQuiz": true
+              }
+            },
+            "updateMask": "quizSettings.isQuiz"
+          }
+        }
+      ]
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "requests": [
+              {
+                "createItem": {
+                  "item": {
+                    "title": "Phone number",
+                    "questionItem": {
+                      "question": {
+                        "required": true,
+                        "textQuestion": {}
+                      }
+                    }
+                  },
+                  "location": {
+                    "index": 0
+                  }
+                }
+              },
+              {
+                "deleteItem": {
+                  "location": {
+                    "index": 4
+                  }
+                }
+              },
+              {
+                "updateSettings": {
+                  "settings": {
+                    "quizSettings": {
+                      "isQuiz": true
+                    }
+                  },
+                  "updateMask": "quizSettings.isQuiz"
+                }
+              }
+            ],
+            "writeControl": {
+              "requiredRevisionId": "00000043"
+            }
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "formId": "form-1",
+        "revisionId": "00000044",
+        "replies": [
+          {
+            "createdItemId": "i9",
+            "createdQuestionIds": [
+              "q9"
+            ]
+          },
+          {},
+          {}
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,461 @@
+[
+  {
+    "label": "get_document",
+    "tool": "get_document",
+    "args": {
+      "documentId": "doc-1"
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "GET",
+        "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "documentId": "doc-1",
+        "title": "Elders meeting",
+        "revisionId": "rev-1",
+        "url": "https://docs.google.com/document/d/doc-1/edit",
+        "tabs": [
+          {
+            "tabId": "t.0",
+            "title": "Notes",
+            "endIndex": 41,
+            "text": "# Elders meeting\nSee the [plan](https://example.org/plan) now.\n1. Budget",
+            "textTruncated": false
+          },
+          {
+            "tabId": "t.child",
+            "title": "Minutes",
+            "parentTabId": "t.0",
+            "nestingLevel": 1,
+            "endIndex": 11,
+            "text": "Approved.",
+            "textTruncated": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "get_document withIndexes",
+    "tool": "get_document",
+    "args": {
+      "documentId": "doc-1",
+      "tabId": "t.0",
+      "withIndexes": true
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "GET",
+        "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "documentId": "doc-1",
+        "title": "Elders meeting",
+        "revisionId": "rev-1",
+        "url": "https://docs.google.com/document/d/doc-1/edit",
+        "tabs": [
+          {
+            "tabId": "t.0",
+            "title": "Notes",
+            "endIndex": 41,
+            "text": "# Elders meeting\nSee the [plan](https://example.org/plan) now.\n1. Budget",
+            "textTruncated": false,
+            "elements": [
+              {
+                "type": "paragraph",
+                "startIndex": 1,
+                "endIndex": 16,
+                "style": "TITLE",
+                "text": "Elders meeting"
+              },
+              {
+                "type": "paragraph",
+                "startIndex": 16,
+                "endIndex": 34,
+                "text": "See the [plan](https://example.org/plan) now."
+              },
+              {
+                "type": "paragraph",
+                "startIndex": 34,
+                "endIndex": 41,
+                "text": "Budget"
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        }
+      }
+    }
+  },
+  {
+    "label": "create_document",
+    "tool": "create_document",
+    "args": {
+      "title": "Minutes"
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://docs.googleapis.com/v1/documents",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "title": "Minutes"
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "documentId": "new-1",
+        "title": "Minutes",
+        "revisionId": "r0",
+        "url": "https://docs.google.com/document/d/new-1/edit"
+      }
+    }
+  },
+  {
+    "label": "create_document with text",
+    "tool": "create_document",
+    "args": {
+      "title": "Minutes",
+      "text": "Opened in prayer.\nQuorum present."
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://docs.googleapis.com/v1/documents",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "title": "Minutes"
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "url": "https://docs.googleapis.com/v1/documents/new-1:batchUpdate",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "requests": [
+              {
+                "insertText": {
+                  "text": "Opened in prayer.\nQuorum present.",
+                  "endOfSegmentLocation": {}
+                }
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "documentId": "new-1",
+        "title": "Minutes",
+        "revisionId": "r1",
+        "url": "https://docs.google.com/document/d/new-1/edit"
+      }
+    }
+  },
+  {
+    "label": "append_text",
+    "tool": "append_text",
+    "args": {
+      "documentId": "doc-1",
+      "text": "\nAction items follow.",
+      "tabId": "t.child",
+      "requiredRevisionId": "rev-1"
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "requests": [
+              {
+                "insertText": {
+                  "text": "\nAction items follow.",
+                  "endOfSegmentLocation": {
+                    "tabId": "t.child"
+                  }
+                }
+              }
+            ],
+            "writeControl": {
+              "requiredRevisionId": "rev-1"
+            }
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "documentId": "doc-1",
+        "revisionId": "rev-2"
+      }
+    }
+  },
+  {
+    "label": "insert_text",
+    "tool": "insert_text",
+    "args": {
+      "documentId": "doc-1",
+      "index": 23,
+      "text": "Note: "
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "requests": [
+              {
+                "insertText": {
+                  "text": "Note: ",
+                  "location": {
+                    "index": 23
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "documentId": "doc-1"
+      }
+    }
+  },
+  {
+    "label": "replace_all_text",
+    "tool": "replace_all_text",
+    "args": {
+      "documentId": "doc-1",
+      "find": "\\bQ(\\d)\\b",
+      "replaceWith": "Quarter",
+      "matchCase": true,
+      "regex": true,
+      "tabIds": [
+        "t.0"
+      ]
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "requests": [
+              {
+                "replaceAllText": {
+                  "containsText": {
+                    "text": "\\bQ(\\d)\\b",
+                    "matchCase": true,
+                    "searchByRegex": true
+                  },
+                  "replaceText": "Quarter",
+                  "tabsCriteria": {
+                    "tabIds": [
+                      "t.0"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "documentId": "doc-1",
+        "revisionId": "rev-9",
+        "occurrencesChanged": 3
+      }
+    }
+  },
+  {
+    "label": "batch_update_document",
+    "tool": "batch_update_document",
+    "args": {
+      "documentId": "doc-1",
+      "requiredRevisionId": "rev-2",
+      "requests": [
+        {
+          "deleteContentRange": {
+            "range": {
+              "startIndex": 5,
+              "endIndex": 9
+            }
+          }
+        },
+        {
+          "createNamedRange": {
+            "name": "agenda",
+            "range": {
+              "startIndex": 1,
+              "endIndex": 4
+            }
+          }
+        }
+      ]
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token"
+      },
+      {
+        "method": "POST",
+        "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "requests": [
+              {
+                "deleteContentRange": {
+                  "range": {
+                    "startIndex": 5,
+                    "endIndex": 9
+                  }
+                }
+              },
+              {
+                "createNamedRange": {
+                  "name": "agenda",
+                  "range": {
+                    "startIndex": 1,
+                    "endIndex": 4
+                  }
+                }
+              }
+            ],
+            "writeControl": {
+              "requiredRevisionId": "rev-2"
+            }
+          }
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "documentId": "doc-1",
+        "revisionId": "rev-3",
+        "replies": [
+          {},
+          {
+            "createNamedRange": {
+              "namedRangeId": "kix.nr1"
+            }
+          }
+        ],
+        "replyCount": 2
+      }
+    }
+  }
+]

@@ -1248,6 +1248,37 @@ Phase 2's deployment-level classifier overrides, keyed by connector id and
 tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
 regardless of wrapping.
 
+#### Characterization goldens
+
+Every maintained provider with an `api()` surface has goldens under
+`test/goldens/<provider>/`: the oracle a provider migration must match byte
+for byte. `catalog.json` holds the connector metadata, the rendered guide,
+and each tool's name, description, schemas, and annotations. `calls.json`
+holds at least one fixture call per tool: the exact requests sent (method,
+URL, sorted headers, body) and the agent-visible outcome.
+`failures.json` drives one read and one write through 400, 401, 403, 404,
+409, 422, 429 (with `retry-after`) and 500 responses and a refused
+connection. Calls run through `Registry` and `InvocationService` with a real
+credential vault, so the outcome is what `call_tool` returns before MCP
+rendering.
+
+`test/goldens/<provider>/spec.ts` says only how to build the provider and
+which calls to make. `test/goldens/harness.ts` owns the fake network, the
+fixed clock (`Date` only), counted `crypto.randomUUID` and fixed
+`Math.random`, credential redaction (`<secret:field>`, with HTTP Basic shown
+decoded), auxiliary routes for token exchanges (recorded by method and URL
+only), an optional `setup` hook for OAuth consent whose requests go
+unrecorded, and the JSON layout. Object keys keep the order the provider produced.
+A migration changes the provider, never the spec or harness.
+
+`test/goldens.test.ts` compares on both Vitest projects and fails if a
+provider folder is neither covered nor listed as remote-MCP-only, or a tool
+has no call. It never writes. `pnpm run goldens:update [provider...]`
+rewrites the named goldens (all when none are named) on Node; it is not part
+of `check`. A PR that changes agent-facing output on purpose regenerates the
+affected goldens and says why in its description; any other golden diff is a
+regression.
+
 ## Optional deployment modules
 
 `createConnecta` takes closed typed `ui`, `vault`, and `activity`

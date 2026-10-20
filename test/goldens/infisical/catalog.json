@@ -1,0 +1,967 @@
+{
+  "id": "infisical",
+  "kind": "api",
+  "title": "Infisical",
+  "description": "Infisical secrets management — Deployment secrets for the crm and tickets services",
+  "credential": {
+    "label": "Machine identity",
+    "description": "Universal Auth credentials. Project membership and roles bound this connection's access.",
+    "fields": [
+      {
+        "name": "clientId",
+        "label": "Client ID",
+        "inputType": "text",
+        "placeholder": "Universal Auth client ID"
+      },
+      {
+        "name": "clientSecret",
+        "label": "Client secret",
+        "inputType": "password",
+        "placeholder": "Paste client secret"
+      }
+    ]
+  },
+  "guide": {
+    "summary": "Find projects and environments first; secret values are omitted from lists unless requested.",
+    "content": "# Infisical usage\n\nUse this Infisical machine identity at https://app.infisical.com/api for Deployment secrets for the crm and tickets services.\n\nStart with `list_projects` for project IDs and environment slugs, then `list_folders` for absolute paths.\n\nKeep value reads narrow. `list_secrets` returns identifiers only by default, even if the server sends values or comments; use `get_secret` or opt into `includeValues` only when needed. These explicit reads return secrets, including values and comments. Comments are available only from these value-read tools. Do not echo values unless the user asks. Imports follow the same value policy.\n\nValues can reference secrets as `${env.KEY}`. Value reads expand references by default. Use `expandReferences: false` to read the literal reference before editing; updating a value changes only that secret, not the secrets it references. Updates send only named changes. Writes omit values and report `pendingApproval` when an environment's change policy requires approval.\n\nEvery value-free result returns only checked identifiers: UUID or legacy 24-hex IDs, secret keys, positive integer versions, known type/approval enums, environment and tag slugs, absolute paths, and ISO timestamps. Projects expose IDs and environment identifiers; folders expose IDs and paths. Project slugs are withheld because Infisical can derive them from free-text project names. Comments, descriptions, free-form names, reminder notes, and arbitrary nested objects are withheld. `metadataOmitted: true` reports dropped or unavailable metadata; success or pending-approval context remains available. Identifier fields outside the conservative grammar are dropped.\n\nKnown, accepted residual risk: environment slugs are returned as required routing identifiers. Infisical's UI derives them from environment names by default, so secrets entered in those names can appear in returned slugs. Operators must not put secrets in environment names or slugs. Secrets placed in identifiers or key names are out of scope.\n\nThe provider assumes an honest Infisical server and protects against careless human entry of secrets in free text. It does not match submitted values or defend against a malicious server encoding values into valid identifiers. Submitted secret data never joins credential redaction, so later calls in the same program keep their authorized arguments. Client credentials and tokens retain request-scoped credential protection.\n\nThis finite surface has no guarded raw-REST tool. These endpoints return complete collections without a page cursor; narrow the path and avoid recursive/value listings to stay below Connecta's 8 MiB response ceiling. Temporary result paging does not reduce the upstream response size.\n\nUniversal Auth tokens remain in memory only and refresh before expiry. Reads may retry once after a rejected token. Writes refresh a rejected token for a later explicit call and return the auth failure without resending; reconcile the target before another call. Recovery echoes marked `argsRedacted` omit secret values, secret comments, and folder descriptions, so any new call requires the original arguments. The operator's machine identity must belong to each project with the right role; a 403 needs an operator to fix membership or role. US cloud is the default; set `baseUrl: \"https://eu.infisical.com/api\"` for EU cloud or your self-hosted HTTPS API base including `/api`. Preserve the connector id and the `clientId`/`clientSecret` fields when migrating existing credentials.\n\nNo default call budget is assumed. Operators can supply `callAdmission` for their instance's limits. The credential test performs a Universal Auth login only, without reading projects or secrets.\n"
+  },
+  "tools": [
+    {
+      "name": "list_projects",
+      "description": "List Infisical secret-manager projects with their IDs and environment slugs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "secret-manager"
+                  ]
+                },
+                "environments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "slug": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+                      },
+                      "id": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "metadataOmitted": {
+            "type": "boolean",
+            "description": "Free text, invalid identifiers or unavailable upstream metadata was withheld."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_folders",
+      "description": "List folders in an Infisical project environment at a path.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Project ID from list_projects."
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Environment slug, e.g. dev, staging, prod. list_projects shows each project's environments."
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "Absolute folder path beginning with /. Defaults to /.",
+            "default": "/"
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Include every nested folder below path."
+          }
+        },
+        "required": [
+          "projectId",
+          "environment"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^\\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254}(?:\\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254})*\\/?)?$"
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "metadataOmitted": {
+            "type": "boolean",
+            "description": "Free text, invalid identifiers or unavailable upstream metadata was withheld."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_secrets",
+      "description": "List Infisical secret identifiers. includeValues explicitly returns secret values and comments.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Project ID from list_projects."
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Environment slug, e.g. dev, staging, prod. list_projects shows each project's environments."
+          },
+          "secretPath": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "Absolute folder path beginning with /. Defaults to /.",
+            "default": "/"
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Include secrets in every nested folder."
+          },
+          "includeValues": {
+            "type": "boolean",
+            "description": "Return secret values and comments. Defaults to false."
+          },
+          "includeImports": {
+            "type": "boolean",
+            "description": "Include secrets imported from other paths. Defaults to true."
+          },
+          "expandReferences": {
+            "type": "boolean",
+            "description": "Expand ${env.KEY} references in values. Defaults to true."
+          },
+          "tagSlugs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Only secrets with these tag slugs."
+          }
+        },
+        "required": [
+          "projectId",
+          "environment"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "comment": {
+                  "type": "string"
+                },
+                "environment": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "number"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "valueHidden": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "imports": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "environment": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^\\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254}(?:\\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254})*\\/?)?$"
+                },
+                "secrets": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      },
+                      "comment": {
+                        "type": "string"
+                      },
+                      "environment": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "number"
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      },
+                      "valueHidden": {
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "metadataOmitted": {
+            "type": "boolean",
+            "description": "Free text, invalid identifiers or unavailable upstream metadata was withheld."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_secret",
+      "description": "Read one Infisical secret, including its value and comment, by key.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Project ID from list_projects."
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Environment slug, e.g. dev, staging, prod. list_projects shows each project's environments."
+          },
+          "secretName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Secret key, e.g. DATABASE_URL."
+          },
+          "secretPath": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "Absolute folder path beginning with /. Defaults to /.",
+            "default": "/"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "A past version to read. Omit for the current one."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "personal"
+            ],
+            "description": "shared (default) or the caller's personal override."
+          },
+          "expandReferences": {
+            "type": "boolean",
+            "description": "Expand ${env.KEY} references. Defaults to true."
+          }
+        },
+        "required": [
+          "projectId",
+          "environment",
+          "secretName"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "secret": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              },
+              "comment": {
+                "type": "string"
+              },
+              "environment": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "version": {
+                "type": "number"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              },
+              "valueHidden": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "create_secret",
+      "description": "Create a secret in an Infisical project environment and path.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Project ID from list_projects."
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Environment slug, e.g. dev, staging, prod. list_projects shows each project's environments."
+          },
+          "secretName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Secret key, e.g. DATABASE_URL."
+          },
+          "secretValue": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "The value. May reference others as ${env.KEY}."
+          },
+          "secretPath": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "Absolute folder path beginning with /. Defaults to /.",
+            "default": "/"
+          },
+          "secretComment": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "Optional note shown beside the secret."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "personal"
+            ],
+            "description": "shared (default) or the caller's personal override."
+          }
+        },
+        "required": [
+          "projectId",
+          "environment",
+          "secretName",
+          "secretValue"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "secret": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,255}$"
+              },
+              "environment": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^\\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254}(?:\\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254})*\\/?)?$"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "shared",
+                  "personal"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+                }
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          },
+          "pendingApproval": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "close"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "metadataOmitted": {
+            "type": "boolean",
+            "description": "Free text, invalid identifiers or unavailable upstream metadata was withheld."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "update_secret",
+      "description": "Update an Infisical secret's value, comment, or name. Only the fields passed change.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Project ID from list_projects."
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Environment slug, e.g. dev, staging, prod. list_projects shows each project's environments."
+          },
+          "secretName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Secret key, e.g. DATABASE_URL."
+          },
+          "secretPath": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "Absolute folder path beginning with /. Defaults to /.",
+            "default": "/"
+          },
+          "secretValue": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "New value."
+          },
+          "secretComment": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "New comment."
+          },
+          "newSecretName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Rename the secret to this key."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "personal"
+            ],
+            "description": "shared (default) or the caller's personal override."
+          }
+        },
+        "required": [
+          "projectId",
+          "environment",
+          "secretName"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "secret": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,255}$"
+              },
+              "environment": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^\\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254}(?:\\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254})*\\/?)?$"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "shared",
+                  "personal"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+                }
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          },
+          "pendingApproval": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "close"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "metadataOmitted": {
+            "type": "boolean",
+            "description": "Free text, invalid identifiers or unavailable upstream metadata was withheld."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "delete_secret",
+      "description": "Delete an Infisical secret from a project environment and path.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Project ID from list_projects."
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Environment slug, e.g. dev, staging, prod. list_projects shows each project's environments."
+          },
+          "secretName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Secret key, e.g. DATABASE_URL."
+          },
+          "secretPath": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "Absolute folder path beginning with /. Defaults to /.",
+            "default": "/"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "personal"
+            ],
+            "description": "shared (default) or the caller's personal override."
+          }
+        },
+        "required": [
+          "projectId",
+          "environment",
+          "secretName"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "secret": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,255}$"
+              },
+              "environment": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^\\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254}(?:\\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254})*\\/?)?$"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "shared",
+                  "personal"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+                }
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          },
+          "pendingApproval": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "close"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "metadataOmitted": {
+            "type": "boolean",
+            "description": "Free text, invalid identifiers or unavailable upstream metadata was withheld."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "create_folder",
+      "description": "Create a folder in an Infisical project environment.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Project ID from list_projects."
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Environment slug, e.g. dev, staging, prod. list_projects shows each project's environments."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Folder name."
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "Absolute parent path beginning with /. Defaults to /."
+          },
+          "description": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "Optional folder description."
+          }
+        },
+        "required": [
+          "projectId",
+          "environment",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "folder": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^\\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254}(?:\\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254})*\\/?)?$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          },
+          "pendingApproval": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "close"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "metadataOmitted": {
+            "type": "boolean",
+            "description": "Free text, invalid identifiers or unavailable upstream metadata was withheld."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
+    }
+  ]
+}

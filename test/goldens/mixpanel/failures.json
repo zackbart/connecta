@@ -1,0 +1,553 @@
+{
+  "read": {
+    "tool": "get_insights_report",
+    "args": {
+      "bookmark_id": 11
+    },
+    "cases": {
+      "400": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 400. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
+            "retryable": false,
+            "connector": "analytics",
+            "operation": "analytics.get_insights_report",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "analytics"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry analytics.get_insights_report after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "provider_permission_denied",
+            "message": "Mixpanel refused access. Check the service account's project membership, data sensitivity and role; import needs Owner or Admin.",
+            "retryable": false,
+            "connector": "analytics",
+            "operation": "analytics.get_insights_report",
+            "retry": "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access."
+          }
+        }
+      },
+      "404": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 404. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 409. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 422. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "Mixpanel's project API budget is spent; respect the retry window.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Mixpanel returned HTTP 500.",
+            "retryable": true
+          }
+        }
+      },
+      "network": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the Mixpanel API.",
+            "retryable": true,
+            "details": {
+              "host": "https://mixpanel.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      }
+    }
+  },
+  "write": {
+    "tool": "import_events",
+    "args": {
+      "events": [
+        {
+          "event": "Signup",
+          "properties": {
+            "time": 1767225600,
+            "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+            "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+            "Referred by": "Friend"
+          }
+        }
+      ]
+    },
+    "cases": {
+      "400": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 400. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
+            "retryable": false,
+            "connector": "analytics",
+            "operation": "analytics.import_events",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "analytics"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "provider_permission_denied",
+            "message": "Mixpanel refused access. Check the service account's project membership, data sensitivity and role; import needs Owner or Admin.",
+            "retryable": false,
+            "connector": "analytics",
+            "operation": "analytics.import_events",
+            "retry": "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access."
+          }
+        }
+      },
+      "404": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 404. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 409. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 422. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "Mixpanel's project API budget is spent; respect the retry window.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "connector_call_failed",
+            "message": "Mixpanel returned HTTP 500. Whether the write took effect at Mixpanel is unknown: it carried no idempotency key, so check the target before repeating it.",
+            "retryable": false
+          }
+        }
+      },
+      "network": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the Mixpanel API.",
+            "retryable": true,
+            "details": {
+              "host": "https://api.mixpanel.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,393 @@
+{
+  "id": "github",
+  "kind": "api",
+  "guide": {},
+  "tools": [
+    {
+      "name": "list_scopes",
+      "description": "List configured GitHub scopes and reachable repositories for one owner.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Configured owner; omit to return configuration without network access."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Repository page, default 1, at most 1000."
+          },
+          "per_page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Repositories per page, default 100.",
+            "maximum": 100
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "acting_as": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "org": {
+                  "type": "string"
+                },
+                "repo": {
+                  "type": "string"
+                },
+                "access": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "read-write"
+                  ]
+                },
+                "workflows": {
+                  "type": "string",
+                  "enum": [
+                    "write"
+                  ]
+                }
+              },
+              "required": [
+                "access"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "next_page": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "acting_as",
+          "scopes"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "search_scoped",
+      "description": "Search GitHub repositories, issues, pull requests or code within configured scopes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "terms": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Literal words only; scope qualifiers and Boolean operators are refused."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "repositories",
+              "issues",
+              "pull-requests",
+              "code"
+            ],
+            "description": "Resource to search."
+          },
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "org": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Configured org scope."
+                },
+                "repo": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Exact owner/repo within configured scope."
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "description": "Optional subset; defaults to all configured scopes."
+          },
+          "pages": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "description": "Page per returned partition ID, at most 10."
+          },
+          "per_page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Results per partition, default 30.",
+            "maximum": 100
+          }
+        },
+        "required": [
+          "terms",
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "partitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "incomplete_results": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "partitions",
+          "incomplete_results"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "create_release",
+      "description": "Create a GitHub release, optionally as a draft.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Configured repository owner."
+          },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repository name under that owner."
+          },
+          "tag_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Release tag."
+          },
+          "target_commitish": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Branch or commit for a new tag."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Release title."
+          },
+          "body": {
+            "type": "string",
+            "description": "Release notes."
+          },
+          "draft": {
+            "type": "boolean",
+            "description": "Create a draft release."
+          },
+          "prerelease": {
+            "type": "boolean",
+            "description": "Mark as a prerelease."
+          }
+        },
+        "required": [
+          "owner",
+          "repo",
+          "tag_name"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "update_release",
+      "description": "Update or publish an existing GitHub release.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Configured repository owner."
+          },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repository name under that owner."
+          },
+          "release_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Release ID in this repository."
+          },
+          "tag_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Release tag."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Release title."
+          },
+          "body": {
+            "type": "string",
+            "description": "Release notes."
+          },
+          "draft": {
+            "type": "boolean",
+            "description": "Set false to publish a draft."
+          },
+          "prerelease": {
+            "type": "boolean",
+            "description": "Mark as a prerelease."
+          }
+        },
+        "required": [
+          "owner",
+          "repo",
+          "release_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "delete_release",
+      "description": "Delete a GitHub release from the scoped repository.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Configured repository owner."
+          },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repository name under that owner."
+          },
+          "release_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Release ID in this repository."
+          }
+        },
+        "required": [
+          "owner",
+          "repo",
+          "release_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "merge_pull_request",
+      "description": "Merge a same-repository GitHub pull request with explicit workflow-write scope.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Configured repository owner."
+          },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repository name under that owner."
+          },
+          "pull_number": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Pull request number."
+          },
+          "sha": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Expected head commit SHA; reread after a conflict."
+          },
+          "merge_method": {
+            "type": "string",
+            "enum": [
+              "merge",
+              "squash",
+              "rebase"
+            ],
+            "description": "Merge strategy, default merge."
+          }
+        },
+        "required": [
+          "owner",
+          "repo",
+          "pull_number",
+          "sha"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    }
+  ]
+}

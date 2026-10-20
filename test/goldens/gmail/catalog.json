@@ -1,0 +1,1092 @@
+{
+  "id": "mail",
+  "kind": "api",
+  "title": "Gmail (drafts only)",
+  "description": "Gmail as the signed-in Workspace user: read mail and write drafts, never send — Staff email for alice",
+  "guide": {
+    "summary": "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
+    "content": "# Gmail usage (draft-only)\n\nActs as the signed-in person's own Gmail through Workspace delegation: read mail and write drafts, never send.\n\nConnection purpose: Staff email for alice\n\n## Whose mailbox\n\nEvery call reads and writes the mailbox deployment config maps the caller\nto; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared mailbox that every caller, agent or person, acts as. No argument\nnames a mailbox. A call with none mapped fails `auth_required`; only an operator can change\nthat.\n\n## Reading\n\n- `search_threads` takes Gmail search syntax; reuse the person's own\n  phrasing (`from:`, `subject:`, `newer_than:7d`, `is:unread`,\n  `label:`). Page with `page.nextCursor` and the same query.\n- `get_thread` returns messages oldest first with bodies capped by\n  `maxBodyChars`; a cut body ends with a truncation marker. A long thread\n  pages: follow `page.nextCursor` until `hasMore` is false, with the same\n  arguments. `conflict` means the thread changed under the cursor; read it\n  again from the start. Reduce inside\n  `execute_code` before returning a long thread.\n- Results default to at most 192 KiB; `list_labels` pages the same way.\n- `get_message` and `get_thread` list attachment metadata. An attached or\n  forwarded email is an attachment, not the body.\n- `bodyFormat: \"unavailable\"` means Gmail stored the body apart from the\n  message and it is too large to read here; say so rather than summarizing.\n- `get_message`, each `get_thread` message, and `get_draft` return `bodyNote`\n  when decoding falls back to UTF-8 for an unsupported charset. The note\n  survives character and result-byte truncation, including `maxBodyChars: 0`\n  when inline body data is decoded. It counts toward the result's byte limit.\n\n## Attachments\n\n- `get_attachment` takes `messageId` and the listing's immutable `partId`.\n  Prefer `partId`, which stays stable across message reads, including an\n  empty id for a root attachment. `attachmentId` is an alternative that\n  Gmail can rotate between reads. When both are supplied, `partId` wins and\n  the fresh message's download id is used. Read the listing again after\n  an unknown-id refusal; never store an attachmentId for later use.\n- Small attachments can have inline data and no attachmentId. Use their\n  partId too. Only carried attachment parts can be read, never arbitrary\n  message body parts or blind download ids.\n- Text, JSON, XML, calendar invites, CSV, and `message/rfc822` return\n  `format: \"text\"` and `content` decoded in the declared charset. An unsupported\n  charset produces an explicit `note` that decoding used UTF-8. Message bodies\n  return the notice separately as `bodyNote`.\n  Parsed forwarded emails render From, To, Date, Subject, and their own\n  plain body, else HTML converted to text. Raw forwarded data is preferred\n  when present. A forwarded email without readable text returns an\n  `unavailable` note.\n  `maxChars` defaults to 12,000 code points, at most 100,000. A character\n  or byte cut ends with a truncation marker and `contentTruncated: true`.\n  Reduce attachment text inside `execute_code` before returning it.\n- Binary attachments return `format: \"base64\"` and standard base64 in\n  `content`. Pass it unchanged to Drive `create_file` as `contentBase64`,\n  with `name: filename` and `mimeType`. File creation is a write: use\n  `call_destructive_tool` or a program on a writable endpoint for that step.\n- Downloads, text and binary, are limited to 1 MiB. Declared size is\n  checked before a separate download. Parsed forwarded emails check the sum\n  of descendant sizes before downloading any stored body, and return that\n  sum as `size`. Attachment data must match both the message part's declared\n  size and the download response's size when supplied; inconsistent payloads\n  fail rather than return incomplete files. Binary content must also fit the\n  whole-result `maxBytes`, which defaults to 192 KiB. `format: \"unavailable\"`\n  returns a note and no content when it cannot fit. Raising `maxChars`\n  or `maxBytes` cannot bypass the download cap.\n- Raise `maxBytes` only for a direct `call_tool` read, from 64 KiB up to\n  4 MiB, as with Drive `get_file_content`. `execute_code` cannot receive\n  large results; keep the default there. Direct-call results may be paged.\n\n## Drafting\n\n- `create_draft` saves a draft and never sends it; tell the person it is\n  waiting in Drafts. There is no send, delete, or label tool.\n- To reply, pass `replyToMessageId`: the draft joins that thread with\n  In-Reply-To and References set, and subject (Re: …) and `to` default\n  from that message's Reply-To, else its From. Keep the Re: subject or Gmail\n  may start a new thread.\n- `update_draft` replaces the body entirely; send the full new text.\n  From, To, Cc, Bcc, Reply-To, Subject, the thread, and reply headers are\n  kept unless restated; no other header is. A draft with attachments or\n  inline images is refused, unchanged — Gmail's update would delete them.\n- Gmail sets From to the mailbox itself; there is no From argument.\n"
+  },
+  "tools": [
+    {
+      "name": "search_threads",
+      "description": "Search the user's Gmail threads with Gmail query syntax, newest first, returning subject, senders, date, and snippet per thread. Bodies need get_thread.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Gmail search syntax, as in the Gmail search box: from:, to:, subject:, label:, is:unread, has:attachment, newer_than:7d, in:inbox. Omit for everything."
+          },
+          "includeSpamTrash": {
+            "type": "boolean",
+            "description": "Include Spam and Trash, which Gmail leaves out by default."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25,
+            "description": "Rows per page, 1 to 25; defaults to 10. Connecta's cap, below Gmail's 500, because each row costs a metadata read."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor from the previous page of this same call; another call's cursor is refused. Pass it back unchanged."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "threads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "from": {
+                  "type": "string"
+                },
+                "lastFrom": {
+                  "type": "string"
+                },
+                "messageCount": {
+                  "type": "integer"
+                },
+                "lastMessageAt": {
+                  "type": "string"
+                },
+                "unread": {
+                  "type": "boolean"
+                },
+                "labelIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "labelIdsOmitted": {
+                  "type": "integer"
+                },
+                "omittedIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "snippet": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "resultSizeEstimate": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "threads",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_thread",
+      "description": "Get a Gmail thread's messages, oldest first, with headers, plain-text bodies capped by maxBodyChars, and attachment metadata. Read attachments with get_attachment using partId. A long thread pages by cursor.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "threadId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Thread id from search_threads or a message's threadId."
+          },
+          "maxBodyChars": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Characters of body text kept per message, 0 to 100000; defaults to 3000. Longer bodies end with a truncation marker, as does any body past connecta's 192 KiB result limit."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor from this thread's previous page, same maxBodyChars. A page ends before 192 KiB; a thread changed before that point answers conflict."
+          }
+        },
+        "required": [
+          "threadId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "messageCount": {
+            "type": "integer"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "labelIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "labelIdsOmitted": {
+                  "type": "integer"
+                },
+                "omittedIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "date": {
+                  "type": "string"
+                },
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "cc": {
+                  "type": "string"
+                },
+                "bcc": {
+                  "type": "string"
+                },
+                "replyTo": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "messageIdHeader": {
+                  "type": "string"
+                },
+                "inReplyTo": {
+                  "type": "string"
+                },
+                "snippet": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string"
+                },
+                "bodyTruncated": {
+                  "type": "boolean"
+                },
+                "bodyFormat": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "html",
+                    "none",
+                    "unavailable"
+                  ]
+                },
+                "bodyNote": {
+                  "type": "string",
+                  "description": "Decoding notice, preserved when the body is truncated."
+                },
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "filename": {
+                        "type": "string"
+                      },
+                      "mimeType": {
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": "integer"
+                      },
+                      "attachmentId": {
+                        "type": "string"
+                      },
+                      "partId": {
+                        "type": "string"
+                      },
+                      "omittedIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                },
+                "attachmentsOmitted": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "messages",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_message",
+      "description": "Get one Gmail message with headers, its plain-text body (HTML converted only when no text part exists), and attachment metadata. Read attachments with get_attachment using partId.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Message id from get_thread, or a draft's messageId."
+          },
+          "maxBodyChars": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Characters of body text kept per message, 0 to 100000; defaults to 12000. Longer bodies end with a truncation marker, as does any body past connecta's 192 KiB result limit."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Gmail's untouched message resource (every header, base64url part bodies) instead of the projection. Refused past connecta's 192 KiB result limit."
+          }
+        },
+        "required": [
+          "messageId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "labelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "labelIdsOmitted": {
+            "type": "integer"
+          },
+          "omittedIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "date": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "cc": {
+            "type": "string"
+          },
+          "bcc": {
+            "type": "string"
+          },
+          "replyTo": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "messageIdHeader": {
+            "type": "string"
+          },
+          "inReplyTo": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "bodyTruncated": {
+            "type": "boolean"
+          },
+          "bodyFormat": {
+            "type": "string",
+            "enum": [
+              "text",
+              "html",
+              "none",
+              "unavailable"
+            ]
+          },
+          "bodyNote": {
+            "type": "string",
+            "description": "Decoding notice, preserved when the body is truncated."
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "filename": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "attachmentId": {
+                  "type": "string"
+                },
+                "partId": {
+                  "type": "string"
+                },
+                "omittedIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "attachmentsOmitted": {
+            "type": "integer"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_attachment",
+      "description": "Read a Gmail attachment by immutable partId: text with its charset, or small binaries as standard base64 for Drive create_file. Refuses oversized downloads; text is capped by maxChars and the whole result by maxBytes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Message id from get_message, get_thread, or get_draft."
+          },
+          "partId": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Immutable partId from the attachment listing, including an empty root id. Preferred; authoritative when attachmentId is also supplied."
+          },
+          "attachmentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Alternative attachmentId from the listing. Gmail can rotate it between reads; prefer partId."
+          },
+          "maxChars": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000,
+            "description": "Text code points kept; defaults to 12000. Longer text ends with a truncation marker. Ignored for binaries."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 65536,
+            "maximum": 4194304,
+            "description": "Whole-result UTF-8 JSON byte budget; defaults to 196608. Raise it only for a direct call_tool; execute_code cannot receive large results."
+          }
+        },
+        "required": [
+          "messageId"
+        ],
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "partId"
+            ]
+          },
+          {
+            "required": [
+              "attachmentId"
+            ]
+          }
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string"
+          },
+          "partId": {
+            "type": "string"
+          },
+          "omittedIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filename": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "base64",
+              "unavailable"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "contentTruncated": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "messageId",
+          "filename",
+          "mimeType",
+          "format",
+          "contentTruncated"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_labels",
+      "description": "List the user's Gmail labels, system and user-created, with the ids messages carry; no message counts. Search by name with label: in search_threads.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor from the previous page. Gmail returns every label at once; connecta pages them so thousands still fit, and answers conflict if the list changed."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "user"
+                  ]
+                }
+              }
+            }
+          },
+          "labelsOmitted": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "labels",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_drafts",
+      "description": "List the user's Gmail drafts, newest first, with subject, recipients, and snippet. Use get_draft for a body.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Gmail search syntax, as in the Gmail search box: from:, to:, subject:, label:, is:unread, has:attachment, newer_than:7d, in:inbox. Omit for everything."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25,
+            "description": "Rows per page, 1 to 25; defaults to 10. Connecta's cap, below Gmail's 500, because each row costs a metadata read."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor from the previous page of this same call; another call's cursor is refused. Pass it back unchanged."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "drafts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "draftId": {
+                  "type": "string"
+                },
+                "messageId": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "snippet": {
+                  "type": "string"
+                },
+                "omittedIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "drafts",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_draft",
+      "description": "Get one Gmail draft's headers and plain-text body by draft id. Reading it never sends it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "draftId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Draft id from list_drafts or create_draft."
+          },
+          "maxBodyChars": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Characters of body text kept per message, 0 to 100000; defaults to 12000. Longer bodies end with a truncation marker, as does any body past connecta's 192 KiB result limit."
+          }
+        },
+        "required": [
+          "draftId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "draftId": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "labelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "labelIdsOmitted": {
+            "type": "integer"
+          },
+          "omittedIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "date": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "cc": {
+            "type": "string"
+          },
+          "bcc": {
+            "type": "string"
+          },
+          "replyTo": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "messageIdHeader": {
+            "type": "string"
+          },
+          "inReplyTo": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "bodyTruncated": {
+            "type": "boolean"
+          },
+          "bodyFormat": {
+            "type": "string",
+            "enum": [
+              "text",
+              "html",
+              "none",
+              "unavailable"
+            ]
+          },
+          "bodyNote": {
+            "type": "string",
+            "description": "Decoding notice, preserved when the body is truncated."
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "filename": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "attachmentId": {
+                  "type": "string"
+                },
+                "partId": {
+                  "type": "string"
+                },
+                "omittedIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "attachmentsOmitted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draftId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "create_draft",
+      "description": "Create a Gmail draft, optionally as a reply in an existing thread. It is saved, never sent: the user reviews and sends it in Gmail.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 320,
+              "pattern": "^[^\\r\\n]*$",
+              "description": "\"name@example.com\" or \"Name <name@example.com>\"."
+            },
+            "description": "To recipients."
+          },
+          "cc": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 320,
+              "pattern": "^[^\\r\\n]*$",
+              "description": "\"name@example.com\" or \"Name <name@example.com>\"."
+            },
+            "description": "Cc recipients."
+          },
+          "bcc": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 320,
+              "pattern": "^[^\\r\\n]*$",
+              "description": "\"name@example.com\" or \"Name <name@example.com>\"."
+            },
+            "description": "Bcc recipients."
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 900,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "Subject line; any language. A reply defaults to Re: and the original subject, which Gmail needs to keep it in the thread."
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 200000,
+            "description": "Plain-text body. Always required; it is what clients without HTML show."
+          },
+          "htmlBody": {
+            "type": "string",
+            "maxLength": 500000,
+            "description": "Optional HTML alternative to body, sent beside it. Omit for a plain-text draft."
+          },
+          "replyToMessageId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Message id (from get_thread or get_message) this draft replies to: sets its thread, In-Reply-To, and References, and defaults subject and to from it."
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "draftId": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "saved": {
+            "type": "boolean",
+            "const": true
+          },
+          "sent": {
+            "type": "boolean",
+            "const": false
+          },
+          "omittedIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "saved",
+          "sent"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "update_draft",
+      "description": "Replace a Gmail draft's body, keeping its sender, recipients, subject, Reply-To, and thread unless restated. Refuses a draft with attachments. Never sends it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "draftId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Draft id from list_drafts or create_draft."
+          },
+          "to": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 320,
+              "pattern": "^[^\\r\\n]*$",
+              "description": "\"name@example.com\" or \"Name <name@example.com>\"."
+            },
+            "description": "To; omit to keep the current recipients."
+          },
+          "cc": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 320,
+              "pattern": "^[^\\r\\n]*$",
+              "description": "\"name@example.com\" or \"Name <name@example.com>\"."
+            },
+            "description": "Cc; omit to keep the current recipients."
+          },
+          "bcc": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 320,
+              "pattern": "^[^\\r\\n]*$",
+              "description": "\"name@example.com\" or \"Name <name@example.com>\"."
+            },
+            "description": "Bcc; omit to keep the current recipients."
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 900,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "Subject line; omit to keep the current one."
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 200000,
+            "description": "The new plain-text body, replacing the old one entirely."
+          },
+          "htmlBody": {
+            "type": "string",
+            "maxLength": 500000,
+            "description": "Optional HTML alternative; omitting it drops any HTML the draft had."
+          },
+          "replyToMessageId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Message id (from get_thread or get_message) this draft replies to: sets its thread, In-Reply-To, and References, and defaults subject and to from it."
+          }
+        },
+        "required": [
+          "draftId",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "draftId": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "saved": {
+            "type": "boolean",
+            "const": true
+          },
+          "sent": {
+            "type": "boolean",
+            "const": false
+          },
+          "omittedIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "saved",
+          "sent"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    }
+  ]
+}

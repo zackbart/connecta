@@ -1,0 +1,877 @@
+[
+  {
+    "label": "breeze_api_get",
+    "tool": "breeze_api_get",
+    "args": {
+      "path": "/people/157857",
+      "query": [
+        {
+          "name": "details",
+          "value": 1
+        }
+      ]
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "id": "157857",
+          "first_name": "Thomas",
+          "last_name": "Anderson"
+        }
+      }
+    }
+  },
+  {
+    "label": "breeze_api_get filter_json",
+    "tool": "breeze_api_get",
+    "args": {
+      "path": "/people/",
+      "query": [
+        {
+          "name": "filter_json",
+          "value": {
+            "tag_contains": "y_9"
+          }
+        }
+      ]
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/people?filter_json=%7B%22tag_contains%22%3A%22y_9%22%7D",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": [
+          {
+            "id": "1",
+            "first_name": "Thomas",
+            "last_name": "Anderson"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "breeze_api_mutate",
+    "tool": "breeze_api_mutate",
+    "args": {
+      "path": "/giving/delete",
+      "query": [
+        {
+          "name": "payment_id",
+          "value": "56789123"
+        }
+      ]
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/giving/delete?payment_id=56789123",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "success": true,
+          "errors": null,
+          "payment_id": 56789123
+        }
+      }
+    }
+  },
+  {
+    "label": "get_account_summary",
+    "tool": "get_account_summary",
+    "args": {},
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/account/summary",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "1234",
+        "name": "Grace Church",
+        "subdomain": "gracechurch",
+        "timezone": "America/New_York",
+        "country": "United States of America",
+        "currency": "USD"
+      }
+    }
+  },
+  {
+    "label": "list_people",
+    "tool": "list_people",
+    "args": {
+      "tagId": "16681",
+      "filter": {
+        "2000138015": "226-227"
+      },
+      "limit": 2,
+      "cursor": "40"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/people?details=0&filter_json=%7B%222000138015%22%3A%22226-227%22%2C%22tag_contains%22%3A%22y_16681%22%7D&limit=2&offset=40",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "people": [
+          {
+            "id": "1",
+            "firstName": "Thomas",
+            "forceFirstName": "Tom",
+            "lastName": "Anderson"
+          },
+          {
+            "id": "2",
+            "firstName": "Kate",
+            "forceFirstName": "Kate",
+            "lastName": "Austen"
+          }
+        ],
+        "page": {
+          "hasMore": true,
+          "nextCursor": "42"
+        }
+      }
+    }
+  },
+  {
+    "label": "list_people raw",
+    "tool": "list_people",
+    "args": {
+      "includeDetails": true,
+      "raw": true
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/people?details=1&limit=100&offset=0",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "people": [
+          {
+            "id": "1",
+            "first_name": "Thomas",
+            "last_name": "Anderson",
+            "path": "img/x.jpg"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        }
+      }
+    }
+  },
+  {
+    "label": "get_person",
+    "tool": "get_person",
+    "args": {
+      "personId": "157857"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "157857",
+        "firstName": "Thomas",
+        "forceFirstName": "Tom",
+        "lastName": "Anderson",
+        "middleName": "J",
+        "details": {
+          "1508481877": [
+            {
+              "address": "thomas@example.com"
+            }
+          ]
+        },
+        "family": [
+          {
+            "personId": "157858",
+            "familyId": "9",
+            "role": "Spouse",
+            "firstName": "Trinity",
+            "lastName": "Anderson"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_profile_fields",
+    "tool": "list_profile_fields",
+    "args": {},
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/profile",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "fields": [
+          {
+            "fieldId": "2000138015",
+            "name": "Status",
+            "type": "multiple_choice",
+            "section": "Main",
+            "options": [
+              {
+                "optionId": "225",
+                "name": "Member"
+              }
+            ]
+          },
+          {
+            "fieldId": "656342607",
+            "name": "Age",
+            "type": "birthdate",
+            "section": "Main"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_tags",
+    "tool": "list_tags",
+    "args": {
+      "folderId": "77"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/tags/list_tags?folder_id=77",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "tags": [
+          {
+            "id": "16681",
+            "name": "Choir",
+            "folderId": "77"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_events",
+    "tool": "list_events",
+    "args": {
+      "start": "2025-03-01",
+      "end": "2025-03-31",
+      "calendarId": "1553",
+      "limit": 1
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/events?start=2025-03-01&end=2025-03-31&category_id=1553&limit=1",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "events": [
+          {
+            "id": "40984",
+            "eventId": "736",
+            "name": "Youth Group",
+            "calendarId": "1553",
+            "startsAt": "2025-03-05 18:00:00",
+            "endsAt": null
+          }
+        ],
+        "truncated": true
+      }
+    }
+  },
+  {
+    "label": "list_calendars",
+    "tool": "list_calendars",
+    "args": {},
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/events/calendars/list",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "calendars": [
+          {
+            "id": "0",
+            "name": "Main",
+            "color": "b2cd92"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_attendance",
+    "tool": "list_attendance",
+    "args": {
+      "instanceId": "3778451",
+      "includeNames": true
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/events/attendance/list?instance_id=3778451&type=person&details=true",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "attendance": [
+          {
+            "personId": "824512",
+            "firstName": "Carol",
+            "lastName": "Adams",
+            "checkedInAt": "2025-12-09 11:01:33",
+            "checkedOutAt": null
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_forms",
+    "tool": "list_forms",
+    "args": {},
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/forms/list_forms?is_archived=0",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "forms": [
+          {
+            "id": "15326",
+            "name": "Visitor Card",
+            "slug": "visitor-card",
+            "archived": false,
+            "createdAt": "2025-02-01"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_form_fields",
+    "tool": "list_form_fields",
+    "args": {
+      "formId": "15326"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/forms/list_form_fields?form_id=15326",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "fields": [
+          {
+            "fieldId": "46",
+            "name": "Email",
+            "type": "email"
+          },
+          {
+            "fieldId": "47",
+            "name": "How did you hear about us?",
+            "type": "multiple_choice",
+            "options": [
+              {
+                "optionId": "3",
+                "name": "Friend"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_form_entries",
+    "tool": "list_form_entries",
+    "args": {
+      "formId": "15326",
+      "includeResponses": true
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/forms/list_form_entries?form_id=15326&details=1",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "entries": [
+          {
+            "id": "11",
+            "personId": "5",
+            "createdAt": "2025-03-09",
+            "responses": {
+              "46": "z@example.com"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_volunteers",
+    "tool": "list_volunteers",
+    "args": {
+      "instanceId": "123456"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/volunteers/list?instance_id=123456",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "volunteers": [
+          {
+            "personId": "3008467",
+            "roleIds": [],
+            "response": "0",
+            "rsvpedAt": null
+          },
+          {
+            "personId": "3349681",
+            "roleIds": [
+              "9627"
+            ],
+            "response": "1",
+            "comment": "Glad to",
+            "rsvpedAt": "2025-03-02 09:00:00"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_volunteer_roles",
+    "tool": "list_volunteer_roles",
+    "args": {
+      "instanceId": "123456"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/volunteers/list_roles?instance_id=123456&show_quantity=1",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "roles": [
+          {
+            "id": "9627",
+            "name": "Teacher",
+            "quantity": 2
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "list_account_log",
+    "tool": "list_account_log",
+    "args": {
+      "action": "person_updated",
+      "start": "2025-08-01",
+      "includeDetails": true,
+      "limit": 1
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/account/list_log?action=person_updated&start=2025-08-01&details=1&limit=1",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "entries": [
+          {
+            "id": "112",
+            "action": "person_updated",
+            "userId": "261",
+            "object": "5023943",
+            "createdAt": "2025-08-15 04:41:10",
+            "details": "Updated Status"
+          }
+        ],
+        "truncated": true
+      }
+    }
+  },
+  {
+    "label": "list_contributions",
+    "tool": "list_contributions",
+    "args": {
+      "start": "2022-01-01",
+      "end": "2022-06-30",
+      "fundIds": [
+        "28",
+        "29"
+      ],
+      "batchNumbers": [
+        "144"
+      ]
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/giving/list?start=2022-01-01&end=2022-06-30&fund_ids=28-29&batches=144",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "contributions": [
+          {
+            "id": "378477",
+            "paidOn": "2022-03-05",
+            "amount": "0.10",
+            "method": "check",
+            "methodId": "41",
+            "personId": "157857",
+            "firstName": "Thomas",
+            "lastName": "Anderson",
+            "envelopeNumber": "105",
+            "batchNumber": "144",
+            "funds": [
+              {
+                "fundId": "28",
+                "name": "General Fund",
+                "amount": "0.10",
+                "taxDeductible": true
+              }
+            ]
+          },
+          {
+            "id": "376786",
+            "paidOn": "2022-05-06",
+            "amount": "0.20",
+            "funds": []
+          }
+        ],
+        "count": 2,
+        "totalAmount": "0.30"
+      }
+    }
+  },
+  {
+    "label": "list_funds",
+    "tool": "list_funds",
+    "args": {},
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/funds/list",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "funds": [
+          {
+            "id": "12346",
+            "name": "General Fund",
+            "taxDeductible": true,
+            "isDefault": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "add_person",
+    "tool": "add_person",
+    "args": {
+      "firstName": "Jiminy",
+      "lastName": "Cricket",
+      "fields": [
+        {
+          "fieldId": "1508481877",
+          "type": "email",
+          "details": {
+            "address": "jiminy@example.com"
+          }
+        }
+      ]
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket&fields_json=%5B%7B%22field_id%22%3A%221508481877%22%2C%22field_type%22%3A%22email%22%2C%22response%22%3Atrue%2C%22details%22%3A%7B%22address%22%3A%22jiminy%40example.com%22%7D%7D%5D",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "12345678",
+        "firstName": "Jiminy",
+        "forceFirstName": "Jiminy",
+        "lastName": "Cricket"
+      }
+    }
+  },
+  {
+    "label": "update_person",
+    "tool": "update_person",
+    "args": {
+      "personId": "12345678",
+      "fields": [
+        {
+          "fieldId": "2000138811",
+          "type": "radio",
+          "response": "459"
+        }
+      ]
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/people/update?person_id=12345678&fields_json=%5B%7B%22field_id%22%3A%222000138811%22%2C%22field_type%22%3A%22radio%22%2C%22response%22%3A%22459%22%7D%5D",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "12345678",
+        "firstName": "Jiminy",
+        "lastName": "Cricket"
+      }
+    }
+  },
+  {
+    "label": "assign_tag",
+    "tool": "assign_tag",
+    "args": {
+      "personId": "157857",
+      "tagId": "16681"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/tags/assign?person_id=157857&tag_id=16681",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "assigned": true
+      }
+    }
+  },
+  {
+    "label": "unassign_tag",
+    "tool": "unassign_tag",
+    "args": {
+      "personId": "157857",
+      "tagId": "16681"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/tags/unassign?person_id=157857&tag_id=16681",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "unassigned": true
+      }
+    }
+  },
+  {
+    "label": "record_check_in",
+    "tool": "record_check_in",
+    "args": {
+      "personId": "157857",
+      "instanceId": "40984"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/events/attendance/add?person_id=157857&instance_id=40984&direction=in",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "checkedIn": true
+      }
+    }
+  }
+]

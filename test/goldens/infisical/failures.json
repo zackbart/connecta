@@ -1,0 +1,648 @@
+{
+  "read": {
+    "tool": "get_secret",
+    "args": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "secretName": "API_KEY",
+      "secretPath": "/apps"
+    },
+    "cases": {
+      "400": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Infisical returned HTTP 400. Check the named tool's arguments.",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          },
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Infisical returned HTTP 401. An operator must replace invalid or revoked machine identity credentials in this connection.",
+            "retryable": false,
+            "connector": "infisical",
+            "operation": "infisical.get_secret",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "infisical"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry infisical.get_secret after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Infisical returned HTTP 403. An operator must add the machine identity to the project or widen its role for this environment and path.",
+            "retryable": false,
+            "connector": "infisical",
+            "operation": "infisical.get_secret",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "infisical"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry infisical.get_secret after the operator completes recovery."
+          }
+        }
+      },
+      "404": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "not_found",
+            "message": "Infisical returned HTTP 404. Confirm the project ID with list_projects, the environment slug, and the path with list_folders.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Infisical returned HTTP 409. Check the named tool's arguments.",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Infisical returned HTTP 422. Check the named tool's arguments.",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "Infisical returned HTTP 429. Wait before retrying.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Infisical returned HTTP 500. Infisical is failing upstream.",
+            "retryable": true
+          }
+        }
+      },
+      "network": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "GET",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the Infisical API.",
+            "retryable": true,
+            "details": {
+              "host": "https://app.infisical.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      }
+    }
+  },
+  "write": {
+    "tool": "create_secret",
+    "args": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "secretName": "API_KEY",
+      "secretValue": "new-crm-api-value-456",
+      "secretPath": "/apps"
+    },
+    "cases": {
+      "400": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Infisical returned HTTP 400. Check the named tool's arguments.",
+            "retryable": false
+          }
+        }
+      },
+      "401": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          },
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Infisical returned HTTP 401. An operator must replace invalid or revoked machine identity credentials in this connection.",
+            "retryable": false,
+            "connector": "infisical",
+            "operation": "infisical.create_secret",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "infisical"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "403": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Infisical returned HTTP 403. An operator must add the machine identity to the project or widen its role for this environment and path.",
+            "retryable": false,
+            "connector": "infisical",
+            "operation": "infisical.create_secret",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "infisical"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
+      "404": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "not_found",
+            "message": "Infisical returned HTTP 404. Confirm the project ID with list_projects, the environment slug, and the path with list_folders.",
+            "retryable": false
+          }
+        }
+      },
+      "409": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Infisical returned HTTP 409. Check the named tool's arguments.",
+            "retryable": false
+          }
+        }
+      },
+      "422": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "invalid_args",
+            "message": "Infisical returned HTTP 422. Check the named tool's arguments.",
+            "retryable": false
+          }
+        }
+      },
+      "429": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "rate_limited",
+            "message": "Infisical returned HTTP 429. Wait before retrying.",
+            "retryable": true,
+            "retryAfterMs": 7000
+          }
+        }
+      },
+      "500": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Infisical returned HTTP 500. Infisical is failing upstream.",
+            "retryable": true
+          }
+        }
+      },
+      "network": {
+        "requests": [
+          {
+            "auxiliary": "universal-auth-login",
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+          },
+          {
+            "method": "POST",
+            "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "environment": "prod",
+                "secretValue": "new-crm-api-value-456",
+                "secretPath": "/apps"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Could not reach the Infisical API.",
+            "retryable": true,
+            "details": {
+              "host": "https://app.infisical.com",
+              "code": "ECONNREFUSED"
+            }
+          }
+        }
+      }
+    }
+  }
+}
