@@ -113,7 +113,12 @@ Every main push runs the full tier. PRs also run full when changing
 provider/harness imports (derived with TypeScript's parser and resolver),
 `test/goldens/`, the golden suites, provider fixtures, Vitest configuration,
 dependency manifests/lockfiles, or selector/source-boundary tooling. Unknown
-paths/dependencies and classification errors select full. This includes every
+paths/dependencies and classification errors select full. The `changes` job first classifies with
+Node built-ins from the runner: main pushes and directly relevant or unknown
+paths select full, docs-only paths select always, and deletions (including
+renames with rename detection disabled) select full. Only existing source/test
+modules whose tier depends on transitive imports install dependencies and run
+the TypeScript graph selector. This includes every
 step-1 provider migration. Full adds Workers reverse order, repeated provider
 captures and the complete jitter matrix on both runtimes. Only the exact env
 value `always` reduces the tier; unset or invalid values run full locally, so
