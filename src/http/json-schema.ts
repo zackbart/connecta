@@ -103,6 +103,9 @@ const JSON_TYPES: Readonly<Record<string, string>> = {
 function exactChecks(ast: SchemaAST.AST, seen = new Set<SchemaAST.AST>()): void {
   if (seen.has(ast)) return;
   seen.add(ast);
+  // Transformations can change what the decoder accepts; the inline renderer
+  // has no reviewed exactness contract for them.
+  if (ast.encoding) throw new Error("A kit input encoding has no exact catalog spelling.");
   const type = JSON_TYPES[ast._tag];
   const visit = (checks: SchemaAST.Checks | ReadonlyArray<SchemaAST.Check<any>>): void => {
     for (const check of checks) {
@@ -126,7 +129,10 @@ function exactChecks(ast: SchemaAST.AST, seen = new Set<SchemaAST.AST>()): void 
   switch (ast._tag) {
     case "Objects":
       for (const property of ast.propertySignatures) exactChecks(property.type, seen);
-      for (const index of ast.indexSignatures) exactChecks(index.type, seen);
+      for (const index of ast.indexSignatures) {
+        exactChecks(index.parameter, seen);
+        exactChecks(index.type, seen);
+      }
       return;
     case "Arrays":
       for (const element of [...ast.elements, ...ast.rest]) exactChecks(element, seen);
@@ -134,6 +140,19 @@ function exactChecks(ast: SchemaAST.AST, seen = new Set<SchemaAST.AST>()): void 
     case "Union":
       for (const member of ast.types) exactChecks(member, seen);
       return;
+    case "Suspend":
+      exactChecks(ast.thunk(), seen);
+      return;
+    case "String":
+    case "Number":
+    case "Boolean":
+    case "Null":
+    case "Unknown":
+    case "Never":
+    case "Literal":
+      return;
+    default:
+      throw new Error(`A kit input AST form (${ast._tag}) has no exact catalog spelling.`);
   }
 }
 

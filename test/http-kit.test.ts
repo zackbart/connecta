@@ -43,6 +43,7 @@ import {
   Recovery,
   Secrets,
   Signal,
+  WriteCapacity,
   attachServedClassification,
   callView,
   chargeView,
@@ -102,6 +103,7 @@ function services(
     Context.add(Signal, undefined),
     Context.add(Classification, classification),
     Context.add(Dispatches, dispatches),
+    Context.add(WriteCapacity, new Map([["write", new Set([undefined])]])),
   );
 }
 
@@ -199,7 +201,9 @@ describe("guarded client (decision 0010, B.2)", () => {
     expect(refused._tag === "Failure" && refused.failure._tag).toBe("RequestRefused");
     expect(read).toBe(0);
     expect(sent).toEqual([]);
-    expect(dispatches).toEqual([]);
+    expect(dispatches).toMatchObject([{ write: true, state: "preparing" }]);
+    // The form belongs to a new deliberate call; the refused call keeps its reservation.
+    dispatches.length = 0;
 
     const bodies: unknown[] = [];
     const recording = globalThis.fetch;
@@ -463,8 +467,8 @@ describe("failure mapping (decision 0010, B.3)", () => {
   });
 
   it("INV-9: never advertises a write that may have landed as retryable, whatever the vendor says", () => {
-    const write = (failure: HttpFailure, dispatches: Dispatch[], idempotent = false) =>
-      toConnectorCallError(failure, VENDOR, { classification: "write", idempotent, dispatches });
+    const write = (failure: HttpFailure, dispatches: Dispatch[]) =>
+      toConnectorCallError(failure, VENDOR, { classification: "write", dispatches });
     const outage = status(503);
     const landed = write(outage, [answered(outage)]);
     expect(landed).toMatchObject({ code: "connector_call_failed", retryable: false });
@@ -475,13 +479,12 @@ describe("failure mapping (decision 0010, B.3)", () => {
     );
     const reset = new TransportFailure({ failure: { cause: { code: "ECONNRESET" } }, host: "https://acme.example" });
     expect(write(reset, [answered(reset)]).retryable).toBe(false);
-    // Refused, already final, or protected by an idempotency key: the vendor's verdict on the write stands.
+    // Even mapped refusal codes and redirects carry explicit uncertainty without reviewed proof.
     const refused = status(400);
     expect(write(refused, [answered(refused)])).toMatchObject({ code: "invalid_args" });
-    expect(writeOutcomeOf(write(refused, [answered(refused)]))).toBeUndefined();
+    expect(writeOutcomeOf(write(refused, [answered(refused)]))).toBe("unknown");
     const redirect = new RedirectRefused({ status: 302 });
-    expect(write(redirect, [answered(redirect, { status: 302 })]).message).not.toContain("unknown");
-    expect(write(outage, [answered(outage)], true)).toMatchObject({ code: "unavailable", retryable: true });
+    expect(writeOutcomeOf(write(redirect, [answered(redirect, { status: 302 })]))).toBe("unknown");
   });
 
   it("INV-9: decides from what each request did, not from how many were sent", () => {
@@ -503,6 +506,83 @@ describe("failure mapping (decision 0010, B.3)", () => {
     const outage = new Refusal({ error: new ConnectorCallError("unavailable", "The upstream is down.") });
     expect(write(outage, [])).toBe(outage.error);
     expect(write(outage, [dispatch("lost")])).toMatchObject({ code: "connector_call_failed", retryable: false });
+  });
+
+  it.each([
+    [503, "RATE_LIMIT_EXCEEDED", "rate_limited"],
+    [429, "lock_timeout", "conflict"],
+    [409, "ABORTED", "conflict"],
+    [500, "denied", "provider_permission_denied"],
+    [502, "bad", "invalid_args"],
+    [504, "missing", "not_found"],
+    [503, "expired", "auth_required"],
+    [500, "failed", "connector_call_failed"],
+  ] as const)(
+    "INV-9: raw dispatched HTTP %i with fact %s constrains the vendor's %s verdict",
+    (code, reason, mapped) => {
+      const failure = status(code, { "Retry-After": "2" }, { reason });
+      const vendor: VendorErrors<{ reason: string }> = {
+        ...VENDOR,
+        facts: (tokens) => tokens as { reason: string },
+        classify: [() => ({ code: mapped, retryable: true, retryAfterMs: 2000 })],
+      };
+      const result = toConnectorCallError(failure, vendor, {
+        classification: "write",
+        dispatches: [answered(failure)],
+      });
+      expect(result).toMatchObject({
+        code: mapped,
+        retryable: false,
+        retryAfterMs: undefined,
+        writeOutcome: "unknown",
+      });
+    },
+  );
+
+  it("INV-9: only explicit vendor proof of non-execution allows a dispatched refusal to stand", () => {
+    const failure = status(429, {}, { code: "lock_timeout" });
+    const vendor: VendorErrors<{ code: string }> = {
+      ...VENDOR,
+      facts: (tokens) => (tokens ?? {}) as { code: string },
+      classify: [() => ({ code: "conflict", retryable: true, retryAfterMs: 1000 })],
+      nonExecution: [
+        {
+          evidence: "The vendor documents rejecting lock_timeout before execution.",
+          matches: ({ status, facts }) => status === 429 && facts.code === "lock_timeout",
+        },
+      ],
+    };
+    const map = (failure: StatusFailure) =>
+      toConnectorCallError(failure, vendor, {
+        classification: "write",
+        dispatches: [answered(failure)],
+      });
+    expect(map(failure)).toMatchObject({ code: "conflict", retryable: true });
+    expect(writeOutcomeOf(map(failure))).toBeUndefined();
+    // Neither a mapped conflict nor the same fact on a different raw status is proof.
+    expect(map(status(503, {}, { code: "lock_timeout" }))).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(map(status(429, {}, { code: "other" }))).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    const inBand = status(429, {}, { code: "lock_timeout" });
+    expect(
+      toConnectorCallError(inBand, vendor, {
+        classification: "write",
+        dispatches: [answered(inBand, { status: 200 })],
+      }),
+    ).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+  });
+
+  it("INV-9: a proven 401 refusal still owns auth recovery when another write step is uncertain", () => {
+    const unauthorized = status(401);
+    const throttled = status(429);
+    const result = toConnectorCallError(
+      throttled,
+      {
+        ...VENDOR,
+        authBeforeExecution: { evidence: "This vendor checks credentials first." },
+      },
+      { classification: "write", dispatches: [answered(unauthorized), dispatch("answered", { status: 201 })] },
+    );
+    expect(result).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
   });
 });
 
@@ -670,6 +750,33 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {
       expect(disagreements(tool, bases[tool.name]!), tool.name).toEqual([]);
     }
   });
+
+  it("INV-1 INV-11: traverses suspended input checks and refuses every unsupported AST form", () => {
+    const input = Schema.Struct({ value: Schema.suspend(() => Schema.String.check(Schema.isMaxLength(3))) });
+    expect(() => catalogSchema(input, "input")).toThrow(/no exact catalog spelling/);
+    const exact = Schema.Struct({ value: Schema.suspend(() => Schema.String.check(isMaxChars(3))) });
+    const rendered = catalogSchema(exact, "input");
+    for (const value of ["😀😀", "😀😀😀", "😀😀😀😀"]) {
+      expect(Schema.decodeUnknownExit(exact)({ value })._tag === "Success").toBe(
+        validateToolInput(rendered, { value }, { address: "acme.suspended", failClosed: true }) === null,
+      );
+    }
+    for (const unsupported of [
+      Schema.Any,
+      Schema.ObjectKeyword,
+      Schema.BigInt,
+      Schema.Symbol,
+      Schema.Date,
+      Schema.TemplateLiteral([Schema.String, "x"]),
+    ]) {
+      expect(() => catalogSchema(Schema.Struct({ value: unsupported }), "input")).toThrow(/no exact catalog spelling/);
+    }
+    const recursive: Schema.Codec<{ readonly next?: unknown }> = Schema.suspend(() =>
+      Schema.Struct({ next: Schema.optionalKey(recursive) }),
+    ).annotate({ identifier: "Node" });
+    // The exactness walk terminates; the existing inline-only renderer refuses definitions.
+    expect(() => catalogSchema(recursive, "input")).toThrow(/inline/);
+  });
 });
 
 describe("paging (decision 0010, B.4)", () => {
@@ -706,11 +813,19 @@ describe("paging (decision 0010, B.4)", () => {
 const keys = get("listKeys", "/keys");
 const ACME_API = vendor("Acme", keys);
 
-function acme(options: { withholds?: boolean; sensitive?: "drop" | "return"; refresh?: boolean } = {}) {
+function acme(
+  options: {
+    withholds?: boolean;
+    sensitive?: "drop" | "return";
+    refresh?: boolean;
+    authenticate?: GuardedOptions["authenticate"];
+  } = {},
+) {
   const guarded = guardedClient({
     ...OPTIONS,
     maxResponseBytes: 4096,
     ...(options.refresh ? { authenticate: bearer } : {}),
+    ...(options.authenticate ? { authenticate: options.authenticate } : {}),
   });
   return connect(ACME_API, options.refresh ? refreshOnce(guarded as never) : guarded, {
     errors: VENDOR,
@@ -1235,10 +1350,12 @@ async function invoke(
   connection: Connection,
   run: (connection: Connection) => Effect.Effect<unknown, HttpFailure, CallServices>,
   served: "read" | "write" = "write",
+  writeSteps?: Readonly<Record<string, "once">>,
 ): Promise<{ value?: unknown; error?: unknown }> {
   const tool = write(connection, {
     name: "items",
     description: "Sends a write.",
+    ...(writeSteps ? { writeSteps } : {}),
     destructive: false,
     input: Schema.Struct({}),
     output: Schema.Unknown,
@@ -1262,6 +1379,148 @@ const lost = (code: string) => () => {
 };
 
 describe("one dispatch per logical write (decision 0010, B.2)", () => {
+  it("INV-9: atomically reserves before async authentication for concurrent Send and direct client calls", async () => {
+    for (const direct of [false, true]) {
+      sent = [];
+      let auth = 0;
+      const authenticate = Effect.promise(async () => {
+        await Promise.resolve();
+        auth++;
+        return {};
+      });
+      const request: Effect.Effect<unknown, HttpFailure, CallServices> = direct
+        ? guardedClient({ ...OPTIONS, authenticate }).client.execute(HttpClientRequest.post("/items"))
+        : acme({ authenticate }).sendPath(POST_ITEMS, { step: "write" });
+      const results = await runEdge(
+        Effect.all([request.pipe(Effect.result), request.pipe(Effect.result)], {
+          concurrency: "unbounded",
+        }).pipe(Effect.provideContext(services("write"))),
+      );
+      expect(results.map((result) => result._tag).sort()).toEqual(["Failure", "Success"]);
+      expect(sent).toHaveLength(1);
+      expect(auth).toBe(1);
+    }
+  });
+
+  it("INV-9: consumes the reservation even when asynchronous preparation fails before fetch", async () => {
+    let auth = 0;
+    const connection = acme({
+      authenticate: Effect.promise(async () => {
+        auth++;
+        await Promise.resolve();
+      }).pipe(
+        Effect.flatMap(() =>
+          Effect.fail(
+            new Refusal({
+              error: new ConnectorCallError("auth_required", "No credential."),
+            }),
+          ),
+        ),
+      ),
+    });
+    const outcome = await invoke(connection, (connection) =>
+      connection.sendPath(POST_ITEMS).pipe(Effect.retry({ times: 2 })),
+    );
+    expect(sent).toEqual([]);
+    expect(auth).toBe(1);
+    expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false });
+    expect(writeOutcomeOf(outcome.error)).toBeUndefined();
+  });
+
+  it("INV-9: fresh step names under Effect.suspend/retry cannot mint write capacity", async () => {
+    for (const writeSteps of [undefined, { "1": "once" as const }]) {
+      sent = [];
+      answers = [() => new Response(null, { status: 503 }), () => Response.json({ ok: true })];
+      let attempt = 0;
+      const outcome = await invoke(
+        acme(),
+        (connection) =>
+          Effect.suspend(() => connection.sendPath(POST_ITEMS, { step: String(++attempt) })).pipe(
+            Effect.retry({ times: 1 }),
+          ),
+        "write",
+        writeSteps,
+      );
+      expect(sent).toHaveLength(writeSteps ? 1 : 0);
+      expect(outcome).toHaveProperty("error");
+      if (writeSteps) expect(outcome.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    }
+  });
+
+  it("INV-9 INV-11: fixes bounded bulk capacity once from validated item identities before the program runs", async () => {
+    const connection = acme();
+    let selections = 0;
+    const spec = {
+      name: "bulk",
+      description: "Update each selected item once.",
+      destructive: false,
+      input: Schema.Struct({ ids: Schema.Array(Schema.String).check(Schema.isMaxLength(2)) }),
+      output: Schema.Unknown,
+      writeSteps: {
+        rows: {
+          maxItems: 2,
+          items: (args: { readonly ids: readonly string[] }) => {
+            selections++;
+            return args.ids;
+          },
+        },
+      },
+      run: (args: { readonly ids: readonly string[] }) =>
+        Effect.forEach(
+          args.ids,
+          (id) =>
+            connection
+              .sendPath({ ...POST_ITEMS, path: `/items/${id}` }, { step: "rows", item: id })
+              .pipe(Effect.result),
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.flatMap((results) => {
+            const failed = results.find((result) => result._tag === "Failure");
+            return failed ? Effect.fail(failed.failure) : Effect.succeed(results);
+          }),
+          Effect.retry({ times: 1 }),
+        ),
+    };
+    const tool = write(connection, spec);
+    // Mutating the caller's declaration after construction cannot increase the bound.
+    spec.writeSteps.rows.maxItems = 100;
+    answers = [() => Response.json({ ok: true }), () => new Response(null, { status: 503 })];
+    const outcome = await Promise.resolve(
+      tool.handler!({ ids: ["alice", "bob"] }, { ...context(), fetch: globalThis.fetch }),
+    ).catch((error: unknown) => error);
+    expect(sent.map((request) => request.url).sort()).toEqual([
+      "https://api.acme.example/v1/items/alice",
+      "https://api.acme.example/v1/items/bob",
+    ]);
+    expect(outcome).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(selections).toBe(1);
+
+    sent = [];
+    await expect(tool.handler!({ ids: ["alice", "alice"] }, { ...context(), fetch: globalThis.fetch })).rejects.toThrow(
+      /unique/,
+    );
+    expect(sent).toEqual([]);
+    await expect(
+      tool.handler!({ ids: ["alice", "bob", "carol"] }, { ...context(), fetch: globalThis.fetch }),
+    ).rejects.toThrow();
+    expect(sent).toEqual([]);
+    const unselected = write(connection, {
+      ...spec,
+      run: () =>
+        connection.sendPath(POST_ITEMS, {
+          step: "rows",
+          item: "attempt_1",
+        }),
+    });
+    await expect(
+      unselected.handler!({ ids: ["alice"] }, { ...context(), fetch: globalThis.fetch }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toEqual([]);
+    expect(() => write(connection, { ...spec, writeSteps: { rows: { maxItems: 0, items: () => [] } } })).toThrow(
+      /maxItems/,
+    );
+  });
+
   it.each([307, 308])(
     "INV-9: Effect.retry after a %i hands the write to fetch once and reports it unknown",
     async (code) => {
@@ -1379,21 +1638,29 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       () => Response.json({ ok: true }),
     );
     // A resumable upload: open a session, then send the bytes. Two steps, each once.
-    const upload = await invoke(acme(), (connection) =>
-      connection.sendPath(POST_ITEMS, { step: "session" }).pipe(
-        Effect.flatMap(() => connection.sendPath({ ...POST_ITEMS, method: "PUT" }, { step: "bytes" })),
-        Effect.map(({ data }) => data),
-      ),
+    const upload = await invoke(
+      acme(),
+      (connection) =>
+        connection.sendPath(POST_ITEMS, { step: "session" }).pipe(
+          Effect.flatMap(() => connection.sendPath({ ...POST_ITEMS, method: "PUT" }, { step: "bytes" })),
+          Effect.map(({ data }) => data),
+        ),
+      "write",
+      { session: "once", bytes: "once" },
     );
     expect(upload).toEqual({ value: { ok: true } });
     expect(sent.map((request) => request.method)).toEqual(["POST", "PUT"]);
 
     sent = [];
     answers = [() => new Response(null, { status: 503 })];
-    const again = await invoke(acme(), (connection) =>
-      connection
-        .sendPath(POST_ITEMS, { step: "rows" })
-        .pipe(Effect.catch(() => connection.sendPath(POST_ITEMS, { step: "rows" }))),
+    const again = await invoke(
+      acme(),
+      (connection) =>
+        connection
+          .sendPath(POST_ITEMS, { step: "rows" })
+          .pipe(Effect.catch(() => connection.sendPath(POST_ITEMS, { step: "rows" }))),
+      "write",
+      { rows: "once" },
     );
     expect(sent).toHaveLength(1);
     expect(again.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
@@ -1415,6 +1682,63 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
 });
 
 describe("write outcomes after the write left (decision 0010, B.3)", () => {
+  it.each(["declared", "streamed", "broken"])(
+    "INV-9: a recorded 401 keeps the auth handoff when its body is %s",
+    async (body) => {
+      const bytes = new TextEncoder().encode("x".repeat(5000));
+      answers.push(
+        () =>
+          new Response(
+            body === "declared"
+              ? "{}"
+              : new ReadableStream({
+                  start(controller) {
+                    if (body === "streamed") {
+                      controller.enqueue(bytes);
+                      controller.close();
+                    } else controller.error(Object.assign(new Error("body disconnected"), { code: "ECONNREFUSED" }));
+                  },
+                }),
+            { status: 401, ...(body === "declared" ? { headers: { "Content-Length": "5000" } } : {}) },
+          ),
+      );
+      const outcome = await invoke(acme(), (connection) => connection.sendPath(POST_ITEMS));
+      expect(sent).toHaveLength(1);
+      expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+      expect((outcome.error as Error).message).toContain("Acme rejected the token.");
+    },
+  );
+
+  it("INV-9: a caught write 401 owns the auth handoff even after an auxiliary 429", async () => {
+    answers.push(
+      () => new Response(null, { status: 401 }),
+      () => new Response(null, { status: 429 }),
+    );
+    const outcome = await invoke(acme(), (connection) =>
+      connection.sendPath(POST_ITEMS).pipe(Effect.catch(() => connection.sendPath(LOOKUP, { effect: "read" }))),
+    );
+    expect(sent).toHaveLength(2);
+    expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+    expect((outcome.error as Error).message).toContain("Acme rejected the token.");
+  });
+
+  it("INV-9: a response received before disconnect is unknown even when the body fails with a never-connected errno", async () => {
+    answers.push(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(Object.assign(new Error("body disconnected"), { code: "ECONNREFUSED" }));
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    const outcome = await invoke(acme(), (connection) => connection.sendPath(POST_ITEMS));
+    expect(outcome.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(sent).toHaveLength(1);
+  });
+
   const writeThenLookup = (connection: Connection) =>
     connection.sendPath(POST_ITEMS).pipe(Effect.flatMap(() => connection.sendPath(LOOKUP, { effect: "read" })));
   const ACCEPTED =
@@ -1488,7 +1812,6 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
     const refused = await invoke(acme(), (connection) =>
       connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
     );
-    expect(refused.error).toMatchObject({ code: "invalid_args", message: "Acme returned HTTP 400." });
-    expect(writeOutcomeOf(refused.error)).toBeUndefined();
+    expect(refused.error).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
   });
 });

@@ -48,7 +48,7 @@ export class ResponseTooLarge extends Data.TaggedError("ResponseTooLarge")<{ rea
  * A logical write was about to be handed to `fetch` a second time in one
  * call, by any path (an Effect retry, a redirect follower, a renewal that
  * replays, a reconnect, a retry under a new request id). Raised below all of
- * them, before anything leaves; `first` is the dispatch that did leave.
+ * them, before anything leaves; `first` is the permanent reservation, which may still be preparing.
  */
 export class ResendRefused extends Data.TaggedError("ResendRefused")<{ readonly first: Dispatch }> {}
 
@@ -170,6 +170,11 @@ export interface VendorErrors<F extends Facts = Facts> {
    * a credential.
    */
   readonly authBeforeExecution?: { readonly evidence: string };
+  /** Explicit reviewed proof of non-execution, tested against raw response facts, never the mapped code. */
+  readonly nonExecution?: ReadonlyArray<{
+    readonly evidence: string;
+    readonly matches: (input: Classified<F>) => boolean;
+  }>;
 }
 
 // No 409: `conflict` is a refusal, so it tells invocation a write did not
@@ -274,8 +279,12 @@ function hasControl(value: string): boolean {
  * one all report the write as unknown. The prototype sets the field #902 adds
  * to `ConnectorCallError`; once #902 merges, this is its constructor option.
  */
-function unknownWrite(code: ConnectorCallErrorCode, message: string): ConnectorCallError {
-  return Object.assign(new ConnectorCallError(code, message, { retryable: false }), {
+function unknownWrite(
+  code: ConnectorCallErrorCode,
+  message: string,
+  details?: ConnectorCallError["details"],
+): ConnectorCallError {
+  return Object.assign(new ConnectorCallError(code, message, { retryable: false, ...(details ? { details } : {}) }), {
     writeOutcome: "unknown" as const,
   });
 }
@@ -290,8 +299,6 @@ export function writeOutcomeOf(error: unknown): "unknown" | undefined {
 export interface MapOptions {
   /** The call's served classification (the Classification service), never the HTTP method. */
   readonly classification: "read" | "write";
-  /** A write whose request carried an idempotency key keeps its retry advice. */
-  readonly idempotent?: boolean;
   /** Every resource request of this call, as the transport recorded it (the Dispatches service). */
   readonly dispatches: ReadonlyArray<Dispatch>;
   /** Whether an operation withholds vendor error text (the connection's ResultSafety). */
@@ -310,22 +317,11 @@ export function toConnectorCallError(
 }
 
 /**
- * What a write call's failure says, read from the ledger:
- *
- * 1. Nothing of the write left connecta (no write request, or `fetch` refused
- *    to connect for each): the verdict stands, retry advice included.
- * 2. A second dispatch of the write was stopped (`ResendRefused`): something
- *    above the transport took the first attempt for a failure and tried
- *    again, so the outcome is unknown.
- * 3. The failure is the write's own answer (the call's one write that left,
- *    and the failure its answer settled into): a 401 keeps its code with an
- *    unknown outcome; a request with an idempotency key keeps the verdict; a
- *    retryable outage becomes an unknown outcome; any other verdict is the
- *    vendor's refusal of the write itself and stands.
- * 4. Anything else came after the write left (an auxiliary request, the
- *    provider's own check, a second write step): the write's outcome is
- *    unknown and the call is never retryable as a whole, whatever the later
- *    failure's code.
+ * Raw dispatch facts constrain every vendor verdict. Only a reservation that
+ * never dispatched, a proven failure to connect, or explicit vendor evidence
+ * proves non-execution. Every other failure after dispatch is non-retryable
+ * and explicitly unknown, regardless of its mapped code or an idempotency key.
+ * A recorded 401 owns the authorization handoff until renewal succeeds.
  */
 function writeOutcome(
   failure: HttpFailure,
@@ -333,15 +329,33 @@ function writeOutcome(
   vendor: VendorErrors<any>,
   options: MapOptions,
 ): ConnectorCallError {
-  const left = options.dispatches.filter((dispatch) => dispatch.write && dispatch.state !== "unconnected");
+  const left = options.dispatches.filter(
+    (dispatch) =>
+      dispatch.write && (dispatch.state === "pending" || dispatch.state === "lost" || dispatch.state === "answered"),
+  );
   if (left.length === 0) {
     // A blocked second attempt of a write that never connected reports that first attempt.
     return failure._tag === "ResendRefused" && failure.first.failure
       ? verdict(failure.first.failure, vendor, options)
       : error;
   }
-  // A deadline is invocation's `write_outcome_unknown`, with its own facts.
-  if (timedOut(error)) return error;
+  // A recorded resource-server 401 owns the handoff, regardless of a body
+  // failure or a later auxiliary failure. Never classify that later error as it.
+  const is401 = (entry: Dispatch) => entry.status === 401 && entry.state === "answered";
+  const unauthorizedWrite = left.find((entry) => is401(entry) && !entry.renewed) ?? left.find(is401);
+  if (unauthorizedWrite) {
+    const auth = unauthorized(unauthorizedWrite, vendor, options);
+    // Evidence about this step's refusal does not prove another dispatched
+    // step's outcome, but the recorded authorization verdict still owns recovery.
+    const decided = vendor.authBeforeExecution && left.length > 1 ? afterWrite(auth, left, vendor) : auth;
+    return failure._tag === "ResendRefused" ? reworded(decided, `${decided.message} ${RESEND}`) : decided;
+  }
+  // Keep invocation's timeout promotion and diagnostics while enforcing the
+  // kit's explicit non-retryable/unknown contract before it reaches that edge.
+  const network = error.details?.code;
+  if (error.code === "timeout" || network === "timeout" || network === "ETIMEDOUT" || network?.endsWith("_TIMEOUT")) {
+    return unknownWrite(error.code, error.message, error.details);
+  }
   if (failure._tag === "ResendRefused") return resend(failure.first, vendor, options);
   const own = options.dispatches.find((dispatch) => dispatch.failure === failure);
   if (own !== undefined && left.length === 1 && left[0] === own) return writeAnswer(own, error, vendor, options);
@@ -354,11 +368,9 @@ function writeAnswer(
   vendor: VendorErrors<any>,
   options: MapOptions,
 ): ConnectorCallError {
-  if (own.state === "answered" && own.status === 401) return unauthorized(own, error, vendor);
-  if (options.idempotent === true) return error;
-  if (error.code !== "unavailable" || !error.retryable) return error;
+  if (provesNonExecution(own, vendor, options)) return error;
   return unknownWrite(
-    "connector_call_failed",
+    error.code === "unavailable" ? "connector_call_failed" : error.code,
     `${error.message} Whether the write took effect at ${vendor.provider} is unknown: it carried no idempotency key, ` +
       "so check the target before repeating it.",
   );
@@ -379,9 +391,10 @@ function resend(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions)
       ? verdict(answerOf(first), vendor, options)
       : undefined;
   if (answer && first.state === "answered" && first.status === 401) {
-    const decided = unauthorized(first, answer, vendor);
+    const decided = unauthorized(first, vendor, options);
     return reworded(decided, `${decided.message} ${RESEND}`);
   }
+  if (answer && provesNonExecution(first, vendor, options)) return reworded(answer, `${answer.message} ${RESEND}`);
   const was =
     answer?.message ??
     `This call had already sent its write to ${vendor.provider}` +
@@ -403,7 +416,12 @@ function resend(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions)
  * that succeeded drops the handoff: the credential needs no recovery, and the
  * write is still unknown.
  */
-function unauthorized(answer: Dispatch, error: ConnectorCallError, vendor: VendorErrors<any>): ConnectorCallError {
+function unauthorized(
+  answer: Dispatch,
+  vendor: VendorErrors<any>,
+  options: Pick<MapOptions, "withholds" | "signal">,
+): ConnectorCallError {
+  const error = verdict(recordedAnswer(answer), vendor, options);
   if (vendor.authBeforeExecution) return error;
   if (answer.renewed) {
     return unknownWrite(
@@ -467,7 +485,26 @@ export function departedVerdict(
   const answer = options.dispatches.find(
     (dispatch) => dispatch.write && dispatch.state === "answered" && dispatch.status === 401,
   );
-  return answer ? unauthorized(answer, verdict(answerOf(answer), vendor, options), vendor) : undefined;
+  return answer ? unauthorized(answer, vendor, options) : undefined;
+}
+
+/** Use a parsed body only when it belongs to this recorded status; ceilings and later failures cannot supply its code. */
+function recordedAnswer(dispatch: Dispatch): StatusFailure {
+  return dispatch.failure?._tag === "StatusFailure" && dispatch.failure.status === dispatch.status
+    ? dispatch.failure
+    : answerOf(dispatch);
+}
+
+function provesNonExecution(
+  dispatch: Dispatch,
+  vendor: VendorErrors<any>,
+  options: Pick<MapOptions, "withholds">,
+): boolean {
+  if (dispatch.state !== "answered") return false;
+  if (dispatch.status === 401 && vendor.authBeforeExecution) return true;
+  const answer = recordedAnswer(dispatch);
+  const input = classificationInput(answer, vendor, options.withholds?.(answer.operation) === true);
+  return vendor.nonExecution?.some((proof) => proof.evidence.trim().length > 0 && proof.matches(input)) === true;
 }
 
 /** A recorded answer as the failure it was, from the facts the ledger kept (its body is gone). */
@@ -482,11 +519,6 @@ function answerOf(dispatch: Dispatch): StatusFailure {
 
 function ok(status: number | undefined): boolean {
   return status !== undefined && status >= 200 && status <= 299;
-}
-
-function timedOut(error: ConnectorCallError): boolean {
-  const code = error.details?.code;
-  return error.code === "timeout" || code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT") === true;
 }
 
 /** The same verdict in other words: code, retry advice, and explicit outcome kept. */
@@ -539,16 +571,8 @@ function verdict(
 }
 
 function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withheld: boolean): ConnectorCallError {
-  const facts = bounded(vendor.facts(tokensOf(failure.body)));
-  const headers = visibleHeaders(failure.headers, vendor.headers);
-  const input: Classified = {
-    status: failure.status,
-    facts,
-    headers,
-    retryAfterMs: retryAfterMs(failure.headers),
-    operation: failure.operation,
-    withheld,
-  };
+  const input = classificationInput(failure, vendor, withheld);
+  const { facts, headers } = input;
   // Classification first, over facts and headers only.
   const { code, retryable, retryAfterMs: wait, current, words } = classified(input, vendor);
   // Then the wording. The body reaches `detail` only when this operation's
@@ -565,6 +589,17 @@ function statusVerdict(failure: StatusFailure, vendor: VendorErrors<any>, withhe
     ...(wait === undefined ? {} : { retryAfterMs: wait }),
     ...(current ? { current } : {}),
   });
+}
+
+function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, withheld: boolean): Classified {
+  return {
+    status: failure.status,
+    facts: bounded(vendor.facts(tokensOf(failure.body))),
+    headers: visibleHeaders(failure.headers, vendor.headers),
+    retryAfterMs: retryAfterMs(failure.headers),
+    operation: failure.operation,
+    withheld,
+  };
 }
 
 function classified(input: Classified, vendor: VendorErrors<any>): Verdict {

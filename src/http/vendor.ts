@@ -24,9 +24,25 @@ import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as OpenApi from "effect/http-api/OpenApi";
 import type { GuardedClient } from "./client.js";
-import { StatusFailure, UnreadableBody, type HttpFailure, type OperationRef, type VendorErrors } from "./errors.js";
+import {
+  RequestRefused,
+  ResendRefused,
+  StatusFailure,
+  UnreadableBody,
+  type HttpFailure,
+  type OperationRef,
+  type VendorErrors,
+} from "./errors.js";
 import type { ResultSafety } from "./safety.js";
-import { RequestFacts, type CallServices, type Dispatch } from "./services.js";
+import {
+  Classification,
+  Dispatches,
+  RequestFacts,
+  WriteCapacity,
+  reserveWrite,
+  type CallServices,
+  type Dispatch,
+} from "./services.js";
 
 /** Declare a GET operation: `get("getCharge", "/charges/:chargeId", { params, query, success })`. */
 export const get = HttpApiEndpoint.get;
@@ -63,12 +79,12 @@ interface SendOptions {
   /** An auxiliary lookup inside a write tool: it is not the write, and may be replayed after a 401. Never inferred. */
   readonly effect?: "read";
   /**
-   * Which logical write this request is, for a tool that sends more than one
-   * (a resumable upload's session and its bytes, one request per row of a
-   * bulk change). Each step is handed to `fetch` at most once per call; a
-   * tool that names none has one write.
+   * A name in the tool's construction-declared writeSteps, never fresh capacity.
+   * Each step/item can be reserved once. The implicit default is `write`.
    */
   readonly step?: string;
+  /** An identity in this step's fixed, validated-input-derived item set. Never an attempt counter. */
+  readonly item?: string;
   /** Named facts the vendor's error rules read for this request, such as Google's `revisionGuarded`. */
   readonly flags?: Readonly<Record<string, true>>;
 }
@@ -121,7 +137,11 @@ export interface Connection<R = CallServices> {
 type Method<R> = (request: unknown) => Effect.Effect<HttpClientResponse.HttpClientResponse, unknown, R>;
 
 /** Bind a vendor to one connection's guarded client. The typed client is built once, on first use. */
-export function connect<R>(vendor: Vendor, guarded: GuardedClient<R>, options: ConnectOptions): Connection<R> {
+export function connect<R>(
+  vendor: Vendor,
+  guarded: GuardedClient<R>,
+  options: ConnectOptions,
+): Connection<R | CallServices> {
   let built: Record<string, Method<R>> | undefined;
   const client = Effect.suspend(() =>
     built
@@ -135,13 +155,21 @@ export function connect<R>(vendor: Vendor, guarded: GuardedClient<R>, options: C
     operation: OperationRef,
     response: Effect.Effect<HttpClientResponse.HttpClientResponse, HttpFailure, R>,
     sendOptions: SendOptions | undefined,
-  ): Effect.Effect<Answer, HttpFailure, R> =>
+  ): Effect.Effect<Answer, HttpFailure, R | CallServices> =>
     Effect.suspend(() => {
       // The transport names the request it handed to `fetch` here; whatever
       // its answer settles into is recorded on it in the ledger, so the
       // write-outcome rule can tell the write's own failure from a later one.
-      const sent: { dispatch?: Dispatch } = {};
+      const sent: { reservation?: Dispatch; dispatch?: Dispatch } = {};
       return Effect.gen(function* () {
+        if ((yield* Classification) === "write" && sendOptions?.effect !== "read") {
+          const ledger = yield* Dispatches;
+          const capacity = yield* WriteCapacity;
+          // Reserve before request encoding, authentication, or any asynchronous preparation.
+          const slot = yield* Effect.sync(() => reserveWrite(ledger, capacity, { ...sendOptions, operation }));
+          if (slot instanceof RequestRefused || slot instanceof ResendRefused) return yield* Effect.fail(slot);
+          sent.reservation = slot;
+        }
         const reply = yield* Effect.flatMap(response, guarded.read);
         const parsed = parse(reply.text);
         if (reply.status < 200 || reply.status > 299) {
@@ -162,12 +190,14 @@ export function connect<R>(vendor: Vendor, guarded: GuardedClient<R>, options: C
       }).pipe(
         Effect.tapError((failure) =>
           Effect.sync(() => {
-            if (sent.dispatch && sent.dispatch.failure === undefined) sent.dispatch.failure = failure;
+            const slot = sent.dispatch ?? sent.reservation;
+            if (slot && slot.failure === undefined && failure._tag !== "ResendRefused") slot.failure = failure;
           }),
         ),
         Effect.provideService(RequestFacts, {
           effect: sendOptions?.effect === "read" ? "read" : "call",
           ...(sendOptions?.step === undefined ? {} : { step: sendOptions.step }),
+          ...(sendOptions?.item === undefined ? {} : { item: sendOptions.item }),
           operation,
           sent,
         }),
@@ -198,24 +228,26 @@ export function connect<R>(vendor: Vendor, guarded: GuardedClient<R>, options: C
       );
     },
     sendPath: (request, sendOptions) => {
-      let built = HttpClientRequest.make(request.method)(
-        request.path,
-        request.query ? { urlParams: request.query } : {},
-      );
-      if (request.form && Object.keys(request.form).length > 0) {
-        built = HttpClientRequest.bodyText(
-          built,
-          new URLSearchParams(request.form).toString(),
-          "application/x-www-form-urlencoded",
-        );
-      }
       return settle(
         {
           method: request.method,
           template: request.template,
           ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}),
         },
-        guarded.client.execute(built),
+        Effect.suspend(() => {
+          let built = HttpClientRequest.make(request.method)(
+            request.path,
+            request.query ? { urlParams: request.query } : {},
+          );
+          if (request.form && Object.keys(request.form).length > 0) {
+            built = HttpClientRequest.bodyText(
+              built,
+              new URLSearchParams(request.form).toString(),
+              "application/x-www-form-urlencoded",
+            );
+          }
+          return guarded.client.execute(built);
+        }),
         sendOptions,
       );
     },

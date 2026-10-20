@@ -45,6 +45,13 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
     };
   },
   headers: ["request-id", "stripe-rate-limited-reason"],
+  nonExecution: [
+    {
+      evidence:
+        "https://docs.stripe.com/rate-limits#object-lock-timeouts documents that Stripe did not process this request.",
+      matches: ({ status, facts }) => status === 429 && facts.code === "lock_timeout",
+    },
+  ],
   detail: ({ status, facts, headers, withheld, body }) => {
     const kind = [facts.type, facts.code, facts.declineCode].filter(Boolean).join(" ");
     const message = withheld

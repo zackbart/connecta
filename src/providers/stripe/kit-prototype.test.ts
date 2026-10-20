@@ -3,7 +3,7 @@
 // and a status table, must say exactly what rest.ts says today.
 import { describe, expect, it } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
-import { StatusFailure, toConnectorCallError } from "../../http/errors.js";
+import { StatusFailure, toConnectorCallError, writeOutcomeOf } from "../../http/errors.js";
 import { restCall } from "../_shared/rest/tools.js";
 import { stripeErrors } from "./kit-prototype.js";
 import { stripeRest } from "./rest.js";
@@ -88,5 +88,33 @@ describe("Stripe's failure mapper on the kit's error contract (decision 0010)", 
     // rest.ts quotes the param whatever it holds; the kit's bound drops it.
     expect(kit.message).toBe("Stripe invalid_request_error: Bad.");
     expect(vendor.failure(400, new Headers(), body, open).message).toContain("(param a param with spaces)");
+  });
+
+  it("INV-9: a write needs explicit non-execution proof, independent of its mapped code", () => {
+    for (const [status, body, proved] of [
+      [429, bodies["lock timeout"], true],
+      [503, bodies["lock timeout"], false],
+      [409, bodies["nested param"], false],
+      [429, bodies["card decline"], false],
+    ] as const) {
+      const failure = new StatusFailure({
+        status,
+        headers: new Headers(),
+        body,
+        operation: { method: "POST", template: "/v1/charges" },
+      });
+      const map = (errors: typeof stripeErrors) =>
+        toConnectorCallError(failure, errors, {
+          classification: "write",
+          dispatches: [{ write: true, state: "answered", status, failure }],
+        });
+      const result = map(stripeErrors);
+      if (proved) {
+        expect(result).toMatchObject({ code: "conflict", retryable: true, retryAfterMs: 1000 });
+        expect(writeOutcomeOf(result)).toBeUndefined();
+      } else expect(result).toMatchObject({ retryable: false, retryAfterMs: undefined, writeOutcome: "unknown" });
+      const { nonExecution: _proof, ...withoutProof } = stripeErrors;
+      expect(map(withoutProof)).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    }
   });
 });

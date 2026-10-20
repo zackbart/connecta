@@ -389,11 +389,26 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
   ];
 
   it.each(cases)(
-    "INV-6 INV-9: sends the same requests and maps $name the same way",
+    "INV-6 INV-9: preserves requests for $name and records each write-outcome difference",
     async ({ tool, args, responses }) => {
       const { before, after } = await both(tool, args, responses);
       expect(after.sent).toEqual(before.sent);
-      expect(after.result).toEqual(before.result);
+      if (
+        tool === "tithely_api_mutate" &&
+        (responses[0]?.status || (responses[0]?.body as { status?: string } | undefined)?.status === "fail")
+      ) {
+        // Round 3: raw dispatch, rather than a mapped refusal code, owns uncertainty.
+        const previous = before.result as { message: string };
+        expect(after.result).toEqual({
+          ...(before.result as object),
+          retryable: false,
+          retryAfterMs: undefined,
+          writeOutcome: "unknown",
+          message:
+            `${previous.message} Whether the write took effect at Tithe.ly is unknown: ` +
+            "it carried no idempotency key, so check the target before repeating it.",
+        });
+      } else expect(after.result).toEqual(before.result);
     },
   );
 
@@ -546,6 +561,26 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     );
     expect(error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
     expect((error as Error).message).toContain("whether it took effect is unknown");
+  });
+
+  it.each(["declared", "streamed"])("INV-9: a write's recorded 401 survives a %s oversized body", async (kind) => {
+    const result = await run(
+      kit(),
+      "tithely_api_mutate",
+      MUTATE,
+      [
+        {
+          status: 401,
+          ...(kind === "declared"
+            ? { text: "{}", headers: { "Content-Length": String(8 * 1024 * 1024) } }
+            : { stream: 5 * 1024 * 1024 }),
+        },
+      ],
+      context(),
+    );
+    expect(result.sent).toHaveLength(1);
+    expect(result.result).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+    expect((result.result as { message: string }).message).toContain("Tithe.ly rejected the key pair.");
   });
 
   it("derives the endpoint manifest drift checks read from the same declaration", () => {

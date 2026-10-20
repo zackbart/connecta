@@ -17,11 +17,23 @@ import type { ApiTool } from "../connectors/api-connector.js";
 import { runEdge } from "../runtime/run.js";
 import { departedVerdict, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { catalogSchema } from "./json-schema.js";
-import { Classification, Dispatches, fromConnectorContext, type CallServices } from "./services.js";
+import { Classification, Dispatches, WriteCapacity, fromConnectorContext, type CallServices } from "./services.js";
 import type { Connection } from "./vendor.js";
 
 /** An input Schema the kit can render as catalog JSON Schema and decode without services. */
 type Input = Schema.Top & { readonly DecodingServices: never };
+
+/** A fixed step, or a bounded set of deterministic identities selected once from validated arguments. */
+type WriteSteps<A> = Readonly<
+  Record<
+    string,
+    | "once"
+    | {
+        readonly maxItems: number;
+        readonly items: (args: A) => readonly string[];
+      }
+  >
+>;
 
 export interface ToolSpec<I extends Input, O extends Schema.Top> {
   readonly name: string;
@@ -35,6 +47,8 @@ export interface ToolSpec<I extends Input, O extends Schema.Top> {
   readonly input: I;
   /** What the program returns; its type is checked against the projection statically. */
   readonly output: O;
+  /** Default: one implicit `write` step. Declare every step before serving, including reads served as writes. */
+  readonly writeSteps?: WriteSteps<I["Type"]>;
   readonly run: (args: I["Type"]) => Effect.Effect<O["Type"], HttpFailure, CallServices>;
 }
 
@@ -72,6 +86,31 @@ function build<I extends Input, O extends Schema.Top>(
   verdict: "read" | "write",
   annotations: ApiTool["annotations"],
 ): ApiTool {
+  // Snapshot the declaration now; mutations and retries cannot add step names or increase bounds.
+  const steps = Object.entries(spec.writeSteps ?? { write: "once" }).map(([name, declaration]) => {
+    if (
+      !name ||
+      (declaration !== "once" && (!Number.isSafeInteger(declaration.maxItems) || declaration.maxItems < 1))
+    ) {
+      throw new Error("Write steps need nonempty names and a positive whole maxItems bound.");
+    }
+    return [name, declaration === "once" ? declaration : { ...declaration }] as const;
+  });
+  const capacity = (args: I["Type"]) =>
+    new Map(
+      steps.map(([name, declaration]) => {
+        if (declaration === "once") return [name, new Set<string | undefined>([undefined])] as const;
+        const items = [...declaration.items(args)];
+        if (
+          items.length > declaration.maxItems ||
+          items.some((item) => typeof item !== "string" || item.length === 0) ||
+          new Set(items).size !== items.length
+        ) {
+          throw new Error("Write item identities must be unique nonempty strings within the declared maxItems bound.");
+        }
+        return [name, new Set<string | undefined>(items)] as const;
+      }),
+    );
   const decode = Schema.decodeUnknownEffect(spec.input);
   const tool: ApiTool = {
     name: spec.name,
@@ -89,7 +128,9 @@ function build<I extends Input, O extends Schema.Top>(
         decode(args).pipe(
           // Its message can quote the argument; as a defect, api() withholds it.
           Effect.orDie,
-          Effect.flatMap((decoded) => spec.run(decoded)),
+          Effect.flatMap((decoded) =>
+            Effect.suspend(() => spec.run(decoded)).pipe(Effect.provideService(WriteCapacity, capacity(decoded))),
+          ),
           Effect.mapError((failure) => toConnectorCallError(failure, connection.errors, map)),
           Effect.provideContext(lease.services),
           // The call's finalizer: every capability kept from it refuses after this.

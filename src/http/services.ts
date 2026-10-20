@@ -32,7 +32,7 @@ import { ConnectorCallError } from "../errors.js";
 import { runEdge } from "../runtime/run.js";
 import { sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import type { ConnectorContext, ConnectorCredentialValues } from "../types.js";
-import type { HttpFailure, OperationRef } from "./errors.js";
+import { RequestRefused, ResendRefused, type HttpFailure, type OperationRef } from "./errors.js";
 
 /** Who admitted the operation; absent for a probe or a callback no request admitted. */
 export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>()("connecta/http/Caller") {}
@@ -76,11 +76,12 @@ export class Classification extends Context.Service<Classification, "read" | "wr
 export interface Dispatch {
   /** It counts as the call's write: every request of a write call except one sent with `{ effect: "read" }`. */
   readonly write: boolean;
-  /** Which logical write it is (`Send`'s `step`, else the call's one write). Each is handed to `fetch` once. */
+  /** Which construction-declared logical write it is; the implicit default is `write`. */
   readonly step?: string;
+  readonly item?: string;
   readonly operation?: OperationRef;
   /** `unconnected` only when `fetch` rejected with an errno proving no connection; `lost` for any other rejection. */
-  state: "pending" | "unconnected" | "lost" | "answered";
+  state: "reserved" | "preparing" | "pending" | "unconnected" | "lost" | "answered";
   status?: number;
   headers?: Headers;
   /** The failure this request's own answer settled into, so the mapping can tell it from a later one. */
@@ -89,8 +90,37 @@ export interface Dispatch {
   renewed?: true;
 }
 
-/** Every resource request this call handed to `fetch`, in order. The write-outcome rule (B.3) reads it. */
+/** Permanent write reservations plus resource dispatches, in reservation order. The outcome rule reads their states. */
 export class Dispatches extends Context.Service<Dispatches, Dispatch[]>()("connecta/http/Dispatches") {}
+
+/** Closed capacity, snapshotted from the tool declaration and validated input before its program runs. */
+export class WriteCapacity extends Context.Service<
+  WriteCapacity,
+  ReadonlyMap<string, ReadonlySet<string | undefined>>
+>()("connecta/http/WriteCapacity") {}
+
+/** No await or fiber yield between the check and insertion. Reservations are never released. */
+export function reserveWrite(
+  ledger: Dispatch[],
+  capacity: Context.Service.Shape<typeof WriteCapacity>,
+  facts: { readonly step?: string; readonly item?: string; readonly operation?: OperationRef },
+): Dispatch | RequestRefused | ResendRefused {
+  const step = facts.step ?? "write";
+  if (!capacity.get(step)?.has(facts.item)) {
+    return new RequestRefused({ message: "This write step/item was not declared by the tool for this call." });
+  }
+  const first = ledger.find((entry) => entry.write && entry.step === step && entry.item === facts.item);
+  if (first) return new ResendRefused({ first });
+  const slot: Dispatch = {
+    write: true,
+    step,
+    ...(facts.item === undefined ? {} : { item: facts.item }),
+    ...(facts.operation ? { operation: facts.operation } : {}),
+    state: "reserved",
+  };
+  ledger.push(slot);
+  return slot;
+}
 
 /**
  * What one request inside a call is: the call's own effect, or an auxiliary
@@ -102,8 +132,9 @@ export class Dispatches extends Context.Service<Dispatches, Dispatch[]>()("conne
 export const RequestFacts = Context.Reference<{
   readonly effect: "call" | "read";
   readonly step?: string;
+  readonly item?: string;
   readonly operation?: OperationRef;
-  readonly sent?: { dispatch?: Dispatch };
+  readonly sent?: { reservation?: Dispatch; dispatch?: Dispatch };
 }>("connecta/http/RequestFacts", { defaultValue: () => ({ effect: "call" }) });
 
 type OperationServices = Caller;
@@ -115,7 +146,8 @@ export type CallServices =
   | Recovery
   | Signal
   | Classification
-  | Dispatches;
+  | Dispatches
+  | WriteCapacity;
 
 function ended(): ConnectorCallError {
   return new ConnectorCallError(
@@ -176,6 +208,7 @@ export function openCall(inputs: CallInputs): CallLease {
     Context.add(Signal, inputs.signal),
     Context.add(Classification, inputs.classification),
     Context.add(Dispatches, []),
+    Context.add(WriteCapacity, new Map([["write", new Set([undefined])]])),
   );
   return {
     services,

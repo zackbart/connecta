@@ -19,13 +19,14 @@ imports either, and the build does not emit them.
 
 The prototype gives three kinds of evidence:
 
-- **Against `index.ts`.** `kit-prototype.test.ts` (53 tests) compares catalog
+- **Against `index.ts`.** `kit-prototype.test.ts` (55 tests) compares catalog
   entries, the requests sent, and the mapped results for 44 fixture cases,
   including the write's statuses, in-band refusal, refused connection,
+  oversized 401 bodies,
   confinement and a path of astral characters. It names every deliberate
   difference and asserts it: A.2's write outcomes and sensitive fields, and
   this record's 401 rule.
-- **Against A.3's goldens.** Run out of tree through PR #900's harness (at
+- **Against A.3's goldens (round 2; superseded by round 3 below).** Run out of tree through PR #900's harness (at
   `f1a2df2b`), with the three kit tools substituted into today's provider:
   `catalog.json` and `calls.json` are byte-identical, and `failures.json`
   differs in exactly three write cases, each a deliberate change named above.
@@ -42,9 +43,39 @@ The prototype gives three kinds of evidence:
   verdict through `stripeFailure` and through the kit, and requires the same
   code, message, retry advice and wait.
 
-`test/http-kit.test.ts` (65 tests) covers the kit's own rules, and
+`test/http-kit.test.ts` (85 tests) covers the kit's own rules, and
 `test/kit-stability.node.test.ts` the stability guard (Q7). Every suite but the
 Node-only guard passes on Node and workerd.
+
+**Round-3 evidence.** The fixed-capacity and atomic-reservation regressions,
+raw-status write mapping, recorded 401 body/later-failure cases and suspended
+schema checks are in the prototype suites. The out-of-tree golden run on
+#900's `f1a2df2b` substitutes the three prototype tools into the original
+provider, with the privacy option set to `return` to compare its existing
+behaviour. `catalog.json` stays 34,969 bytes and `calls.json` stays 17,331
+bytes, both byte-identical. `failures.json` changes from 21,943 to 23,075
+bytes (+1,132), in exactly nine write cases: 400, 401, 403, 404, 409, 422,
+429, 500 and 401 echo. Each request stays identical. Seven change message
+only; 429 also loses retryability and its wait; 500 changes code and
+retryability. Read failures, refused connection and timeout stay identical.
+The 401 handoffs remain. This harness's older core drops `writeOutcome` from
+the wire; #902's explicit field makes all nine dispatched failures visibly
+unknown and keeps refusal-code accounting from overriding them. No golden
+or harness change from that run is committed.
+
+**Round-3 verification.** The kit/prototype, Stripe and Tithe.ly suites pass
+on Node and workerd, along with the purity, package-surface and stability
+guards. `check:fast` passes. `pnpm run check` ran once: 18,503 tests passed,
+4 failed and 304 were skipped; all 13 invariants and 154 spec references are
+backed by passing tests. The full gate is **not green**. At an observed host
+load of 25–165, the failures were in unchanged files: a 10 s QuickJS timeout,
+a 5 s operator-store cancellation timeout and its following identity-state
+failure, and an access-token adoption deadline assertion on workerd. All
+three files pass in isolation (74 Node tests, 159 workerd tests). The stages
+blocked by that test failure pass separately: build; 88 reachable declarations
+with no Effect types; every bundle cap; examples; and all 347 Chromium tests.
+`dist/` contains no `http/` or `kit-prototype` files. Passing isolated reruns
+does not turn the failed full run into a clean gate.
 
 Four constraints shape the design:
 
@@ -56,8 +87,8 @@ Four constraints shape the design:
   upgrade may still change what those names do. Every other `effect` member
   the kit and its provider declarations use is tagged `@stability stable`,
   and `kit-stability.node.test.ts` checks it (Q7).
-- **The kit stays out of the root graph.** The root measures 380,179 B gzip
-  against a 399,882 B cap, which leaves 19,703 B of headroom. The kit costs
+- **The kit stays out of the root graph.** The round-3 build measures the root at 379,170 B gzip
+  against a 399,882 B cap, which leaves 20,712 B of headroom. The kit costs
   about 120 KB. A deployment pays that once, through its first kit provider
   entry. The purity suite checks that `src/index.ts` reaches nothing under
   `src/http/`.
@@ -77,8 +108,10 @@ explicit `writeOutcome: "unknown"` on `ConnectorCallError` and
 `CallErrorDetails`, which `classifyWriteOutcome` reads before its refusal
 codes, so an authorization verdict reached after a write left keeps its code
 and handoff and is still counted unknown. This record uses those names and
-verdicts. Where A.2's review changes one, the kit takes A.2's; each lives in
-one place in the kit. Until #902 merges, the prototype carries a ten-line copy
+verdicts. The explicit unknown field agrees with A.2; this round fixes a stricter
+raw-dispatch constraint in B.3. The static OAuth divergence is explicitly
+planned B.2 work below, not shipped alignment. Each rule lives in one place
+in the kit. Until #902 merges, the prototype carries a ten-line copy
 of `callClassification` (`attachServedClassification`) and sets
 `writeOutcome` itself (`unknownWrite`).
 
@@ -121,10 +154,11 @@ interface CallShapes extends OperationShapes {
   Secrets: SentSecrets;
   Credentials: { readonly values: Effect.Effect<ConnectorCredentialValues | null, ConnectorCallError> };
   Signal: AbortSignal | undefined;
-  Dispatches: Dispatch[]; // the ledger (B.2) the write-outcome rule reads (B.3)
+  Dispatches: Dispatch[]; // permanent reservations and dispatch facts (B.2/B.3)
+  WriteCapacity: ReadonlyMap<string, ReadonlySet<string | undefined>>; // B.4 declaration, snapshotted once per call
 }
 // What one request inside a call is; set by `Send`, read by the transport and refresh-once.
-const RequestFacts = Context.Reference<{ effect: "call" | "read"; operation?: OperationRef }>(…, { defaultValue: () => ({ effect: "call" }) });
+const RequestFacts = Context.Reference<{ effect: "call" | "read"; step?: string; item?: string; operation?: OperationRef }>(…, { defaultValue: () => ({ effect: "call" }) });
 ```
 
 **Operations outside a call (discovery, status, `startAuth`).** Caller state is
@@ -288,64 +322,74 @@ requests sent and hand request facts to whatever tracer is installed.
 A provider never holds an `HttpClientResponse` or a raw body. `Send` returns an
 `Answer` that already passed the value-safety boundary (B.4).
 
-**The dispatch ledger.** The transport appends one `Dispatch` to the call's
-`Dispatches` for every request it hands to `fetch`, and fills it in as it
-happens:
+**Fixed capacity and the dispatch ledger.** Write capacity belongs to the
+**tool declaration at construction**, never to `Send`. `writeSteps` is a
+closed set of literal step names; the default is one implicit `write` step.
+Each entry is either `"once"`, or a bulk declaration with a positive finite
+`maxItems` and a pure selector of deterministic item identities from validated
+arguments. The builder snapshots the declaration at construction. After input
+validation/decoding, before the program runs, it calls each selector exactly
+once, copies its identities, and refuses duplicate/empty identities or a set
+past the declared bound. The selector must derive identities from arguments,
+never an attempt counter, a random value, or mutable retry state. The allowed
+set never grows while the program runs or retries. A send naming an undeclared
+step or unselected item is refused before preparation or dispatch. A bulk tool
+uses `{ step: "rows", item: row.id }`, with `row.id` selected from its validated
+input; an upload declares `session` and `bytes` as separate `"once"` steps.
 
 ```ts
 interface Dispatch {
-  readonly write: boolean;          // served classification is "write" and the request's effect is "call"
-  readonly step?: string;           // which logical write: Send's `step`, else the call's one write
+  readonly write: boolean;          // served classification is write, effect is call
+  readonly step?: string;           // construction-declared step; default write
+  readonly item?: string;           // identity in the call's fixed, bounded item set
   readonly operation?: OperationRef;
-  state: "pending" | "unconnected" | "lost" | "answered";
-  status?: number;                  // set the moment the resource server answers
+  state: "reserved" | "preparing" | "pending" | "unconnected" | "lost" | "answered";
+  status?: number;                  // recorded as soon as the resource server answers
   headers?: Headers;
-  failure?: HttpFailure;            // what this request's own answer settled into
-  renewed?: true;                   // its 401 earned a renewal that succeeded
+  failure?: HttpFailure;            // only this request's own failure, never a blocked retry's
+  renewed?: true;
 }
 ```
 
-`unconnected` is recorded only when `fetch` itself rejected with an errno that
-proves no connection (`ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `EAI_FAIL`,
-`EHOSTUNREACH`); any other rejection is `lost`, and a request interrupted in
-flight stays `pending`. Requests a grant makes to its authorization server are
-not resource requests and never enter the ledger.
+**Atomic, permanent reservation.** `Send` reserves the `(call, step, item)`
+slot in one synchronous check-and-insert before encoding a body, authenticating,
+or awaiting any preparation. The transport atomically claims that reservation
+before it evaluates preparation. A direct `HttpClient` call reserves and claims
+there instead. Nothing yields between the slot check and insertion or claim,
+so `Effect.all(..., { concurrency: "unbounded" })` cannot admit two sends.
+A wrapper that retries below `Send` sees the same claimed reservation and is
+refused too. A reservation is **never released**, including after preparation
+failure or a proven failure to connect. This deliberately gives up an in-call
+retry even when nothing left: retaining the slot makes two sends impossible;
+a new deliberate call gets fresh capacity and the proven-unsent failure may
+still be advertised retryable. No request id, body, URL, retry counter or
+new step name can mint capacity.
 
-`failure` ties a failure to the request whose answer produced it, so the
-write-outcome rule (B.3) can tell the write's own answer from anything later.
-The transport records the failures it raises itself (a lost connection, a
-redirect, a declared ceiling). For the rest, `Send` gives each attempt a slot
-the transport fills with the dispatch it hands to `fetch`, and records on that
-dispatch whatever its answer settles into: a status, an unreadable body, a
-streamed ceiling, the vendor's in-band refusal. Each new attempt clears the
-slot first, so a failure raised before a request leaves is never pinned on an
-earlier one.
+`reserved` and `preparing` have not dispatched. Immediately before `fetch`,
+the transport marks the slot `pending` and associates it with the attempt.
+A read needs no reservation and enters the ledger there. A fetch rejection is
+`unconnected` only for a never-connected errno (`ECONNREFUSED`, `ENOTFOUND`,
+`EAI_AGAIN`, `EAI_FAIL`, `EHOSTUNREACH`); every other rejection is `lost`.
+After a response arrives, a body failure with one of those errnos does **not**
+prove non-execution: the recorded answer still owns the outcome. A write
+interrupted after dispatch stays `pending`. Authorization-server requests
+never enter this resource ledger.
 
-**One dispatch per logical write.** Recording repeats is not enough: the
-transport also refuses them. Its last step before `fetch` looks up the
-request's logical write in the call's ledger and fails with `ResendRefused`
-when that write already has a dispatch. It does so before the request is even
-prepared, so no credential is read and nothing leaves. The rule:
+The slot's `failure` records only its own preparation or answer failure, never
+`ResendRefused` from a later attempt. `Send`'s attempt slot distinguishes its
+request from later auxiliary requests. B.3 maps a blocked retry from the
+original reservation and its raw dispatch facts. If the reservation never
+dispatched or never connected, its own original verdict stands. Otherwise it
+is unknown and non-retryable unless vendor evidence proves non-execution.
+A recorded 401 keeps its auth handoff until renewal succeeds.
 
-- A logical write is the call's one write, or a `step` the tool names in
-  `Send` (`{ step: "session" }`, `{ step: "bytes" }`) when it sends several:
-  Drive's resumable upload, one request per row of a bulk change, a paging
-  read the deployment serves as a write. Each is handed to `fetch` at most
-  once per call, whatever became of it: pending, lost, answered, or never
-  connected.
-- It is enforced below every path that can send again, because nothing sits
-  between it and `fetch`: an `Effect.retry` around `Send` or around a program
-  that calls `Send` again, an `HttpClient` wrapper that follows a 307 or 308,
-  a renewal that replays after a 401 (Google's transport today), a reconnect
-  after a broken connection, a retry under a new request id or body. The key
-  is the call's ledger and the step, never a request id, URL, header or body,
-  so none of those resets it.
-- An auxiliary read (`{ effect: "read" }`) and every request of a call served
-  as a read are not writes and may be replayed.
-- B.3 maps `ResendRefused` to the first dispatch's outcome. It is unknown and
-  never retryable, unless that dispatch never connected, which reports that
-  first attempt's own verdict (nothing left connecta). A first answer of 401
-  keeps its code and handoff, as rule 2 says.
+This holds below Effect retries, program retries, 307/308 followers, replaying
+renewals, reconnects and new request ids. It also holds when a retry tries fresh
+step names or item ids. Auxiliary `{ effect: "read" }` requests and all requests
+in calls served as reads may still be replayed. Tests cover async-auth
+concurrency through both entry paths, preparation failure, the reviewer's
+`Effect.suspend` counter repro, fixed upload steps, bounded bulk concurrency,
+whole-loop retries, duplicate/unselected ids and construction bounds.
 
 **Two transports during Phase C (Q6).** `guarded-fetch.ts` stays a Promise
 module for unmigrated providers, and is deleted with its last caller. It does
@@ -405,8 +449,14 @@ difference is left for B.2, when `Grant` wraps `static-oauth.ts`: on a renewal
 that fails without an authorization verdict (a throttled or unreachable token
 endpoint), #902 reports `connector_call_failed` and names the renewal's
 failure class, where the kit keeps the write's own 401 code and its handoff.
-B.2 adopts the kit's rule for both and records the wording change in the
-`api()` OAuth goldens.
+B.2 explicitly changes `src/auth/static-oauth.ts` to preserve the resource
+server's auth verdict and structured handoff until renewal succeeds, always
+non-retryable with `writeOutcome: "unknown"`. This is planned work, not a
+claim that #902 already agrees. B.2 adds parity tests through `Grant` and
+`ctx.oauth.fetch` for permanent refusal, throttling, DNS failure, outage,
+cancellation, successful renewal and oversized/broken 401 bodies. It also
+checks direct calls and caught/uncaught program accounting against #902's
+`classifyWriteOutcome`, and records the wording changes in the OAuth goldens.
 
 The goldens record two divergent 401 behaviours today:
 
@@ -450,7 +500,8 @@ interface VendorErrors<F extends Facts> {
   readonly statuses: { 401; 403; 404 /* required */; [status: number]; serverError?; otherwise? }; // Classified<F> => Verdict
   readonly detail: (input: { status; facts: F; headers; withheld: boolean; body?: unknown }) => string; // after classification
   readonly unreadable: string;
-  readonly authBeforeExecution?: { readonly evidence: string }; // Q8
+  readonly authBeforeExecution?: { readonly evidence: string }; // Q8, raw 401 only
+  readonly nonExecution?: readonly { evidence: string; matches: (input: Classified<F>) => boolean }[]; // explicit reviewed proof over raw response facts
 }
 interface Classified<F> { status; facts: F; headers; retryAfterMs; operation: OperationRef; withheld: boolean } // no detail, no body
 interface Verdict { code; retryable?; retryAfterMs?; current?; words?: (detail: string) => string }
@@ -494,8 +545,10 @@ The kit runs them in this order for every `StatusFailure`:
 - **Defaults cover the rest:** 400 and 422 → `invalid_args`; 429 →
   `rate_limited` with `Retry-After`; 5xx → `unavailable` with `Retry-After`;
   any other status → `connector_call_failed`, non-retryable.
-- **409 has no default.** `conflict` is a refusal, so it tells invocation that
-  a write did not land. Only a vendor that documents its 409 may say that.
+- **409 has no default.** A vendor may refine its code to `conflict`, but
+  that code never proves the dispatched write did not run. Only explicit
+  `nonExecution` evidence can do that; otherwise `writeOutcome: "unknown"`
+  takes precedence over invocation's refusal-code accounting.
 - **What the types cannot stop.** A rule that closes over mutable module state
   could carry one failure's wording into the next failure's classification.
   That is code review's to refuse; the contract makes it the only way, and a
@@ -516,6 +569,12 @@ const stripeErrors: VendorErrors<{ type?; code?; declineCode?; param? }> = {
     404: not_found, 400/409/422: invalid_args, 402: connector_call_failed, 424: unavailable, serverError: unavailable (no wait) },
 };
 ```
+
+Stripe separately declares `nonExecution` evidence for raw HTTP 429 plus
+`lock_timeout`, citing its object-lock-timeout documentation. That proof is
+independent of the classification rule; without the declaration, the same
+`conflict` verdict is unknown and non-retryable on a write. The fact on HTTP
+503 is not the declared proof. Tests cover all three and raw 409.
 
 The one narrowing: a `param` outside the token grammar (a param name with
 spaces) is dropped where `stripeFailure` quotes it; the suite records it.
@@ -578,69 +637,63 @@ ahead of these (Drive's `cannotDownloadAbusiveFile`), reading `facts.reasons`,
 so the `googleReasonsOf` side table goes away. `googleOutcomeOf`'s phases
 become the ledger.
 
-**Write outcome over the ledger.** A builder maps every failure through this
-one function, with the call's served `Classification`, its `Dispatches`, and
-whether the request carried an idempotency key. A write's outcome is derived
-from the ledger, from what each of its requests was answered, and nothing
-that fails later can change it. For a call served as a write, in order:
+**Write outcome over the ledger.** Raw dispatch facts constrain every mapped
+code. A failure after a write may have reached the resource server always
+carries `writeOutcome: "unknown"`, is non-retryable and carries no wait,
+unless the vendor explicitly declares proof of non-execution. A code chosen
+by a vendor rule is never that proof. An idempotency key records reconciliation
+facts; it does not relax either the one-attempt rule or this outcome contract.
+For a call served as a write, in order:
 
-1. **Nothing left connecta.** No write request, or every one is `unconnected`:
-   the vendor's verdict stands, retry advice included. A failure before the
-   first dispatch proves nothing was sent; so does a write whose own `fetch`
-   found no host. The count of dispatches does not decide this, because an
-   authorization server's or an auxiliary read's failure is not the write's.
-2. **The write was answered 401** (Q8). The verdict is fixed by that answer:
-   - Without `authBeforeExecution` evidence, the code and wording are the
-     vendor's 401 verdict (`auth_required`, which invocation turns into
-     `downstream_oauth_required` for an OAuth connector), so invocation keeps
-     the structured `authorize_connector` handoff and marks it
-     `reconciliationRequired`. The error is never retryable, its message adds
-     "The write was sent before {provider} rejected its credential, so
-     whether it took effect is unknown: check the target before repeating
-     it.", and it carries #902's explicit `writeOutcome: "unknown"`, which
-     `classifyWriteOutcome` reads before its refusal codes. That holds
-     whatever renewal met afterwards (a permanent refusal, a throttled or
-     unreachable token endpoint, an outage) and when the caller left during
-     the renewal or while the 401's body was read.
-   - When the renewal succeeded (`renewed`), the credential needs no
-     recovery, so the handoff would mislead: the verdict is
-     `connector_call_failed`, never retryable, `writeOutcome: "unknown"`, in
-     #902's words ("{provider} answered this write with HTTP 401. The
-     credential is renewed for the next call, but the write was not sent
-     again, so whether it took effect is unknown…").
-   - With evidence, the vendor's 401 refusal stands: the write did not run.
-3. **A second dispatch was stopped** (`ResendRefused`). Something above the
-   transport took the first attempt for a failure and tried again, so the
-   outcome is unknown: `connector_call_failed` (or the first answer's auth
-   code), never retryable, `writeOutcome: "unknown"`, worded from what the
-   first attempt was answered. A first 401 follows rule 2.
-4. **The failure is the write's own answer**: the dispatch whose recorded
-   `failure` it is, and that dispatch is the call's one write that left.
-   - With an idempotency key, the vendor's verdict stands, and its `Recovery`
-     facts carry the key.
-   - A retryable `unavailable` (a 5xx, a connection lost after sending)
-     becomes `connector_call_failed`, never retryable, with
-     `writeOutcome: "unknown"`, in A.2's `unknownOutcome` words, so REST
-     goldens hold: "Whether the write took effect at {provider} is unknown: it
-     carried no idempotency key, so check the target before repeating it."
-   - Any other verdict is the vendor's answer to the write itself (a 4xx
-     refusal, an in-band refusal, a refused redirect) and stands.
-5. **Anything else came after the write left**: an auxiliary request's
-   failure, the provider's own refusal, a decode or projection failure, a
-   second write step. It cannot describe the write. The verdict keeps an
-   authorization code (`auth_required`, `downstream_oauth_required`) for its
-   handoff; every other code (throttling, refusals, unavailable) becomes
-   `connector_call_failed`. Either way it is never retryable, carries no wait,
-   and carries `writeOutcome: "unknown"`. Its message adds what the ledger
-   knows: "{provider} had already accepted this call's write (HTTP 201), so
-   it has probably taken effect: check the target before repeating the
-   call.", or, when the write's answer was not a success, "This call had
-   already sent its write to {provider}, so whether the write took effect is
-   unknown: check the target before repeating it."
+1. **Nothing left connecta.** No write dispatched (reservations still
+   `reserved`/`preparing`), or every write dispatch is `unconnected`: its own
+   original verdict stands, retry advice included. The permanent reservation
+   still forbids another send within this call.
+2. **A write was answered raw HTTP 401** (Q8). Derive its authorization
+   verdict from that recorded 401, its headers/operation and its parsed body
+   when available, **not from the failure currently being mapped**. A declared
+   or streamed ceiling, a disconnect during body reading, a caught 401 followed
+   by an auxiliary 429, and renewal failures cannot change that verdict.
+   - Without `authBeforeExecution` evidence, retain the vendor's 401 auth code
+     (`auth_required`, converted by invocation to `downstream_oauth_required`
+     for OAuth), structured `authorize_connector` handoff and
+     `reconciliationRequired`. Add the unknown-outcome sentence and explicit
+     field, never a retry or wait. This holds through cancellation too.
+   - A successful renewal alone drops the handoff: use
+     `connector_call_failed`, still non-retryable and explicitly unknown,
+     in #902's renewed-but-unsent words. With several steps, an unrenewed
+     recorded 401 takes precedence over one whose renewal succeeded.
+   - With evidence and no other uncertain write, the recorded 401's refusal
+     stands. It is still never resent within the call.
+3. **A second send was stopped** (`ResendRefused`). Use the first reservation's
+   recorded answer/failure. Only explicit non-execution evidence or proven
+   non-dispatch lets that verdict stand. Otherwise report unknown,
+   non-retryable, with no wait. A 401 follows rule 2.
+4. **The failure is the write's own answer.** A `nonExecution` declaration
+   carries reviewed evidence and a predicate over `Classified` with the **raw
+   recorded status**, token facts and allowlisted headers. It never tests the
+   mapped code. An in-band synthetic status cannot substitute for the wire's
+   status. With proof and no other uncertain write, the vendor's refusal
+   stands. Without proof, preserve vendor code refinements (including
+   `rate_limited`, `conflict`, `invalid_args`, auth codes), add explicit unknown
+   outcome, and remove all retry advice. For compatibility with A.2, ordinary
+   `unavailable` becomes `connector_call_failed` with its unknown-outcome
+   sentence. Raw 503 + `RATE_LIMIT_EXCEEDED`, 429 + `lock_timeout` without
+   evidence, raw 409 and every mapped 5xx variant remain unknown. A transport
+   failure after send or a response/body failure has the same constraint.
+5. **Anything else failed after a write left** (an auxiliary request,
+   projection, provider check or second step). It cannot prove that write's
+   outcome. Keep a later auth code for its handoff; other later codes become
+   `connector_call_failed`, always unknown and non-retryable with no wait.
+   A recorded write 401 takes precedence under rule 2. The message states the
+   recorded 2xx acceptance when known, or that the write was already sent.
 
-A timeout that reaches the mapping after a write left is exempt from rules 2
-to 5: invocation already reports it as `write_outcome_unknown` with its own
-facts.
+Timeouts receive the same explicit unknown/non-retryable constraint at the
+kit boundary; invocation may promote them to `write_outcome_unknown` with its
+own reconciliation facts. `writeOutcome` is read before refusal codes in
+#902's `classifyWriteOutcome`, so neither a rate-limit rule nor a conflict
+rule can turn an ambiguous dispatched write into known failure in direct calls
+or caught/uncaught programs.
 
 Rule 5 reports unknown even when the vendor answered the write with a 2xx.
 The alternative, accounting it as `ok`, was rejected:
@@ -680,7 +733,8 @@ export function connect<R>(vendor: Vendor, guarded: GuardedClient<R>, options: {
 }): Connection<R>;                                           // { provider, errors, safety, send, sendPath }
 type Send<R> = <Op extends Operation>(operation: Op, request: RequestOf<Op>, options?: {
   readonly effect?: "read";                                  // an auxiliary lookup inside a write tool; never inferred
-  readonly step?: string;                                    // which logical write, for a tool that sends several (B.2)
+  readonly step?: string;                                    // a construction-declared step (B.2), default write
+  readonly item?: string;                                    // one identity in its fixed bounded item set
   readonly flags?: Readonly<Record<string, true>>;           // facts the vendor's rules read, such as revisionGuarded
 }) => Effect.Effect<Answer, HttpFailure, R>;                 // Answer = { status, data }: settled and safe
 export function manifest(vendor: Vendor): OpenApi.OpenAPISpec; // for scripts/drift-check.mjs only
@@ -754,6 +808,10 @@ interface ToolSpec<I extends Input, O extends Schema.Top> {
   readonly description: string;
   readonly input: I;   // -> inputSchema, closed
   readonly output: O;  // -> outputSchema; `run` is typed by it
+  readonly writeSteps?: Readonly<Record<string, "once" | {
+    readonly maxItems: number;
+    readonly items: (args: I["Type"]) => readonly string[]; // pure, deterministic input identities, evaluated once before run
+  }>>;
   readonly run: (args: I["Type"]) => Effect.Effect<O["Type"], HttpFailure, CallServices>;
 }
 function list<I extends Input, Row extends Schema.Top>(connection: Connection, spec: Omit<ToolSpec<I, never>, "output" | "run"> & {
@@ -810,8 +868,13 @@ the `review` check arrive in B.4.
   `Schema.annotateKey`; Effect drops a value annotation there.
 
 - **An input check the catalog cannot state is refused at construction.** The
-  builder walks the input Schema's AST and throws on any check with no JSON
-  Schema rendering, or one Effect marks approximate: a UTF-16 string length,
+  builder walks the input Schema's AST, including `Suspend.thunk()` with an
+  identity recursion guard. It explicitly allows only the reviewed JSON forms
+  (String, Number, Boolean, Null, Unknown, Never, Literal, Objects, Arrays,
+  Union, Suspend); every other form and encoding transformation fails
+  construction. New Effect AST forms therefore fail closed. Object index
+  parameters and values are traversed too. Every check with no JSON Schema
+  rendering, or one Effect marks approximate, is refused: a UTF-16 string length,
   a RegExp whose flags differ. An array's `isMaxLength` renders `maxItems`
   exactly and stays.
 
@@ -916,21 +979,21 @@ comes from code.
 
 ### How the kit keeps the invariants
 
-| INV | Mechanism                                                                                                                                                                                                           | Evidence: existing, then new                                                                                                                                                                                                                         |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | The builder annotates the class; the served classification decides at run time; byte-identical catalog; catalog and decoder agree, string lengths in code points; inexact input checks refused                      | `rest-connector.test.ts` "INV-1: names four tools…"; `kit-prototype.test.ts` "INV-1" (catalog, served classification); `http-kit.test.ts` "INV-1" (boundary agreement beyond ASCII, code points, refusal, served classification); A.3 `catalog.json` |
-| 2   | Kit tools are `ApiTool`s; registry enforcement unchanged                                                                                                                                                            | `connector-read-only.test.ts` "INV-2: defaults writable…"                                                                                                                                                                                            |
-| 3   | Confinement and `admit` run before credentials; agents name no base or credential                                                                                                                                   | `guarded-fetch.test.ts` confinement suite; `http-kit.test.ts` "INV-3: confines…" and "INV-3 INV-5: admits…"                                                                                                                                          |
-| 4   | `Caller` comes from the admitted scope on every operation; `Classification` from the served definition                                                                                                              | `mcp-core.test.ts` "INV-4: binds SDK envelope…"; `http-kit.test.ts` "INV-4 INV-10: discovery, status, and startAuth views…"; B.1's registry tests                                                                                                    |
-| 5   | Credentials only through services; every sent value registered; one value-safety boundary; withheld text decided before any detail                                                                                  | `sent-secrets.test.ts` "INV-5: api OAuth registers both tokens…"; `http-kit.test.ts` "INV-5" (boundary, hatch, withheld); `kit-prototype.test.ts` "INV-5" (sensitive fields)                                                                         |
-| 6   | Bounded bytes, token-only facts, rules typed without prose and run before any wording, allowlisted headers, `TextDecoder`, errno-only transport facts, withheld handler and decode text                             | `guarded-fetch.test.ts` "INV-6: decodes bounded bytes…"; `http-kit.test.ts` "INV-6" (token facts, rule order, compile-fail fixture, complete lists); Stripe `kit-prototype.test.ts` "INV-6"                                                          |
-| 7   | Explicit call finalizers and closed-state checks; request-owned resources close with the request, revocation first and every step run; `fetch` gets the call signal                                                 | `call-admission.test.ts` "INV-7: stops a retained connector context…"; `http-kit.test.ts` "INV-7" (retained service, pending read, retained view, request-owned session, throwing finalizers); `kit-prototype.test.ts` "INV-7"                       |
-| 8   | Catalogs are static; no change                                                                                                                                                                                      | `catalog-cache.test.ts` "INV-8: a missing SQL chunk forces a complete live refresh"                                                                                                                                                                  |
-| 9   | One dispatch per logical write below every resend path; the ledger, the served class and idempotency decide; a write answered 401 keeps its code with an unknown outcome; nothing after a write changes its outcome | `rest-connector.test.ts` "INV-9: dispatches a write once…"; `http-kit.test.ts` "INV-9" (ledger, guard triggers, auxiliary failures, renewals, cancellation, direct call, evidence); `kit-prototype.test.ts` "INV-9"; A.3 `failures.json`             |
-| 10  | Renewal only inside a call; probes and operation views never start authorization                                                                                                                                    | `api-oauth.test.ts` "INV-10: reports auth_required from status…"                                                                                                                                                                                     |
-| 11  | Base URL, ceiling, page size, value-safety review and options checked at construction                                                                                                                               | `provider-definition.test.ts` "INV-11: rejects invalid common options before create runs"; `http-kit.test.ts` "INV-11"                                                                                                                               |
-| 12  | `src/http/` is unreachable from the root; area modules confined to three files; stable members only elsewhere                                                                                                       | `purity.node.test.ts` "keeps the provider kit out of the root graph" and "confines Effect's unstable area modules…"; `kit-stability.node.test.ts`                                                                                                    |
-| 13  | Factories return `Connector`; kit types are internal; the build does not emit the prototype                                                                                                                         | `package-surface.node.test.ts` "INV-13: publishes no Effect type in any reachable declaration"; `check:declarations`                                                                                                                                 |
+| INV | Mechanism                                                                                                                                                                                                                                   | Evidence: existing, then new                                                                                                                                                                                                                         |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The builder annotates the class; the served classification decides at run time; byte-identical catalog; catalog and decoder agree, string lengths in code points; inexact input checks refused                                              | `rest-connector.test.ts` "INV-1: names four tools…"; `kit-prototype.test.ts` "INV-1" (catalog, served classification); `http-kit.test.ts` "INV-1" (boundary agreement beyond ASCII, code points, refusal, served classification); A.3 `catalog.json` |
+| 2   | Kit tools are `ApiTool`s; registry enforcement unchanged                                                                                                                                                                                    | `connector-read-only.test.ts` "INV-2: defaults writable…"                                                                                                                                                                                            |
+| 3   | Confinement and `admit` run before credentials; agents name no base or credential                                                                                                                                                           | `guarded-fetch.test.ts` confinement suite; `http-kit.test.ts` "INV-3: confines…" and "INV-3 INV-5: admits…"                                                                                                                                          |
+| 4   | `Caller` comes from the admitted scope on every operation; `Classification` from the served definition                                                                                                                                      | `mcp-core.test.ts` "INV-4: binds SDK envelope…"; `http-kit.test.ts` "INV-4 INV-10: discovery, status, and startAuth views…"; B.1's registry tests                                                                                                    |
+| 5   | Credentials only through services; every sent value registered; one value-safety boundary; withheld text decided before any detail                                                                                                          | `sent-secrets.test.ts` "INV-5: api OAuth registers both tokens…"; `http-kit.test.ts` "INV-5" (boundary, hatch, withheld); `kit-prototype.test.ts` "INV-5" (sensitive fields)                                                                         |
+| 6   | Bounded bytes, token-only facts, rules typed without prose and run before any wording, allowlisted headers, `TextDecoder`, errno-only transport facts, withheld handler and decode text                                                     | `guarded-fetch.test.ts` "INV-6: decodes bounded bytes…"; `http-kit.test.ts` "INV-6" (token facts, rule order, compile-fail fixture, complete lists); Stripe `kit-prototype.test.ts` "INV-6"                                                          |
+| 7   | Explicit call finalizers and closed-state checks; request-owned resources close with the request, revocation first and every step run; `fetch` gets the call signal                                                                         | `call-admission.test.ts` "INV-7: stops a retained connector context…"; `http-kit.test.ts` "INV-7" (retained service, pending read, retained view, request-owned session, throwing finalizers); `kit-prototype.test.ts` "INV-7"                       |
+| 8   | Catalogs are static; no change                                                                                                                                                                                                              | `catalog-cache.test.ts` "INV-8: a missing SQL chunk forces a complete live refresh"                                                                                                                                                                  |
+| 9   | One dispatch per logical write below every resend path; fixed capacity, permanent atomic reservations and raw dispatch facts decide; a write answered 401 keeps its code with an unknown outcome; nothing after a write changes its outcome | `rest-connector.test.ts` "INV-9: dispatches a write once…"; `http-kit.test.ts` "INV-9" (ledger, guard triggers, auxiliary failures, renewals, cancellation, direct call, evidence); `kit-prototype.test.ts` "INV-9"; A.3 `failures.json`             |
+| 10  | Renewal only inside a call; probes and operation views never start authorization                                                                                                                                                            | `api-oauth.test.ts` "INV-10: reports auth_required from status…"                                                                                                                                                                                     |
+| 11  | Base URL, ceiling, page size, value-safety review and options checked at construction                                                                                                                                                       | `provider-definition.test.ts` "INV-11: rejects invalid common options before create runs"; `http-kit.test.ts` "INV-11"                                                                                                                               |
+| 12  | `src/http/` is unreachable from the root; area modules confined to three files; stable members only elsewhere                                                                                                                               | `purity.node.test.ts` "keeps the provider kit out of the root graph" and "confines Effect's unstable area modules…"; `kit-stability.node.test.ts`                                                                                                    |
+| 13  | Factories return `Connector`; kit types are internal; the build does not emit the prototype                                                                                                                                                 | `package-surface.node.test.ts` "INV-13: publishes no Effect type in any reachable declaration"; `check:declarations`                                                                                                                                 |
 
 ### Migration order
 
@@ -944,7 +1007,10 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
   - Moves `client.ts` and `oauth.ts` out of prototype status, with the ledger.
   - Adds the shared pure module and the two-transport parity suite (Q6).
   - Builds `Grant` over `static-oauth.ts`: `token`, `refresh`, and `rejected`
-    with its latch. `ctx.oauth.fetch` shares the decision.
+    with its latch. Aligns `src/auth/static-oauth.ts` with the kit's resource
+    auth verdict and handoff until renewal succeeds; the parity matrix and
+    direct/program accounting checks above are required, planned B.2 work.
+    `ctx.oauth.fetch` shares the decision.
 - **B.3.** Adds `errors.ts`. The REST kit's failure mappers and A.2's
   `unknownOutcome`/`sendingOnce` move onto `toConnectorCallError`. Each
   vendor's mapper is restated as facts, an allowlist and rules, with a suite
@@ -973,7 +1039,7 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
     the same `connect`/`Send` signature over the guarded client, with
     `manifest` built from those declarations.
 
-### Measured
+### Measured (round 2, c01183cf)
 
 Builds use esbuild with `scripts/bundle-size.mjs` settings (neutral platform,
 minified, gzip -9) on this branch. Deltas are over `src/index.ts`, which every
@@ -1087,8 +1153,10 @@ The previous draft asked eight questions. The orchestrator decided them:
   not the provider's own refusal.
 - **A write leaves once.** The transport refuses a second dispatch of any
   logical write in a call, whatever above it asked: a retry, a redirect
-  follower, a replaying renewal, a reconnect, a new request id. A tool that
-  sends several write requests names each step.
+  follower, a replaying renewal, a reconnect, a new request id. Every tool's write capacity is fixed at construction; a tool sending
+  several declares its steps and bounded, input-derived item identities.
+  Reservation happens atomically before any asynchronous preparation and
+  is never released within a call.
 - **Some write failures read differently.** Tithe.ly-style writes answered
   5xx, or cut off after connecting, report `connector_call_failed` with an
   unknown outcome instead of a retryable `unavailable`. A write answered 401

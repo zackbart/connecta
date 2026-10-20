@@ -34,6 +34,8 @@ import {
   RequestFacts,
   Secrets,
   Signal,
+  WriteCapacity,
+  reserveWrite,
   type CallServices,
   type Dispatch,
 } from "./services.js";
@@ -159,30 +161,38 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
       // A new attempt: until it is handed to `fetch`, no failure is its answer.
       if (facts.sent) delete facts.sent.dispatch;
       const write = (yield* Classification) === "write" && facts.effect === "call";
-      const step = facts.step ?? "write";
-      // One dispatch per logical write, enforced here because nothing sits
-      // below this point but `fetch`: an Effect retry, a redirect follower, a
-      // renewal that replays, a reconnect, or a retry under a new request id
-      // all arrive here again, and none of them is the call's write being
-      // sent for the first time. The ledger is the call's, so no request id
-      // and no re-run of `Send` resets it. Refused before the request is
-      // even prepared, so nothing is read or sent.
-      const first = write ? ledger.find((dispatch) => dispatch.write && dispatch.step === step) : undefined;
-      if (first) return yield* Effect.fail(new ResendRefused({ first }));
-      const request = yield* prepared;
+      const capacity = yield* WriteCapacity;
+      // Claim the early Send reservation (or reserve a direct HttpClient call)
+      // atomically, before evaluating `prepared`. A wrapper cannot reuse it.
+      const slot = yield* Effect.sync(() => {
+        if (!write) return undefined;
+        const reserved = facts.sent?.reservation ?? reserveWrite(ledger, capacity, facts);
+        if (reserved instanceof RequestRefused || reserved instanceof ResendRefused) return reserved;
+        if (reserved.state !== "reserved") return new ResendRefused({ first: reserved });
+        reserved.state = "preparing";
+        return reserved;
+      });
+      if (slot instanceof RequestRefused || slot instanceof ResendRefused) return yield* Effect.fail(slot);
+      const request = yield* prepared.pipe(
+        Effect.tapError((failure) =>
+          Effect.sync(() => {
+            if (slot) slot.failure = failure;
+          }),
+        ),
+      );
       const url = wireUrl(request);
       const callSignal = yield* Signal;
       const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== "content-length"));
-      // Recorded as it happens, per request: the write-outcome rule (B.3)
-      // reads what each one did, so a token renewal that fails afterwards,
-      // or an auxiliary request, is never mistaken for the write.
-      const dispatch: Dispatch = {
-        write,
-        ...(write ? { step } : {}),
+      const body = bodyInit(request);
+      // A reservation is never released, including preparation failures and
+      // proven pre-connect failures. Only a new deliberate call gets capacity.
+      const dispatch: Dispatch = slot ?? {
+        write: false,
         ...(facts.operation ? { operation: facts.operation } : {}),
         state: "pending",
       };
-      ledger.push(dispatch);
+      if (!slot) ledger.push(dispatch);
+      dispatch.state = "pending";
       if (facts.sent) facts.sent.dispatch = dispatch;
       const refused = (failure: HttpFailure) => {
         dispatch.failure = failure;
@@ -193,7 +203,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           globalThis.fetch(url, {
             method: request.method,
             headers,
-            ...bodyInit(request),
+            ...body,
             // A redirect re-sends the credential wherever `Location` points.
             redirect: "manual",
             signal: callSignal ? AbortSignal.any([interrupted, callSignal]) : interrupted,
