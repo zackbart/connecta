@@ -13,6 +13,7 @@ export async function authenticate(
   baseUrl: string,
   runtimeContext: InboundAuthRuntimeContext | undefined,
   logger: Logger,
+  settle?: (pending: Promise<unknown>) => void,
 ): Promise<{ admitted: true; result: AuthResult } | { admitted: false; response: Response }> {
   request.signal.throwIfAborted();
   if (active >= AUTHENTICATION_CONCURRENCY) {
@@ -26,22 +27,24 @@ export async function authenticate(
     };
   }
   active++;
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    active--;
-  };
-  // workerd can discard an awaiting continuation on disconnect. Only this
-  // owning request's abort handler releases its slot; finally is idempotent.
-  request.signal.addEventListener("abort", release, { once: true });
+  let asynchronous = false;
   try {
     const result = provider.authorize(request, baseUrl, runtimeContext);
     // A synchronous local/cached verdict owns no pending authentication.
     // Release before yielding, rather than holding a slot for a microtask.
-    return { admitted: true, result: "ok" in result ? result : await result };
+    if ("ok" in result) return { admitted: true, result };
+    // Keep just this request's cancellation/settlement continuation runnable
+    // when workerd drops the disconnected caller. This does not detach or
+    // start work: the adapter's signal still cancels its upstream I/O.
+    asynchronous = true;
+    const pending = result.finally(() => {
+      active--;
+    });
+    settle?.(pending.catch(() => {}));
+    return { admitted: true, result: await pending };
   } finally {
-    request.signal.removeEventListener("abort", release);
-    release();
+    // A caller leaving is not proof that its adapter or SDK has stopped.
+    // Keep capacity charged until the underlying authorization settles.
+    if (!asynchronous) active--;
   }
 }

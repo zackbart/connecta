@@ -26,9 +26,9 @@ const app = createConnecta({
   },
 });
 export default {
-  async fetch(request: Request) {
+  async fetch(request: Request, _env: unknown, ctx: { waitUntil(pending: Promise<unknown>): void }) {
     try {
-      return await app.fetch(request);
+      return await app.fetch(request, undefined, ctx);
     } catch {
       // A disconnected service-binding caller has no response to receive.
       return new Response(null, { status: 499 });

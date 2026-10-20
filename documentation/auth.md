@@ -237,10 +237,22 @@ The operator log records only the checked `authentication_busy` reason, never
 credentials or identity-provider diagnostics. Retry after the indicated delay;
 Connecta does not automatically retry the authentication.
 
-A slot lasts only until the adapter returns, throws, or its owning request
-aborts. Cleanup releases it exactly once, including on Worker disconnects.
-Adapters must keep their work request-owned and honor `request.signal`;
-admission cannot cancel arbitrary custom code that ignores cancellation.
+A slot lasts until the underlying adapter work settles, including cancellation
+cleanup. A caller leaving does not release capacity while its verifier is still
+running. Clerk creates a client per authorization: SDK verification (opaque
+access tokens, JWT/JWKS, browser handshakes and session refresh), domain checks,
+and gate-client lookups all use that request's signal and a ten-second
+authentication deadline. Its transport reads at most 1 MiB per SDK response,
+cancels the upstream body on every exit, and gives the SDK only buffered bytes.
+JWKS fetches make one attempt; cancellation starts no retry timer. Additional
+Backend API admission reads retain their 64 KiB response bound.
+
+On Workers, pass the invocation's `ctx` through to `app.fetch(request, env, ctx)`
+as in the installed Worker example. Its `waitUntil` keeps only that request's
+already-running authorization and cleanup runnable after disconnect, so an
+aborted upstream settles before its slot is released. No other request shares
+its promise or I/O. Custom adapters must honor `request.signal` and settle only
+after their work ends; code that ignores cancellation keeps occupying capacity.
 The current adapters cannot cheaply establish a fully authenticated cache hit
 before verification, so every adapter invocation counts, including one that
 later uses a cached membership or policy verdict. Cache hits finish their slots
@@ -261,7 +273,12 @@ An invalid `/connect` handoff or unknown OAuth callback target also refuses
 before a verifier. Downstream OAuth exchanges and display-label reads are
 separate operations, with their existing limits; this bound covers the inbound
 authentication that admits their caller. Cloudflare Access edge authentication
-runs before the Worker; its in-Worker identity lookup is covered.
+runs before the Worker; its in-Worker identity lookup is covered. Access uses
+only the trusted runtime binding, with no JWT/JWKS fetch. That native binding
+and token storage expose no cancellation API: an abandoned pending operation
+keeps occupying admission until it settles; agent verification starts no further
+storage read after its request aborts. Access refuses a verdict after its
+five-second deadline, but waits for the underlying lookup to settle.
 
 This is a concurrency bound, **not a rate limit or a shared provider quota**.
 Require ingress rate limiting for public deployments across all authenticated

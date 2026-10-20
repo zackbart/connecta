@@ -137,9 +137,14 @@ An admitted non-preflight `/mcp` request then takes five steps in
    outside the MCP pool. Only a plain counter is shared per loaded core;
    there is no queue or shared promise. Saturation returns retryable 503
    `authentication_busy` with `Retry-After: 1` and a checked payload-free log.
-   Each request releases exactly once in `finally` or its own abort handler
-   (workerd can discard the awaiting continuation on disconnect). No other
-   request touches its signal or I/O. No current adapter exposes a cheap,
+   Each request releases exactly once after the adapter and its cancellation
+   cleanup settle; abort alone does not release capacity. The request's
+   `ctx.waitUntil` keeps that same settlement continuation runnable on Worker
+   disconnects. No other request touches its promise, signal or I/O. Clerk
+   uses a client per authorization, with its signal and a ten-second deadline
+   across verification, JWKS, handshakes, session refresh, domain and gate
+   lookups. The SDK transport buffers at most 1 MiB, closes every upstream body,
+   and makes no JWKS retries; no live response escapes to an SDK clone. No current adapter exposes a cheap,
    fully authenticated cache hit, so the entire adapter invocation counts.
    [Authentication capacity](./auth.md#authentication-capacity-and-ingress-limiting)
    lists exemptions and ingress requirements. `/agent/<pool>` consults only the built-in `cta_` adapter

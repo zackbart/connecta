@@ -883,12 +883,16 @@ export class AccessTokenManager {
     const credential = authorizationCredential(request);
     const token = credential.kind === "bearer" ? credential.token : undefined;
     if (!token || !TOKEN_VALUE_RE.test(token)) return unauthorized();
+    request.signal.throwIfAborted();
     const hash = await hashToken(token);
+    request.signal.throwIfAborted();
     const lookupRaw = await this.storage.get(lookupKey(hash));
+    request.signal.throwIfAborted();
     if (!lookupRaw) return unauthorized();
     const lookup = parseLookup(lookupRaw);
     if (!lookup) return unauthorized();
     const record = await this.read(lookup.id);
+    request.signal.throwIfAborted();
     if (!record || record.revokedAt || record.tokenHash !== hash || record.tokenPrefix !== token.slice(0, 12)) {
       return unauthorized();
     }
@@ -897,6 +901,7 @@ export class AccessTokenManager {
     // code, refuse exactly as an unknown token does.
     if (record.principal || record.agent === undefined || !this.agents.has(record.agent)) return unauthorized();
     const { slot } = await this.readSlot(record.agent);
+    request.signal.throwIfAborted();
     if (slot?.state !== "issued" || slot.tokenId !== record.id) return unauthorized();
     return { ok: true, subjectId: agentSubjectId(record.agent), agent: record.agent };
   }

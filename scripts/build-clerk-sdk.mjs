@@ -69,6 +69,9 @@ const result = await build({
           if (source.includes("runtime.fetch(")) throw new Error("Unwrapped Clerk fetch remains");
           // Route every SDK console failure/diagnostic through the same checked
           // sink. Do not evaluate the diagnostic's text or interpolate errors.
+          // JWKS retries own uncancellable sleep promises. One verification
+          // attempt must end with its request, including on fetch cancellation.
+          source = replace(source, "const { keys } = await retry(fetcher);", "const { keys } = await fetcher();");
           const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
           const edits = [];
           function visit(node) {

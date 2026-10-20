@@ -284,7 +284,14 @@ export async function authorize(
   // A header owns one verdict even for adapters without a recognition hook.
   const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
   for (const provider of candidates) {
-    const admission = await authenticate(provider, request, baseUrl, runtimeContext, logger);
+    const admission = await authenticate(
+      provider,
+      request,
+      baseUrl,
+      runtimeContext,
+      logger,
+      runtimeContext?.waitUntil.bind(runtimeContext),
+    );
     if (!admission.admitted) return { ok: false, response: admission.response };
     const result = admission.result;
     // Only the built-in access-token adapter asserts an agent, and it never
@@ -380,12 +387,13 @@ export async function authorizeAgent(
   baseUrl: string,
   auth: readonly InboundAuth[],
   logger: Logger = console,
+  settle?: (pending: Promise<unknown>) => void,
 ): Promise<Awaited<ReturnType<typeof authorize>>> {
   const provider = auth.find(assertsAgents);
   if (!provider || !isMachineCredential(request)) return agentChallenge();
   let result: Awaited<ReturnType<InboundAuth["authorize"]>>;
   try {
-    const admission = await authenticate(provider, authorizationRequest(request), baseUrl, undefined, logger);
+    const admission = await authenticate(provider, authorizationRequest(request), baseUrl, undefined, logger, settle);
     if (!admission.admitted) return { ok: false, response: admission.response };
     result = admission.result;
   } catch {

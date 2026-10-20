@@ -710,7 +710,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * itself failing — because "we could not tell" and "they belong here" must
    * not be the same answer for a membership rule.
    */
-  const checkDomain = async (userId: string): Promise<boolean> => {
+  const checkDomain = async (userId: string, clerk: ClerkGateClient): Promise<boolean> => {
     if (!allowedDomains) return true;
     let email: string | undefined;
     try {
@@ -822,13 +822,13 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * operator gate code. One cached verdict covers both, so composing them costs
    * no more Clerk calls than `gate` alone did.
    */
-  const checkGate = async (userId: string): Promise<boolean> => {
+  const checkGate = async (userId: string, clerk: ClerkGateClient): Promise<boolean> => {
     if (!opts.gate && !allowedDomains) return true;
     const hit = readIdentityCache(gateCache, userId);
     if (hit) return hit.allowed;
     let allowed = false;
     try {
-      const domainAllowed = await checkDomain(userId);
+      const domainAllowed = await checkDomain(userId, clerk);
       allowed = domainAllowed && (opts.gate ? await opts.gate(userId, clerk) : true);
       if (domainAllowed && !allowed) logDenial("gate_denied");
     } catch {
@@ -908,108 +908,128 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         logDenial("authorization_header_invalid");
         return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
       }
-      const browserOAuthRoute = /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
-      let userId: string | undefined;
-      let sessionCookies: string[] | undefined;
+      const finished = new AbortController();
+      const signal = AbortSignal.any([request.signal, finished.signal]);
+      const timer = setTimeout(
+        () => finished.abort(new Error("Clerk authentication timed out")),
+        BACKEND_LOOKUP_TIMEOUT_MS,
+      );
+      const pending = new Set<Promise<unknown>>();
+      // SDK-created verification clients, JWKS, handshakes, domain lookups and
+      // gate calls all close over this authorization's signal, never another
+      // request's client. The long-lived client above serves display labels only.
+      const clerk = createByteReadingClerkClient(opts, signal, pending);
       try {
-        const pathname = new URL(request.url).pathname;
-        const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
-        const state = await clerk.authenticateRequest(authorizationRequest(request), {
-          acceptsToken: isMcp ? "oauth_token" : "session_token",
-        });
-        const browserOAuth = !tokenPresent && browserOAuthRoute;
-        // Consent can outlast Clerk's session JWT. Preserve the SDK's browser
-        // handshake, which returns here with a refreshed, verified session.
-        if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
-          return {
-            ok: false,
-            response: new Response(null, {
-              status: 307,
-              headers: state.headers,
-            }),
-          };
-        }
-        if (browserOAuth) sessionCookies = state.headers?.getSetCookie();
-        const auth = state.toAuth();
-        if (!auth?.isAuthenticated) {
-          logDenial("authentication_failed");
-          return {
-            ok: false,
-            response: unauthorized(baseUrl, tokenPresent, request),
-          };
-        }
-        if (isMcp) {
-          const resource = `${resolveBase(baseUrl)}/mcp${mcpPoolSuffix(pathname) ?? ""}`;
-          if (auth.tokenType !== "oauth_token") {
-            logDenial("token_type_mismatch");
-            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+        signal.throwIfAborted();
+        const browserOAuthRoute = /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
+        let userId: string | undefined;
+        let sessionCookies: string[] | undefined;
+        try {
+          const pathname = new URL(request.url).pathname;
+          const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
+          const state = await clerk.authenticateRequest(authorizationRequest(request), {
+            acceptsToken: isMcp ? "oauth_token" : "session_token",
+          });
+          const browserOAuth = !tokenPresent && browserOAuthRoute;
+          // Consent can outlast Clerk's session JWT. Preserve the SDK's browser
+          // handshake, which returns here with a refreshed, verified session.
+          if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
+            return {
+              ok: false,
+              response: new Response(null, {
+                status: 307,
+                headers: state.headers,
+              }),
+            };
           }
-          const token = await auth.getToken();
-          let claims: Record<string, unknown>;
-          if (token.startsWith("oat_")) {
-            try {
-              const verify = () => opaqueOAuthClaims(token, opts.secretKey, auth.userId, auth.clientId, request.signal);
-              claims = await (organizationId
-                ? organizationLookup(auth.userId ?? "", request.signal, verify)
-                : verify());
-            } catch (error) {
-              if (error instanceof OrganizationLookupBusy) return { ok: false, response: organizationBusy(error) };
-              logDenial("oauth_verification_failed");
+          if (browserOAuth) sessionCookies = state.headers?.getSetCookie();
+          const auth = state.toAuth();
+          if (!auth?.isAuthenticated) {
+            logDenial("authentication_failed");
+            return {
+              ok: false,
+              response: unauthorized(baseUrl, tokenPresent, request),
+            };
+          }
+          if (isMcp) {
+            const resource = `${resolveBase(baseUrl)}/mcp${mcpPoolSuffix(pathname) ?? ""}`;
+            if (auth.tokenType !== "oauth_token") {
+              logDenial("token_type_mismatch");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+            const token = await auth.getToken();
+            let claims: Record<string, unknown>;
+            if (token.startsWith("oat_")) {
+              try {
+                const verify = () => opaqueOAuthClaims(token, opts.secretKey, auth.userId, auth.clientId, signal);
+                claims = await (organizationId ? organizationLookup(auth.userId ?? "", signal, verify) : verify());
+              } catch (error) {
+                if (error instanceof OrganizationLookupBusy) return { ok: false, response: organizationBusy(error) };
+                logDenial("oauth_verification_failed");
+                return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+              }
+            } else {
+              claims = decodeJwt(token).payload as Record<string, unknown>;
+            }
+            const rejection = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
+            if (rejection) {
+              logDenial(rejection);
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+            // The membership lookup is keyed by subject, so on a shared
+            // instance the issuer and subject must be this instance's and the
+            // SDK's. An opaque token's claims come from this instance's Backend
+            // API, which has already matched the subject and carries no issuer.
+            if (
+              organizationId &&
+              !token.startsWith("oat_") &&
+              (claims.iss !== frontendApiUrl || claims.sub !== auth.userId)
+            ) {
+              logDenial("token_identity_mismatch");
               return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
             }
           } else {
-            claims = decodeJwt(token).payload as Record<string, unknown>;
+            if (auth.tokenType !== "session_token") {
+              logDenial("token_type_mismatch");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+            // Browser session origins retain their existing deployment pin.
+            const azp = auth.sessionClaims?.azp;
+            const origin = new URL(resolveBase(baseUrl)).origin;
+            if (azp && azp !== origin) {
+              logDenial("session_origin_mismatch");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+            // The session's active organization is not read; membership is.
+            if (
+              organizationId &&
+              (auth.sessionClaims.iss !== frontendApiUrl || auth.sessionClaims.sub !== auth.userId)
+            ) {
+              logDenial("token_identity_mismatch");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
           }
-          const rejection = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
-          if (rejection) {
-            logDenial(rejection);
-            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-          }
-          // The membership lookup is keyed by subject, so on a shared
-          // instance the issuer and subject must be this instance's and the
-          // SDK's. An opaque token's claims come from this instance's Backend
-          // API, which has already matched the subject and carries no issuer.
-          if (
-            organizationId &&
-            !token.startsWith("oat_") &&
-            (claims.iss !== frontendApiUrl || claims.sub !== auth.userId)
-          ) {
-            logDenial("token_identity_mismatch");
-            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-          }
-        } else {
-          if (auth.tokenType !== "session_token") {
-            logDenial("token_type_mismatch");
-            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-          }
-          // Browser session origins retain their existing deployment pin.
-          const azp = auth.sessionClaims?.azp;
-          const origin = new URL(resolveBase(baseUrl)).origin;
-          if (azp && azp !== origin) {
-            logDenial("session_origin_mismatch");
-            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-          }
-          // The session's active organization is not read; membership is.
-          if (organizationId && (auth.sessionClaims.iss !== frontendApiUrl || auth.sessionClaims.sub !== auth.userId)) {
-            logDenial("token_identity_mismatch");
-            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
-          }
+          userId = auth.userId ?? undefined;
+        } catch {
+          logDenial("authentication_failed");
+          return { ok: false, response: unauthorized(baseUrl, true, request) };
         }
-        userId = auth.userId ?? undefined;
-      } catch {
-        logDenial("authentication_failed");
-        return { ok: false, response: unauthorized(baseUrl, true, request) };
+        if (!userId) {
+          logDenial("user_missing");
+          return { ok: false, response: unauthorized(baseUrl, true, request) };
+        }
+        const membership = await checkOrganization(userId, signal);
+        if (membership instanceof Response) return { ok: false, response: membership };
+        if (!membership || !(await checkGate(userId, clerk))) {
+          return { ok: false, response: forbidden() };
+        }
+        signal.throwIfAborted();
+        return { ok: true, userId, ...(sessionCookies?.length ? { sessionCookies } : {}) };
+      } finally {
+        clearTimeout(timer);
+        finished.abort();
+        await Promise.allSettled(pending);
       }
-      if (!userId) {
-        logDenial("user_missing");
-        return { ok: false, response: unauthorized(baseUrl, true, request) };
-      }
-      const membership = await checkOrganization(userId, request.signal);
-      if (membership instanceof Response) return { ok: false, response: membership };
-      if (!membership || !(await checkGate(userId))) {
-        return { ok: false, response: forbidden() };
-      }
-      return { ok: true, userId, ...(sessionCookies?.length ? { sessionCookies } : {}) };
     },
   };
 }

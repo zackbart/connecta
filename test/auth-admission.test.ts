@@ -80,17 +80,21 @@ describe("inbound authentication admission", () => {
     }
   });
 
-  it("INV-7: abort releases once, late finally cannot release another request, and pre-abort invokes nothing", async () => {
+  it("INV-7: abort retains capacity until the adapter settles, and pre-abort invokes nothing", async () => {
     const gate = blocking();
     const caller = new AbortController();
     const old = gate.start(caller.signal);
     const finishOld = gate.finish.shift()!;
     caller.abort();
-    const pending = Array.from({ length: 16 }, () => gate.start());
+    const pending = Array.from({ length: 15 }, () => gate.start());
     try {
-      expect(gate.finish).toHaveLength(16);
+      expect(gate.finish).toHaveLength(15);
+      const refusedWhileSettling = gate.start();
+      expect(gate.finish).toHaveLength(15);
+      expect((await refusedWhileSettling).admitted).toBe(false);
       finishOld(refused());
       await old;
+      pending.push(gate.start());
       const busy = await gate.start();
       expect(busy.admitted).toBe(false);
       if (!busy.admitted) await expectBusy(busy.response);
@@ -98,7 +102,9 @@ describe("inbound authentication admission", () => {
       await expect(gate.start(caller.signal)).rejects.toBe(caller.signal.reason);
       expect(gate.provider.authorize).toHaveBeenCalledTimes(before);
     } finally {
+      finishOld(refused());
       gate.release();
+      await old;
       await Promise.all(pending);
     }
   });

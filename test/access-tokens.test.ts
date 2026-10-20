@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AccessTokenError, accessTokens, AccessTokenManager } from "../src/access-tokens.js";
 import { CredentialVault } from "../src/credentials.js";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
@@ -722,4 +722,37 @@ describe("agent identity", () => {
       await app.close();
     }
   });
+});
+
+it("INV-7: aborted agent verification settles its pending storage read and starts no further read", async () => {
+  const storage = memoryStorage();
+  const manager = new AccessTokenManager(storage, { agents: ["assistant"] });
+  const { token } = await manager.rotate("assistant");
+  const get = storage.get.bind(storage);
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = vi.spyOn(storage, "get").mockImplementation(async (key) => {
+    entered();
+    await blocked;
+    return get(key);
+  });
+  const controller = new AbortController();
+  const pending = manager.auth.authorize(new Request(request(token), { signal: controller.signal }), BASE);
+  try {
+    await started;
+    controller.abort();
+    release();
+    expect((await pending).ok).toBe(false);
+    expect(read).toHaveBeenCalledTimes(1);
+  } finally {
+    release();
+    await pending;
+    read.mockRestore();
+  }
 });

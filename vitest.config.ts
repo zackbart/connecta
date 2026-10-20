@@ -70,14 +70,22 @@ async function clerkOrganizationWorker(backend: string) {
 }
 
 // A separate native Worker: requests share no test-request I/O or promises.
-function authAdmissionWorker() {
+function authAdmissionWorker(backend?: string) {
   return {
-    name: "auth-admission",
+    name: backend ? "auth-admission-sdk" : "auth-admission",
+    ...(backend ? { outboundService: { external: { address: backend, http: {} } } } : {}),
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
     modules: true,
     script: buildSync({
-      entryPoints: [fileURLToPath(new URL("./test/fixtures/auth-admission/index.ts", import.meta.url))],
+      entryPoints: [
+        fileURLToPath(
+          new URL(
+            backend ? "./test/fixtures/auth-admission/clerk.ts" : "./test/fixtures/auth-admission/index.ts",
+            import.meta.url,
+          ),
+        ),
+      ],
       bundle: true,
       format: "esm",
       platform: "neutral",
@@ -123,7 +131,7 @@ export default defineConfig({
         },
         test: {
           name: "node",
-          globalSetup: ["./test/fixtures/oauth-http-server.ts"],
+          globalSetup: ["./test/fixtures/oauth-http-server.ts", "./test/fixtures/auth-admission-server.ts"],
           include: TEST_INCLUDE,
           exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
         },
@@ -144,8 +152,16 @@ export default defineConfig({
               // one-shot KV → D1 copy (test/kv-to-d1.test.ts).
               kvNamespaces: ["KV_COPY_SOURCE"],
               d1Databases: ["KV_COPY_TARGET"],
-              serviceBindings: { CLERK_ORGANIZATION: "clerk-organization", AUTH_ADMISSION: "auth-admission" },
-              workers: [await clerkOrganizationWorker(inject("clerkBackendServer")), authAdmissionWorker()],
+              serviceBindings: {
+                CLERK_ORGANIZATION: "clerk-organization",
+                AUTH_ADMISSION: "auth-admission",
+                AUTH_ADMISSION_SDK: "auth-admission-sdk",
+              },
+              workers: [
+                await clerkOrganizationWorker(inject("clerkBackendServer")),
+                authAdmissionWorker(),
+                authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
+              ],
             },
           })),
         ],

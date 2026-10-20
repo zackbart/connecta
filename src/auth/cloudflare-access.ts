@@ -42,12 +42,20 @@ export function cloudflareAccessAuth(): InboundAuth {
       if (!access || typeof access.aud !== "string" || !/^[\x21-\x7e]{1,256}$/.test(access.aud)) return unauthorized();
 
       let identity: Record<string, unknown> | undefined;
+      let lookup: Promise<Record<string, unknown> | undefined> | undefined;
       try {
-        identity = await withDeadline(() => access.getIdentity(), {
-          timeoutMs: 5000,
-          signal: request.signal,
-          timeoutError: new Error("Access identity lookup timed out"),
-        });
+        identity = await withDeadline(
+          () => {
+            request.signal.throwIfAborted();
+            lookup = access.getIdentity();
+            return lookup;
+          },
+          {
+            timeoutMs: 5000,
+            signal: request.signal,
+            timeoutError: new Error("Access identity lookup timed out"),
+          },
+        );
       } catch {
         return {
           ok: false,
@@ -56,6 +64,11 @@ export function cloudflareAccessAuth(): InboundAuth {
             { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "1" } },
           ),
         };
+      } finally {
+        // The trusted runtime binding has no SDK fetch/JWKS or cancellation
+        // option. A deadline refuses its verdict, but cannot prove the lookup
+        // ended: retain admission until the native operation actually settles.
+        await lookup?.catch(() => {});
       }
       // Access binds ctx.access.aud to its Worker application at the edge.
       // Service credentials can pass that edge, but connecta machines must
