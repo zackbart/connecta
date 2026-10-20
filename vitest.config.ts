@@ -85,7 +85,13 @@ export default defineConfig({
               // cases against a real Dynamic Worker executor rather than a
               // stand-in.
               compatibilityDate: "2025-01-01",
-              compatibilityFlags: ["nodejs_compat"],
+              // Before 2026-03-03, workerd reports a rejection as unhandled even
+              // when its handler attaches later in the same microtask
+              // checkpoint: an async `then` callback that throws before its
+              // first await, or a pending read of a cancelled internal stream.
+              // Report only what is still unhandled after the checkpoint, as
+              // Node does. A rejection nothing handles still fails the run.
+              compatibilityFlags: ["nodejs_compat", "unhandled_rejection_after_microtask_checkpoint"],
               workerLoaders: { LOADER: {} },
               // A real local Workers KV namespace and D1 database for the
               // one-shot KV → D1 copy (test/kv-to-d1.test.ts).

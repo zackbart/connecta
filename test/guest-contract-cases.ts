@@ -4,7 +4,7 @@ import { recordToolActivity } from "../src/activity.js";
 // case that behaves differently under two executors is either a bug or a
 // documented exception in that guide.
 
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
@@ -651,6 +651,7 @@ export async function checkHostFailureArrays(executor: Executor): Promise<void> 
 /** Host write accounting retains deadline facts even when guest code catches the error. */
 export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise<void> {
   let writes = 0;
+  let onWrite = () => {};
   const witnessed: unknown[] = [];
   const warnings: unknown[] = [];
   const events: ToolCallActivityEvent[] = [];
@@ -671,6 +672,7 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
         async callTool(name, args) {
           if (name === "write") {
             writes++;
+            onWrite();
             return await new Promise<never>(() => {});
           }
           witnessed.push(args);
@@ -692,34 +694,63 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
     serverInfo: { name: "connecta-contract", version: "0" },
     logger,
   };
-  const direct = await createMetaTools(registry, CONTRACT_BASE, { activity }).callDestructiveTool({
-    address: "deadline.write",
-    args: { private: "deadline-argument-sentinel" },
-    timeoutMs: 25,
-    resultMode: "value",
-  });
+  // The 25 ms deadline also covers catalog resolution and admission. Expire it
+  // only once every write the run makes is waiting downstream, so a slow host
+  // cannot end a call in an earlier stage than the one under test.
+  const expireAfterDispatch = async <T>(run: () => Promise<T>, dispatches = 1): Promise<T> => {
+    const before = writes;
+    const dispatched = deferred<void>();
+    onWrite = () => {
+      if (writes - before === dispatches) dispatched.resolve();
+    };
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const result = run();
+      void result.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      await dispatched.promise;
+      await vi.advanceTimersByTimeAsync(24);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      return await result;
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+  const direct = await expireAfterDispatch(() =>
+    createMetaTools(registry, CONTRACT_BASE, { activity }).callDestructiveTool({
+      address: "deadline.write",
+      args: { private: "deadline-argument-sentinel" },
+      timeoutMs: 25,
+      resultMode: "value",
+    }),
+  );
   const check = (error: unknown) => {
     expect(error).toMatchObject({
       code: "write_outcome_unknown",
       retryable: false,
-      details: { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
+      details: { operation: "deadline.write", stage: "downstream", elapsedMs: 25, deadlineMs: 25 },
     });
-    expect((error as { details: { elapsedMs: number } }).details.elapsedMs).toBeGreaterThanOrEqual(24);
   };
   check(direct.structuredContent?.error);
   for (const caught of [false, true]) {
-    const result = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
-      readOnly: false,
-      defaultToolTimeoutMs: 25,
-    })({
-      code: caught
-        ? `async () => {
+    const result = await expireAfterDispatch(() =>
+      createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
+        readOnly: false,
+        defaultToolTimeoutMs: 25,
+      })({
+        code: caught
+          ? `async () => {
       try { await connecta.call("deadline.write", { private: "deadline-argument-sentinel" }); }
       catch (error) { await connecta.call("deadline.witness", error.details); }
       return "caught";
     }`
-        : `async () => await connecta.call("deadline.write", { private: "deadline-argument-sentinel" })`,
-    });
+          : `async () => await connecta.call("deadline.write", { private: "deadline-argument-sentinel" })`,
+      }),
+    );
     expect(result.isError).toBe(true);
     check(result.structuredContent?.error);
     expect(result.structuredContent).toMatchObject({
@@ -727,22 +758,26 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
       hostCalls: { attempted: caught ? 2 : 1, admitted: caught ? 2 : 1, succeeded: caught ? 1 : 0, failed: 1 },
     });
   }
-  const multiple = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
-    readOnly: false,
-    defaultToolTimeoutMs: 25,
-  })({
-    code: `async () => await Promise.allSettled([
+  const multiple = await expireAfterDispatch(
+    () =>
+      createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
+        readOnly: false,
+        defaultToolTimeoutMs: 25,
+      })({
+        code: `async () => await Promise.allSettled([
     connecta.call("deadline.write", { private: "deadline-argument-sentinel" }),
     connecta.call("deadline.write", { private: "deadline-argument-sentinel" }),
   ])`,
-  });
+      }),
+    2,
+  );
   check(multiple.structuredContent?.error);
   expect(multiple.structuredContent).toMatchObject({
     error: {
       writes: { succeeded: 0, failed: 0, unknown: 2 },
       timeouts: [
-        { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
-        { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
+        { operation: "deadline.write", stage: "downstream", elapsedMs: 25, deadlineMs: 25 },
+        { operation: "deadline.write", stage: "downstream", elapsedMs: 25, deadlineMs: 25 },
       ],
     },
     hostCalls: { attempted: 2, admitted: 2, succeeded: 0, failed: 2 },
