@@ -20,7 +20,7 @@ import { api } from "../src/connectors/api.js";
 import { signJwt } from "@clerk/backend/jwt";
 
 import { oauthVault } from "./fixtures/oauth.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { mcpRpc, readJsonRpc, stalledResponse } from "./fixtures/http.js";
 import type { Connector } from "../src/types.js";
 
 describe("OAuth browser token policy", () => {
@@ -977,6 +977,74 @@ describe("clerkAuth inbound auth", () => {
       expect(Date.now() - started).toBeGreaterThanOrEqual(9_000);
       expect(Date.now() - started).toBeLessThan(14_000);
     }, 15_000);
+
+    it.each([
+      ["a non-2xx status", 503, "oat_private", undefined],
+      ["an oversized body", 200, " ".repeat(65_537), undefined],
+      ["a caller that leaves", 200, '{"object":', "caller"],
+      ["the ten-second deadline", 200, '{"object":', "deadline"],
+    ] as const)(
+      "INV-7: ends an opaque verification whose body never closes on %s",
+      async (_name, status, chunk, leave) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const deadline = new AbortController();
+        const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+        try {
+          authenticateOAuth("oat_verified");
+          const { response, cancelled, waiting } = stalledResponse(status, chunk);
+          mocks.fetch.mockResolvedValueOnce(response);
+          const caller = new AbortController();
+          const request = new Request(`${BASE}/mcp`, {
+            method: "POST",
+            headers: { Authorization: "Bearer oat_verified" },
+            signal: caller.signal,
+          });
+          const pending = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }).authorize(
+            request,
+            BASE,
+          );
+          if (leave) {
+            await waiting;
+            (leave === "caller" ? caller : deadline).abort();
+          }
+          const result = await pending;
+          expect(result.ok ? 200 : result.response.status).toBe(401);
+          expect(cancelled).toHaveBeenCalledTimes(1);
+          expect(mocks.fetch.mock.calls[0]![1].signal.aborted).toBe(true);
+          expect(timeout).toHaveBeenCalledWith(10_000);
+          expect(warn.mock.calls).toEqual([
+            ["[connecta] Clerk request denied", { reason: "oauth_verification_failed" }],
+          ]);
+        } finally {
+          timeout.mockRestore();
+          warn.mockRestore();
+        }
+      },
+    );
+
+    it("INV-7: ends a stalled non-2xx opaque verification after real Clerk SDK authentication", async () => {
+      // Clerk uses the current fetch in test mode, including under workerd.
+      vi.stubEnv("NODE_ENV", "test");
+      const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
+      const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", telemetry: { disabled: true } });
+      mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
+      const { response, cancelled } = stalledResponse(401, "oat_private");
+      mocks.fetch.mockReset();
+      mocks.fetch
+        .mockResolvedValueOnce(Response.json(opaqueVerification({ aud: [`${BASE}/mcp`] })))
+        .mockResolvedValueOnce(response);
+      const request = mcpRequest("/mcp");
+      request.headers.set("Authorization", "Bearer oat_verified");
+      const result = await clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }).authorize(
+        request,
+        BASE,
+      );
+      expect(result.ok ? 200 : result.response.status).toBe(401);
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
+      expect(mocks.fetch.mock.calls[1]![0]).toBe("https://api.clerk.com/v1/oauth_applications/access_tokens/verify");
+      expect(cancelled).toHaveBeenCalledTimes(1);
+      expect(mocks.fetch.mock.calls[1]![1].signal.aborted).toBe(true);
+    });
 
     it("INV-4: rechecks opaque revocation on every request without an audience cache", async () => {
       authenticateOAuth("oat_verified");

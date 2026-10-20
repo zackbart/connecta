@@ -6,7 +6,6 @@ import { authorizationCredential, authorizationRequest, isMachineCredential } fr
 import type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
 import { createByteReadingClerkClient } from "./clerk-transport.js";
 import { decodeJwt } from "@clerk/backend/jwt";
-import { byteReadResponse } from "../byte-read-response.js";
 import { failureRecord, logFailure, type AuthDenialReason } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
@@ -37,9 +36,10 @@ export interface ClerkAuthOptions {
    * The one Clerk Organization this deployment admits, as its `org_…` ID,
    * so one Clerk instance can serve many deployments. Every admitted Clerk
    * user must be a member: connecta asks Clerk's Backend API and caches the
-   * answer for at most 60 seconds per organization and user. Organization
-   * claims in tokens and sessions are never read. A failed or timed-out lookup
-   * refuses admission. Requires resource-bound tokens, so it cannot be
+   * answer per organization and user for 60 seconds from the start of the
+   * lookup (30 for a non-member). Organization claims in tokens and sessions
+   * are never read. A failed or timed-out lookup refuses admission. Requires
+   * resource-bound tokens, so it cannot be
    * combined with a nonempty `allowedOAuthClientIds`. Organization roles grant
    * nothing; `maintainers` and pool `members` still decide what an admitted
    * user reaches.
@@ -115,9 +115,10 @@ function fapiUrl(publishableKey: string): string {
 
 const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
-const ORGANIZATION_LOOKUP_TIMEOUT_MS = 10_000;
-// A user-filtered membership list holds at most one row.
-const MAX_ORGANIZATION_LOOKUP_BYTES = 65_536;
+const BACKEND_LOOKUP_TIMEOUT_MS = 10_000;
+// A user-filtered membership list holds at most one row, and a token
+// verification describes one token.
+const MAX_BACKEND_RESPONSE_BYTES = 65_536;
 const ACTIVITY_LABEL_TTL_MS = 5 * 60 * 1000;
 const ACTIVITY_LABEL_MISS_TTL_MS = 30 * 1000;
 const ACTIVITY_LABEL_LOOKUP_TIMEOUT_MS = 1_250;
@@ -274,10 +275,8 @@ function normalizeOrganizationId(value: string | undefined, allowedOAuthClientId
 
 /**
  * Is this user a member of the organization, according to Clerk now? The
- * request's own signal and a ten-second deadline bound the call, and nothing
- * is shared with another request. Any response that is not a clear answer
- * throws, so the caller refuses. Every exit aborts the call and cancels its
- * body, so no upstream outlives the admission decision (INV-7).
+ * given signal and a ten-second deadline bound the call. Any response that is
+ * not a clear answer throws, so the caller refuses.
  */
 async function organizationMember(
   secretKey: string,
@@ -287,31 +286,41 @@ async function organizationMember(
 ): Promise<boolean> {
   const url = new URL(`https://api.clerk.com/v1/organizations/${encodeURIComponent(organizationId)}/memberships`);
   url.searchParams.set("user_id", userId);
+  const list = await backendJson(
+    url,
+    { headers: { Authorization: `Bearer ${secretKey}`, "Clerk-API-Version": "2026-05-12" } },
+    signal,
+  );
+  if (!isRecord(list) || !Array.isArray(list.data)) {
+    throw new Error("Organization membership response invalid");
+  }
+  // The filter narrows the list; membership is still read exactly from each
+  // row, so an ignored or widened filter cannot admit someone else's row.
+  return list.data.some(
+    (membership) =>
+      isRecord(membership) &&
+      membership.object === "organization_membership" &&
+      isRecord(membership.organization) &&
+      membership.organization.id === organizationId &&
+      isRecord(membership.public_user_data) &&
+      membership.public_user_data.user_id === userId,
+  );
+}
+
+/**
+ * One Backend API request, bounded by the signal, a ten-second deadline, and
+ * `MAX_BACKEND_RESPONSE_BYTES`. A non-2xx status or unreadable body throws.
+ * Every exit aborts the request and cancels its body, so no upstream outlives
+ * the caller's decision (INV-7).
+ */
+async function backendJson(url: URL | string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
   const settled = new AbortController();
-  const lookup = AbortSignal.any([signal, settled.signal, AbortSignal.timeout(ORGANIZATION_LOOKUP_TIMEOUT_MS)]);
+  const request = AbortSignal.any([signal, settled.signal, AbortSignal.timeout(BACKEND_LOOKUP_TIMEOUT_MS)]);
   let response: Response | undefined;
   try {
-    response = await fetch(url, {
-      headers: { Authorization: `Bearer ${secretKey}`, "Clerk-API-Version": "2026-05-12" },
-      redirect: "error",
-      signal: lookup,
-    });
-    if (!response.ok) throw new Error("Organization membership lookup failed");
-    const list: unknown = JSON.parse(await boundedText(response, lookup));
-    if (!isRecord(list) || !Array.isArray(list.data)) {
-      throw new Error("Organization membership response invalid");
-    }
-    // The filter narrows the list; membership is still read exactly from each
-    // row, so an ignored or widened filter cannot admit someone else's row.
-    return list.data.some(
-      (membership) =>
-        isRecord(membership) &&
-        membership.object === "organization_membership" &&
-        isRecord(membership.organization) &&
-        membership.organization.id === organizationId &&
-        isRecord(membership.public_user_data) &&
-        membership.public_user_data.user_id === userId,
-    );
+    response = await fetch(url, { ...init, redirect: "error", signal: request });
+    if (!response.ok) throw new Error("Clerk Backend API request failed");
+    return JSON.parse(await boundedText(response, request));
   } finally {
     settled.abort();
     void response?.body?.cancel().catch(() => {});
@@ -320,7 +329,7 @@ async function organizationMember(
 
 /**
  * The body as text, read as bytes (see `byteReadResponse`) and refused past
- * `MAX_ORGANIZATION_LOOKUP_BYTES`. An abort cancels a read the upstream has
+ * `MAX_BACKEND_RESPONSE_BYTES`. An abort cancels a read the upstream has
  * stopped feeding, so the caller's deadline holds while a body stays open.
  */
 async function boundedText(response: Response, signal: AbortSignal): Promise<string> {
@@ -339,13 +348,24 @@ async function boundedText(response: Response, signal: AbortSignal): Promise<str
       signal.throwIfAborted();
       if (done) return text + decoder.decode();
       size += value.byteLength;
-      if (size > MAX_ORGANIZATION_LOOKUP_BYTES) throw new Error("Organization membership response too large");
+      if (size > MAX_BACKEND_RESPONSE_BYTES) throw new Error("Clerk Backend API response too large");
       text += decoder.decode(value, { stream: true });
     }
   } finally {
     signal.removeEventListener("abort", cancel);
     reader.releaseLock();
   }
+}
+
+interface MembershipWaiter {
+  resolve(member: boolean): void;
+  reject(error: unknown): void;
+}
+
+/** A Backend API membership lookup and the requests waiting on its answer. */
+interface MembershipLookup {
+  readonly controller: AbortController;
+  readonly waiters: Set<MembershipWaiter>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -387,19 +407,19 @@ async function opaqueOAuthClaims(
   clientId: string,
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const response = await fetch("https://api.clerk.com/v1/oauth_applications/access_tokens/verify", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${secretKey}`,
-      "Content-Type": "application/json",
-      "Clerk-API-Version": "2026-05-12",
+  const claims = await backendJson(
+    "https://api.clerk.com/v1/oauth_applications/access_tokens/verify",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        "Content-Type": "application/json",
+        "Clerk-API-Version": "2026-05-12",
+      },
+      body: JSON.stringify({ access_token: token }),
     },
-    body: JSON.stringify({ access_token: token }),
-    redirect: "error",
-    signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-  });
-  if (!response.ok) throw new Error("Opaque OAuth verification failed");
-  const claims: unknown = await byteReadResponse(response).json();
+    signal,
+  );
   if (
     !claims ||
     typeof claims !== "object" ||
@@ -473,6 +493,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   const scopes = [...requestedScopes];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
   const membershipCache = new Map<string, { member: boolean; exp: number }>();
+  const membershipLookups = new Map<string, MembershipLookup>();
   const activityLabelCache = new Map<string, { label?: string; exp: number }>();
   const pendingActivityLabels = new Map<string, Promise<string | undefined>>();
   const inFlightActivityLabelIds = new Set<string>();
@@ -597,13 +618,82 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   };
 
   /**
+   * Start the one Backend API lookup for an organization and user. It stays
+   * registered under `key` until it settles or its last waiter leaves, and
+   * only a registered lookup caches its answer. So no lookup starts while
+   * another for the same key runs, an abandoned one never writes, and answers
+   * reach the cache in the order their lookups started. Expiry counts from
+   * the start, since Clerk answered no earlier, and a request that joins
+   * waits on a lookup at most ten seconds old. So every request that reaches
+   * this check 60 seconds or more after a member's removal is refused.
+   */
+  const startMembershipLookup = (organization: string, userId: string, key: string): MembershipLookup => {
+    const started = Date.now();
+    const lookup: MembershipLookup = { controller: new AbortController(), waiters: new Set() };
+    const settle = (answer: (waiter: MembershipWaiter) => void) => {
+      for (const waiter of lookup.waiters) answer(waiter);
+      lookup.waiters.clear();
+    };
+    void organizationMember(opts.secretKey, organization, userId, lookup.controller.signal).then(
+      (member) => {
+        if (membershipLookups.get(key) === lookup) {
+          membershipLookups.delete(key);
+          writeIdentityCache(membershipCache, key, {
+            member,
+            exp: started + (member ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
+          });
+        }
+        settle((waiter) => waiter.resolve(member));
+      },
+      (error: unknown) => {
+        if (membershipLookups.get(key) === lookup) membershipLookups.delete(key);
+        settle((waiter) => waiter.reject(error));
+      },
+    );
+    membershipLookups.set(key, lookup);
+    return lookup;
+  };
+
+  /**
+   * Wait for a lookup's answer for as long as this request's signal allows.
+   * A request that leaves stops waiting at once without disturbing the
+   * others; the last one to leave unregisters and aborts the lookup, which
+   * cancels its request and body (INV-7).
+   */
+  const awaitMembership = (lookup: MembershipLookup, key: string, signal: AbortSignal): Promise<boolean> =>
+    new Promise((resolve, reject) => {
+      const leave = () => {
+        lookup.waiters.delete(waiter);
+        if (lookup.waiters.size === 0) {
+          if (membershipLookups.get(key) === lookup) membershipLookups.delete(key);
+          lookup.controller.abort();
+        }
+        reject(signal.reason);
+      };
+      const waiter: MembershipWaiter = {
+        resolve: (member) => {
+          signal.removeEventListener("abort", leave);
+          resolve(member);
+        },
+        reject: (error) => {
+          signal.removeEventListener("abort", leave);
+          reject(error);
+        },
+      };
+      lookup.waiters.add(waiter);
+      signal.addEventListener("abort", leave, { once: true });
+    });
+
+  /**
    * The organization half of admission, checked before the domain allowlist
    * and `gate`, for every token type and session. No claim answers it or is
    * read: an OAuth JWT verifies offline and can outlive a removed membership
    * by a day, and a member's token is audience-bound to this deployment
    * whichever organization they chose at consent. Membership always comes
-   * from the Backend API, cached at most 60 seconds per organization and user.
-   * A failed lookup is not an answer, so it refuses without being cached.
+   * from the Backend API, cached per organization and user for 60 seconds
+   * from the start of the lookup that answered (30 for a non-member).
+   * Requests that miss the cache together share one lookup. A failed lookup
+   * is not an answer, so it refuses without being cached.
    */
   const checkOrganization = async (userId: string, signal: AbortSignal): Promise<boolean> => {
     if (!organizationId) return true;
@@ -612,16 +702,14 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     if (hit) return hit.member;
     let member: boolean;
     try {
-      member = await organizationMember(opts.secretKey, organizationId, userId, signal);
+      signal.throwIfAborted();
+      const lookup = membershipLookups.get(key) ?? startMembershipLookup(organizationId, userId, key);
+      member = await awaitMembership(lookup, key, signal);
     } catch {
       logDenial("organization_lookup_failed");
       return false;
     }
     if (!member) logDenial("organization_membership_denied");
-    writeIdentityCache(membershipCache, key, {
-      member,
-      exp: Date.now() + (member ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
-    });
     return member;
   };
 

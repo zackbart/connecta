@@ -1628,7 +1628,9 @@ claims. SDK 3.12.0 drops opaque `aud`, so connecta makes one additional Backend
 API verification request and reads the raw response. Its subject and client
 must agree with the SDK, and it must report an unrevoked, unexpired token.
 The extra call follows request cancellation, times out after ten seconds,
-caches no token or audience, and denies admission on failure.
+reads at most 64 KiB, caches no token or audience, and denies admission on
+failure. It ends its request and response body on every outcome, including an
+error status and a body that stops arriving.
 
 ### Explicit fallback for unbound tokens
 
@@ -1663,18 +1665,24 @@ Admission in organization mode:
   member of that Organization. Connecta asks Clerk's Backend API,
   `GET /v1/organizations/{organization_id}/memberships?user_id={user_id}`,
   for MCP OAuth tokens (JWT and opaque) and for operator sessions. It caches
-  each answer per Organization and user: a member for 60 seconds, a non-member
-  for 30. Removing a member takes effect within 60 seconds even while their
-  day-long access token remains valid.
+  each answer per Organization and user, counted from when the lookup
+  started: a member for 60 seconds, a non-member for 30. Requests that miss
+  the cache together share one lookup, and no lookup starts while another for
+  the same user runs, so an older answer never replaces a newer one. Every
+  request that reaches the check 60 seconds or more after a member's removal
+  in Clerk is refused, even while their day-long access token remains valid;
+  a person added is admitted 30 seconds after the addition at the latest.
 - Organization claims are never read. A token's `org_id` and a session's
   active Organization neither admit nor refuse. A member's token is bound to
   this deployment's URL whichever Organization they chose in Clerk, and a
   non-member gets `403` from the lookup.
 - A lookup that fails, answers with an error status or an unreadable or
-  oversized body, times out after ten seconds, or is cancelled by the caller
-  refuses the request with `403`. Connecta ends the Backend API request on
-  every outcome and does not cache a failure, so the next request asks Clerk
-  again.
+  oversized body, or times out ten seconds after it started refuses every
+  request waiting on it with `403`. A caller that leaves stops waiting and is
+  refused; the lookup continues for the other requests waiting on it, and the
+  last one to leave cancels it. Connecta ends the Backend API request and its
+  body on every outcome and caches neither a failure nor a cancelled lookup,
+  so the next request asks Clerk again.
 - Connecta checks the token's audience, issuer, and subject before the lookup.
   The issuer must be the Frontend API origin encoded in `publishableKey`, and
   the subject must be the user the lookup names. An opaque token's
