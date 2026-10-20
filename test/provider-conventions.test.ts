@@ -156,8 +156,16 @@
 // A provider that later needs an exception adds it to the recorded lists here
 // with its argument, so an accepted miss stays visible instead of quietly
 // widening the bar for everyone ([#342](https://github.com/zackbart/connecta/issues/342)).
+//
+// Decision 0011's provider standard adds S1–S6, one agent-facing shape across
+// api() surfaces (hatch names, paging, result envelope, errors, `fields`, and
+// privacy as deployment config), defined in `test/provider-standard.ts`. A
+// provider is held to them from its step-2 PR on; `PENDING.step2` lists those
+// still owed, and the Node-only `provider-standard.node.test.ts` holds the
+// folder rules and keeps that list shrinking.
 import { describe, expect, it } from "vitest";
 import { providerFixtures } from "./providers.generated.js";
+import { PENDING, surfaceViolations } from "./provider-standard.js";
 import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, compactDiscoverySchema } from "../src/catalog.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { validateToolInput } from "../src/validate.js";
@@ -421,5 +429,28 @@ describe("Notion splits its guarded raw access by safety class (H14)", () => {
       throw new Error("expected a structured usage guide");
     }
     expect(guide.content).toContain("Refused by design");
+  });
+});
+
+describe("standard api() surfaces share one agent-facing shape (decision 0011, S1–S6)", () => {
+  it("holds every provider past its step-2 PR to the S rules, on this runtime", () => {
+    // Empty until the first step-2 PR lands; each later one joins by leaving PENDING.step2.
+    const found = providers
+      .filter(({ name }) => !PENDING.step2.has(name))
+      .flatMap(({ name, tools }) => surfaceViolations(tools).map((finding) => `${name} ${finding}`));
+    expect(found).toEqual([]);
+  });
+
+  it("finds today's Tithe.ly surface short of the standard, so the S rules bite real catalogs", () => {
+    const { tools } = providers.find((provider) => provider.name === "tithely")!;
+    expect(surfaceViolations(tools)).toEqual(
+      expect.arrayContaining([
+        "S1: tithely_api_get is not a standard hatch tool",
+        "S1: tithely_api_mutate is not a standard hatch tool",
+        "S3: list_charges returns { items, page }",
+        "S5: get_charge takes fields to narrow its result",
+        "S6: get_charge takes raw; privacy is deployment config",
+      ]),
+    );
   });
 });

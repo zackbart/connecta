@@ -1016,6 +1016,19 @@ for a narrow reviewed subset. Its official contracts are YAML and app identity
 has no published response schema, so its guide and drift record carry explicit
 manual review evidence instead of claiming a machine-checkable JSON pin.
 
+[Decision 0011](https://github.com/zackbart/connecta/blob/main/decisions/0011-provider-standard.md)
+sets the provider standard the providers above are migrating to. It fixes
+one folder layout per kind and fixed evidence names. `drift.json` gets a
+generated block and the guide a generated Conventions section, and every
+`api()` surface gets one agent-facing shape. It also folds `"composed"` into
+`"dual"` with an optional tool-ownership map. Each provider migrates in two
+PRs: onto the kit with unchanged output, then onto the standard surface.
+`PENDING` in `test/provider-standard.ts` lists the providers that have not
+landed each step, and this section describes their current shapes.
+`test/provider-standard.node.test.ts` holds every other provider folder to the
+standard, and `test/provider-conventions.test.ts` checks the surface rules on
+both runtimes.
+
 The generic REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `pnpm run providers:spec` compiles offline from the

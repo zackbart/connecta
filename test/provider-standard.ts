@@ -1,0 +1,500 @@
+// The provider standard of decision 0011 (decisions/0011-provider-standard.md):
+// the rule checks, and the one list of providers that have not reached it yet.
+//
+// Rule ids match the record: L folder layout, E evidence, D drift.json, G the
+// maintained guide, S the agent-facing surface. Step 1 (onto the kit, agent
+// output unchanged) answers to L, E and D; step 2 (the agent-facing surface)
+// adds G and S. The checks are plain functions over plain data, so the
+// Node-only folder suite (`provider-standard.node.test.ts`) and the
+// conventions suite apply the same rules.
+
+/**
+ * Providers that have not landed a step yet. Each list only shrinks: a
+ * migration PR removes its provider, and `provider-standard.node.test.ts`
+ * fails while a listed provider already passes, so an exemption cannot
+ * outlive its reason. A name never joins these lists. A provider folder
+ * created after them meets the whole standard from its first commit.
+ */
+export const PENDING = {
+  /** Not yet on the kit and the standard layout, evidence and drift record. */
+  step1: new Set([
+    "basecamp",
+    "breeze",
+    "ccb",
+    "cloudflare",
+    "docs",
+    "drive",
+    "forms",
+    "github",
+    "gmail",
+    "infisical",
+    "intercom",
+    "linear",
+    "mixpanel",
+    "notion",
+    "overflow",
+    "planning-center",
+    "revenuecat",
+    "sheets",
+    "slides",
+    "stripe",
+    "tithely",
+    "vercel",
+    "wispr-flow",
+  ]),
+  /** Agent-facing surface and guide not yet standard. Always contains step1. */
+  step2: new Set([
+    "basecamp",
+    "breeze",
+    "ccb",
+    "cloudflare",
+    "docs",
+    "drive",
+    "forms",
+    "github",
+    "gmail",
+    "infisical",
+    "intercom",
+    "linear",
+    "mixpanel",
+    "notion",
+    "overflow",
+    "planning-center",
+    "revenuecat",
+    "sheets",
+    "slides",
+    "stripe",
+    "tithely",
+    "vercel",
+    "wispr-flow",
+  ]),
+} as const;
+
+/** What the rules read about one provider folder. */
+export interface ProviderFacts {
+  readonly name: string;
+  /** `definition.kind` from the provider's factory. */
+  readonly kind: string;
+  /** Display name: `definition.readme ?? definition.title`. */
+  readonly display: string;
+  /** Every file in the folder, relative to it and "/"-separated. */
+  readonly files: readonly string[];
+  /** A file's text, or undefined when the folder has no such file. */
+  readonly read: (path: string) => string | undefined;
+}
+
+/** The parts of a served tool the S rules read. */
+export interface ToolFacts {
+  readonly name: string;
+  readonly inputSchema?: unknown;
+  readonly outputSchema?: unknown;
+  readonly annotations?: { readonly readOnlyHint?: boolean; readonly destructiveHint?: boolean };
+}
+
+const ROOT_FILES = new Set([
+  "index.ts",
+  "api.ts",
+  "tools.ts",
+  "hosted.ts",
+  "safety.ts",
+  "SKILL.md",
+  "drift.json",
+  "fixtures.ts",
+  "skill.generated.ts",
+  "openapi.generated.ts",
+]);
+const TEST_FILE = /^provider(?:\.[a-z][a-z0-9-]*)?(?:\.node)?\.test\.ts$/;
+const EVIDENCE_FILES = new Set([
+  "catalog.json",
+  "openapi.json",
+  "openapi.document.json",
+  "value-safety.json",
+  "review.md",
+]);
+/** Evidence whose bytes `providers:generate` hashes into drift.json. */
+const HASHED_EVIDENCE = ["catalog.json", "openapi.json", "openapi.document.json", "value-safety.json"];
+const KIND_FILES: Readonly<Record<string, { required: string[]; forbidden: string[] }>> = {
+  api: { required: ["api.ts", "tools.ts"], forbidden: ["hosted.ts"] },
+  mcp: { required: ["hosted.ts"], forbidden: ["api.ts", "tools.ts", "safety.ts", "openapi.generated.ts"] },
+  dual: { required: ["api.ts", "tools.ts", "hosted.ts"], forbidden: [] },
+};
+const CHECK_TYPES = new Set([
+  "endpoints",
+  "versioned-endpoints",
+  "openapi-index",
+  "mcp-docs",
+  "mcp-catalog",
+  "oauth-discovery",
+  "manual",
+]);
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const OPERATION = /^(?:GET|HEAD|POST|PUT|PATCH|DELETE) \/\S*$/;
+
+type Json = Record<string, unknown>;
+
+function record(value: unknown): value is Json {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parse(text: string | undefined): unknown {
+  if (text === undefined) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function sortedUnique(values: unknown): values is string[] {
+  return (
+    Array.isArray(values) &&
+    values.every((value, index) => typeof value === "string" && (index === 0 || values[index - 1]! < value))
+  );
+}
+
+function day(value: unknown, today: string): boolean {
+  if (typeof value !== "string" || !DAY.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value) && value <= today;
+}
+
+/** Every key at any depth, for the renamed-key checks. */
+function keysDeep(value: unknown, into: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(value)) for (const item of value) keysDeep(item, into);
+  else if (record(value)) {
+    for (const [key, child] of Object.entries(value)) {
+      into.add(key);
+      keysDeep(child, into);
+    }
+  }
+  return into;
+}
+
+/** L: one fixed folder layout per kind. */
+export function layoutViolations(provider: ProviderFacts): string[] {
+  const found: string[] = [];
+  const has = (path: string) => provider.files.includes(path);
+  for (const file of provider.files) {
+    const [top, ...rest] = file.split("/");
+    if (rest.length === 0) {
+      if (!ROOT_FILES.has(file) && !TEST_FILE.test(file)) found.push(`L1: ${file} is not a standard root file`);
+    } else if (top === "lib") {
+      if (!file.endsWith(".ts")) found.push(`L1: ${file}: lib/ holds TypeScript modules only`);
+    } else if (top !== "evidence") {
+      found.push(`L1: ${top}/ is not evidence/ or lib/`);
+    }
+  }
+  const kind = KIND_FILES[provider.kind];
+  if (!kind) found.push(`L2: kind "${provider.kind}" is not "mcp", "api", or "dual"`);
+  for (const file of kind?.required ?? []) if (!has(file)) found.push(`L2: kind "${provider.kind}" needs ${file}`);
+  for (const file of kind?.forbidden ?? []) if (has(file)) found.push(`L2: kind "${provider.kind}" has no ${file}`);
+  const index = provider.read("index.ts") ?? "";
+  if (/\basProviderFactory\s*\(/.test(index)) found.push("L3: index.ts uses asProviderFactory, not defineProvider");
+  if (/\binputSchema\b/.test(index)) found.push("L3: index.ts defines tools; they belong in tools.ts");
+  if (/\bremoteMcp\s*\(/.test(index)) found.push("L3: index.ts configures remoteMcp(); that belongs in hosted.ts");
+  for (const file of ["index.ts", "SKILL.md", "drift.json", "fixtures.ts", "skill.generated.ts"]) {
+    if (!has(file)) found.push(`L4: missing ${file}`);
+  }
+  if (!has("provider.test.ts") && !has("provider.node.test.ts")) found.push("L4: missing provider.test.ts");
+  if (has("openapi.generated.ts") !== has("evidence/openapi.json")) {
+    found.push("L4: openapi.generated.ts exists exactly when evidence/openapi.json does");
+  }
+  return found;
+}
+
+/** E: fixed evidence names and formats. */
+export function evidenceViolations(provider: ProviderFacts, today: string): string[] {
+  const found: string[] = [];
+  const has = (path: string) => provider.files.includes(path);
+  for (const file of provider.files) {
+    if (!file.startsWith("evidence/")) continue;
+    const name = file.slice("evidence/".length);
+    if (!EVIDENCE_FILES.has(name) && !name.startsWith("pages/"))
+      found.push(`E1: ${file} is not a standard evidence name`);
+  }
+  if ((provider.kind === "mcp" || provider.kind === "dual") && !has("evidence/catalog.json")) {
+    found.push("E2: a hosted implementation needs evidence/catalog.json");
+  }
+  if (has("evidence/catalog.json")) {
+    const catalog = parse(provider.read("evidence/catalog.json"));
+    const tools = record(catalog) && Array.isArray(catalog["tools"]) ? (catalog["tools"] as unknown[]) : undefined;
+    if (
+      !record(catalog) ||
+      !day(catalog["capturedAt"], today) ||
+      (catalog["method"] !== "tools/list" && catalog["method"] !== "documentation") ||
+      typeof catalog["source"] !== "string" ||
+      !catalog["source"].trim() ||
+      !tools?.length ||
+      !sortedUnique(tools.map((tool) => (record(tool) ? tool["name"] : undefined)))
+    ) {
+      found.push("E3: evidence/catalog.json needs capturedAt, method, source, and tools sorted by unique name");
+    }
+  }
+  if (has("evidence/openapi.json")) {
+    const pin = parse(provider.read("evidence/openapi.json"));
+    if (
+      !record(pin) ||
+      typeof pin["url"] !== "string" ||
+      !pin["url"].startsWith("https://") ||
+      typeof pin["revision"] !== "string" ||
+      !pin["revision"] ||
+      typeof pin["digest"] !== "string" ||
+      !SHA256.test(pin["digest"])
+    ) {
+      found.push("E3: evidence/openapi.json needs an https url, a revision, and a sha256 digest");
+    }
+    if (record(pin) && (pin["vendored"] === true) !== has("evidence/openapi.document.json")) {
+      found.push("E3: evidence/openapi.document.json exists exactly when the pin says vendored: true");
+    }
+  } else if (has("evidence/openapi.document.json")) {
+    found.push("E3: evidence/openapi.document.json needs its pin in evidence/openapi.json");
+  }
+  if (has("evidence/value-safety.json")) {
+    const candidates = parse(provider.read("evidence/value-safety.json"));
+    if (
+      !record(candidates) ||
+      typeof candidates["format"] !== "number" ||
+      typeof candidates["digest"] !== "string" ||
+      !SHA256.test(candidates["digest"]) ||
+      !record(candidates["candidates"])
+    ) {
+      found.push("E3: evidence/value-safety.json is the generated candidates file (format, digest, candidates)");
+    }
+    if (!has("safety.ts")) found.push("E3: evidence/value-safety.json needs its reviewed table in safety.ts");
+  }
+  if (provider.files.some((file) => file.startsWith("evidence/pages/"))) {
+    const recording = parse(provider.read("evidence/pages/recording.json"));
+    const pages = record(recording) && Array.isArray(recording["pages"]) ? (recording["pages"] as unknown[]) : [];
+    if (
+      !pages.length ||
+      !pages.every(
+        (page) =>
+          record(page) &&
+          typeof page["file"] === "string" &&
+          has(`evidence/pages/${page["file"]}`) &&
+          typeof page["url"] === "string" &&
+          typeof page["sha256"] === "string",
+      )
+    ) {
+      found.push("E3: evidence/pages/recording.json must list every recorded page with its url and sha256");
+    }
+  }
+  if (has("evidence/review.md") && !provider.read("evidence/review.md")?.trim()) {
+    found.push("E3: evidence/review.md is empty");
+  }
+  return found;
+}
+
+/** D: drift.json v2. Humans write sources, reasons, and dates; tools write lists and digests. */
+export function driftViolations(provider: ProviderFacts, today: string): string[] {
+  const found: string[] = [];
+  const drift = parse(provider.read("drift.json"));
+  if (!record(drift) || drift["version"] !== 2 || drift["provider"] !== provider.name) {
+    return ["D1: drift.json needs version 2 and this provider's name"];
+  }
+  const generated = drift["generated"];
+  if (!record(generated) || Object.keys(generated).some((key) => !["operations", "hosted", "evidence"].includes(key))) {
+    found.push("D2: drift.json needs a generated block of operations, hosted, and evidence only");
+  } else {
+    const operations = generated["operations"];
+    if (provider.kind !== "mcp" && !(sortedUnique(operations) && operations.every((key) => OPERATION.test(key)))) {
+      found.push('D2: generated.operations lists the kit manifest as sorted "METHOD /path" keys');
+    }
+    if (provider.kind !== "api" && !(sortedUnique(generated["hosted"]) && generated["hosted"].length > 0)) {
+      found.push("D2: generated.hosted lists the reviewed hosted tool names, sorted");
+    }
+    const evidence = generated["evidence"];
+    const expected = HASHED_EVIDENCE.filter((name) => provider.files.includes(`evidence/${name}`));
+    if (
+      !record(evidence) ||
+      JSON.stringify(Object.keys(evidence).sort()) !== JSON.stringify(expected.sort()) ||
+      !Object.values(evidence).every((digest) => typeof digest === "string" && SHA256.test(digest))
+    ) {
+      found.push("D2: generated.evidence holds one sha256 per hashed evidence file");
+    }
+  }
+  const checks = drift["checks"];
+  if (!Array.isArray(checks)) return [...found, "D3: drift.json needs a checks array"];
+  const operations = new Set(
+    record(generated) && Array.isArray(generated["operations"]) ? generated["operations"] : [],
+  );
+  for (const [index, check] of checks.entries()) {
+    const at = `checks[${index}]`;
+    if (!record(check) || !CHECK_TYPES.has(String(check["type"]))) {
+      found.push(`D3: ${at} has an unknown type`);
+      continue;
+    }
+    const keys = keysDeep(check);
+    if (keys.has("rationale") || keys.has("reviewedAt")) {
+      found.push(`D3: ${at} uses rationale or reviewedAt; v2 names them reason and lastVerified`);
+    }
+    if (check["type"] === "manual") {
+      if (typeof check["source"] !== "string" || !check["source"].startsWith("https://")) {
+        found.push(`D3: ${at} manual check needs an https source`);
+      }
+      if (typeof check["reason"] !== "string" || !check["reason"].trim()) {
+        found.push(`D3: ${at} manual check needs a reason`);
+      }
+      if (!day(check["lastVerified"], today)) {
+        found.push(`D3: ${at} manual check needs lastVerified as a past YYYY-MM-DD date`);
+      }
+    }
+    if (keys.has("reviewed")) found.push(`D4: ${at} hand-keeps a reviewed list; generated.hosted carries it`);
+    if (check["type"] === "endpoints" || check["type"] === "versioned-endpoints") {
+      const entries = Array.isArray(check["endpoints"]) ? check["endpoints"] : [];
+      if (
+        entries.some(
+          (entry) =>
+            !record(entry) || "method" in entry || "path" in entry || !operations.has(String(entry["operation"])),
+        )
+      ) {
+        found.push(`D4: ${at} entries are keyed by an operation in generated.operations, never a hand-listed path`);
+      }
+    }
+  }
+  return found;
+}
+
+/** G: SKILL.md carries agent-facing domain guidance only, rendered by the one guide renderer. */
+export function guideViolations(provider: ProviderFacts, documentation: string): string[] {
+  const found: string[] = [];
+  const source = provider.read("SKILL.md") ?? "";
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+  const metadata = parse(frontmatter?.[1]);
+  if (
+    !record(metadata) ||
+    JSON.stringify(Object.keys(metadata).sort()) !== JSON.stringify(["instructionsHeading", "name"]) ||
+    metadata["name"] !== provider.name
+  ) {
+    found.push("G1: SKILL.md frontmatter declares exactly name and instructionsHeading");
+  }
+  const body = frontmatter ? source.slice(frontmatter[0].length) : source;
+  if (/<!--\s*(?:end)?fragment\b/.test(body)) found.push("G2: SKILL.md uses retired fragment markers");
+  let open = false;
+  for (const marker of body.matchAll(/<!--\s*(when:\s*([a-z][a-z0-9:-]*)|end)\s*-->/g)) {
+    if (marker[2] !== undefined ? open : !open) {
+      found.push("G2: SKILL.md when-blocks must open and close in turn, unnested");
+      break;
+    }
+    open = marker[2] !== undefined;
+  }
+  if (open) found.push("G2: SKILL.md leaves a when-block open");
+  if (/^# /m.test(body)) found.push("G3: SKILL.md headings start at ##; the renderer writes the title");
+  if (/^## Conventions\s*$/m.test(body)) found.push("G3: the Conventions section is generated, not written");
+  if (/@zackbart\/connecta|^#+ .*\b(?:setup|set up|install|configure|configuration)\b/im.test(body)) {
+    found.push("G4: SKILL.md carries operator setup; it belongs in documentation/providers.md");
+  }
+  if (/\bINV-\d+|\b(?:src|test|scripts)\/[\w./-]+|value[- ]safety/i.test(body)) {
+    found.push("G5: SKILL.md carries contributor internals");
+  }
+  if (/\bskill\.(?:fragments|instructionsHeading)\b/.test(provider.read("index.ts") ?? "")) {
+    found.push("G6: index.ts renders its own guide; render through ProviderContext.usageGuide");
+  }
+  if (!documentation.split(/\r?\n/).includes(`## ${provider.display}`)) {
+    found.push(`G7: documentation/providers.md has no "## ${provider.display}" section`);
+  }
+  return found;
+}
+
+const RETIRED_PAGING = new Set([
+  "page",
+  "perPage",
+  "per_page",
+  "page_size",
+  "pageSize",
+  "offset",
+  "start_cursor",
+  "maxRows",
+]);
+const PRIVACY_ARGUMENTS = new Set(["raw", "includeSensitive", "sensitiveFields", "unredacted"]);
+/** Size-truncation reports that `truncated` replaces; safety and completeness facts keep their names. */
+const RETIRED_TRUNCATION = new Set([
+  "attachmentsOmitted",
+  "bodyTruncated",
+  "contentTruncated",
+  "itemsTruncated",
+  "labelIdsOmitted",
+  "labelsOmitted",
+  "namedRangesOmitted",
+  "repliesOmitted",
+  "repliesTruncated",
+  "teamMembersTruncated",
+  "truncatedCells",
+  "truncatedFields",
+  "truncated_properties",
+]);
+const HATCH = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)*)_api_([a-z]+)$/;
+const HATCH_TOOLS = new Set(["search", "details", "read", "write", "upload"]);
+
+function properties(schema: unknown): Json {
+  return record(schema) && record(schema["properties"]) ? schema["properties"] : {};
+}
+
+/** S: one agent-facing shape across api() surfaces. */
+export function surfaceViolations(tools: readonly ToolFacts[]): string[] {
+  const found: string[] = [];
+  const prefixes = new Set<string>();
+  const hatch = new Map<string, ToolFacts>();
+  for (const tool of tools) {
+    const match = HATCH.exec(tool.name);
+    if (!match) continue;
+    prefixes.add(match[1]!);
+    if (!HATCH_TOOLS.has(match[2]!)) found.push(`S1: ${tool.name} is not a standard hatch tool`);
+    else hatch.set(match[2]!, tool);
+  }
+  if (prefixes.size > 1) found.push(`S1: one hatch prefix per provider, found ${[...prefixes].sort().join(", ")}`);
+  if (hatch.size > 0) {
+    for (const part of ["search", "details", "read"]) {
+      if (!hatch.has(part))
+        found.push(`S1: a hatch has _api_search, _api_details, and _api_read; missing _api_${part}`);
+    }
+    for (const part of ["search", "details", "read"]) {
+      const tool = hatch.get(part);
+      if (tool && tool.annotations?.readOnlyHint !== true) found.push(`S1: ${tool.name} is annotated read-only`);
+    }
+    for (const part of ["write", "upload"]) {
+      const tool = hatch.get(part);
+      if (tool && (tool.annotations?.readOnlyHint !== false || tool.annotations?.destructiveHint !== true)) {
+        found.push(`S1: ${tool.name} is annotated destructive`);
+      }
+    }
+  }
+  for (const tool of tools) {
+    const input = properties(tool.inputSchema);
+    const output = properties(tool.outputSchema);
+    const isHatch = HATCH.test(tool.name);
+    for (const name of Object.keys(input)) {
+      if (RETIRED_PAGING.has(name)) found.push(`S2: ${tool.name} takes ${name}; page with limit and cursor`);
+      if (PRIVACY_ARGUMENTS.has(name)) found.push(`S6: ${tool.name} takes ${name}; privacy is deployment config`);
+    }
+    const rows = !isHatch && /^(?:list|search)_/.test(tool.name);
+    if (rows && "page" in output && !("cursor" in input && "limit" in input)) {
+      found.push(`S2: ${tool.name} pages with limit and cursor`);
+    }
+    if ("page" in output) {
+      const page = properties(output["page"]);
+      if (!("hasMore" in page) || !("nextCursor" in page)) {
+        found.push(`S2: ${tool.name} reports page as { hasMore, nextCursor }`);
+      }
+    }
+    if (rows && !("items" in output && "page" in output)) found.push(`S3: ${tool.name} returns { items, page }`);
+    for (const name of Object.keys(output)) {
+      if (RETIRED_TRUNCATION.has(name)) found.push(`S3: ${tool.name} reports ${name}; report cut fields in truncated`);
+    }
+    if ("truncated" in output) {
+      const truncated = output["truncated"];
+      if (!record(truncated) || truncated["type"] !== "array") {
+        found.push(`S3: ${tool.name} truncated lists the dot paths it cut`);
+      }
+    }
+    if ("select" in input) found.push(`S5: ${tool.name} takes select; the projection argument is fields`);
+    const read = tool.annotations?.readOnlyHint === true;
+    const named = !isHatch && /^(?:list|get|search)_/.test(tool.name);
+    const hatchCall = /_api_(?:read|write)$/.test(tool.name);
+    if (((read && named) || (isHatch && hatchCall)) && !("fields" in input)) {
+      found.push(`S5: ${tool.name} takes fields to narrow its result`);
+    }
+  }
+  return found;
+}
