@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import { api } from "../../src/connectors/api.js";
 import { machineAuth, registerTestMaintainer } from "../helpers/machine-auth.js";
 import { memoryStorage } from "../../src/storage/memory.js";
@@ -82,6 +83,27 @@ export function mcpRpc(
   return deployment
     ? deployment.fetch(request, undefined, options.runtimeContext)
     : request;
+}
+
+/**
+ * A response whose headers arrive now and whose body never closes after
+ * `chunk`. `waiting` resolves once a read waits on the body; `cancelled`
+ * records each cancellation of it.
+ */
+export function stalledResponse(status: number, chunk: string) {
+  const cancelled = vi.fn();
+  let reading!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    reading = resolve;
+  });
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (chunk) controller.enqueue(new TextEncoder().encode(chunk));
+    },
+    pull: () => reading(),
+    cancel: cancelled,
+  });
+  return { response: new Response(body, { status }), cancelled, waiting };
 }
 
 export async function readJsonRpc(response: Response): Promise<any> {

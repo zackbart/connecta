@@ -11,3 +11,5 @@ export const fixture = {
   },
   conventions: {"verbs":["search","list","get","create","update","move","copy","trash","restore","share","delete"],"nestedDescriptionExceptions":[],"auth":"delegated"},
 };
+
+export const createAuthored = () => fixture.create();

@@ -7,3 +7,5 @@ export const fixture = {
   create(id = "fixture", overrides: Partial<Parameters<typeof ccb>[1]> = {}) { return ccb(id, { ...options, ...overrides } as Parameters<typeof ccb>[1]); },
   conventions: {"verbs":["list","get","ccb"],"nestedDescriptionExceptions":[],"auth":"oauth"},
 };
+
+export const createAuthored = () => fixture.create();

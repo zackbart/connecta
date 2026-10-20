@@ -133,6 +133,10 @@ export type AuthDenialReason =
   | "oauth_client_not_allowed"
   | "oauth_binding_mismatch"
   | "session_origin_mismatch"
+  | "token_identity_mismatch"
+  | "organization_membership_denied"
+  | "organization_lookup_failed"
+  | "organization_lookup_busy"
   | "user_missing"
   | "email_lookup_failed"
   | "verified_email_invalid"
@@ -151,6 +155,10 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "oauth_client_not_allowed",
   "oauth_binding_mismatch",
   "session_origin_mismatch",
+  "token_identity_mismatch",
+  "organization_membership_denied",
+  "organization_lookup_failed",
+  "organization_lookup_busy",
   "user_missing",
   "email_lookup_failed",
   "verified_email_invalid",

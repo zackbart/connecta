@@ -36,3 +36,5 @@ export const attachmentFixtures = {
   },
   forwarded: { partId: "6", mimeType: "message/rfc822", filename: "forwarded.eml", body: { attachmentId: "mail-current", size: 27 } },
 };
+
+export const createAuthored = () => fixture.create();
