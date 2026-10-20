@@ -256,9 +256,14 @@ function variantPath(variant: VisualVariant): string {
   if (variant.includes("overview")) return "/";
   return "/endpoints";
 }
+// Each once failed a first attempt on Linux CI with a stable capture, then
+// passed its retry; no time, animation, font or late-read cause was found.
+// The visual-unstable project keeps their retries. Remove a variant once fixed.
+const UNSTABLE_VARIANTS = new Set<VisualVariant>(["overview-trace", "narrow-matrix"]);
 for (const variant of VISUAL_VARIANTS)
   for (const scheme of ["light", "dark"]) {
-    test(`detail: ${variant}, ${scheme}`, async ({ page }) => {
+    const tag = UNSTABLE_VARIANTS.has(variant) ? ["@unstable"] : [];
+    test(`detail: ${variant}, ${scheme}`, { tag }, async ({ page }) => {
       const fixture = operatorVisualVariant(fixtures.get("populated")!, variant);
       const path = variantPath(variant);
       const name = variant === "legacy-activity" ? "activity" : "detail";
