@@ -39,6 +39,7 @@
     "src/operator-ui/app/main.tsx",
     "src/operator-ui/browser.css",
     "examples/*/src/index.ts",
+    "examples/*/alchemy.run.ts",
     "scripts/*.mjs",
     "test/**/*.test.ts",
     // The eval harness: CLI entries, plus the Worker entries wrangler loads.

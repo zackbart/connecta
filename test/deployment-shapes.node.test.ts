@@ -64,6 +64,7 @@ describe("deployment shapes", () => {
     const agents = readWorker("AGENTS.md");
     const readme = readWorker("README.md");
     const source = readWorker("src", "connecta.config.ts");
+    const stack = readWorker("alchemy.run.ts");
     const callbacks = [
       "https://claude.ai/api/mcp/auth_callback",
       "https://chatgpt.com/connector_platform_oauth_redirect",
@@ -73,10 +74,60 @@ describe("deployment shapes", () => {
       expect(agents).toContain(callback);
       expect(readme).toContain(callback);
       expect(source).toContain(callback);
+      expect(stack).toContain(`"${callback}"`);
     }
     expect(agents).toContain("oauth_configuration.dynamic_client_registration.allowed_uris");
     expect(readme).toContain('"dynamic_client_registration": {');
     expect(readme).toContain('"allowed_uris": [');
+  });
+
+  // Alchemy deploys the Worker; wrangler.jsonc stays for `wrangler dev`.
+  it("deploys the Worker with an Alchemy stack that keeps its state and secrets", () => {
+    const stack = readWorker("alchemy.run.ts");
+    const code = stack
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n");
+    // The database survives `alchemy destroy`.
+    expect(code).toMatch(/D1\.Database\("ConnectaDB", \{[^}]*\}\)\.pipe\(\s*Alchemy\.RemovalPolicy\.retain\(\)/);
+    // Bindings match the configuration's Env; secrets are declared in-stack,
+    // since each deploy deletes bindings set any other way.
+    for (const binding of [
+      "CONNECTA_DB: database",
+      "LOADER: Cloudflare.WorkerLoader()",
+      "PUBLIC_URL: Cloudflare.Worker.URL",
+      "CONNECTA_MAINTAINERS:",
+      'DOWNSTREAM_TOKEN: Config.Redacted("DOWNSTREAM_TOKEN")',
+      'CREDENTIAL_ENCRYPTION_KEY: Config.Redacted("CREDENTIAL_ENCRYPTION_KEY")',
+    ]) {
+      expect(code).toContain(binding);
+    }
+    expect(code).toContain('flags: ["nodejs_compat", "enable_request_signal"]');
+    // Access is attached to the Worker itself, and the bypass covers only /agent/*.
+    expect(code).toMatch(/Cloudflare\.Worker\("Connecta", \{[\s\S]*\n\s+access,\n/);
+    expect(code).toContain("/agent/*`");
+    expect(code.match(/decision: "bypass"/g)).toHaveLength(1);
+    expect(code).toContain("Alchemy.localState()");
+    expect(readFileSync(join(ROOT, ".gitignore"), "utf8")).toContain(".alchemy/");
+    expect(readWorker("wrangler.jsonc")).toContain("Local development only");
+
+    // The documented pins are the repository's own, and Effect is connecta's.
+    const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+    const effect = manifest.dependencies["effect"];
+    expect(effect).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(manifest.devDependencies["@effect/platform-node"]).toBe(effect);
+    const readme = readWorker("README.md");
+    for (const pin of [
+      `alchemy@${manifest.devDependencies["alchemy"]}`,
+      `effect@${effect}`,
+      `@effect/platform-node@${effect}`,
+    ]) {
+      expect(readme).toContain(pin);
+    }
+    expect(readme).toContain("npx alchemy deploy --stage production");
   });
 
   it("ships one Node deployment that is also its own container", () => {

@@ -25,10 +25,11 @@ migrations, and secrets.
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | `src/index.ts`                                         | the Worker entrypoint — starts the configuration, under 30 lines                                                                 |
 | `src/connecta.config.ts`                               | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)`                                                   |
-| `wrangler.jsonc`                                       | Worker name, vars, bindings, `compatibility_flags`                                                                               |
+| `alchemy.run.ts`                                       | the deployment: Worker, vars, secrets, D1, Worker Loader, and both Access applications                                           |
+| `wrangler.jsonc`                                       | local `wrangler dev` only, with a simulated Access identity; never used to deploy                                                |
 | `scripts/copy-kv-to-d1.mjs`, `kv-to-d1.wrangler.jsonc` | one-shot copy of a 0.28 Workers KV deployment's state into D1, run once and deleted ([Upgrading from 0.28](#upgrading-from-028)) |
 
-Keep `enable_request_signal` in `wrangler.jsonc`. On Workers it lets a live
+Keep `enable_request_signal` in `alchemy.run.ts` and `wrangler.jsonc`. On Workers it lets a live
 response's client disconnect abort its request, so connecta cancels the stream
 and returns the admission permit promptly. The total admitted-request bound in
 `admission.requests.maxDurationMs` (default 300,000 ms) also reclaims capacity
@@ -43,28 +44,147 @@ See [Storage](#storage).
 
 ## Deploy
 
-This example has no `package.json` of its own — it resolves the installed
-package from the repository root.
+[Alchemy](https://alchemy.run) deploys this Worker. `alchemy.run.ts` declares
+the Worker script and every binding, the one D1 database, the Worker Loader,
+the vars and secrets, the Worker-level Access application with Managed OAuth,
+and [the agent bypass](#let-agents-through-access). Each deploy reconciles all
+of them, so change the stack and redeploy instead of editing these resources in
+the dashboard. Install `alchemy@2.0.0-beta.83`, `effect@4.0.5`, and
+`@effect/platform-node@4.0.5` at exact versions. Effect must be connecta's own
+exact pin; check `npm ls effect` for one resolved copy. Alchemy's CLI needs
+Node 24.11.1 or later, although the deployed Worker does not. Inside the connecta
+repository these are already development dependencies; a copied deployment
+installs them as [below](#copied-into-its-own-repository).
+
+Before the first deploy, edit `alchemy.run.ts`:
+
+- Replace `signIn` with the deployment's Access rule, for example
+  `{ email: "alice@example.com" }` or `{ emailDomain: "example.com" }`.
+- Set `CONNECTA_MAINTAINERS` to the maintainers' Access user ids (`user_uuid`,
+  else email), comma-separated.
+- Keep `name: "connecta"` on the D1 database only if no other database in the
+  account has that name: the first deploy takes over a database with the same
+  name without asking.
+
+Give Alchemy an account API token and the two secrets through the environment
+or a `.env` file beside `alchemy.run.ts`, which Alchemy loads by default:
 
 ```sh
-pnpm install                                   # from the repository root
-
-wrangler d1 create connecta                    # paste the id into wrangler.jsonc
-# In wrangler.jsonc also set PUBLIC_URL to this Worker's URL and
-# CONNECTA_MAINTAINERS to your Access user ids (user_uuid, else email).
-
-cd examples/worker
-wrangler secret put DOWNSTREAM_TOKEN
-wrangler secret put CREDENTIAL_ENCRYPTION_KEY   # base64 32-byte AES key
-wrangler deploy
+CLOUDFLARE_ACCOUNT_ID=<account id>
+CLOUDFLARE_API_TOKEN=<account API token>
+DOWNSTREAM_TOKEN=<the example remote MCP connector's token>
+CREDENTIAL_ENCRYPTION_KEY=<base64 32-byte AES key>
 ```
 
-`PUBLIC_URL` is a plain var in `wrangler.jsonc`. After the first deploy, attach
-Cloudflare Access to the Worker itself (the API destination type is `worker`,
-not a hostname application) and choose the account, email-domain, or
-advanced Zero Trust policy that owns admission. Enable **Managed OAuth** on
-that Access application for interactive MCP clients, turn on Dynamic Client
-Registration, and add these three entries under **Allowed redirect URIs**:
+The token needs Workers Scripts Write, D1 Write, Access: Apps and Policies
+Write, and Access: Organizations, Identity Providers, and Groups Read on the
+account. Generate the encryption key with the command in
+[UI and encrypted credentials](#ui-and-encrypted-credentials). Then, from the
+folder holding `alchemy.run.ts`:
+
+```sh
+npx alchemy deploy --stage production
+```
+
+Pass the same `--stage` to every `deploy`, `plan`, and `destroy`. Alchemy keys
+its state by stage and otherwise picks a per-user stage that does not own the
+deployment's resources. `npx alchemy plan --stage production`
+shows the changes without applying them. Code and configuration updates use
+the same deploy command. The Worker keeps its script tag across deploys, so the
+Worker-level Access application keeps covering it and `ctx.access` keeps
+arriving.
+
+`PUBLIC_URL` is `Cloudflare.Worker.URL`: the Worker's first custom domain if it
+has one, otherwise its `workers.dev` URL. Add a custom domain with the Worker's
+`domain` property, for example `domain: "connecta.example.com"`; the agent
+bypass follows `PUBLIC_URL` to that hostname on the next deploy. Agents then
+use the custom domain, and `/agent/*` on the `workers.dev` hostname stays
+behind Access.
+
+### Secrets and state
+
+- **Declare every secret in `alchemy.run.ts`.** Each deploy replaces the
+  Worker's whole binding set, so a secret set any other way, for example with
+  `cf workers secrets put`, is deleted by the next deploy.
+- **Never commit `.alchemy/` or `.env`.** Add both to `.gitignore`. Alchemy's
+  local state under `.alchemy/state/` records the Worker's bindings, including
+  the plaintext value of every secret such as `CREDENTIAL_ENCRYPTION_KEY`.
+  Protect it like the secrets themselves and back it up securely. Alchemy also
+  writes per-run logs under `~/.alchemy/logs/`; keep them off shared machines.
+- Local state belongs to one machine. To deploy from CI or from several
+  machines, replace `Alchemy.localState()` with `Cloudflare.state()`. It
+  bootstraps an account-level state-store Worker backed by a Durable Object
+  that encrypts resource state at rest with a key held in the account's
+  Secrets Store. Retain that store: deleting it loses Alchemy's record of what
+  it owns. This option has not been verified with connecta; deploy it to a
+  throwaway account first and confirm `ctx.access` and D1 as described in
+  [Verify after deploying](#verify-after-deploying).
+
+### Destroying and recovering
+
+The D1 database is declared with `Alchemy.RemovalPolicy.retain()`. `npx alchemy
+destroy --stage production` deletes the Worker and both Access applications
+but only forgets the database, so its grants, sealed credentials, tokens, and
+activity remain. The next deploy adopts it again by name, with its data. Delete
+a retained database deliberately, after a backup, with
+`cf d1 delete <database-id>`. Keep the policy on any R2 bucket you add for the
+same reason.
+
+If local state is lost, the next deploy adopts the database by name and reuses
+the Worker and its script tag through Alchemy's ownership tags, but cannot find
+either Access application. Set `applicationId` on each
+`Cloudflare.Access.Application` to its existing id (listed with
+`cf zero-trust access applications list`) and deploy. That takes the
+application over and keeps its AUD; a new application would change the AUD,
+and Cloudflare refuses a second application for the Worker destination. Then
+remove both `applicationId` values and deploy again; that updates the
+applications in place.
+
+### Verify after deploying
+
+Access changes take time to settle at the edge. Repeat these checks until they
+agree for several consecutive rounds:
+
+- `/mcp` and `/` without credentials get Access's refusal. With Managed OAuth
+  that is a 401 whose `WWW-Authenticate` names `realm="OAuth"` and whose body
+  is `{"error":"invalid_token",…}`.
+- `/agent/ci` without credentials reaches connecta: its 401 carries a bare
+  `WWW-Authenticate: Bearer` and the body `{"error":{"code":"host_auth_required",…}}`.
+- With Access service-token headers, `/health` returns 200 and `/ui/api/config`
+  returns 403 `Cloudflare Access human identity required`. That 403 shows the
+  Worker received `ctx.access`; a 401 there means it did not.
+
+Service-token checks and `connecta doctor` need a service token that the
+Worker-level application admits. Create one with
+`cf zero-trust access service-tokens create`, keep its client secret out of
+the repository, and add its id to `ConnectaAccess` as a second policy, as the
+comment in `alchemy.run.ts` shows. connecta still refuses that service
+identity on every MCP and operator route.
+
+Then sign in as a maintainer, issue the `ci` token, and run
+[`connecta doctor`](#client-authentication-and-activity).
+
+### Local development
+
+`wrangler.jsonc` exists only for `wrangler dev`, which runs the Worker locally
+with local D1 and needs no Cloudflare login. Its `access.dev` block gives every
+local request a simulated operator identity; it requires Wrangler 4.123.0 or
+later, and earlier versions ignore it with an unexpected-field warning. Remove
+the block to test the missing-Access refusal. Keep its vars, compatibility
+flags, and bindings in step with `alchemy.run.ts`, and never deploy with it:
+a Wrangler deploy would leave Alchemy's state behind, and Alchemy would replace
+it on the next deploy. `alchemy dev` does not supply `ctx.access` to this
+Worker, so every request is refused there.
+
+### Cloudflare Access
+
+`ConnectaAccess` in `alchemy.run.ts` is attached to the Worker itself through
+the Worker's `access` property: Alchemy adds the Worker's `worker` destination,
+plus a `preview_worker` destination covering version preview URLs. Only that
+attachment makes Access supply `ctx.access`; a hostname application does not.
+Its policy, `signIn`, decides who may sign in. **Managed OAuth** is enabled for
+interactive MCP clients, with Dynamic Client Registration and these three
+**Allowed redirect URIs**:
 
 ```text
 https://claude.ai/api/mcp/auth_callback
@@ -89,7 +209,8 @@ an agent: it uses `/agent/<pool>` with a stored `cta_` bearer as its only
 credential, once [the agent bypass](#let-agents-through-access) exists. An
 Access service identity alone is refused. See [Machine tokens](#machine-tokens).
 
-Through the API, the relevant part of the application is:
+In the stack these are `oauthConfiguration.dynamicClientRegistration.allowedUris`.
+Through the Access API, the relevant part of the application is:
 
 ```json
 {
@@ -108,7 +229,7 @@ Through the API, the relevant part of the application is:
 ```
 
 Cloudflare's [Worker Access guide](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
-owns the dashboard/API steps; its [Managed OAuth guide](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
+explains the Worker destination; its [Managed OAuth guide](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
 owns client registration, redirect allowlists, and token lifetimes.
 
 [`AGENTS.md`](./AGENTS.md) repeats the callback invariant for coding agents
@@ -117,11 +238,13 @@ the Access policy or application.
 
 ### Let agents through Access
 
-Add one more self-hosted Access application for each hostname agents use (the
-`workers.dev` hostname and each custom domain): domain set to that hostname,
-path `agent/*`, and a single policy whose action is **Bypass** and whose include
-rule is **Everyone**. Keep the Worker-level application; it still protects every
-other path. Through the API:
+`ConnectaAgents` in `alchemy.run.ts` is a second self-hosted Access
+application whose destination is `<PUBLIC_URL host>/agent/*`, with a single
+policy whose action is **Bypass** and whose include rule is **Everyone**. The
+Worker-level application still protects every other path. Never bypass any
+other path. To serve agents on another hostname too, add a destination for it,
+for example `{ type: "public", uri: "agents.example.com/agent/*" }`. Through the
+Access API, the application is:
 
 ```json
 {
@@ -135,114 +258,60 @@ other path. Through the API:
 It must be a hostname-and-path (`public`) destination: a second Worker
 destination is refused because the Worker-level application owns it. Changes
 took 15–19 seconds to settle when probed, occasionally longer, with transient
-edge errors meanwhile. Do not rely on a fixed wait: verify that `/agent/ci`
-without credentials returns connecta's 401 (`WWW-Authenticate: Bearer`) while
-`/mcp` still returns Access's refusal, several times in a row. Connecta ignores Access
+edge errors meanwhile. Do not rely on a fixed wait; repeat
+[Verify after deploying](#verify-after-deploying). Connecta ignores Access
 context on `/agent/*` and refuses every other spelling of that namespace before
 auth. [Deploying Connecta](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md#agent-endpoints-behind-cloudflare-access)
 records the untested cases and the propagation details.
 
-The checked-in `access.dev` block gives `wrangler dev` a local operator
-identity; it requires Wrangler 4.123.0 or later, and earlier versions ignore it
-with an unexpected-field warning. Remove the block to test the missing-Access refusal. It has no effect
-on a deployed Worker's production identity.
+### Moving a Wrangler-deployed Worker to Alchemy
 
-### Optional resource management with Alchemy
+A deployment first deployed with `wrangler deploy` already owns a Worker, a D1
+database, and Access applications that Alchemy did not create. Take them over
+once, in a quiet period, so the Worker keeps its script tag and the Access
+applications keep their AUD and Managed OAuth client registrations:
 
-Keep this example's Worker on Wrangler. A copied deployment may use
-[Alchemy](https://alchemy.run) to manage its D1 database, optional R2 bucket,
-and the Access application without adding Alchemy to connecta or
-changing this template. In that deployment, install `alchemy@2.0.0-beta.79`
-and `effect@4.0.5` at exact versions. The latter is connecta's own exact
-Effect pin; check `npm ls effect` for one resolved copy after installation.
-The following `alchemy.run.ts` is a resource stack, not a Worker deployment:
+1. Set `name` on the Worker and the D1 database to their existing names. The
+   database is adopted by name without further changes.
+2. Wrap the Worker in `.pipe(Alchemy.AdoptPolicy.adopt(true))`, which permits
+   taking over a Worker without Alchemy's ownership tags.
+3. Set `applicationId` on `ConnectaAccess` and `ConnectaAgents` to the existing
+   Worker-level and `/agent/*` application ids
+   (`cf zero-trust access applications list`).
+4. Declare every existing secret and var in `env`, with the same values. The
+   first Alchemy deploy deletes any binding the stack does not declare.
+5. Run `npx alchemy plan --stage production`, compare it with the live
+   resources, then deploy and repeat
+   [Verify after deploying](#verify-after-deploying).
+6. Remove the `adopt(true)` pipe and both `applicationId` values afterwards;
+   the state now records them.
 
-```ts
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import { adopt } from "alchemy/AdoptPolicy";
-import * as Effect from "effect/Effect";
-
-// Replace this with the immutable ID of the Wrangler-deployed Worker.
-const workerId = "replace-with-worker-id";
-
-export default Alchemy.Stack(
-  "ConnectaResources",
-  { providers: Cloudflare.providers(), state: Cloudflare.state() },
-  Effect.gen(function* () {
-    const database = yield* Cloudflare.D1.Database("ConnectaDB", {
-      name: "connecta",
-    }).pipe(adopt(true));
-    const access = yield* Cloudflare.Access.Application("ConnectaAccess", {
-      type: "self_hosted",
-      name: "Connecta",
-      destinations: [{ type: "worker", workerId }],
-      policies: [{ decision: "allow", include: [{ emailDomain: "example.com" }] }],
-      oauthConfiguration: {
-        enabled: true,
-        dynamicClientRegistration: {
-          enabled: true,
-          allowedUris: [
-            "https://claude.ai/api/mcp/auth_callback",
-            "https://chatgpt.com/connector_platform_oauth_redirect",
-            "https://chatgpt.com/connector/oauth/*",
-          ],
-        },
-      },
-    }).pipe(adopt(true));
-    return { databaseId: database.databaseId,
-      accessId: access.applicationId };
-  }),
-);
-```
-
-Replace the Worker ID and example Access policy before applying this stack.
-`CONNECTA_DB` is required. Copy the database ID into `wrangler.jsonc` and keep
-`LOADER` in `worker_loaders`. Configure the hostname as a Wrangler custom domain
-route with `custom_domain: true`. Verify it against the Worker-level Access
-application, set secrets with `wrangler secret put`, and deploy with Wrangler.
-After the initial `wrangler deploy`, use `wrangler versions upload` and
-`wrangler versions deploy` for code updates.
-
-The `adopt(true)` calls explicitly permit taking over matching existing
-resources; compare their live names, IDs, Access policy, and data before the
-first Alchemy deploy. Remove adoption where a resource is new. The stack
-configures no `migrations`: connecta creates its tables on first use. Remote
-`Cloudflare.state()` bootstraps an account-level state-store Worker backed by a
-Durable Object and Secrets Store entries for its credentials. Retain them:
-deleting the state store loses Alchemy's record of what it owns.
-
-Verification for this optional path stops at the API and types. This snippet
-was copied to an isolated `alchemy.run.ts` and passed `tsc --noEmit` with
-TypeScript 5.9.3, Alchemy 2.0.0-beta.79, and Effect 4.0.5, with `npm ls
-effect` confirming one resolved copy. No Alchemy deploy or adoption was run.
-[Alchemy's Worker resource](https://alchemy.run/cloudflare/compute/workers/)
-can declare `WorkerLoader`, domains, Browser Rendering, and cron wiring, but
-those properties are coupled to its script deploy. Its current full deploy
-still uses the script-upload endpoint; only a conditional gradual rollout uses
-the versions API. A previous full deploy through that endpoint did not provide
-`ctx.access`, so do not transfer Worker ownership until that path is verified
-end to end. The [Access](https://alchemy.run/cloudflare/security/access/),
-[D1](https://alchemy.run/cloudflare/data/d1/), and
-[state-store](https://alchemy.run/state-store/) guides describe the resources
-above; the typecheck does not prove Cloudflare will accept this particular
-Access adoption or preserve production identity.
+Adopting D1 by name and taking Access applications over by `applicationId`
+were verified on throwaway deployments; taking over a Worker that lacks
+Alchemy's ownership tags was checked against Alchemy's source only. Back up D1
+first with a D1 export.
 
 ### Copied into its own repository
 
-The `pnpm install` above is the connecta repository's, which already has every
-dependency this file imports. A copy with its own `package.json` installs
-Connecta and the separately installed `@cloudflare/codemode` peer:
+Inside the connecta repository, `pnpm install` at the root provides every
+dependency this example imports, and `npx alchemy` run from `examples/worker`
+resolves the root's Alchemy. A copy with its own `package.json` installs
+Connecta, the separately installed `@cloudflare/codemode` peer, and the
+deployment tooling:
 
 ```sh
 npm install --save-exact @zackbart/connecta@<version>
 npm install @cloudflare/codemode
+npm install --save-dev --save-exact alchemy@2.0.0-beta.83 effect@4.0.5 @effect/platform-node@4.0.5
 npm install --save-dev wrangler @cloudflare/workers-types typescript @types/node
+npm ls effect   # one resolved copy
 ```
 
-A `tsconfig.json` like the following lets `tsc --noEmit` resolve `D1Database`,
-`WorkerLoader`, and `ExecutionContext`. `wrangler` also serves
-`scripts/copy-kv-to-d1.mjs`.
+`wrangler` serves only `wrangler dev` and `scripts/copy-kv-to-d1.mjs`. Add
+`.alchemy/`, `.env`, `.dev.vars`, `.wrangler/`, and `node_modules/` to the
+copy's `.gitignore`. A `tsconfig.json` like the following lets `tsc --noEmit`
+resolve `D1Database`, `WorkerLoader`, and `ExecutionContext`, and checks the
+stack:
 
 ```json
 {
@@ -256,7 +325,7 @@ A `tsconfig.json` like the following lets `tsc --noEmit` resolve `D1Database`,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "alchemy.run.ts"]
 }
 ```
 
@@ -271,7 +340,7 @@ no Clerk import, secret, package, or fallback provider. Docker deployments keep
 the Clerk path in the Node template.
 
 Then list the maintainers' Access user ids (`user_uuid`, else email) in the
-`CONNECTA_MAINTAINERS` var and point a maintainer's MCP client at
+`CONNECTA_MAINTAINERS` var in `alchemy.run.ts`, deploy, and point a maintainer's MCP client at
 `<PUBLIC_URL>/mcp`. Other people use `<PUBLIC_URL>/mcp/<pool>`, and agents
 `<PUBLIC_URL>/agent/<pool>`, for a pool that lists them in `members`. The example explicitly enables
 `ui: operatorUi()`; open `<PUBLIC_URL>/` for endpoints, and each connector's Connection tab
@@ -418,10 +487,11 @@ still require a deployment-code change.
 
 The Dynamic Worker sandbox requires the
 [Workers Paid plan](https://developers.cloudflare.com/dynamic-workers/pricing/).
-The required Worker Loader binding is checked into `wrangler.jsonc`:
+The required Worker Loader binding is declared in `alchemy.run.ts`, and in
+`wrangler.jsonc` for local development:
 
-```jsonc
-"worker_loaders": [{ "binding": "LOADER" }]
+```ts
+LOADER: Cloudflare.WorkerLoader(),
 ```
 
 `src/connecta.config.ts` uses `workerExecutor({ loader: env.LOADER })` from
@@ -469,8 +539,10 @@ CREATE INDEX IF NOT EXISTS connecta_kv_expiry ON connecta_kv (expires_at_ms);
 
 ### Upgrading from 0.28
 
-0.28 shipped three storage shapes in this example. Each moves to the one
-`CONNECTA_DB` binding:
+0.28 shipped three storage shapes in this example, each deployed with
+Wrangler. Finish the storage upgrade on the deployment's existing Wrangler
+configuration, then [move it to Alchemy](#moving-a-wrangler-deployed-worker-to-alchemy).
+Each shape moves to the one `CONNECTA_DB` binding:
 
 - **Already on `d1-storage.ts`** (one D1 database, possibly also holding
   activity). The table is unchanged, so no data moves. Rename the binding in
@@ -551,7 +623,7 @@ then `wrangler login` and check the prepared deployment with a dry run.
    `verified` / `mismatches` counts by family only, and exits non-zero on any
    invalid entry or mismatch. Keep traffic and writers stopped until these
    counts are resolved. A verification pass does not rewrite copied entries.
-5. Deploy the D1 configuration with `wrangler deploy` while maintenance remains.
+5. Deploy the D1 configuration with the deployment's `wrangler deploy` while maintenance remains.
    Run `connecta doctor --pool <pool>` using Access service credentials plus a
    stored `cta_` bearer through `CONNECTA_TOKEN`. Verify an existing
    OAuth connector without re-consent, an existing `cta_` token, a connector
