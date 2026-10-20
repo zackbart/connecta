@@ -1,4 +1,4 @@
-// Node-only: spawns the Bash CI path filters and aggregate gate.
+// Node-only: spawns the Bash CI path filters, aggregate gate and drift scope selector.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,47 @@ function pathFilter(script: string) {
 }
 const browserRequired = pathFilter("ci-browser-paths.sh");
 const securityRequired = pathFilter("ci-security-paths.sh");
+const planningOnly = pathFilter("ci-planning-paths.sh");
+
+function driftScope(paths: string[]): string {
+  const result = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("../scripts/ci-drift-providers.mjs", import.meta.url))],
+    {
+      input: paths.map((path) => `${path}\0`).join(""),
+      encoding: "utf8",
+    },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout.trim();
+}
+
+describe("CI planning-only paths", () => {
+  it.each([
+    [["decisions/0042-storage.md"]],
+    [[".changes/898.md"]],
+    [["decisions/nested/record.json", ".changes/a.md"]],
+  ])("skips tests, build and browsers for %j", (paths) => {
+    expect(planningOnly(paths)).toBe("true");
+  });
+
+  it.each([
+    [[]],
+    [["documentation/deploying.md"]],
+    [["README.md"]],
+    [["CHANGELOG.md"]],
+    [["templates/node/README.md"]],
+    [["examples/worker/README.md"]],
+    [["spec/coverage.json"]],
+    [["decisions-extra/record.md"]],
+    [[".changes"]],
+    [["decisions/record.md", "documentation/deploying.md"]],
+    [["documentation/deploying.md", "decisions/record.md"]],
+    [[".changes/a.md", "src/server.ts"]],
+  ])("runs every job for %j", (paths) => {
+    expect(planningOnly(paths)).toBe("false");
+  });
+});
 
 describe("CI browser paths", () => {
   it.each([
@@ -171,6 +212,44 @@ describe("CI aggregate check", () => {
     },
   );
 
+  const gate = (results: Record<string, string>) =>
+    spawnSync("bash", ["-e", "-c", script], {
+      env: {
+        ...process.env,
+        STATIC_RESULT: "success",
+        NODE_RESULT: "skipped",
+        WORKERS_RESULT: "skipped",
+        BUILD_RESULT: "skipped",
+        PLANNING_ONLY: "true",
+        CHANGES_RESULT: "success",
+        BROWSER_RESULT: "skipped",
+        BROWSER_REQUIRED: "false",
+        SECURITY_RESULT: "skipped",
+        SECURITY_REQUIRED: "false",
+        ...results,
+      },
+      encoding: "utf8",
+    }).status;
+
+  it("accepts a planning-only pull request that skips node, workers, build and browser", () => {
+    expect(gate({})).toBe(0);
+    expect(gate({ NODE_RESULT: "success", BUILD_RESULT: "success" })).toBe(0);
+  });
+
+  it.each([
+    { STATIC_RESULT: "skipped" },
+    { STATIC_RESULT: "failure" },
+    { CHANGES_RESULT: "failure" },
+    { NODE_RESULT: "failure" },
+    { WORKERS_RESULT: "cancelled" },
+    { BUILD_RESULT: "" },
+    { PLANNING_ONLY: "false" },
+    { PLANNING_ONLY: "" },
+    { BROWSER_REQUIRED: "true" },
+  ])("rejects a planning-only gate with %j", (results) => {
+    expect(gate(results)).toBe(1);
+  });
+
   it.each(
     ["NODE", "WORKERS", "BUILD"].flatMap((job) =>
       ["failure", "cancelled", "skipped", ""].map((result) => [job, result] as const),
@@ -193,5 +272,37 @@ describe("CI aggregate check", () => {
       encoding: "utf8",
     });
     expect(result.status, result.stdout + result.stderr).toBe(1);
+  });
+});
+
+describe("Provider drift pull request scope", () => {
+  it.each([
+    [["src/providers/github/index.ts"], "github"],
+    [["src/providers/notion/drift.json", "src/providers/github/SKILL.md"], "github notion"],
+    [["src/providers/_shared/google/workspace.ts"], "docs drive forms gmail sheets slides"],
+    [["src/providers/_shared/request-token.ts"], "infisical"],
+    [["src/providers/_shared/new-area/module.ts"], ""],
+    [["src/providers/retired/index.ts"], ""],
+    [["README.md", "src/server.ts"], ""],
+  ])("scans %j as %j", (paths, providers) => {
+    expect(driftScope(paths)).toBe(providers);
+  });
+
+  it("scans the providers a shared REST module serves", () => {
+    const scope = driftScope(["src/providers/_shared/rest/tools.ts"]).split(" ");
+    expect(scope).toEqual(expect.arrayContaining(["notion", "stripe"]));
+    expect(scope).not.toContain("gmail");
+  });
+
+  it.each([
+    "scripts/drift-check.mjs",
+    "scripts/providers.mjs",
+    "scripts/generate-openapi.mjs",
+    "scripts/vercel-inventory.mjs",
+    "scripts/value-safety.mjs",
+    "scripts/ci-drift-providers.mjs",
+    ".github/workflows/provider-drift.yml",
+  ])("scans every provider when %s changes", (path) => {
+    expect(driftScope(["src/providers/github/index.ts", path])).toBe("all");
   });
 });

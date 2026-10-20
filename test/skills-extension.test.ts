@@ -445,27 +445,91 @@ it("INV-8: stops catalog intake at aggregate bounds before cloning or fetching l
 });
 
 it("INV-7: cancels bounded skill work and closes its owned connector scope", async () => {
-  let signal: AbortSignal | undefined;
+  // The guest utility deadline starts before local manifests are hashed, so a
+  // real 5 ms timer can expire before the downstream scope opens. Expire each
+  // deadline only after the downstream listing has started.
+  vi.useFakeTimers();
+  try {
+    let signal: AbortSignal | undefined;
+    let opened!: () => void;
+    let open = new Promise<void>((resolve) => (opened = resolve));
+    let closed!: () => void;
+    const close = new Promise<void>((resolve) => (closed = resolve));
+    const closeScope = vi.fn(async () => {
+      if (closeScope.mock.calls.length === 2) closed();
+    });
+    const remote = downstream("remote", {
+      list: async (ctx) => {
+        signal = ctx.signal;
+        opened();
+        return new Promise(() => {});
+      },
+    });
+    remote.closeScope = closeScope;
+    const listing = expect(
+      new SkillsRegistry(makeRegistry([remote]), BASE, { probeTimeoutMs: 5 }).list(),
+    ).rejects.toMatchObject({ code: "unavailable" });
+    await open;
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(5);
+    await listing;
+    expect(signal?.aborted).toBe(true);
+    expect(closeScope).toHaveBeenCalledTimes(1);
+
+    open = new Promise<void>((resolve) => (opened = resolve));
+    const guest = (
+      await buildSandboxProviders(makeRegistry([remote]), BASE, silentLogger, undefined, { hostCallTimeoutMs: 5 })
+    )[0]!.fns;
+    const lookup = expect(guest.skill!(downstreamSkillUri("remote", URI))).rejects.toMatchObject({ code: "timeout" });
+    await open;
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(5);
+    await lookup;
+    expect(signal?.aborted).toBe(true);
+    // The outer utility deadline must reach the asynchronous downstream work.
+    await close;
+    expect(closeScope).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("INV-7: never opens a downstream skill scope for work cancelled before it starts", async () => {
+  const list = vi.fn(async () => []);
   const closeScope = vi.fn(async () => {});
-  const remote = downstream("remote", {
-    list: async (ctx) => {
-      signal = ctx.signal;
-      return new Promise(() => {});
-    },
-  });
+  const remote = downstream("remote", { list });
   remote.closeScope = closeScope;
-  await expect(new SkillsRegistry(makeRegistry([remote]), BASE, { probeTimeoutMs: 5 }).list()).rejects.toMatchObject({
-    code: "unavailable",
+  const registry = makeRegistry([remote]);
+  const contextFor = vi.spyOn(registry, "contextFor");
+  // Hold local manifest hashing so cancellation lands before the downstream
+  // operation is dispatched, as a short deadline can on a slow host.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  // The cancelled listing discards every manifest, so the bytes never matter.
+  const hashing = vi.spyOn(crypto.subtle, "digest").mockImplementation(async () => {
+    await held;
+    return new ArrayBuffer(32);
   });
-  expect(signal?.aborted).toBe(true);
-  expect(closeScope).toHaveBeenCalledTimes(1);
-  const guest = (
-    await buildSandboxProviders(makeRegistry([remote]), BASE, silentLogger, undefined, { hostCallTimeoutMs: 5 })
-  )[0]!.fns;
-  await expect(guest.skill!(downstreamSkillUri("remote", URI))).rejects.toMatchObject({ code: "timeout" });
-  expect(signal?.aborted).toBe(true);
-  // The outer utility deadline must reach the asynchronous downstream work.
-  await vi.waitFor(() => expect(closeScope).toHaveBeenCalledTimes(2));
+  try {
+    const cancelling = new AbortController();
+    const listing = expect(
+      new SkillsRegistry(registry, BASE, { requestSignal: cancelling.signal }).list(),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(hashing).toHaveBeenCalled());
+    cancelling.abort();
+    release();
+    await listing;
+  } finally {
+    hashing.mockRestore();
+  }
+  const cancelled = new AbortController();
+  cancelled.abort();
+  const guest = (await buildSandboxProviders(registry, BASE, silentLogger, undefined, { signal: cancelled.signal }))[0]!
+    .fns;
+  await expect(guest.skill!(downstreamSkillUri("remote", URI))).rejects.toMatchObject({ code: "cancelled" });
+  expect(contextFor).not.toHaveBeenCalled();
+  expect(list).not.toHaveBeenCalled();
+  expect(closeScope).not.toHaveBeenCalled();
 });
 
 it("INV-8: manifests local bytes and retains authority-rooted downstream skill names", async () => {

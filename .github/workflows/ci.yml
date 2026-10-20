@@ -18,30 +18,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      planning: ${{ steps.paths.outputs.planning }}
       browser: ${{ steps.paths.outputs.browser }}
       security: ${{ steps.paths.outputs.security }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Decide whether browser and dependency checks are needed
+      - name: Decide which test, browser and dependency checks are needed
         id: paths
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          planning=false
           browser=true
           security=true
           if [[ "$EVENT_NAME" == pull_request ]]; then
             git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/paths"
+            planning=$(bash scripts/ci-planning-paths.sh < "$RUNNER_TEMP/paths")
             browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/paths")
             security=$(bash scripts/ci-security-paths.sh < "$RUNNER_TEMP/paths")
           fi
-          echo "browser=$browser" >> "$GITHUB_OUTPUT"
-          echo "security=$security" >> "$GITHUB_OUTPUT"
+          # A planning-only change has nothing for Chromium to exercise.
+          if [[ "$planning" == true ]]; then browser=false; fi
+          {
+            echo "planning=$planning"
+            echo "browser=$browser"
+            echo "security=$security"
+          } >> "$GITHUB_OUTPUT"
 
   # Keep every check:core check, but give both runtimes their own runner.
+  # Static checks run for every change, including planning-only pull requests.
   static:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -63,7 +72,11 @@ jobs:
       - run: pnpm run check:unused
       - run: pnpm run typecheck
 
+  # Decision records and changelog fragments ship nothing that tests or the
+  # package build read, so planning-only pull requests skip these three jobs.
   node:
+    needs: changes
+    if: needs.changes.outputs.planning != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -78,6 +91,8 @@ jobs:
       - run: pnpm run test --config vitest.config.node.ts
 
   workers:
+    needs: changes
+    if: needs.changes.outputs.planning != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -91,6 +106,8 @@ jobs:
       - run: pnpm run test:workers
 
   build:
+    needs: changes
+    if: needs.changes.outputs.planning != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -159,7 +176,20 @@ jobs:
         run: |
           bash scripts/ci-settle-apt.sh
           pnpm run test:browser:install --with-deps
-      - run: pnpm run test:browser
+      - name: Run browser tests
+        run: pnpm run test:browser
+      # test-results/ holds output only for failed attempts, flaky ones included.
+      # A run that fails before any test still uploads its HTML report.
+      - name: Upload Playwright report, diffs and traces
+        if: ${{ !cancelled() && (failure() || hashFiles('test-results/**') != '') }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
 
   # Keep the existing check name as the gate for every job, even on failure.
   check:
@@ -174,18 +204,21 @@ jobs:
           NODE_RESULT: ${{ needs.node.result }}
           WORKERS_RESULT: ${{ needs.workers.result }}
           BUILD_RESULT: ${{ needs.build.result }}
+          PLANNING_ONLY: ${{ needs.changes.outputs.planning }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BROWSER_RESULT: ${{ needs.browser.result }}
           BROWSER_REQUIRED: ${{ needs.changes.outputs.browser }}
           SECURITY_RESULT: ${{ needs.security.result }}
           SECURITY_REQUIRED: ${{ needs.changes.outputs.security }}
         run: |
-          if [[ "$STATIC_RESULT" == success && "$NODE_RESULT" == success &&
-                "$WORKERS_RESULT" == success && "$BUILD_RESULT" == success && "$CHANGES_RESULT" == success ]] &&
+          # A planning-only pull request intentionally skips node, workers and build.
+          planned() { [[ "$1" == success || ( "$PLANNING_ONLY" == true && "$1" == skipped ) ]]; }
+          if [[ "$STATIC_RESULT" == success && "$CHANGES_RESULT" == success ]] &&
+             planned "$NODE_RESULT" && planned "$WORKERS_RESULT" && planned "$BUILD_RESULT" &&
              [[ "$BROWSER_RESULT" == success || ( "$BROWSER_REQUIRED" == false && "$BROWSER_RESULT" == skipped ) ]] &&
              [[ "$SECURITY_RESULT" == success || ( "$SECURITY_REQUIRED" == false && "$SECURITY_RESULT" == skipped ) ]]; then
             echo "All required checks passed"
           else
-            echo "Static=$STATIC_RESULT node=$NODE_RESULT workers=$WORKERS_RESULT build=$BUILD_RESULT changes=$CHANGES_RESULT browser=$BROWSER_RESULT required=$BROWSER_REQUIRED security=$SECURITY_RESULT required=$SECURITY_REQUIRED"
+            echo "Static=$STATIC_RESULT node=$NODE_RESULT workers=$WORKERS_RESULT build=$BUILD_RESULT planning=$PLANNING_ONLY changes=$CHANGES_RESULT browser=$BROWSER_RESULT required=$BROWSER_REQUIRED security=$SECURITY_RESULT required=$SECURITY_REQUIRED"
             exit 1
           fi
