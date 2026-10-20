@@ -359,8 +359,8 @@ class Fragments {
       if (!this.seconds[slot]) {
         this.firsts[slot] = first;
         this.seconds[slot] = key;
-        // At most half full, so a probe ends quickly.
-        if (++this.size * 2 > this.firsts.length) this.grow();
+        // At most half full, so a probe ends quickly; past capacity the index is abandoned.
+        if (++this.size * 2 > this.firsts.length && this.size <= MAX_FRAGMENTS) this.grow();
         return;
       }
       if (this.firsts[slot] === first && this.seconds[slot] === key) return;
