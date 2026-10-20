@@ -6,6 +6,7 @@
 import { callClassification } from "./call-classification.js";
 import type { ConnectorContext } from "./types.js";
 import { classifyCallError, ConnectorCallError, WithheldTextError, type CallErrorDetails } from "./errors.js";
+import { isKnownProviderFailure, knownProviderFailure, providerRequests, refusalRequest } from "./provider-call.js";
 import { carryFailureFacts } from "./operator-record.js";
 
 /** How a dispatched write ended, as far as anyone can know. */
@@ -36,6 +37,7 @@ export function classifyWriteOutcome(outcome: {
   if (outcome.ok) return "ok";
   if (!outcome.dispatched) return "failed";
   if (outcome.error?.writeOutcome === "unknown") return "unknown";
+  if (isKnownProviderFailure(outcome.error)) return "failed";
   const code = outcome.error?.code;
   if (code === "result_processing_failed") return "ok";
   if (code === "timeout" || code === "cancelled" || code === "unavailable") {
@@ -123,10 +125,32 @@ export function providerCallFailure(
     status?: number;
     fallback: "read" | "write";
     repeatable?: boolean;
+    finalize?: boolean;
   },
 ): unknown {
   const served = callClassification(ctx);
-  if ((served ?? facts.fallback) !== "write" || !facts.dispatched) return error;
+  if ((served ?? facts.fallback) !== "write") return error;
+  const requests = providerRequests(ctx);
+  // Guarded transports collect facts; only api() knows when the logical call
+  // has ended. Google may add phases or recovery words in the meantime.
+  if (requests && !facts.finalize) return error;
+  if (requests) {
+    const dispatched = requests.filter(
+      (request) => request.dispatched && !request.auxiliary && !request.neverConnected,
+    );
+    if (dispatched.length === 0) return knownProviderFailure(error);
+    const refusal = refusalRequest(error);
+    // An explicit unknown marker (notably the existing 401 handoff) wins.
+    if (
+      !(error instanceof ConnectorCallError && error.writeOutcome === "unknown") &&
+      dispatched.length === 1 &&
+      dispatched[0] === refusal
+    )
+      return knownProviderFailure(error);
+    if (served === undefined && dispatched.length === 1 && dispatched[0]?.repeatable) return error;
+    return uncertainProviderFailure({ title: dispatched[0]?.provider ?? vendor.title }, error);
+  }
+  if (!facts.dispatched) return error;
   // A direct transport user may prove idempotency. A deployment's served
   // write verdict still requires reconciliation rather than retry advice.
   if (served === undefined && facts.repeatable === true) return error;
@@ -143,7 +167,7 @@ export function providerCallFailure(
     !serverError &&
     (REFUSALS.has(error.code) || (facts.status !== undefined && facts.status >= 400 && error.code !== "unavailable"))
   )
-    return error;
+    return knownProviderFailure(error);
   if (error.code !== "unavailable" && error.code !== "connector_call_failed" && !serverError) return error;
   if (facts.repeatable === true && error.retryable) {
     return carryFailureFacts(
@@ -163,6 +187,63 @@ export function providerCallFailure(
       retryable: false,
       writeOutcome: "unknown",
     }),
+  );
+}
+
+/** Change recovery wording without rebuilding a provider's shared verdict. */
+export function providerFailureMessage(error: ConnectorCallError, message: string): ConnectorCallError {
+  return carryFailureFacts(
+    error,
+    new ConnectorCallError(error.code, message, {
+      retryable: error.retryable,
+      ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
+      ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
+      ...(error.details ? { details: error.details } : {}),
+      ...(error.validation ? { validation: error.validation } : {}),
+      ...(error.repair ? { repair: error.repair } : {}),
+      ...(error.current ? { current: error.current } : {}),
+    }),
+  );
+}
+
+/** Final ambiguous call verdict, including typed handler failures after 2xx. */
+function uncertainProviderFailure(vendor: { title: string }, error: unknown): ConnectorCallError {
+  if (error instanceof ConnectorCallError && error.writeOutcome === "unknown" && !error.retryable) return error;
+  const details = classifyCallError(error);
+  const networkCode = details.details?.code;
+  const timeout =
+    details.code === "timeout" ||
+    (details.code === "unavailable" &&
+      (networkCode === "timeout" || networkCode === "ETIMEDOUT" || networkCode?.endsWith("_TIMEOUT") === true));
+  const common =
+    error instanceof ConnectorCallError && (error.code === "unavailable" || error.code === "connector_call_failed");
+  const message =
+    !timeout && common && error.retryable
+      ? `${error.message} Whether the write took effect at ${vendor.title} is unknown; check the target before repeating it.`
+      : details.message;
+  return carryFailureFacts(
+    error,
+    new ConnectorCallError(
+      error instanceof ConnectorCallError && (error.code !== "unavailable" || timeout)
+        ? error.code
+        : timeout
+          ? "timeout"
+          : "connector_call_failed",
+      message,
+      {
+        retryable: false,
+        writeOutcome: "unknown",
+        ...(error instanceof ConnectorCallError
+          ? {
+              ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
+              ...(error.details ? { details: error.details } : {}),
+              ...(error.validation ? { validation: error.validation } : {}),
+              ...(error.repair ? { repair: error.repair } : {}),
+              ...(error.current ? { current: error.current } : {}),
+            }
+          : {}),
+      },
+    ),
   );
 }
 

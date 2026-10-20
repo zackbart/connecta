@@ -31,6 +31,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 import { recoveryFor } from "./call-recovery.js";
+import { isKnownProviderFailure } from "./provider-call.js";
 import { classifyWriteOutcome } from "./write-outcome.js";
 import {
   classificationDigest,
@@ -174,12 +175,12 @@ function assertRawMcpSuccess(kind: ResolvedCatalogTool["connector"]["kind"], res
 
 /**
  * Whether a failed attempt is the downstream tool's own answer: an MCP
- * `isError`. A connector's typed error is not, by itself, one — a response
- * too large to read or a refused redirect comes after the request was acted
- * on — so its code decides instead (`classifyWriteOutcome`).
+ * `isError`, or an API ledger's known refusal/unsent failure. A typed error
+ * alone is not proof: a body ceiling, refused redirect, or handler error may
+ * follow execution. The API boundary supplies provenance, never wording.
  */
 function answeredFailure(error: unknown): boolean {
-  return error instanceof DownstreamToolError;
+  return error instanceof DownstreamToolError || isKnownProviderFailure(error);
 }
 
 export interface InvocationTiming {
@@ -547,7 +548,7 @@ export class InvocationService {
           };
         }
         // Downstream diagnostics were redacted under payload rules where they entered.
-        const details = sentSecrets.redact(enrich(error, target), "envelope");
+        const details = carryFailureFacts(error, sentSecrets.redact(enrich(error, target), "envelope"));
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,

@@ -198,7 +198,7 @@ export class AppAuth {
     let found: Installation | undefined;
     for (let page = 1; page <= 20; page++) {
       const data = await this.json(
-        { method: "GET", path: "/app/installations", query: { per_page: 100, page } },
+        { auxiliary: true, method: "GET", path: "/app/installations", query: { per_page: 100, page } },
         jwt,
         ctx,
       );
@@ -275,7 +275,7 @@ export class AppAuth {
     for (let page = 1; page <= 100; page++) {
       const data = record(
         await this.json(
-          { method: "GET", path: "/installation/repositories", query: { per_page: 100, page } },
+          { auxiliary: true, method: "GET", path: "/installation/repositories", query: { per_page: 100, page } },
           resolver,
           ctx,
         ),
@@ -416,6 +416,7 @@ export class AppAuth {
       response = record(
         await this.json(
           {
+            auxiliary: true,
             method: "POST",
             path: `/app/installations/${installation.id}/access_tokens`,
             body: { permissions: permissionSet, ...(repositorySet ? { repository_ids: repositorySet } : {}) },

@@ -31,6 +31,7 @@ import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -1014,14 +1015,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             outcome.phase !== "refused" &&
             outcome.phase !== "before-send"
           ) {
-            throw new ConnectorCallError(
-              error.code,
+            throw googleFailureMessage(
+              error,
               `${error.message} create_form makes a new form on every call: look for "${args["documentTitle"] ?? args["title"]}" in the user's Drive, or ask them, before creating it again.`,
-              {
-                retryable: error.retryable,
-                ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
-                cause: error,
-              },
             );
           }
           throw error;

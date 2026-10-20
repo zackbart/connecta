@@ -9,6 +9,7 @@ import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
+import { providerCallContext, providerRequests, providerFetch } from "../provider-call.js";
 import { providerCallFailure } from "../write-outcome.js";
 import { deriveContext } from "../derived-context.js";
 import type {
@@ -393,9 +394,10 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       // write once: the registry's classification of this call decides, else
       // the rule the registry would apply to the tool (INV-1).
       const write = (callClassification(ctx) ?? classifyTool(tool)) === "write";
-      const handlerCtx = deriveContext<ApiHandlerContext>(ctx, {
-        fetch: sentSecretsFetch(ctx),
-        ...(oauth ? { oauth: oauth.access(ctx, { write }) } : {}),
+      const callCtx = providerCallContext(ctx);
+      const handlerCtx = deriveContext<ApiHandlerContext>(callCtx, {
+        fetch: providerFetch(callCtx, opts.title ?? id, false, sentSecretsFetch(ctx)),
+        ...(oauth ? { oauth: oauth.access(callCtx, { write }) } : {}),
       });
       try {
         return redactSentSecrets(ctx, await tool.handler(input, handlerCtx));
@@ -404,7 +406,17 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
         // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
         // URL, so it must never masquerade as the failed downstream host.
-        if (error instanceof ConnectorCallError) throw redactSentSecrets(ctx, error);
+        const settle = (failure: unknown) =>
+          redactSentSecrets(
+            ctx,
+            providerCallFailure(handlerCtx, { title: opts.title ?? id }, failure, {
+              dispatched: true,
+              responded: true,
+              fallback: write ? "write" : "read",
+              finalize: true,
+            }),
+          );
+        if (error instanceof ConnectorCallError) throw settle(error);
         if (!networkErrorCode(error)) {
           // Anything else is a runtime's, parser's, or stream's account of
           // what the handler read (a JSON parser quotes the reply it choked
@@ -415,22 +427,27 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
           // ConnectorCallError. No host is named: connecta does not know
           // which destination the handler read.
           const kind = errorLabel(error);
-          throw attachFailureFacts(
-            carryFailureFacts(
-              error,
-              new WithheldTextError(
-                `Connector "${id}" tool "${name}" handler failed` +
-                  `${kind ? ` (${kind})` : ""}. Its text is withheld because it ` +
-                  "can quote what the downstream sent.",
+          throw settle(
+            attachFailureFacts(
+              carryFailureFacts(
                 error,
+                new WithheldTextError(
+                  `Connector "${id}" tool "${name}" handler failed` +
+                    `${kind ? ` (${kind})` : ""}. Its text is withheld because it ` +
+                    "can quote what the downstream sent.",
+                  error,
+                ),
               ),
+              { step: "handler" },
             ),
-            { step: "handler" },
           );
         }
         // A handler is opaque: by the time its fetch failed it may already
         // have sent the write, so no network code proves a write unsent.
         const unreachable = unavailableCallError(error, undefined, undefined, ctx.signal);
+        // A raw handler with no tracked requests remains opaque, as before.
+        // Once guarded requests exist their ledger supplies the dispatch proof.
+        if (providerRequests(handlerCtx)?.length) throw settle(unreachable);
         throw providerCallFailure(ctx, { title: opts.title ?? id }, unreachable, {
           dispatched: true,
           responded: true,

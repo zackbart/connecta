@@ -29,6 +29,7 @@
 // such as an account pin), `result` (unwrap a vendor envelope), a reviewed
 // `headers` allowlist, and `textBodies`. Named tools reuse `restCall` and
 // `callRest` to share the same validation-free request path.
+import { providerFailureMessage } from "../../../write-outcome.js";
 import type { ApiTool } from "../../../connectors/api-connector.js";
 import {
   guardedFetch,
@@ -700,18 +701,10 @@ export function restTools(vendor: RestVendor): ApiTool[] {
           // A generated key exists nowhere else, so a failure must carry it:
           // only that key lets the caller check or retry this exact write.
           if (!key || given || !(error instanceof ConnectorCallError)) throw error;
-          throw new ConnectorCallError(
-            error.code,
+          throw providerFailureMessage(
+            error,
             `${error.message} ${header}: ${key}. Reusing it with the exact original arguments retries this write ` +
               "without repeating it only while the vendor retains the key; after that, look the object up before retrying.",
-            {
-              retryable: error.retryable,
-              ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
-              ...(error.validation ? { validation: error.validation } : {}),
-              ...(error.repair ? { repair: error.repair } : {}),
-              ...(error.details ? { details: error.details } : {}),
-              ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
-            },
           );
         }
       },

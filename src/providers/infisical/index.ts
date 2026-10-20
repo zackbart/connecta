@@ -8,7 +8,7 @@ import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../pro
 import type { ConnectorContext, JsonSchema } from "../../types.js";
 import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
-import { unsentAfterUnauthorized } from "../../write-outcome.js";
+import { providerFailureMessage, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { skill } from "./skill.generated.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
@@ -170,10 +170,9 @@ export const infisical = defineProvider<InfisicalOptions>({
         return result.value;
       } catch (error) {
         if (error instanceof ConnectorCallError && error.message.includes("response ceiling"))
-          throw new ConnectorCallError(
-            "connector_call_failed",
+          throw providerFailureMessage(
+            error,
             "Infisical's response exceeded 8 MiB. Narrow secretPath, drop recursive, or omit includeValues.",
-            { retryable: false },
           );
         throw error;
       }

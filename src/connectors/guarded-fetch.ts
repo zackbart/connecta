@@ -15,6 +15,7 @@
  * public surface. Web APIs only.
  */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
+import { bindProviderRequest, providerRequest, vendorRefusal } from "../provider-call.js";
 import { providerCallFailure } from "../write-outcome.js";
 import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
@@ -73,7 +74,7 @@ export interface GuardedRequest {
   prefixOnly?: boolean;
   /** Fallback only without a served verdict (e.g. Breeze writes use GET). */
   classification?: "read" | "write";
-  /** Authentication/lookup request before resource dispatch. */
+  /** Provider-declared request that cannot perform the logical resource write. */
   auxiliary?: boolean;
   /** Replay proof for direct transport users; never overrides a served write. */
   repeatable?: boolean;
@@ -141,7 +142,7 @@ export interface GuardedFetchOptions {
    * "Notion". Used for messages only; it is never parsed.
    */
   provider: string;
-  /** Token acquisition is auxiliary, not dispatch of the resource call. */
+  /** Provider-declared auth/metadata work that cannot perform the logical write. */
   auxiliary?: boolean;
   /**
    * Absolute base URL. Its origin and path prefix are the confinement: every
@@ -485,12 +486,24 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   const send = options.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
 
   return async function guarded(request, ctx, map) {
+    const dispatch = providerRequest(
+      ctx,
+      options.auxiliary === true || request.auxiliary === true,
+      provider,
+      request.repeatable,
+    );
     let dispatched = false;
     let response: Response | undefined;
     try {
       return await requestOnce(request, ctx, map);
     } catch (error) {
-      throw providerCallFailure(ctx, { title: provider }, error, {
+      if (
+        !response &&
+        error instanceof ConnectorCallError &&
+        ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EAI_FAIL", "EHOSTUNREACH"].includes(error.details?.code ?? "")
+      )
+        dispatch.neverConnected = true;
+      throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
         dispatched: dispatched && options.auxiliary !== true && request.auxiliary !== true,
         responded: response !== undefined,
         ...(response ? { status: response.status } : {}),
@@ -555,8 +568,11 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           }
           headers[name] = value;
         }
-        dispatched = true;
+        bindProviderRequest(init, dispatch);
+        dispatched = dispatch.dispatched = true;
         response = await send(url.toString(), init, ctx);
+        dispatch.answered = true;
+        dispatch.status = response.status;
       } catch (cause) {
         if (cause instanceof ConnectorCallError) throw cause;
         throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);

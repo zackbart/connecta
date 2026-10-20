@@ -1,3 +1,4 @@
+import { boundProviderRequest, providerRequest } from "../provider-call.js";
 import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
   AuthorizationServerMetadata,
@@ -366,15 +367,24 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    */
   const tokenEndpointFetch = async (ctx: ConnectorContext, input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
+    const dispatch = providerRequest(ctx, true, id);
     if (settings.tokenRequestHeaders.length === 0 || `${url.origin}${url.pathname}` !== settings.identity) {
       trackRemoteClientRequest(sentSecretsFor(ctx), input, init);
-      return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, redirect: "manual" }));
+      dispatch.dispatched = true;
+      const response = await sentSecretsFetch(ctx)(input, { ...init, redirect: "manual" });
+      dispatch.answered = true;
+      dispatch.status = response.status;
+      return byteReadResponse(response);
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
     for (const [, value] of settings.tokenRequestHeaders) sentSecretsFor(ctx).header(value);
     trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
-    return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" }));
+    dispatch.dispatched = true;
+    const response = await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" });
+    dispatch.answered = true;
+    dispatch.status = response.status;
+    return byteReadResponse(response);
   };
 
   /**
@@ -437,6 +447,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     input: string | URL,
     init: RequestInit = {},
   ): Promise<Response> => {
+    const dispatch = boundProviderRequest(init) ?? providerRequest(ctx, false, id);
+    dispatch.dispatched = false;
     const url = new URL(input);
     if (!settings.apiOrigins.has(url.origin)) {
       throw new ConnectorCallError(
@@ -471,12 +483,15 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       // The handler reads the answer with `.json()` or `.text()`, which read
       // bytes here: workerd quotes a text read's non-text Content-Type in
       // its own log, out of the handler's reach.
+      dispatch.dispatched = true;
       const response = await sentSecretsFetch(ctx)(url, {
         ...init,
         headers: sent,
         redirect: "manual",
         ...(signal ? { signal } : {}),
       });
+      dispatch.answered = true;
+      dispatch.status = response.status;
       return byteReadResponse(response);
     };
 

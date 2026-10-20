@@ -36,6 +36,7 @@ import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -809,11 +810,7 @@ async function adding<T>(work: () => Promise<T>, check: string): Promise<T> {
       outcome.phase !== "refused" &&
       outcome.phase !== "before-send"
     ) {
-      throw new ConnectorCallError(error.code, `${error.message} ${check}`, {
-        retryable: error.retryable,
-        ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
-        cause: error,
-      });
+      throw googleFailureMessage(error, `${error.message} ${check}`);
     }
     throw error;
   }

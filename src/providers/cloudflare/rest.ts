@@ -592,12 +592,16 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     if (owner === undefined) {
       chargeLookup(ctx);
       await chargeConnectorCall(ctx);
-      owner = await send({ method: "GET", path: `/zones/${encodeURIComponent(zone)}` }, ctx, async (response) => {
-        const body = await response.jsonResult().catch(() => ({ value: undefined }));
-        const value = "value" in body ? body.value : undefined;
-        if (!response.ok) throw failureFor(response.status, response.headers, value);
-        return text(record(record(record(value)["result"])["account"])["id"]) ?? "";
-      });
+      owner = await send(
+        { auxiliary: true, method: "GET", path: `/zones/${encodeURIComponent(zone)}` },
+        ctx,
+        async (response) => {
+          const body = await response.jsonResult().catch(() => ({ value: undefined }));
+          const value = "value" in body ? body.value : undefined;
+          if (!response.ok) throw failureFor(response.status, response.headers, value);
+          return text(record(record(record(value)["result"])["account"])["id"]) ?? "";
+        },
+      );
       if (owner) owners.set(zone, owner);
     }
     if (!owner || !pinnedAccounts?.has(owner)) pinRefusal(`Zone ${zone}`);

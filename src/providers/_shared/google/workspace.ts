@@ -51,11 +51,13 @@
  *    admitted identity to a Workspace address in `subject`. Give each pool
  *    agents use an `owner`, the address they act as there.
  */
+import { carryFailureFacts } from "../../../operator-record.js";
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
 import { callClassification } from "../../../call-classification.js";
-import { providerCallFailure, unsentAfterUnauthorized } from "../../../write-outcome.js";
+import { providerRequests } from "../../../provider-call.js";
+import { providerCallFailure, providerFailureMessage, unsentAfterUnauthorized } from "../../../write-outcome.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../../errors.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
@@ -363,6 +365,14 @@ function outcome<T>(error: T, facts: GoogleOutcome): T {
  */
 export function googleOutcomeOf(error: unknown): GoogleOutcome | undefined {
   return error !== null && typeof error === "object" ? googleOutcomes.get(error) : undefined;
+}
+
+/** Product recovery words must preserve the shared verdict and provenance. */
+export function googleFailureMessage(error: ConnectorCallError, message: string): ConnectorCallError {
+  const copy = providerFailureMessage(error, message);
+  googleReasons.set(copy, googleReasonsOf(error));
+  const facts = googleOutcomeOf(error);
+  return facts ? outcome(copy, facts) : copy;
 }
 
 function apiFailure(
@@ -728,11 +738,19 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       fallback: method === "GET" ? "read" : "write",
       repeatable: requestOptions.idempotent === true,
     });
-    if (!(decision instanceof ConnectorCallError) || decision.writeOutcome !== "unknown") return undefined;
+    const collecting = providerRequests(ctx) !== undefined;
+    if (collecting) {
+      if (!isWrite(method, ctx) || (callClassification(ctx) === undefined && requestOptions.idempotent === true))
+        return undefined;
+    } else if (!(decision instanceof ConnectorCallError) || decision.writeOutcome !== "unknown") return undefined;
     const unknown = new ConnectorCallError(
       "connector_call_failed",
       `${provider} answered HTTP ${status} after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it.`,
-      { retryable: decision.retryable, writeOutcome: decision.writeOutcome, cause: mapped },
+      {
+        retryable: collecting ? mapped.retryable : false,
+        ...(collecting ? {} : { writeOutcome: "unknown" as const }),
+        cause: mapped,
+      },
     );
     const reasons = googleReasons.get(mapped);
     if (reasons) googleReasons.set(unknown, reasons);
@@ -831,7 +849,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     ctx: ConnectorContext,
     requestOptions: GoogleRequestOptions,
   ): unknown {
-    const mapped = settledFailure(error, facts, method, ctx, requestOptions);
+    const mapped = carryFailureFacts(error, settledFailure(error, facts, method, ctx, requestOptions));
     const decision = providerCallFailure(ctx, { title: provider }, mapped, {
       dispatched: facts.dispatched,
       responded: facts.status !== undefined,
@@ -922,7 +940,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         // on the body. A caller that has left gets neither: the 401 it saw is
         // reported as it was, and no new token is minted for a request nobody
         // awaits.
-        const failed = error instanceof TokenRejected ? error.failure : error;
+        const failed = error instanceof TokenRejected ? carryFailureFacts(error, error.failure) : error;
         const unauthorized = !ctx.signal?.aborted && (error instanceof TokenRejected || facts.status === 401);
         if (!unauthorized) throw settled(failed, facts, headed.method, ctx, requestOptions);
         // Only the token this request carried; a newer one stays.

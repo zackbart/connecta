@@ -36,6 +36,7 @@ import { ConnectorCallError } from "../../errors.js";
 import type { Connector, JsonSchema } from "../../types.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -439,11 +440,7 @@ async function uncertainWrite<T>(advice: string, write: () => Promise<T>): Promi
     if (!(error instanceof ConnectorCallError) || !outcome?.dispatched || outcome.phase === "refused") {
       throw error;
     }
-    throw new ConnectorCallError(error.code, `${error.message} ${advice}`, {
-      retryable: error.retryable,
-      ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
-      cause: error,
-    });
+    throw googleFailureMessage(error, `${error.message} ${advice}`);
   }
 }
 

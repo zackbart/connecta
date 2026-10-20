@@ -31,6 +31,7 @@ import { ConnectorCallError } from "../../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -690,12 +691,7 @@ async function sendWrite(
     const outcome = writeOutcome(error);
     if (outcome === "not-sent" || outcome === "refused") throw error;
     const message = outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error));
-    throw error instanceof ConnectorCallError
-      ? new ConnectorCallError(error.code, message, {
-          retryable: error.retryable,
-          ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
-        })
-      : uncertain(message, ctx);
+    throw error instanceof ConnectorCallError ? googleFailureMessage(error, message) : uncertain(message, ctx);
   }
   if (reply.text.trim() === "") return {};
   try {
@@ -1212,13 +1208,10 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             // an explicit refusal proves the text is absent; anything else
             // sends the caller to look before appending.
             const detail = detailOf(cause);
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              ["refused", "not-sent"].includes(writeOutcome(cause))
-                ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
-                : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`,
-              { retryable: false, cause },
-            );
+            const message = ["refused", "not-sent"].includes(writeOutcome(cause))
+              ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
+              : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`;
+            throw cause instanceof ConnectorCallError ? googleFailureMessage(cause, message) : uncertain(message, ctx);
           }
         }
         return compact({

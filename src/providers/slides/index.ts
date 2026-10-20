@@ -49,6 +49,7 @@ import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -1170,11 +1171,7 @@ function afterUnknownCreate(error: unknown, lookFor: string): unknown {
   if (!(error instanceof ConnectorCallError) || !outcome?.dispatched || outcome.phase === "refused") {
     return error;
   }
-  return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, {
-    retryable: error.retryable,
-    ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
-    cause: error,
-  });
+  return googleFailureMessage(error, `${error.message} ${lookFor}`);
 }
 
 /**
@@ -1669,10 +1666,9 @@ const COMMENTS_RAW: RawLayout = {
 /** A 403 on a comment read: what it most likely means, beside Google's words. */
 function commentAccess(error: unknown): unknown {
   if (!(error instanceof ConnectorCallError) || googleOutcomeOf(error)?.status !== 403) return error;
-  return new ConnectorCallError(
-    error.code,
+  return googleFailureMessage(
+    error,
     `${error.message} Reading comments needs comment access: an account that may only view the deck cannot read them.`,
-    { retryable: error.retryable, cause: error },
   );
 }
 

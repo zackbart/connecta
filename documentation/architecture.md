@@ -1696,23 +1696,42 @@ compiling and configuring the real thing.
   resends it after a `HeaderMismatch` answer. `api()` OAuth
   (`src/auth/static-oauth.ts`), the Google Workspace client, and Infisical
   apply the same one-send rule to credential recovery. All maintained API
-  provider failure mappers run inside `guardedFetch`, which records entry to
-  fetch and any response before calling `providerCallFailure` in
-  `src/write-outcome.ts`. That helper alone decides retry advice and the
-  unknown-outcome marker, from `callClassification(ctx)` before a tool/method
-  fallback. Providers choose error codes and wording, and product recovery
-  wrappers preserve both the retry verdict and `writeOutcome`. Google uses
-  the same helper while retaining its response phases and reason codes.
+  provider failure mappers run inside `guardedFetch`. Each `api()` entry owns
+  a fresh request ledger (`src/provider-call.ts`) on its derived handler context;
+  further `deriveContext` copies share that ledger without sharing it with
+  concurrent calls. Every guarded request records dispatch, response status,
+  and provider-declared auxiliary status. Plain handler fetches and OAuth
+  resource sends record their dispatch too; OAuth credential checks precede
+  the resource dispatch record. Token exchanges, GitHub installation
+  and repository binding lookups, token minting, and Cloudflare zone-ownership
+  pin lookups are auxiliary: they cannot perform the logical resource write. A proven pre-connection failure is also
+  distinguished from a possibly executing resource request.
+  `providerCallFailure` in `src/write-outcome.ts` finalizes the call once at the
+  `api()` boundary, including handler-thrown typed errors. For a served write,
+  no resource dispatch keeps the failure's own advice. A vendor's own 4xx
+  refusal is a known failure only when no other resource request was
+  dispatched. Refusal provenance travels with the error independently of its
+  code or wording, so a generic `connector_call_failed` refusal still counts
+  as failed in program write accounting. Every other possibly executing
+  failure is non-retryable with `writeOutcome: "unknown"`; authorization codes
+  keep their handoff. The existing special handling of write 401s remains.
+  A later refusal cannot make an earlier successful request safe to repeat.
+  Provider recovery wrappers change wording through helpers that preserve
+  verdicts and provenance; Google also retains its response phases and reasons.
   A served write requires reconciliation even with an idempotency key or a
   provider's idempotent-operation hint; direct transport calls without a
-  served verdict can still prove repeatability. Token acquisition is auxiliary,
-  so a failure before any resource request remains a before-send failure.
+  served verdict can still prove repeatability.
   The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
   provider/tool in both runtimes, fails on missing provider/tool examples or a
   dispatched failure bypassing the helper, and covers served write/read
   overrides with HTTP 503 and a connection reset after send. Local metadata
   tools prove zero sends; composite calls prove each distinct request leaves
-  once. Additional tests:
+  once. The round-5 cases additionally cover Docs creation with initial text,
+  composite success followed by refusal, GitHub preflight failures, typed
+  handler errors after successful sends, Forms cursor conflicts after 200,
+  generic-code vendor refusals, auxiliary failures after resource dispatch,
+  redaction of refusal errors, and concurrent direct-call ledger isolation.
+  Additional tests:
   `test/remote-mcp-write-once.test.ts` (real SDK transport),
   `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each
   provider's `INV-9` tests.

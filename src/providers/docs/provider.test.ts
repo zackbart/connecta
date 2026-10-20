@@ -554,7 +554,7 @@ describe("editing a document", () => {
     const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
       (error) => error,
     );
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
     expect(failure.message).toContain("Created document new-1");
     expect(failure.message).toContain("add the text with append_text on new-1");
   });
@@ -899,7 +899,11 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
       (error) => error,
     );
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure).toMatchObject({
+      code: _kind === "an explicit 4xx refusal" ? "invalid_args" : "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
     expect(failure.message).toContain(`Created document new-1, but ${says}`);
     expect(failure.message).toContain(advice);
     expect(failure.message).toContain("Do not create it again");
