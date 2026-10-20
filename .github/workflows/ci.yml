@@ -21,17 +21,11 @@ jobs:
       planning: ${{ steps.paths.outputs.planning }}
       browser: ${{ steps.paths.outputs.browser }}
       security: ${{ steps.paths.outputs.security }}
-      goldens: ${{ steps.paths.outputs.goldens }}
+      goldens: ${{ steps.goldens.outputs.goldens }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - name: Decide which test, browser and dependency checks are needed
         id: paths
         env:
@@ -49,8 +43,10 @@ jobs:
               browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/paths")
               security=$(bash scripts/ci-security-paths.sh < "$RUNNER_TEMP/paths")
               # Classification failures must spend more CI, never skip the oracle.
-              goldens=$(node scripts/ci-goldens-tier.mjs < "$RUNNER_TEMP/paths") || goldens=full
-              if [[ "$goldens" != always ]]; then goldens=full; fi
+              if git diff --no-renames --diff-filter=D --quiet "$BASE_SHA...$HEAD_SHA"; then
+                goldens=$(node scripts/ci-goldens-tier.mjs --fast < "$RUNNER_TEMP/paths") || goldens=full
+                case "$goldens" in full|always|graph) ;; *) goldens=full ;; esac
+              fi
             else
               echo "Path diff failed; running every check with full goldens." >&2
             fi
@@ -64,6 +60,29 @@ jobs:
             echo "security=$security"
             echo "goldens=$goldens"
           } >> "$GITHUB_OUTPUT"
+      - if: steps.paths.outputs.goldens == 'graph'
+        uses: pnpm/action-setup@v6
+      - if: steps.paths.outputs.goldens == 'graph'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - if: steps.paths.outputs.goldens == 'graph'
+        run: pnpm install --frozen-lockfile
+      - name: Resolve provider goldens tier
+        id: goldens
+        env:
+          FIRST_PASS: ${{ steps.paths.outputs.goldens }}
+        run: |
+          goldens=full
+          if [[ "$FIRST_PASS" == graph ]]; then
+            goldens=$(node scripts/ci-goldens-tier.mjs < "$RUNNER_TEMP/paths") || goldens=full
+          elif [[ "$FIRST_PASS" == always ]]; then
+            goldens=always
+          fi
+          if [[ "$goldens" != always ]]; then goldens=full; fi
+          echo "Provider goldens tier: $goldens"
+          echo "goldens=$goldens" >> "$GITHUB_OUTPUT"
 
   # Keep every check:core check, but give both runtimes their own runner.
   # Static checks run for every change, including planning-only pull requests.

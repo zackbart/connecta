@@ -72,6 +72,15 @@ classification failures also run full. Every step-1 migration therefore runs
 full, as does every push to main. Check the `changes` log's `goldens` output
 before diagnosing an intentionally skipped repeated-capture test.
 
+The `changes` job uses the runner's Node with built-ins for a first pass.
+Main pushes, directly relevant or unknown paths, and deletions/renames select
+full immediately; docs-only PRs select always. Only existing source/test modules
+that require transitive import analysis return the internal `graph` sentinel.
+That result enables pnpm setup, Node/cache setup and install before the full
+selector runs. These setup steps should be skipped on both fast paths. Invalid
+first-pass or graph output and selector failures select full; `graph` is never
+published as the job's `goldens` output.
+
 Locally, unset/invalid `CONNECTA_GOLDENS_TIER` means full; only `always` reduces
 it. Compare both tiers without rewriting fixtures:
 `CONNECTA_GOLDENS_TIER=always pnpm exec vitest run --project workers test/goldens.test.ts test/goldens-harness.test.ts`
