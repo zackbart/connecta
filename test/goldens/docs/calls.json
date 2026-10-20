@@ -8,6 +8,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -47,6 +48,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "GET",
           "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
           "headers": {
@@ -96,6 +100,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -135,6 +140,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "GET",
           "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
           "headers": {
@@ -198,6 +206,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -237,6 +246,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents",
           "headers": {
@@ -273,6 +285,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -312,6 +325,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents",
           "headers": {
@@ -328,6 +344,10 @@
       ],
       [
         {
+          "after": [
+            0,
+            1
+          ],
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/new-1:batchUpdate",
           "headers": {
@@ -373,6 +393,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -412,6 +433,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
           "headers": {
@@ -459,6 +483,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -498,6 +523,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
           "headers": {
@@ -546,6 +574,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -585,6 +614,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
           "headers": {
@@ -655,6 +687,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -694,6 +727,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
           "headers": {
@@ -757,6 +793,7 @@
     "steps": [
       [
         {
+          "after": [],
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -796,6 +833,9 @@
       ],
       [
         {
+          "after": [
+            0
+          ],
           "method": "GET",
           "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
           "headers": {

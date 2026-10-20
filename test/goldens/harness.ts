@@ -195,6 +195,7 @@ interface RealWork {
   inFlight: number;
   /** Bumped whenever real work starts or finishes. */
   events: number;
+  violation?: Error;
 }
 
 const SUBTLE_METHODS = [
@@ -220,6 +221,7 @@ function trackRealWork(work: RealWork): Array<{ mockRestore(): void }> {
     [crypto.subtle, SUBTLE_METHODS],
     [Request.prototype, BODY_METHODS],
     [Response.prototype, BODY_METHODS],
+    [Blob.prototype, BODY_METHODS],
     [ReadableStreamDefaultReader.prototype, ["read"]],
   ];
   return owners.flatMap(([owner, names]) =>
@@ -250,7 +252,13 @@ function trackRealWork(work: RealWork): Array<{ mockRestore(): void }> {
  * call never moves another call's ids, states, verifiers, or timers.
  */
 function deterministic(): { real: RealWork; restart(): void; restore(): void } {
-  const fakeClock = () => vi.useFakeTimers({ now: GOLDEN_NOW, toFake: FAKED_TIMERS });
+  // Effect captures this function object when its module loads. Faking only
+  // process.hrtime would leave that object's bigint() reading the real clock.
+  const hrtime = (globalThis as { process?: { hrtime?: typeof process.hrtime } }).process?.hrtime;
+  const nanos =
+    hrtime && vi.spyOn(hrtime, "bigint").mockImplementation(() => BigInt(Date.now() - GOLDEN_NOW) * 1_000_000n);
+  const fakeClock = () =>
+    vi.useFakeTimers({ now: GOLDEN_NOW, toFake: [...FAKED_TIMERS!, ...(hrtime ? ["hrtime" as const] : [])] });
   fakeClock();
   let uuid = 0;
   const randomUUID = vi
@@ -268,12 +276,41 @@ function deterministic(): { real: RealWork; restart(): void; restore(): void } {
   const random = vi.spyOn(Math, "random").mockImplementation(() => (seed = (seed * 9301 + 49297) % 233280) / 233280);
   const real: RealWork = { inFlight: 0, events: 0 };
   const tracked = trackRealWork(real);
+  const unsupported = (source: string): never => {
+    real.violation = new Error(
+      `Unsupported asynchronous source: ${source}; register and count it in the golden harness before capturing it`,
+    );
+    throw real.violation;
+  };
+  // These native producers bypass reader.read() and the fake clock. Even a
+  // fast completion must fail, rather than accidentally blessing one schedule.
+  const globals = globalThis as unknown as Record<string, Method>;
+  for (const name of [
+    "CompressionStream",
+    "DecompressionStream",
+    "WebSocket",
+    "Worker",
+    "XMLHttpRequest",
+    "EventSource",
+  ]) {
+    if (typeof globals[name] === "function") {
+      tracked.push(
+        vi.spyOn(globals, name).mockImplementation(function () {
+          return unsupported(name);
+        }),
+      );
+    }
+  }
+  const scheduler = (globalThis as { scheduler?: Record<string, Method> }).scheduler;
+  if (scheduler?.wait)
+    tracked.push(vi.spyOn(scheduler, "wait").mockImplementation(() => unsupported("scheduler.wait")));
   return {
     real,
     restart() {
       uuid = 0;
       byte = 0;
       seed = 0;
+      delete real.violation;
       // A fresh clock: no timer from an earlier scenario survives into this one.
       fakeClock();
     },
@@ -283,6 +320,7 @@ function deterministic(): { real: RealWork; restart(): void; restore(): void } {
       random.mockRestore();
       for (const spy of tracked) spy.mockRestore();
       vi.useRealTimers();
+      nanos?.mockRestore();
     },
   };
 }
@@ -371,6 +409,8 @@ function timeoutFailure(): Error {
 interface Recorded {
   request: SeenRequest;
   auxiliary?: string;
+  /** Zero-based indices in flattened steps whose answers were delivered at send time. */
+  after: number[];
 }
 
 /** One causal step: every request sent before any of them was answered, in canonical order. */
@@ -404,21 +444,14 @@ async function microtasks(count: number): Promise<void> {
   for (let left = count; left > 0; left--) await Promise.resolve();
 }
 
-/**
- * Delays each request before the fake network sees it, the way a provider's
- * own work does: microtasks, a timer due now, and real Web Crypto work, in a
- * seeded mix. None of them may move a request to another step.
- */
-function jittered(send: typeof fetch, jitter: Jitter): typeof fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    for (let left = jitter.below(4); left > 0; left--) {
-      const kind = jitter.below(3);
-      if (kind === 0) await microtasks(jitter.below(8));
-      else if (kind === 1) await new Promise((resolve) => setTimeout(resolve, 0));
-      else await crypto.subtle.digest("SHA-256", new Uint8Array(8));
-    }
-    return send(input, init);
-  }) as typeof fetch;
+/** Supported scheduling noise, counted from the provider's call to fetch. */
+async function networkJitter(jitter: Jitter): Promise<void> {
+  for (let left = jitter.below(4); left > 0; left--) {
+    const kind = jitter.below(3);
+    if (kind === 0) await microtasks(jitter.below(8));
+    else if (kind === 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    else await crypto.subtle.digest("SHA-256", new Uint8Array(8));
+  }
 }
 
 /** Real event-loop turns with no progress and no real work in flight before a step is answered. */
@@ -435,6 +468,7 @@ interface Waiting {
   key: string;
   /** The order requests reached the network, which only orders requests identical in `key`. */
   sent: number;
+  after: number[];
   resolve(response: Response): void;
   reject(error: Error): void;
 }
@@ -456,66 +490,101 @@ interface Network {
 }
 
 /**
- * The fake network and the step loop that drives a scenario. It lets the
- * provider run until nothing can progress without an answer or a timer:
- * microtasks drained, due timers fired, no request still being built, and no
- * real work in flight. The requests then waiting are one step, sent before
- * any of them was answered. The loop records the step and answers it in
- * canonical order (method, URL, headers, body), then runs again. When no
- * request waits but the work has not finished, it advances the virtual clock
- * to the next timer. The network answers in zero virtual time, so a request
- * sent after a provider's own delay lands in a later step than the requests
- * before the delay, and concurrent requests share a step whatever order they
- * arrive in. `jitter` delays requests before and after they reach the
- * network and answers a step in shuffled order, none of which may change a
- * golden.
+ * Run to quiescence, record newly waiting requests in canonical order, then
+ * release ONE answer and run to quiescence again. Earlier recorded requests
+ * keep release priority over newly sent ones. `after` snapshots the delivered
+ * answers at fetch entry, before harness jitter, not after body inspection.
+ * Thus A || B; await A; C differs from A || B; await B; C, even though both
+ * have step sizes [2, 1]. A step is an admission cohort, not a release batch.
  */
 function installNetwork(capture: Capture): Network {
   const { spec, seam, jitter, real } = capture;
   const realFetch = globalThis.fetch;
   let issued = 0;
   let arrived = 0;
+  let delivered: number[] = [];
   let waiting: Waiting[] = [];
+  const pending = new Set<Waiting>();
   const fake = (async (input: unknown, init?: RequestInit) => {
     const sent = issued++;
+    const after = [...delivered];
     let request: SeenRequest;
     try {
-      if (jitter) for (let left = jitter.below(3); left > 0; left--) await realTurn();
+      if (jitter) {
+        await networkJitter(jitter);
+        for (let left = jitter.below(3); left > 0; left--) await realTurn();
+      }
       request = await seen(input, init);
     } finally {
       arrived++;
     }
     const { method, url, headers, body } = request;
     const key = JSON.stringify([method, url.href, headers, body ?? null]);
-    return new Promise<Response>((resolve, reject) => waiting.push({ request, key, sent, resolve, reject }));
+    return new Promise<Response>((resolve, reject) => {
+      const waiter: Waiting = {
+        request,
+        key,
+        sent,
+        after,
+        resolve(response) {
+          pending.delete(waiter);
+          resolve(response);
+        },
+        reject(error) {
+          pending.delete(waiter);
+          reject(error);
+        },
+      };
+      pending.add(waiter);
+      waiting.push(waiter);
+    });
   }) as typeof fetch;
-  const entry = jitter ? jittered(fake, jitter) : fake;
-  globalThis.fetch = seam ? seam(entry) : entry;
+  globalThis.fetch = seam ? seam(fake) : fake;
 
   async function drive<T>(work: () => Promise<T>, answer?: Answer): Promise<Driven<T>> {
     const steps: Step[] = [];
+    const releases: Array<{ index: number; release(): void }> = [];
+    delivered = [];
     const began = Date.now();
     let index = 0;
+    let recorded = 0;
     const state: { outcome?: { ok: true; value: T } | { ok: false; error: unknown } } = {};
     void (async () => work())().then(
       (value) => (state.outcome = { ok: true, value }),
       (error: unknown) => (state.outcome = { ok: false, error }),
     );
+    const progress = () => [issued, arrived, real.events, vi.getTimerCount(), state.outcome ? 1 : 0].join();
+    const assertSupported = () => {
+      if (real.violation) throw real.violation;
+    };
     const settle = async (turns: number) => {
       let last = "";
       for (let quiet = 0, changes = 0; quiet < turns;) {
-        // Synchronously, so a zero-delay timer set by a microtask stays due
-        // now: one set inside a timer callback is due a millisecond later.
+        // Synchronous: 0 ms timers created by microtasks stay due now.
         vi.advanceTimersByTime(0);
         await realTurn();
-        const now = [issued, arrived, real.events, vi.getTimerCount(), state.outcome ? 1 : 0].join();
+        const now = progress();
         if (now !== last && ++changes > MAX_SETTLE_CHANGES)
           throw new Error(`${spec.provider}: a call never stopped working`);
         quiet = now === last && issued === arrived && real.inFlight === 0 ? quiet + 1 : 0;
         last = now;
       }
+      assertSupported();
     };
-    const answerStep = async () => {
+    const auditQuiescence = async () => {
+      const quiet = progress();
+      // No answer, clock tick, or other harness stimulus here. Any progress
+      // contradicts the supported-source model; never record it as a step.
+      for (let turn = 0; turn < STEP_QUIET_TURNS; turn++) {
+        await realTurn();
+        assertSupported();
+        if (progress() !== quiet)
+          throw new Error(
+            `${spec.provider}: progress after declared quiescence without a released answer or clock tick; likely unsupported asynchronous source (native stream, scheduler.wait, or uncounted host I/O)`,
+          );
+      }
+    };
+    const admit = () => {
       const batch = waiting.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.sent - b.sent));
       waiting = [];
       if (!answer) {
@@ -524,49 +593,82 @@ function installNetwork(capture: Capture): Network {
       }
       const step: Step = [];
       steps.push(step);
-      const releases = batch.map((waiter) => {
-        const { request } = waiter;
+      let previous: { key: string; reply: string } | undefined;
+      for (const waiter of batch) {
+        const { request, after } = waiter;
+        const requestIndex = recorded++;
         const route = spec.auxiliary?.find((candidate) => candidate.match(request));
-        if (route) {
-          step.push({ request, auxiliary: route.name });
-          const response = respond(typeof route.reply === "function" ? route.reply(request) : route.reply);
-          return () => waiter.resolve(response);
+        step.push({ request, after, ...(route ? { auxiliary: route.name } : {}) });
+        const reply = route
+          ? typeof route.reply === "function"
+            ? route.reply(request)
+            : route.reply
+          : answer(request, index++);
+        const response = typeof reply === "string" ? undefined : respond(reply);
+        const replyKey =
+          typeof reply === "string"
+            ? reply
+            : JSON.stringify([
+                response!.status,
+                [...response!.headers],
+                response!.body === null
+                  ? null
+                  : (reply.text ?? (reply.body === undefined ? "{}" : JSON.stringify(reply.body))),
+              ]);
+        if (previous?.key === waiter.key && previous.reply !== replyKey) {
+          throw new Error(
+            `${spec.provider}: fixture authoring error: indistinguishable concurrent requests (${request.method} ${request.url.href}) have distinct queued replies; use a provider-controlled request discriminator or identical replies`,
+          );
         }
-        step.push({ request });
-        const reply = answer(request, index++);
-        if (reply === "network") return () => waiter.reject(networkFailure());
-        if (reply === "timeout") return () => waiter.reject(timeoutFailure());
-        const response = respond(reply);
-        return () => waiter.resolve(response);
-      });
-      if (!jitter) {
-        for (const release of releases) release();
-        return;
-      }
-      for (let left = releases.length; left > 0; left--) {
-        const [release] = releases.splice(jitter.below(left), 1);
-        release!();
-        await microtasks(jitter.below(4));
+        previous = { key: waiter.key, reply: replyKey! };
+        releases.push({
+          index: requestIndex,
+          release: () => {
+            if (reply === "network") waiter.reject(networkFailure());
+            else if (reply === "timeout") waiter.reject(timeoutFailure());
+            else waiter.resolve(response!);
+          },
+        });
       }
     };
-    for (let advances = 0; ;) {
-      await settle(STEP_QUIET_TURNS);
-      if (waiting.length > 0) {
-        await answerStep();
-        continue;
+    try {
+      for (let advances = 0; ;) {
+        await settle(STEP_QUIET_TURNS);
+        await auditQuiescence();
+        if (waiting.length > 0) admit();
+        const next = releases.shift();
+        if (next) {
+          delivered.push(next.index);
+          next.release();
+          continue;
+        }
+        if (state.outcome) break;
+        await settle(CLOCK_QUIET_TURNS);
+        await auditQuiescence();
+        if (waiting.length > 0 || state.outcome) continue;
+        if (vi.getTimerCount() === 0) {
+          throw new Error(
+            `${spec.provider}: unsupported asynchronous source: a call waits on something that is neither a request, counted Web Crypto/body read, nor a fake timer (likely native stream, scheduler.wait, or uncounted host I/O)`,
+          );
+        }
+        if (++advances > MAX_CLOCK_ADVANCES) throw new Error(`${spec.provider}: a call kept waiting on timers`);
+        await vi.advanceTimersToNextTimerAsync();
       }
-      if (state.outcome) break;
-      await settle(CLOCK_QUIET_TURNS);
-      if (waiting.length > 0 || state.outcome) continue;
-      if (vi.getTimerCount() === 0) {
-        throw new Error(`${spec.provider}: a call waits on something that is neither a request nor a timer`);
+      const outcome = state.outcome!;
+      if (!outcome.ok) throw outcome.error;
+      return { value: outcome.value, steps, waitedMs: Date.now() - began };
+    } catch (error) {
+      // An invalid capture can still have concurrent fake requests in flight.
+      // Drain/cancel them under this capture's fakes, never the next one's.
+      for (let turn = 0; turn < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight > 0; turn++) {
+        for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
+        waiting = [];
+        vi.advanceTimersByTime(0);
+        await realTurn();
+        if (turn > MAX_SETTLE_CHANGES) break;
       }
-      if (++advances > MAX_CLOCK_ADVANCES) throw new Error(`${spec.provider}: a call kept waiting on timers`);
-      await vi.advanceTimersToNextTimerAsync();
+      throw error;
     }
-    const outcome = state.outcome!;
-    if (!outcome.ok) throw outcome.error;
-    return { value: outcome.value, steps, waitedMs: Date.now() - began };
   }
 
   return {
@@ -645,6 +747,7 @@ function decodeJwts(value: unknown): unknown {
 function requestRecord(entry: Recorded): unknown {
   const { request } = entry;
   return decodeJwts({
+    after: entry.after,
     ...(entry.auxiliary ? { auxiliary: entry.auxiliary } : {}),
     method: request.method,
     url: request.url.href,

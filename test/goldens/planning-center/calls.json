@@ -18,6 +18,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/publishing/v2/episodes?where%5Btitle%5D=Easter&per_page=5",
           "headers": {
@@ -62,6 +63,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/campuses",
           "headers": {
@@ -113,6 +115,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/giving/v2/batches",
           "headers": {
@@ -162,6 +165,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "DELETE",
           "url": "https://api.planningcenteronline.com/people/v2/emails/101",
           "headers": {
@@ -188,6 +192,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/me?include=organization",
           "headers": {
@@ -229,6 +234,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/people?where%5Bsearch_name_or_email_or_phone_number%5D=alice&where%5Bstatus%5D=active&where%5Bupdated_at%5D%5Bgte%5D=2026-01-01&order=-updated_at&include=emails%2Cphone_numbers&per_page=1",
           "headers": {
@@ -276,6 +282,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
           "headers": {
@@ -367,6 +374,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/people",
           "headers": {
@@ -422,6 +430,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "PATCH",
           "url": "https://api.planningcenteronline.com/people/v2/people/9",
           "headers": {
@@ -475,6 +484,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/people/9/emails",
           "headers": {
@@ -521,6 +531,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/people/9/phone_numbers",
           "headers": {
@@ -566,6 +577,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/lists?where%5Bname%5D=Volunteers%25&order=name&per_page=25",
           "headers": {
@@ -610,6 +622,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/lists/3/people?include=emails%2Cphone_numbers&per_page=25",
           "headers": {
@@ -657,6 +670,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/lists/3/run",
           "headers": {
@@ -684,6 +698,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/workflows?filter=not_archived&include=steps&per_page=25",
           "headers": {
@@ -742,6 +757,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/workflows/5/cards?where%5Bstage%5D=ready&where%5Boverdue%5D=true&include=person%2Ccurrent_step&per_page=25",
           "headers": {
@@ -792,6 +808,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/workflows/5/cards",
           "headers": {
@@ -843,6 +860,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/people/7/workflow_cards/88/snooze",
           "headers": {
@@ -885,6 +903,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/people/7/workflow_cards/88/promote",
           "headers": {
@@ -917,6 +936,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/people/7/workflow_cards/88/notes",
           "headers": {
@@ -958,6 +978,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/people/7/notes?order=-created_at&include=category&per_page=25",
           "headers": {
@@ -1004,6 +1025,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/people/v2/people/7/notes",
           "headers": {
@@ -1051,6 +1073,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/people/7/field_data?include=field_definition&per_page=25",
           "headers": {
@@ -1091,6 +1114,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/forms?filter=not_archived&per_page=25",
           "headers": {
@@ -1135,6 +1159,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/people/v2/forms/4/form_submissions?where%5Bcreated_at%5D%5Bgte%5D=2026-01-01&order=-created_at&include=form_submission_values%2Cform_fields%2Cperson&per_page=25",
           "headers": {
@@ -1183,6 +1208,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/service_types?order=sequence&per_page=25",
           "headers": {
@@ -1224,6 +1250,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans?filter=future&order=sort_date&per_page=25",
           "headers": {
@@ -1270,6 +1297,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/items?per_page=100",
           "headers": {
@@ -1280,6 +1308,7 @@
           }
         },
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/team_members?include=team&per_page=100",
           "headers": {
@@ -1290,6 +1319,7 @@
           }
         },
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20?include=plan_times",
           "headers": {
@@ -1370,6 +1400,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/service_types/10/teams?include=team_positions&per_page=25",
           "headers": {
@@ -1419,6 +1450,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/people/7/schedules?filter=future&order=starts_at&per_page=25",
           "headers": {
@@ -1468,6 +1500,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/team_members",
           "headers": {
@@ -1522,6 +1555,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/items",
           "headers": {
@@ -1573,6 +1607,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/songs?where%5Btitle%5D=Amazing%25&order=title&per_page=25",
           "headers": {
@@ -1616,6 +1651,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/services/v2/songs/30/arrangements?include=keys&per_page=25",
           "headers": {
@@ -1672,6 +1708,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/groups/v2/groups?where%5Bname%5D=Young%25&where%5Barchive_status%5D=include&per_page=25",
           "headers": {
@@ -1717,6 +1754,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/groups/v2/groups/8/memberships?where%5Brole%5D=leader&include=person&per_page=25",
           "headers": {
@@ -1760,6 +1798,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.planningcenteronline.com/groups/v2/groups/8/memberships?include=person",
           "headers": {
@@ -1807,6 +1846,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/groups/v2/groups/8/events?where%5Bstarts_at%5D%5Bgte%5D=2026-01-01&where%5Bstarts_at%5D%5Blt%5D=2026-02-01&filter=not_canceled&order=starts_at&per_page=25",
           "headers": {
@@ -1849,6 +1889,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/check-ins/v2/events?filter=not_archived&per_page=25",
           "headers": {
@@ -1890,6 +1931,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/check-ins/v2/events/2/event_periods?where%5Bstarts_at%5D%5Bgte%5D=2025-12-01&order=-starts_at&per_page=25",
           "headers": {
@@ -1937,6 +1979,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/check-ins/v2/events/2/check_ins?where%5Bevent_period%5D%5Bstarts_at%5D%5Bgte%5D=2025-12-28&where%5Bevent_period%5D%5Bstarts_at%5D%5Blt%5D=2025-12-29&filter=guest&per_page=25",
           "headers": {
@@ -1985,6 +2028,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/calendar/v2/event_instances?where%5Bstarts_at%5D%5Bgte%5D=2026-01-01&where%5Bstarts_at%5D%5Blt%5D=2026-01-08&order=starts_at&per_page=25",
           "headers": {
@@ -2029,6 +2073,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/registrations/v2/signups?filter=unarchived&per_page=25",
           "headers": {
@@ -2076,6 +2121,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/registrations/v2/signups/1801/attendees?filter=active&include=person&per_page=25",
           "headers": {
@@ -2122,6 +2168,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/giving/v2/donations?where%5Breceived_at%5D%5Bgte%5D=2025-12-01&where%5Bfund_id%5D=61&filter=succeeded&order=-received_at&include=designations%2Cdesignations.fund&per_page=25",
           "headers": {
@@ -2183,6 +2230,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/giving/v2/people/7/donations?order=-received_at&include=designations%2Cdesignations.fund&per_page=1&offset=1",
           "headers": {
@@ -2235,6 +2283,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/giving/v2/funds?per_page=25",
           "headers": {
@@ -2277,6 +2326,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/giving/v2/batches?filter=committed&order=-updated_at&per_page=25",
           "headers": {
@@ -2320,6 +2370,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/giving/v2/pledge_campaigns?order=-starts_at&per_page=25",
           "headers": {
@@ -2364,6 +2415,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/giving/v2/pledge_campaigns/2001/pledges?per_page=25",
           "headers": {
@@ -2406,6 +2458,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/giving/v2/recurring_donations?where%5Bstatus%5D=active&include=designations%2Cdesignations.fund&per_page=25",
           "headers": {
@@ -2455,6 +2508,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/webhooks/v2/webhook_subscriptions?per_page=25",
           "headers": {
@@ -2497,6 +2551,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.planningcenteronline.com/publishing/v2/episodes/71",
           "headers": {

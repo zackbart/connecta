@@ -1,6 +1,7 @@
 [
   [
     {
+      "after": [],
       "auxiliary": "token",
       "method": "POST",
       "url": "https://api.ccbchurch.com/oauth/token",

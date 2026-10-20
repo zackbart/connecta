@@ -9,6 +9,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -31,6 +32,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -64,6 +66,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -89,6 +92,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -111,6 +115,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -133,6 +138,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -155,6 +161,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -178,6 +185,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -200,6 +208,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -233,6 +242,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -259,6 +269,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
               "headers": {
@@ -306,6 +317,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -342,6 +354,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -390,6 +403,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -429,6 +443,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -465,6 +480,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -501,6 +517,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -537,6 +554,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -574,6 +592,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -610,6 +629,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -658,6 +678,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {
@@ -698,6 +719,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
               "headers": {

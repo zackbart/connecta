@@ -9,6 +9,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -48,6 +49,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -71,6 +75,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -110,6 +115,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -120,6 +128,10 @@
           ],
           [
             {
+              "after": [
+                0,
+                1
+              ],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -159,6 +171,11 @@
           ],
           [
             {
+              "after": [
+                0,
+                1,
+                2
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -193,6 +210,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -232,6 +250,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -258,6 +279,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -297,6 +319,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -320,6 +345,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -359,6 +385,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -382,6 +411,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -421,6 +451,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -444,6 +477,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -483,6 +517,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -507,6 +544,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -546,6 +584,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -569,6 +610,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -608,6 +650,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -618,6 +663,10 @@
           ],
           [
             {
+              "after": [
+                0,
+                1
+              ],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -657,6 +706,11 @@
           ],
           [
             {
+              "after": [
+                0,
+                1,
+                2
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -691,6 +745,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -730,6 +785,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -757,6 +815,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -796,6 +855,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://forms.googleapis.com/v1/forms/form-1",
               "headers": {
@@ -836,6 +898,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -875,6 +938,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -916,6 +982,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -955,6 +1022,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -983,6 +1053,10 @@
           ],
           [
             {
+              "after": [
+                0,
+                1
+              ],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1022,6 +1096,11 @@
           ],
           [
             {
+              "after": [
+                0,
+                1,
+                2
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1075,6 +1154,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1114,6 +1194,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1158,6 +1241,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1197,6 +1281,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1238,6 +1325,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1277,6 +1365,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1318,6 +1409,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1357,6 +1449,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1398,6 +1493,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1437,6 +1533,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1479,6 +1578,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1518,6 +1618,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1559,6 +1662,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1598,6 +1702,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1626,6 +1733,10 @@
           ],
           [
             {
+              "after": [
+                0,
+                1
+              ],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1665,6 +1776,11 @@
           ],
           [
             {
+              "after": [
+                0,
+                1,
+                2
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1718,6 +1834,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1757,6 +1874,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {
@@ -1798,6 +1918,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1837,6 +1958,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
               "headers": {

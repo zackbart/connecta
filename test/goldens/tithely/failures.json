@@ -9,6 +9,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -32,6 +33,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -66,6 +68,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -92,6 +95,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -115,6 +119,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -138,6 +143,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -161,6 +167,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -185,6 +192,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -208,6 +216,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -242,6 +251,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -269,6 +279,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "GET",
               "url": "https://tithe.ly/api/v1/charges/ch_1",
               "headers": {
@@ -314,6 +325,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -346,6 +358,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -390,6 +403,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -425,6 +439,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -457,6 +472,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -489,6 +505,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -521,6 +538,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -554,6 +572,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -586,6 +605,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -630,6 +650,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {
@@ -666,6 +687,7 @@
         "steps": [
           [
             {
+              "after": [],
               "method": "POST",
               "url": "https://tithe.ly/api/v1/charges",
               "headers": {

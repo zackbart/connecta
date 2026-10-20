@@ -106,6 +106,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records?type=A&per_page=2",
           "headers": {
@@ -150,6 +151,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "PATCH",
           "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
           "headers": {
@@ -186,6 +188,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.cloudflare.com/client/v4/user/tokens/verify",
           "headers": {
@@ -215,6 +218,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.cloudflare.com/client/v4/accounts?page=1&per_page=5",
           "headers": {
@@ -251,6 +255,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.cloudflare.com/client/v4/zones?page=1&per_page=20&name=example.com&status=active&account.id=0123456789abcdef0123456789abcdef",
           "headers": {
@@ -298,6 +303,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.cloudflare.com/client/v4/graphql",
           "headers": {
@@ -364,6 +370,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "PUT",
           "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/workers/scripts/hello",
           "headers": {
@@ -421,6 +428,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "PUT",
           "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/r2/buckets/b1/objects/logs%2F2026%2Fa.txt",
           "headers": {
@@ -454,6 +462,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
           "headers": {

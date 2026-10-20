@@ -9,6 +9,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -48,6 +49,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -71,6 +75,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -110,6 +115,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -120,6 +128,10 @@
           ],
           [
             {
+              "after": [
+                0,
+                1
+              ],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -159,6 +171,11 @@
           ],
           [
             {
+              "after": [
+                0,
+                1,
+                2
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -193,6 +210,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -232,6 +250,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -258,6 +279,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -297,6 +319,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -320,6 +345,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -359,6 +385,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -382,6 +411,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -421,6 +451,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -444,6 +477,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -483,6 +517,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -507,6 +544,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -546,6 +584,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -569,6 +610,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -608,6 +650,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -618,6 +663,10 @@
           ],
           [
             {
+              "after": [
+                0,
+                1
+              ],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -657,6 +706,11 @@
           ],
           [
             {
+              "after": [
+                0,
+                1,
+                2
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -691,6 +745,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -730,6 +785,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -757,6 +815,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -796,6 +855,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "GET",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
               "headers": {
@@ -838,6 +900,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -877,6 +940,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -908,6 +974,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -947,6 +1014,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -965,6 +1035,10 @@
           ],
           [
             {
+              "after": [
+                0,
+                1
+              ],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1004,6 +1078,11 @@
           ],
           [
             {
+              "after": [
+                0,
+                1,
+                2
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1047,6 +1126,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1086,6 +1166,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1120,6 +1203,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1159,6 +1243,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1190,6 +1277,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1229,6 +1317,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1260,6 +1351,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1299,6 +1391,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1330,6 +1425,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1369,6 +1465,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1401,6 +1500,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1440,6 +1540,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1471,6 +1574,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1510,6 +1614,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1528,6 +1635,10 @@
           ],
           [
             {
+              "after": [
+                0,
+                1
+              ],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1567,6 +1678,11 @@
           ],
           [
             {
+              "after": [
+                0,
+                1,
+                2
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1610,6 +1726,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1649,6 +1766,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {
@@ -1680,6 +1800,7 @@
         "steps": [
           [
             {
+              "after": [],
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1719,6 +1840,9 @@
           ],
           [
             {
+              "after": [
+                0
+              ],
               "method": "POST",
               "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
               "headers": {

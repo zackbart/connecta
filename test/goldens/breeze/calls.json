@@ -14,6 +14,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
           "headers": {
@@ -52,6 +53,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/people?filter_json=%7B%22tag_contains%22%3A%22y_9%22%7D",
           "headers": {
@@ -90,6 +92,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/giving/delete?payment_id=56789123",
           "headers": {
@@ -118,6 +121,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/account/summary",
           "headers": {
@@ -154,6 +158,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/people?details=0&filter_json=%7B%222000138015%22%3A%22226-227%22%2C%22tag_contains%22%3A%22y_16681%22%7D&limit=2&offset=40",
           "headers": {
@@ -198,6 +203,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/people?details=1&limit=100&offset=0",
           "headers": {
@@ -235,6 +241,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
           "headers": {
@@ -279,6 +286,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/profile",
           "headers": {
@@ -324,6 +332,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/tags/list_tags?folder_id=77",
           "headers": {
@@ -359,6 +368,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/events?start=2025-03-01&end=2025-03-31&category_id=1553&limit=1",
           "headers": {
@@ -393,6 +403,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/events/calendars/list",
           "headers": {
@@ -426,6 +437,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/events/attendance/list?instance_id=3778451&type=person&details=true",
           "headers": {
@@ -458,6 +470,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/forms/list_forms?is_archived=0",
           "headers": {
@@ -492,6 +505,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/forms/list_form_fields?form_id=15326",
           "headers": {
@@ -536,6 +550,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/forms/list_form_entries?form_id=15326&details=1",
           "headers": {
@@ -571,6 +586,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/volunteers/list?instance_id=123456",
           "headers": {
@@ -613,6 +629,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/volunteers/list_roles?instance_id=123456&show_quantity=1",
           "headers": {
@@ -648,6 +665,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/account/list_log?action=person_updated&start=2025-08-01&details=1&limit=1",
           "headers": {
@@ -692,6 +710,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/giving/list?start=2022-01-01&end=2022-06-30&fund_ids=28-29&batches=144",
           "headers": {
@@ -745,6 +764,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/funds/list",
           "headers": {
@@ -788,6 +808,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket&fields_json=%5B%7B%22field_id%22%3A%221508481877%22%2C%22field_type%22%3A%22email%22%2C%22response%22%3Atrue%2C%22details%22%3A%7B%22address%22%3A%22jiminy%40example.com%22%7D%7D%5D",
           "headers": {
@@ -824,6 +845,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/people/update?person_id=12345678&fields_json=%5B%7B%22field_id%22%3A%222000138811%22%2C%22field_type%22%3A%22radio%22%2C%22response%22%3A%22459%22%7D%5D",
           "headers": {
@@ -853,6 +875,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/tags/assign?person_id=157857&tag_id=16681",
           "headers": {
@@ -880,6 +903,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/tags/unassign?person_id=157857&tag_id=16681",
           "headers": {
@@ -907,6 +931,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/events/attendance/add?person_id=157857&instance_id=40984&direction=in",
           "headers": {
@@ -933,6 +958,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://gracechurch.breezechms.com/api/people/157857",
           "headers": {

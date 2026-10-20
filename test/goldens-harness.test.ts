@@ -4,11 +4,15 @@
 // or waits on its own timer; spies weaken sent-secret redaction. See the
 // contributor section of documentation/architecture.md.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Clock, Effect } from "effect";
+import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import {
   captureCall,
   captureGoldens,
   goldenFiles,
+  GOLDEN_NOW,
+  type Replies,
   LEAK_PREFIX_UNITS,
   leakedSecret,
   secretEncodings,
@@ -27,7 +31,7 @@ const storedInfisicalCalls = stored["./goldens/infisical/calls.json"]!;
 
 interface Row {
   label: string;
-  steps: Array<Array<{ url: string }>>;
+  steps: Array<Array<{ url: string; after: number[] }>>;
   waitedMs?: number;
   result: unknown;
 }
@@ -35,6 +39,28 @@ interface Row {
 const rowOf = (calls: string, label: string) => (JSON.parse(calls) as Row[]).find((row) => row.label === label)!;
 /** How many requests each causal step of a call held. */
 const stepSizes = (row: Row) => row.steps.map((step) => step.length);
+const requestsOnly = (row: Row) => row.steps.flat().map(({ after: _after, ...request }) => request);
+
+/** Minimal provider for causal and host-API probes; uses the same invocation path. */
+function probeSpec(work: () => Promise<unknown>, replies?: Replies): GoldenSpec {
+  const tools = [
+    {
+      name: "probe",
+      description: "Harness probe",
+      inputSchema: { type: "object" },
+      annotations: { readOnlyHint: true },
+    },
+  ];
+  return {
+    ...infisical,
+    provider: "probe",
+    auxiliary: [],
+    create: () => ({ id: "probe", kind: "api", staticTools: tools, listTools: async () => tools, callTool: work }),
+    calls: [{ tool: "probe", ...(replies ? { replies } : {}) }],
+  };
+}
+
+const hostSchedule = globalThis.setImmediate?.bind(globalThis) ?? globalThis.setTimeout.bind(globalThis);
 
 const LOGIN = "/api/v1/auth/universal-auth/login";
 const CREATE_SECRET = "/api/v4/secrets/API_KEY";
@@ -201,18 +227,165 @@ describe("characterization golden harness", () => {
     expect(early).not.toBe(baseline);
     expect(stepSizes(JSON.parse(baseline) as Row)).toEqual([1, 1]);
     expect(stepSizes(JSON.parse(early) as Row)).toEqual([2]);
-    expect(JSON.parse(early).steps.flat()).toEqual(JSON.parse(baseline).steps.flat());
+    expect(requestsOnly(JSON.parse(early) as Row)).toEqual(requestsOnly(JSON.parse(baseline) as Row));
   });
 
   it("records a duplicated write, and whether its copies were sent together or in turn", async () => {
-    const baseline = (await captureGoldens(infisical)).calls!;
-    const together = (await captureGoldens(infisical, { seam: writeTwiceAtOnce })).calls!;
-    const inTurn = (await captureGoldens(infisical, { seam: writeTwiceInTurn })).calls!;
+    // A duplicate must receive the same answer: distinct replies for identical
+    // concurrent requests are an authoring error, tested separately below.
+    const call = infisical.calls.find((candidate) => candidate.tool === "create_secret")!;
+    const reply = (call.replies as StubResponse[])[0]!;
+    const spec = { ...infisical, calls: [{ ...call, replies: () => reply }] };
+    const baseline = await captureCall(spec, "create_secret");
+    const together = await captureCall(spec, "create_secret", { seam: writeTwiceAtOnce });
+    const inTurn = await captureCall(spec, "create_secret", { seam: writeTwiceInTurn });
     expect(together).not.toBe(baseline);
     expect(inTurn).not.toBe(baseline);
     expect(together).not.toBe(inTurn);
-    expect(stepSizes(rowOf(together, "create_secret"))).toEqual([1, 2]);
-    expect(stepSizes(rowOf(inTurn, "create_secret"))).toEqual([1, 1, 1]);
+    expect(stepSizes(JSON.parse(together) as Row)).toEqual([1, 2]);
+    expect(stepSizes(JSON.parse(inTurn) as Row)).toEqual([1, 1, 1]);
+  });
+
+  it("records partial dependencies: C awaiting A differs from C awaiting B, including a 0 ms timer", async () => {
+    for (const timer of [false, true]) {
+      const captures = new Map<string, string>();
+      for (const dependency of ["a", "b"]) {
+        const spec = probeSpec(async () => {
+          const a = fetch("https://probe.example/a");
+          const b = fetch("https://probe.example/b");
+          await (dependency === "a" ? a : b);
+          if (timer) await new Promise((resolve) => setTimeout(resolve, 0));
+          await fetch("https://probe.example/c");
+          await Promise.all([a, b]);
+          return "done";
+        });
+        const rows = new Set<string>();
+        for (const jitter of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) rows.add(await captureCall(spec, "probe", { jitter }));
+        expect(rows.size).toBe(1);
+        const capture = [...rows][0]!;
+        const row = JSON.parse(capture) as Row;
+        expect(stepSizes(row)).toEqual([2, 1]);
+        expect(row.steps.flat().map((request) => request.after)).toEqual([[], [], dependency === "a" ? [0] : [0, 1]]);
+        captures.set(dependency, capture);
+      }
+      expect(captures.get("a")).not.toBe(captures.get("b"));
+    }
+  });
+
+  it("rejects distinct queued replies for indistinguishable concurrent requests", async () => {
+    const work = async () =>
+      Promise.all(
+        [fetch("https://probe.example/same"), fetch("https://probe.example/same")].map(async (response) =>
+          (await response).text(),
+        ),
+      );
+    for (const replies of [
+      [{ text: "first" }, { text: "second" }],
+      [{ body: null }, {}],
+      [{ status: 201 }, { status: 202 }],
+      [{ headers: { "x-probe": "first" } }, { headers: { "x-probe": "second" } }],
+    ]) {
+      for (const jitter of [1, 2, 3, 4, 5, 6]) {
+        await expect(captureCall(probeSpec(work, replies), "probe", { jitter })).rejects.toThrow(
+          /fixture authoring error: indistinguishable concurrent requests.*distinct queued replies/,
+        );
+      }
+    }
+    // Identical replies are unambiguous, including duplicated writes.
+    const a = await captureCall(probeSpec(work, [{ text: "same" }, { text: "same" }]), "probe", { jitter: 1 });
+    const b = await captureCall(probeSpec(work, [{ text: "same" }, { text: "same" }]), "probe", { jitter: 2 });
+    expect(a).toBe(b);
+    expect((JSON.parse(a) as Row).result).toMatchObject({ ok: true, value: ["same", "same"] });
+  });
+
+  it("fails loudly for native CompressionStream async iteration before a Planning Center request", async () => {
+    const compressedItems: FetchSeam = (send) => async (input, init) => {
+      if (new URL(urlOf(input)).pathname.endsWith("/items")) {
+        const stream = new Blob(["probe"]).stream().pipeThrough(new CompressionStream("gzip"));
+        for await (const _chunk of stream) {
+          /* native work bypasses reader.read() */
+        }
+      }
+      return send(input, init);
+    };
+    for (const jitter of [1, 2, 3, 4, 5, 6]) {
+      await expect(captureCall(planningCenter, "get_plan", { seam: compressedItems, jitter })).rejects.toThrow(
+        /Unsupported asynchronous source: CompressionStream/,
+      );
+    }
+  });
+
+  it("rejects scheduler.wait instead of mistaking native waiting for a fake timer", async () => {
+    const scheduler = (globalThis as { scheduler?: { wait(ms: number): Promise<void> } }).scheduler;
+    if (!scheduler) return; // Workers-only API; the same suite runs on both projects.
+    await expect(
+      captureCall(
+        probeSpec(async () => {
+          await scheduler.wait(0);
+          return "done";
+        }),
+        "probe",
+      ),
+    ).rejects.toThrow(/Unsupported asynchronous source: scheduler.wait/);
+  });
+
+  it("fails if an uncounted host callback sends a request or settles the call after declared quiescence", async () => {
+    // Escape the model deliberately via a saved real scheduler. Four turns
+    // finish after settling's quiet turns but during the no-stimulus audit.
+    for (const request of [true, false]) {
+      const spec = probeSpec(async () => {
+        for (let turn = 0; turn < 4; turn++) await new Promise<void>((resolve) => hostSchedule(resolve));
+        if (request) await fetch("https://probe.example/late");
+        return "done";
+      });
+      await expect(captureCall(spec, "probe")).rejects.toThrow(
+        /progress after declared quiescence.*likely unsupported asynchronous source/,
+      );
+    }
+  });
+
+  it("supports queueMicrotask, counted Blob reads, and synchronous TextDecoderStream pipelines", async () => {
+    const spec = probeSpec(async () => {
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      const text = await new Blob(["body"]).text();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(text));
+          controller.close();
+        },
+      }).pipeThrough(new TextDecoderStream());
+      let decoded = "";
+      for await (const chunk of stream) decoded += chunk;
+      await fetch("https://probe.example/supported");
+      return decoded;
+    });
+    const a = await captureCall(spec, "probe", { jitter: 1 });
+    expect(a).toBe(await captureCall(spec, "probe", { jitter: 2 }));
+    expect((JSON.parse(a) as Row).result).toMatchObject({ ok: true, value: "body" });
+  });
+
+  it("controls Effect nanoseconds and its scheduler across captures on the virtual clock", async () => {
+    const spec = probeSpec(async () => {
+      const before = await runEdge(Clock.currentTimeNanos);
+      const monotonicBefore = await runEdge(Clock.monotonicTimeNanos);
+      await runEdge(Effect.sleep(5));
+      return {
+        before: String(before),
+        after: String(await runEdge(Clock.currentTimeNanos)),
+        elapsed: String((await runEdge(Clock.monotonicTimeNanos)) - monotonicBefore),
+      };
+    });
+    const rows = [];
+    for (const jitter of [1, 2, 3]) rows.push(await captureCall(spec, "probe", { jitter }));
+    expect(new Set(rows).size).toBe(1);
+    expect((JSON.parse(rows[0]!) as Row).result).toMatchObject({
+      ok: true,
+      value: {
+        before: String(BigInt(GOLDEN_NOW) * 1_000_000n),
+        after: String(BigInt(GOLDEN_NOW + 5) * 1_000_000n),
+        elapsed: "5000000",
+      },
+    });
   });
 
   // Planning Center's get_plan sends three requests at once. A provider timer
@@ -347,7 +520,7 @@ describe("characterization golden harness", () => {
 
   // Two captures in one process, each with a different seed delaying requests
   // before and after they reach the network (microtasks, timers due now, real
-  // Web Crypto and event-loop turns) and answering each step in shuffled
+  // Web Crypto and event-loop turns) and releasing one answer at a time in canonical
   // order: neither an earlier capture's caches nor scheduling may move a byte.
   for (const spec of specs) {
     it(`${spec.provider}: repeated captures with scheduling jitter match the stored goldens`, async () => {

@@ -83,6 +83,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.vercel.com/v7/deployments?projectId=web&limit=2&teamId=team_default",
           "headers": {
@@ -130,6 +131,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "PATCH",
           "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
           "headers": {
@@ -168,6 +170,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.vercel.com/v2/teams?limit=5",
           "headers": {
@@ -208,6 +211,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.vercel.com/v10/projects/web%20app/env?gitBranch=main&decrypt=false&teamId=team_default",
           "headers": {
@@ -252,6 +256,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.vercel.com/v10/projects/web/env?upsert=false",
           "headers": {
@@ -300,6 +305,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "PATCH",
           "url": "https://api.vercel.com/v9/projects/web/env/env_2?teamId=team_default",
           "headers": {
@@ -345,6 +351,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "DELETE",
           "url": "https://api.vercel.com/v9/projects/web/env/env_2?teamId=team_default",
           "headers": {
@@ -374,6 +381,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.vercel.com/v3/deployments/dpl_1/events?direction=backward&limit=50&follow=0&teamId=team_default",
           "headers": {
@@ -421,6 +429,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.vercel.com/v1/projects/web/deployments/dpl_1/runtime-logs?teamId=team_default",
           "headers": {
@@ -459,6 +468,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "POST",
           "url": "https://api.vercel.com/v2/files?teamId=team_default",
           "headers": {
@@ -492,6 +502,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "PUT",
           "url": "https://api.vercel.com/v8/artifacts/abc123?teamId=team_default",
           "headers": {
@@ -526,6 +537,7 @@
     "steps": [
       [
         {
+          "after": [],
           "method": "GET",
           "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
           "headers": {

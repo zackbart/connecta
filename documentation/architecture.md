@@ -1323,25 +1323,51 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   with the runtime's boundary as `<boundary>`. A JSON body is recorded as
   `json` alone only when it is exactly that value's compact serialization;
   any other spacing, key order, or escape also keeps the exact `text`.
-- A step loop drives each scenario under fake timers. It runs the provider
-  until nothing can progress without an answer or a timer: microtasks
-  drained, due timers fired, and no request or real work (Web Crypto, body
-  reads) in flight. The requests then waiting are one step, all sent before
-  any was answered. The loop records the step, answers it in canonical order
-  (method, URL, headers, body; identical requests in the order sent), and
-  runs again. With no request waiting and the work unfinished, it advances
-  the virtual clock to the next timer. A row records `steps`, an array of
-  steps each holding its requests, so a write sent with its login differs
-  from one sent after the login's answer, and a request sent twice at once
-  differs from one sent twice in turn.
-- The network answers in zero virtual time. Concurrent requests share a step
-  whatever order they arrive in. A request sent after a provider's own
-  timer (a delay or backoff) lands in a later step, and the row records
-  `waitedMs`, the virtual time the call waited on timers, when it is not
-  zero. Elapsed-time readings, such as a timeout's `elapsedMs`, count only
-  those timers. A timer of 0 ms set outside a timer callback is due at
-  once, so it leaves its request in the current step. A timer set when the
-  call has already finished never fires.
+- A step loop drives each scenario under fake timers. It drains microtasks,
+  fires timers due now synchronously, and waits for request construction and
+  counted real work to finish. Newly waiting requests form one step, sorted
+  by method, URL, headers, and exact body. The loop releases **one answer at
+  a time**, running to quiescence after each. Previously recorded requests
+  keep release priority over new requests. Steps remain readable admission
+  cohorts; they are not batches of simultaneous answers.
+- Every request records `after`: all earlier request indices whose answers
+  had been delivered when the provider called fetch, before harness jitter
+  or body inspection. Indices are zero-based in flattened `steps`, including
+  auxiliary requests, and reset for each setup or invocation. For concurrent
+  A and B, C sent after awaiting A records `[0]`; awaiting B instead records
+  `[0, 1]`, since A's canonical answer was delivered first. Both have step
+  sizes `[2, 1]`, but different frontiers. A write sent before login and a
+  write duplicated concurrently or sequentially also differ.
+- Distinct queued replies for indistinguishable concurrent requests are a
+  fixture authoring error: the harness rejects them with a diagnostic. Use
+  identical replies or a request discriminator the provider controls. The
+  arrival order of identical requests cannot assign distinct responses.
+- The supported asynchronous model is explicit: fake fetch answers; fake
+  timeout, interval and immediate timers; Web Crypto's promise-returning
+  subtle methods; Request/Response/Blob body reads (`arrayBuffer`, `blob`,
+  `bytes`, `formData`, `json`, `text`, where present); default stream-reader
+  `read`; and promises/`queueMicrotask` chains rooted in those sources or
+  synchronous work. Effect's scheduler and sleeps use the same microtasks
+  and fake timers. A synchronous TextDecoderStream pipeline is supported.
+  New host asynchronous sources must be registered and counted before use.
+  Native CompressionStream/DecompressionStream, `scheduler.wait`, and
+  native socket/worker/event-source constructors are rejected explicitly,
+  including when their errors are swallowed by a provider. CompressionStream
+  async iteration bypasses the reader-method spy and cannot establish
+  quiescence. No golden may silently bless that path.
+- A no-stimulus audit follows declared quiescence: request, counted-work,
+  timer, or call-settlement progress before an answer or clock tick fails
+  with an unsupported-source diagnostic. Waiting without a request, counted
+  work, or fake timer also fails. This detects violations of the model;
+  it is not permission to use an unregistered host source that happens to
+  finish during a quiet window. Invalid captures cancel and drain their
+  concurrent fake requests before restoring the globals.
+- The network answers in zero virtual time. Before advancing to the next
+  timer, the loop requires eight quiet real event-loop turns and an audit.
+  A row records nonzero `waitedMs`, the virtual time spent on provider
+  timers. Elapsed-time readings count only those timers. A timer of 0 ms
+  set outside a timer callback is due at once and stays in the current
+  cohort; a timer set after the call finishes never fires.
 - Auxiliary routes answer token exchanges and other requests that are not
   the tool's own, and are recorded by name with headers and body. A JWT in a
   header or field is recorded as its decoded header and claims, with
@@ -1349,11 +1375,14 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
 - `setup` runs before each scenario; its requests must be identical in
   every scenario and are recorded once.
 - Determinism: a fresh fake clock per scenario (timers, `Date`, and
-  `performance`, starting at 2026-01-02T03:04:05Z), counted
+  `performance`, and Node `process.hrtime`/`hrtime.bigint`, starting at
+  2026-01-02T03:04:05Z), counted
   `crypto.randomUUID`, and fixed `crypto.getRandomValues` and `Math.random`,
   all restarted per scenario. `create(scenario)` receives a slug unique in
   the process: the scenario name plus a per-capture suffix the goldens never
-  show, so a process-wide cache (Google's delegated tokens) never carries
+  show. The original hrtime function object captured by Effect is also
+  stubbed, so Effect wall and monotonic nanoseconds follow the virtual clock.
+  A process-wide cache (Google's delegated tokens) never carries
   over from an earlier scenario or capture.
 - Secrets: every credential field and secret becomes `<secret:field>`, with
   HTTP Basic shown decoded. Before that placeholdering, the harness fails
@@ -1393,8 +1422,11 @@ and against PEM framing. A Planning Center request delayed by its
 provider's own 0, 1, 5, or 50 ms timer must give one capture under seven
 schedules. It also captures every spec twice in one process with seeded
 scheduling jitter (requests delayed by microtasks, timers due now, and real
-work before and after they reach the network; each step answered in
-shuffled order) and compares both with the stored goldens.
+work before request inspection; answers released individually in canonical
+order) with committed seeds 1 and 2 and compares every file for every spec
+with the stored goldens. Partial-dependency mutations run under ten seeds,
+and unsupported-source, ambiguous-reply, and cross-capture nanosecond probes
+run on both projects.
 `pnpm run goldens:update [provider...]` rewrites the named goldens (all
 when none are named) on Node; it is not part of `check`. A PR
 that changes agent-facing output on purpose regenerates the affected goldens
