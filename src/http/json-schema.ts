@@ -10,7 +10,11 @@
 // - `additionalProperties: true` is the default and is dropped. Inputs are
 //   closed (`onExcessProperty: "error"`), and their root always names
 //   `required`, as every hand-written input does.
-// - An integer's implicit safe-integer bounds are dropped; declared ones stay.
+// - Nothing the decoder enforces is dropped. `Schema.Int` refuses integers
+//   past 2^53 and says so (`minimum`/`maximum`); catalogs have always meant
+//   any whole number, so kit Schemas use `Integer` below, which decodes and
+//   renders exactly that.
+// - An array's own keywords (`maxItems`, `description`) come before `items`.
 // - `anyOf` over primitive branches with disjoint types, each constrained only
 //   by keywords that apply to its own type, becomes one `type` array. JSON
 //   Schema applies `minLength` only to strings and `minimum` only to numbers,
@@ -31,6 +35,18 @@ const OWN_KEYWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   boolean: new Set(),
   null: new Set(),
 };
+
+/**
+ * A whole number, as JSON Schema's `type: integer` and api()'s validator mean
+ * it: finite, with no safe-integer bound. Use it, not `Schema.Int`, wherever a
+ * catalog or a request encodes an integer.
+ */
+export const Integer = Schema.Finite.check(
+  Schema.makeFilter((value: number) => Number.isInteger(value), {
+    expected: "an integer",
+    toJsonSchema: () => ({ type: "integer" }),
+  }),
+);
 
 /** Render a Schema as catalog JSON Schema. Throws on a schema that needs `$defs`. */
 export function catalogSchema(schema: Schema.Top, mode: "input" | "output"): JsonSchema {
@@ -61,8 +77,6 @@ function normalize(value: unknown): unknown {
   const out: Node = {};
   for (const [key, child] of Object.entries(node)) {
     if (key === "additionalProperties" && child === true) continue;
-    if (node["type"] === "integer" && key === "minimum" && child === -Number.MAX_SAFE_INTEGER) continue;
-    if (node["type"] === "integer" && key === "maximum" && child === Number.MAX_SAFE_INTEGER) continue;
     if (key === "properties") {
       out[key] = Object.fromEntries(Object.entries(child as Node).map(([name, schema]) => [name, normalize(schema)]));
       continue;
@@ -75,6 +89,11 @@ function normalize(value: unknown): unknown {
       continue;
     }
     out[key] = key === "items" || key === "additionalProperties" ? normalize(child) : child;
+  }
+  // Hand-written catalogs spell an array's own keywords before its `items`.
+  if ("items" in out) {
+    const { items, ...rest } = out;
+    return { ...rest, items };
   }
   return out;
 }

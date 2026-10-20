@@ -1,10 +1,13 @@
-// Decision 0010's proof on real code: Tithe.ly's get_charge and list_charges
-// rebuilt on the Effect provider kit must be indistinguishable from index.ts —
-// the same catalog bytes, the same requests on the wire, and the same mapped
-// results and failures, sent-secret redaction included.
+// Decision 0010's proof on real code: Tithe.ly's get_charge, list_charges, and
+// tithely_api_mutate rebuilt on the Effect provider kit must be
+// indistinguishable from index.ts — the same catalog bytes, the same requests
+// on the wire, and the same mapped results and failures, sent-secret
+// redaction included — except where a recorded decision changes them: A.2's
+// write outcomes and sensitive fields, and decision 0010's 401 rule.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiConnector } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
+import { attachServedClassification } from "../../http/services.js";
 import { manifest } from "../../http/vendor.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
@@ -87,7 +90,9 @@ function context(values: Record<string, string> | null = KEYS, signal?: AbortSig
 }
 
 const current = (): Connector => tithely("giving", { purpose: "Weekly giving reports", environment: "live" });
-const kit = (): Connector => apiConnector("giving", { tools: kitTools(TITHELY_API_BASE_URLS.live, 25) });
+// index.ts predates A.2's sensitiveFields, so parity runs with the fields returned.
+const kit = (sensitiveFields: "drop" | "return" = "return"): Connector =>
+  apiConnector("giving", { tools: kitTools(TITHELY_API_BASE_URLS.live, 25, sensitiveFields) });
 
 /** Everything an agent or an operator record could observe about one call. */
 function observed(outcome: { value: unknown } | { error: unknown }): unknown {
@@ -148,6 +153,8 @@ const FULL_CHARGE = {
   payment_method: { pm_id: "pm_9", last_4_digits: "4242", brand: "Visa", pm_type: "card", account_id: "user_jane" },
 };
 
+const MUTATE = { method: "POST", path: "/charges", form: [{ name: "account_id", value: "user_jane" }] };
+
 const ROWS = [1, 2, 3].map((n) => ({
   charge_id: `ch_${n}`,
   charge_status: "charged",
@@ -164,7 +171,7 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
   it("INV-1: renders byte-identical catalog entries, classification included", async () => {
     const before = await current().listTools(context());
     const after = await kit().listTools(context());
-    for (const name of ["list_charges", "get_charge"]) {
+    for (const name of ["list_charges", "get_charge", "tithely_api_mutate"]) {
       const old = before.find((tool) => tool.name === name);
       const now = after.find((tool) => tool.name === name);
       expect(JSON.stringify(now), name).toBe(JSON.stringify(old));
@@ -325,6 +332,51 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
       args: { chargeId: "ch_1" },
       responses: [{ status: 400, body: { reason: `header was ${BASIC}` } }],
     },
+    {
+      // Past 2^53: the catalog and today's handler accept it, so the kit's decoder must too.
+      name: "an integer past the safe range",
+      tool: "list_charges",
+      args: { accountId: "u", createdAfter: 9007199254740992 },
+      responses: [{ body: { data: [] } }],
+    },
+    { name: "a form write", tool: "tithely_api_mutate", args: MUTATE, responses: [{ body: { status: "success" } }] },
+    {
+      name: "a write with a query and no form",
+      tool: "tithely_api_mutate",
+      args: { method: "DELETE", path: "/payment-methods/pm_1", query: [{ name: "account_id", value: "user_1" }] },
+      responses: [{ text: "" }],
+    },
+    ...[400, 403, 404, 409, 422].map((code) => ({
+      name: `a write answered ${code}`,
+      tool: "tithely_api_mutate",
+      args: MUTATE,
+      responses: [{ status: code, body: { status: "fail", reason: `Golden ${code} failure` } }],
+    })),
+    {
+      name: "a write answered 429",
+      tool: "tithely_api_mutate",
+      args: MUTATE,
+      responses: [{ status: 429, body: {}, headers: { "Retry-After": "2" } }],
+    },
+    {
+      name: "a write refused in-band",
+      tool: "tithely_api_mutate",
+      args: MUTATE,
+      responses: [{ body: { status: "fail", reason: "There was a problem using that payment method." } }],
+    },
+    {
+      // fetch refused to connect: nothing left, so the outage stays retryable.
+      name: "a write whose connection was refused",
+      tool: "tithely_api_mutate",
+      args: MUTATE,
+      responses: [{ reject: Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }) }],
+    },
+    {
+      name: "a write path escaping the base",
+      tool: "tithely_api_mutate",
+      args: { method: "POST", path: "/../v2/charges" },
+      responses: [],
+    },
   ];
 
   it.each(cases)(
@@ -380,6 +432,108 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     // Today's transport wraps the reason as an `unavailable` cause; the kit
     // rethrows the reason itself, as runEdge does at every other edge.
     expect(outcomes).toEqual([true, "reason"]);
+  });
+
+  it("INV-9: reports a dispatched write's unknown outcome where index.ts advertised a retry or a refusal (A.2, decision 0010)", async () => {
+    const unknown = (message: string) => ({
+      name: "ConnectorCallError",
+      code: "connector_call_failed",
+      message,
+      retryable: false,
+      retryAfterMs: undefined,
+      details: undefined,
+    });
+    const deliberate: Array<{ responses: Stub[]; was: string; now: ReturnType<typeof unknown> }> = [
+      {
+        // Decision 0010 (Q8): Tithe.ly documents no check of its keys before acting.
+        responses: [{ status: 401, body: { status: "fail", reason: "Bad keys" } }],
+        was: "auth_required",
+        now: unknown(
+          "Tithe.ly: Bad keys Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection. The write was sent before Tithe.ly rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
+        ),
+      },
+      {
+        // A.2: a 5xx after the write left.
+        responses: [{ status: 500, body: { reason: "Boom" } }],
+        was: "unavailable",
+        now: unknown(
+          "Tithe.ly: Boom Tithe.ly is failing upstream. Whether the write took effect at Tithe.ly is unknown: it carried no idempotency key, so check the target before repeating it.",
+        ),
+      },
+      {
+        // A.2: the connection broke after it was made.
+        responses: [{ reject: Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }) }],
+        was: "unavailable",
+        now: unknown(
+          "Could not reach the Tithe.ly API. Whether the write took effect at Tithe.ly is unknown: it carried no idempotency key, so check the target before repeating it.",
+        ),
+      },
+    ];
+    for (const { responses, was, now } of deliberate) {
+      const { before, after } = await both("tithely_api_mutate", MUTATE, responses);
+      expect(after.sent).toEqual(before.sent);
+      expect(after.sent).toHaveLength(1);
+      expect((before.result as { code: string }).code).toBe(was);
+      expect(after.result).toEqual(now);
+    }
+  });
+
+  it("INV-5: drops the sensitive fields from raw reads and hatch replies unless deployment code returns them (A.2)", async () => {
+    const reply = { status: "success", object: FULL_CHARGE };
+    for (const [tool, args] of [
+      ["get_charge", { chargeId: "ch_7", raw: true }],
+      ["tithely_api_mutate", MUTATE],
+    ] as const) {
+      const dropped = await run(kit("drop"), tool, args, [{ body: reply }], context());
+      expect(JSON.stringify(dropped.result), tool).not.toMatch(/TEST BANK|5\/23\/1985/);
+      expect(JSON.stringify(dropped.result), tool).toContain("Grace Church");
+      const returned = await run(kit("return"), tool, args, [{ body: reply }], context());
+      expect(JSON.stringify(returned.result), tool).toMatch(/TEST BANK/);
+    }
+  });
+
+  it("INV-1 INV-9: obeys the classification the deployment serves, not the builder's", async () => {
+    // get_charge is built as a read; served as a write, its 5xx is an unknown outcome.
+    const asWrite = context();
+    attachServedClassification(asWrite, "write");
+    const read = await run(kit(), "get_charge", { chargeId: "ch_1" }, [{ status: 503, body: {} }], asWrite);
+    expect(read.result).toMatchObject({ code: "connector_call_failed", retryable: false });
+    // tithely_api_mutate is built as a write; served as a read, its 5xx stays retryable.
+    const asRead = context();
+    attachServedClassification(asRead, "read");
+    const write = await run(kit(), "tithely_api_mutate", MUTATE, [{ status: 503, body: {} }], asRead);
+    expect(write.result).toMatchObject({ code: "unavailable", retryable: true });
+  });
+
+  it("INV-7 INV-9: a caller who leaves while a write's 401 is still being read gets the write's unknown outcome", async () => {
+    const controller = new AbortController();
+    let reading!: () => void;
+    const reached = new Promise<void>((resolve) => (reading = resolve));
+    globalThis.fetch = vi.fn(
+      async () =>
+        // The status is in; the body is pulled only once read, and never finishes.
+        new Response(
+          new ReadableStream(
+            {
+              pull: () => {
+                reading();
+                return new Promise(() => {});
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+          { status: 401 },
+        ),
+    ) as unknown as typeof fetch;
+    const pending = kit().callTool("tithely_api_mutate", MUTATE, context(KEYS, controller.signal));
+    await reached;
+    controller.abort(new Error("caller left"));
+    const error = await pending.then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect((error as Error).message).toContain("whether it took effect is unknown");
   });
 
   it("derives the endpoint manifest drift checks read from the same declaration", () => {

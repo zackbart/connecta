@@ -1,7 +1,9 @@
 // Prototype for decision 0010, not wired into the live provider: Tithe.ly's
-// get_charge and list_charges on the Effect provider kit (src/http/). Its
-// suite compares both tools' catalog entries, outgoing requests, and mapped
-// results with index.ts. B.5 replaces index.ts with this shape.
+// get_charge, list_charges, and tithely_api_mutate on the Effect provider kit
+// (src/http/). Its suite compares the tools' catalog entries, outgoing
+// requests, and mapped results with index.ts, and names each deliberate
+// difference (A.2's write outcomes and sensitive fields, decision 0010's 401
+// rule). B.5 replaces index.ts with this shape.
 //
 // Sections marked "unchanged" are index.ts's projection and argument code,
 // copied verbatim because index.ts does not export them. B.5 moves them; it
@@ -13,10 +15,12 @@ import { defined } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { guardedClient } from "../../http/client.js";
 import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
+import { Integer } from "../../http/json-schema.js";
 import { Cursor, lookahead, PageInfo } from "../../http/paging.js";
+import { resultSafety } from "../../http/safety.js";
 import { Credentials } from "../../http/services.js";
-import { json, read } from "../../http/tools.js";
-import { connect, get, vendor, type Send } from "../../http/vendor.js";
+import { read, write } from "../../http/tools.js";
+import { connect, get, vendor, type Connection } from "../../http/vendor.js";
 import type { ConnectorCredentialValues } from "../../types.js";
 
 // --- Vendor --------------------------------------------------------------------
@@ -37,9 +41,9 @@ const listCharges = get("listCharges", "/charges-list", {
   query: {
     organization_id: Schema.optionalKey(Schema.String),
     account_id: Schema.optionalKey(Schema.String),
-    created_after: Schema.optionalKey(Schema.Int),
-    created_before: Schema.optionalKey(Schema.Int),
-    limit: Schema.Int,
+    created_after: Schema.optionalKey(Integer),
+    created_before: Schema.optionalKey(Integer),
+    limit: Integer,
     order_by: Schema.Literals(["DESC", "ASC"]),
     starting_after: Schema.optionalKey(Schema.String),
   },
@@ -50,6 +54,9 @@ export const TithelyApi = vendor("Tithe.ly", getCharge, listCharges);
 
 const TITHELY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGE_SIZE = 99;
+
+/** A.2's privacy projection: an organization's payout bank and legal contact. */
+const TITHELY_SENSITIVE_FIELDS: readonly string[] = ["bank", "legal"];
 
 const authenticate = Effect.gen(function* () {
   const values = yield* (yield* Credentials).values.pipe(Effect.mapError((error) => new Refusal({ error })));
@@ -67,10 +74,16 @@ const authenticate = Effect.gen(function* () {
   return { Authorization: `Basic ${btoa(`${pair.publicKey}:${pair.privateKey}`)}` };
 });
 
-/** What Tithe.ly's statuses mean. It documents none, so each rule says what it cannot know. */
+/**
+ * What Tithe.ly's statuses mean. It documents none, so each rule says what it
+ * cannot know, its error bodies carry no machine-readable code, and nothing
+ * documents that it checks keys before acting: a write answered 401 has an
+ * unknown outcome.
+ */
 const errors: VendorErrors = {
   provider: "Tithe.ly",
-  detail: detailFor,
+  facts: () => ({}),
+  detail: ({ body, status }) => detailFor(body, status),
   unreadable: "Tithe.ly returned a successful response that is not JSON.",
   statuses: {
     401: ({ detail }) =>
@@ -107,14 +120,35 @@ const errors: VendorErrors = {
   },
 };
 
-/** A 2xx JSON body that is not an in-band refusal. */
-const answer = (response: Parameters<typeof json>[0]) =>
-  Effect.flatMap(json(response), (payload) => {
-    const refused = inBandFailure(payload);
-    return refused ? Effect.fail(new Refusal({ error: refused })) : Effect.succeed(payload);
-  });
-
 const failed = (error: ConnectorCallError) => Effect.fail(new Refusal({ error }));
+
+/** One connection: the guarded transport, the status table, and the value-safety boundary. */
+function tithelyConnection(baseUrl: string, sensitiveFields: "drop" | "return"): Connection {
+  return connect(
+    TithelyApi,
+    guardedClient({
+      provider: "Tithe.ly",
+      baseUrl,
+      headers: { Accept: "application/json" },
+      maxResponseBytes: TITHELY_MAX_RESPONSE_BYTES,
+      authenticate,
+    }),
+    {
+      errors,
+      safety: resultSafety({
+        review:
+          "Tithe.ly's API returns no credential or stored secret; its sensitive fields are personal data, dropped below.",
+        sensitiveFields: { names: TITHELY_SENSITIVE_FIELDS, choice: sensitiveFields },
+      }),
+      // A 2xx JSON body that is not an in-band refusal. Tithe.ly withholds
+      // nothing, so its own reason may be quoted.
+      result: (body) => {
+        const refused = inBandFailure(body);
+        return refused ? failed(refused) : Effect.succeed(body);
+      },
+    },
+  );
+}
 
 // --- Schemas ---------------------------------------------------------------------
 
@@ -123,10 +157,10 @@ const Raw = Schema.Boolean.annotate({
   description: "Return Tithe.ly's untouched records instead of the lean projection.",
 });
 const Text = Schema.optionalKey(Schema.String);
-const Cents = Schema.optionalKey(Schema.Int);
+const Cents = Schema.optionalKey(Integer);
 const Flag = Schema.optionalKey(Schema.Boolean);
 const When = Schema.Union([
-  Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  Integer.check(Schema.isGreaterThanOrEqualTo(0)),
   Schema.String.check(Schema.isMinLength(1)),
 ]);
 
@@ -153,21 +187,74 @@ const Charge = Schema.Struct({
   paymentMethod: Schema.optionalKey(Schema.Struct({ type: Text, brand: Text, last4: Text })),
 });
 
+const Pairs = (description: string, value: string) =>
+  Schema.Array(
+    Schema.Struct({
+      name: Schema.String.check(Schema.isMinLength(1)).annotate({
+        description: "Tithe.ly's snake_case parameter name.",
+      }),
+      value: Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]).annotate({ description: value }),
+    }),
+  )
+    .check(Schema.isMaxLength(50))
+    .annotate({ description });
+
 // --- Tools -----------------------------------------------------------------------
 
-export function kitTools(baseUrl: string, defaultPageSize: number): ApiTool[] {
-  const send: Send = connect(
-    TithelyApi,
-    guardedClient({
-      provider: "Tithe.ly",
-      baseUrl,
-      headers: { Accept: "application/json" },
-      maxResponseBytes: TITHELY_MAX_RESPONSE_BYTES,
-      authenticate,
-    }),
-  );
+export function kitTools(
+  baseUrl: string,
+  defaultPageSize: number,
+  sensitiveFields: "drop" | "return" = "drop",
+): ApiTool[] {
+  const connection = tithelyConnection(baseUrl, sensitiveFields);
+  const { send } = connection;
   return [
-    read(errors, {
+    write(connection, {
+      name: "tithely_api_mutate",
+      description:
+        "Send a form-encoded Tithe.ly v1 POST or DELETE: charges, refunds, recurring gifts, payment methods, accounts. Moves money or donor payment state; always approval-gated.",
+      destructive: true,
+      input: Schema.Struct({
+        method: Schema.Literals(["POST", "DELETE"]).annotate({
+          description:
+            "POST creates, updates, charges, or refunds; DELETE cancels a recurring gift or removes a payment method.",
+        }),
+        path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)).annotate({
+          description:
+            "Path below /api/v1 beginning with '/', such as /charges-list or /refunds/ch_123. No query string.",
+        }),
+        query: Schema.optionalKey(
+          Pairs(
+            "Query parameters as name/value pairs, e.g. account_id.",
+            "Parameter value; stringified once by the transport.",
+          ),
+        ),
+        form: Schema.optionalKey(
+          Pairs(
+            "Form fields as name/value pairs, sent form-encoded as Tithe.ly's documented examples send them. Amounts are integer cents.",
+            "Field value; stringified once by the transport.",
+          ),
+        ),
+      }),
+      output: Schema.Struct({
+        // Effect drops a value annotation on Unknown; a key annotation renders.
+        result: Schema.Unknown.pipe(
+          Schema.annotateKey({ description: "Tithe.ly's untouched response body, or null when empty." }),
+        ),
+      }),
+      run: (args) =>
+        connection
+          .sendPath({
+            method: args.method,
+            path: args.path,
+            // Tithe.ly has no operation index: its safety is per provider, not per operation.
+            template: args.path,
+            query: pairs(args.query),
+            form: pairs(args.form),
+          })
+          .pipe(Effect.map(({ data }) => ({ result: data ?? null }))),
+    }),
+    read(connection, {
       name: "list_charges",
       description:
         "List gifts (charges) to one organization or from one donor, optionally within a created-date range, with gross, net, and fees in cents.",
@@ -188,7 +275,7 @@ export function kitTools(baseUrl: string, defaultPageSize: number): ApiTool[] {
           When.annotate({ description: "Only charges created before this time, in the same forms as createdAfter." }),
         ),
         limit: Schema.optionalKey(
-          Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_PAGE_SIZE })).annotate({
+          Integer.check(Schema.isBetween({ minimum: 1, maximum: MAX_PAGE_SIZE })).annotate({
             description: `Rows per page, 1 to ${MAX_PAGE_SIZE} (Tithe.ly allows 100; connecta asks for one extra to compute hasMore). Defaults to ${defaultPageSize}.`,
           }),
         ),
@@ -238,7 +325,7 @@ export function kitTools(baseUrl: string, defaultPageSize: number): ApiTool[] {
                   order_by: args.order === "asc" ? "ASC" : "DESC",
                   ...defined({ starting_after: args.cursor }),
                 },
-              }).pipe(Effect.flatMap(answer), Effect.flatMap(listRows)),
+              }).pipe(Effect.flatMap(({ data }) => listRows(data))),
           });
           // The cast is the finding: `raw` returns rows the declared output
           // does not describe, and the kit's types refuse it (decision 0010).
@@ -248,7 +335,7 @@ export function kitTools(baseUrl: string, defaultPageSize: number): ApiTool[] {
           };
         }),
     }),
-    read(errors, {
+    read(connection, {
       name: "get_charge",
       description:
         "Get one charge with amounts in cents, fund, deposit date, donor name and email, and payment-method brand and last four.",
@@ -259,9 +346,8 @@ export function kitTools(baseUrl: string, defaultPageSize: number): ApiTool[] {
       output: Charge,
       run: (args) =>
         send(getCharge, { params: { chargeId: args.chargeId } }).pipe(
-          Effect.flatMap(answer),
-          Effect.map((payload) => {
-            const record = entity(payload, "charge_id");
+          Effect.map(({ data }) => {
+            const record = entity(data, "charge_id");
             return args.raw === true ? record : projectCharge(record);
           }),
         ),
@@ -296,6 +382,10 @@ function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function compact<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
@@ -307,6 +397,19 @@ function text(value: unknown): string | undefined {
 interface KeyPair {
   publicKey: string;
   privateKey: string;
+}
+
+function pairs(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const row of asArray(value)) {
+    const pair = asRecord(row);
+    if (typeof pair["name"] !== "string") continue;
+    const item = pair["value"];
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+      out[pair["name"]] = String(item);
+    }
+  }
+  return out;
 }
 
 function keyPairProblem(values: ConnectorCredentialValues | null): string | KeyPair {

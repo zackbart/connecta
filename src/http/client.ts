@@ -17,8 +17,23 @@ import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Url from "effect/http/Url";
-import { RedirectRefused, RequestRefused, ResponseTooLarge, TransportFailure, type HttpFailure } from "./errors.js";
-import { Dispatches, Secrets, Signal, type CallServices } from "./services.js";
+import {
+  RedirectRefused,
+  RequestRefused,
+  ResponseTooLarge,
+  TransportFailure,
+  neverConnected,
+  type HttpFailure,
+} from "./errors.js";
+import {
+  Classification,
+  Dispatches,
+  RequestFacts,
+  Secrets,
+  Signal,
+  type CallServices,
+  type Dispatch,
+} from "./services.js";
 
 export interface GuardedOptions<R = never> {
   /** Name in failure prose. Never parsed. */
@@ -40,7 +55,7 @@ export interface GuardedOptions<R = never> {
 }
 
 /** One answer, read under the ceiling. `text` is undefined when the body could not be read. */
-export interface Reply {
+interface Reply {
   readonly status: number;
   readonly headers: Headers;
   readonly text: string | undefined;
@@ -140,7 +155,16 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
       const url = wireUrl(request);
       const callSignal = yield* Signal;
       const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== "content-length"));
-      (yield* Dispatches).count++;
+      // Recorded as it happens, per request: the write-outcome rule (B.3)
+      // reads what each one did, so a token renewal that fails afterwards
+      // is never mistaken for the write.
+      const facts = yield* RequestFacts;
+      const dispatch: Dispatch = {
+        write: (yield* Classification) === "write" && facts.effect === "call",
+        ...(facts.operation ? { operation: facts.operation } : {}),
+        state: "pending",
+      };
+      (yield* Dispatches).push(dispatch);
       const response = yield* Effect.tryPromise({
         try: (interrupted) =>
           globalThis.fetch(url, {
@@ -151,8 +175,14 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
             redirect: "manual",
             signal: callSignal ? AbortSignal.any([interrupted, callSignal]) : interrupted,
           }),
-        catch: (failure) => new TransportFailure({ failure, host: url.href }),
+        catch: (failure) => {
+          dispatch.state = neverConnected(failure) ? "unconnected" : "lost";
+          return new TransportFailure({ failure, host: url.href });
+        },
       });
+      dispatch.state = "answered";
+      dispatch.status = response.status;
+      dispatch.headers = response.headers;
       if (REDIRECT_STATUSES.has(response.status)) {
         yield* cancel(response);
         return yield* Effect.fail(new RedirectRefused({ status: response.status }));

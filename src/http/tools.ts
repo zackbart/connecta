@@ -2,9 +2,11 @@
 //
 // Tool builders. A tool is a name, a description, an input Schema, an output
 // Schema, and a program; the builder renders both Schemas as catalog JSON
-// Schema, fixes the classification from which builder was called (never from
-// an HTTP method), and runs the program at the Promise edge with the call's
-// services. Failures leave through the one mapping in src/http/errors.ts.
+// Schema and annotates the tool from which builder was called (never from an
+// HTTP method). At run time the call's served classification decides, so a
+// deployment that reclassifies a tool is obeyed by the transport and the
+// write-outcome rule alike. Failures leave through the one mapping in
+// src/http/errors.ts.
 //
 // The result is an ordinary `ApiTool`, so a kit tool sits in `api()` beside
 // hand-written ones and keeps every guarantee `api()` already gives:
@@ -13,10 +15,10 @@
 import { Context, Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { runEdge } from "../runtime/run.js";
-import type { Reply } from "./client.js";
-import { StatusFailure, UnreadableBody, toConnectorCallError, type HttpFailure, type VendorErrors } from "./errors.js";
+import { answeredVerdict, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { catalogSchema } from "./json-schema.js";
 import { Classification, Dispatches, fromConnectorContext, type CallServices } from "./services.js";
+import type { Connection } from "./vendor.js";
 
 /** An input Schema the kit can render as catalog JSON Schema and decode without services. */
 type Input = Schema.Top & { readonly DecodingServices: never };
@@ -36,59 +38,74 @@ export interface ToolSpec<I extends Input, O extends Schema.Top> {
   readonly run: (args: I["Type"]) => Effect.Effect<O["Type"], HttpFailure, CallServices>;
 }
 
-/** A read. Admitted to call_tool and programs; nothing about it is inferred. */
-export function read<I extends Input, O extends Schema.Top>(errors: VendorErrors, spec: ToolSpec<I, O>): ApiTool {
+const inputs = new WeakMap<ApiTool, Input>();
+
+/** The input Schema a kit tool decodes with, for the catalog/decoder agreement check. */
+export function kitInput(tool: ApiTool): Input | undefined {
+  return inputs.get(tool);
+}
+
+/** A read: admitted to call_tool and programs. */
+export function read<I extends Input, O extends Schema.Top>(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: ToolSpec<I, O>,
+): ApiTool {
+  return build(connection, spec, "read", { readOnlyHint: true });
+}
+
+/** A write: approval-gated, dispatched once, and its failures reported by the write-outcome rule. */
+export function write<I extends Input, O extends Schema.Top>(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: ToolSpec<I, O> & { readonly destructive: boolean },
+): ApiTool {
+  return build(
+    connection,
+    spec,
+    "write",
+    spec.destructive ? { readOnlyHint: false, destructiveHint: true } : { readOnlyHint: false },
+  );
+}
+
+function build<I extends Input, O extends Schema.Top>(
+  connection: Pick<Connection<unknown>, "errors" | "safety">,
+  spec: ToolSpec<I, O>,
+  verdict: "read" | "write",
+  annotations: ApiTool["annotations"],
+): ApiTool {
   const decode = Schema.decodeUnknownEffect(spec.input);
-  return {
+  const tool: ApiTool = {
     name: spec.name,
     description: spec.description,
     inputSchema: catalogSchema(spec.input, "input"),
     outputSchema: catalogSchema(spec.output, "output"),
-    annotations: { readOnlyHint: true },
+    annotations,
     handler: (args, ctx) => {
-      const services = fromConnectorContext(ctx, "read");
+      // The builder's verdict only stands in for a call no invocation dispatched.
+      const lease = fromConnectorContext(ctx, verdict);
+      const classification = Context.get(lease.services, Classification);
+      const dispatches = Context.get(lease.services, Dispatches);
+      const map = { classification, dispatches, withholds: connection.safety.withholdsErrors, signal: ctx.signal };
       return runEdge(
         decode(args).pipe(
           // Its message can quote the argument; as a defect, api() withholds it.
           Effect.orDie,
           Effect.flatMap((decoded) => spec.run(decoded)),
-          // The served classification and the dispatch count decide the
-          // write-outcome rule, never the builder or the HTTP method.
-          Effect.mapError((failure) =>
-            toConnectorCallError(failure, errors, {
-              classification: Context.get(services, Classification),
-              dispatched: Context.get(services, Dispatches).count > 0,
-              signal: ctx.signal,
-            }),
-          ),
-          Effect.provideContext(services),
+          Effect.mapError((failure) => toConnectorCallError(failure, connection.errors, map)),
+          Effect.provideContext(lease.services),
+          // The call's finalizer: every capability kept from it refuses after this.
+          Effect.ensuring(Effect.sync(lease.close)),
         ),
         { signal: ctx.signal },
-      );
+      ).catch((error: unknown) => {
+        // Cancelled after the vendor answered the write: that answer fixed the
+        // outcome, and the caller's departure does not unsay it.
+        if (ctx.signal?.aborted === true && error === ctx.signal.reason) {
+          throw answeredVerdict(undefined, connection.errors, map) ?? error;
+        }
+        throw error;
+      });
     },
   };
-}
-
-/**
- * The JSON body of a 2xx answer. Any other status fails StatusFailure with
- * its body parsed when it is JSON, for the vendor's status table to read; a
- * successful body that is not JSON fails UnreadableBody. An empty body is
- * `undefined`, as guarded-fetch's `json()` has always read it.
- */
-export function json(reply: Reply): Effect.Effect<unknown, HttpFailure> {
-  const parsed = parse(reply.text);
-  if (reply.status < 200 || reply.status > 299) {
-    return Effect.fail(new StatusFailure({ status: reply.status, headers: reply.headers, body: parsed?.value }));
-  }
-  return parsed ? Effect.succeed(parsed.value) : Effect.fail(new UnreadableBody());
-}
-
-function parse(text: string | undefined): { value: unknown } | undefined {
-  if (text === undefined) return undefined;
-  if (text.trim() === "") return { value: undefined };
-  try {
-    return { value: JSON.parse(text) };
-  } catch {
-    return undefined;
-  }
+  inputs.set(tool, spec.input);
+  return tool;
 }
