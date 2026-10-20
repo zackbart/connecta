@@ -444,26 +444,20 @@ describe("Effect behind the published surface", () => {
     }, 60_000);
   });
 
-  it("depends on stable Effect v4 through a compatible range", () => {
-    // A caret range: the root import graph uses only the stable `effect`
-    // module (test/purity.test.ts), so a v4 minor cannot break it, and
-    // a deployment that also uses Effect (Alchemy, for one) dedupes to a
-    // single copy instead of installing a second beside an exact pin.
-    // Adopting an unstable subpath, or a new major, is its own pull request.
-    const range = packageJson.dependencies?.effect;
-    expect(range, "effect is not a runtime dependency").toBeTruthy();
-    expect(range).toMatch(/^\^4\.\d+\.\d+$/);
+  it("pins Effect v4 to one exact version", () => {
+    // An exact pin: within the 4.x long-term-support line the http, http-api,
+    // schema, and sql area modules still carry `@stability unstable`, so every
+    // Effect upgrade is its own deliberate pull request. A deployment that also
+    // depends on Effect (Alchemy, for one) must pin this same version to
+    // resolve a single copy.
+    const pin = packageJson.dependencies?.effect;
+    expect(pin, "effect is not a runtime dependency").toBeTruthy();
+    expect(pin).toMatch(/^4\.\d+\.\d+$/);
     expect(packageJson.peerDependencies).not.toHaveProperty("effect");
     expect(packageJson.devDependencies).not.toHaveProperty("effect");
     const effect = lockedVersions("effect");
-    const locked = effect.resolved ?? "";
-    const [floorMinor = 0, floorPatch = 0] = range!.slice(3).split(".").map(Number);
-    const [major, minor = 0, patch = 0] = locked.split(".").map(Number);
-    expect(major, `locked effect ${locked}`).toBe(4);
-    expect(minor * 1e6 + patch, `locked effect ${locked} is below ${range}`).toBeGreaterThanOrEqual(
-      floorMinor * 1e6 + floorPatch,
-    );
-    expect(effect.locked, "a second copy of effect is locked").toEqual([locked]);
+    expect(effect.resolved, "locked effect differs from the pin").toBe(pin);
+    expect(effect.locked, "a second copy of effect is locked").toEqual([pin]);
   });
 
   it("declares exactly the core runtime dependencies", () => {

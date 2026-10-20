@@ -156,15 +156,16 @@ async function loadDefinition(provider, skills) {
     !["api", "mcp", "composed", "dual"].includes(definition.kind)
   )
     fail(provider.name, "invalid factory definition");
-  const { baselineGzip, maxGzip, note } = definition.bundle ?? {};
+  // Provider entries are reported against a baseline, never capped: see the
+  // policy note in scripts/bundle-budget.json.
+  const { baselineGzip, note, ...rest } = definition.bundle ?? {};
   if (
     !Number.isSafeInteger(baselineGzip) ||
     baselineGzip < 0 ||
-    !Number.isSafeInteger(maxGzip) ||
-    maxGzip < baselineGzip ||
+    Object.keys(rest).length > 0 ||
     (note !== undefined && typeof note !== "string")
   )
-    fail(provider.name, "definition requires valid bundle baselineGzip, maxGzip and optional note");
+    fail(provider.name, "definition requires valid bundle baselineGzip and optional note, and no cap");
   if (
     definition.readme !== undefined &&
     (typeof definition.readme !== "string" || !definition.readme.trim() || /[\r\n]/.test(definition.readme))
@@ -246,7 +247,6 @@ export async function generateProviders({ root = repositoryRoot, check = false }
   const budgets = JSON.parse(await readFile(budgetPath, "utf8"));
   budgets.entries = replaceEntries(budgets.entries, providers, ({ definition }) => ({
     baselineGzip: definition.bundle.baselineGzip,
-    maxGzip: definition.bundle.maxGzip,
   }));
   budgets.notes = [
     ...budgets.notes.filter((note) => !note.startsWith("./providers/")),

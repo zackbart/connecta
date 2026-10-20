@@ -1401,9 +1401,8 @@ export const forms = asProviderFactory<FormsOptions>({
   readme: "Google Forms",
   bundle: {
     "baselineGzip": 26161,
-    "maxGzip": 86161,
     "note":
-      "./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+      "./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

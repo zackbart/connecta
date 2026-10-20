@@ -988,9 +988,8 @@ export const basecamp = defineProvider<BasecampOptions>({
   readme: "Basecamp",
   bundle: {
     "baselineGzip": 131228,
-    "maxGzip": 191228,
     "note":
-      "./providers/basecamp starts at 131,228 B gzip, measured where it was introduced: a remoteMcp() wrapper like ./providers/revenuecat, so the same shape and the same baseline + 60,000 B policy.",
+      "./providers/basecamp starts at 131,228 B gzip, measured where it was introduced: a remoteMcp() wrapper like ./providers/revenuecat, so the same shape. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: BASECAMP_OPTIONS,

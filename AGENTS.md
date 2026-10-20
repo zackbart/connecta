@@ -137,7 +137,10 @@ missing and unknown IDs, and spec coverage titles that no passing test matches.
 - Effect inside, Promises at the edge. `createConnecta`, `remoteMcp()`, `api()`,
   custom connectors, and published declarations name no Effect types.
   Convert at the boundary. See [Effect inside](./documentation/architecture.md#effect-inside).
-  Upgrading an unstable Effect subpath is its own deliberate PR. Replacing
+  Effect is pinned to one exact version; any Effect upgrade is its own
+  deliberate PR, because the `effect/http`, `effect/http-api`, and `effect/sql`
+  area modules carry `@stability unstable` within the 4.x LTS line. Keep one
+  resolved copy across deployments, Alchemy included. Replacing
   either MCP SDK edge needs proof of wire contracts and request lifetimes.
 - Run `pnpm run format` before committing; CI checks formatting.
 - Keep Oxlint and Knip clean. Remove dead declarations instead of suppressing.

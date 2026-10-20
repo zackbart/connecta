@@ -7,14 +7,18 @@
 // deployment ships rather than what tsc happened to emit. The Worker example
 // is bundled too, as the composite a real deployment loads. The Node-only
 // entries (/node, /quickjs, /sqlite) are reported for information and never capped.
+// So are the per-provider entries (./providers/*): every deployment already
+// imports the root, which carries the Effect core, so a provider's standalone
+// size double-counts code the deployed shapes pay for once. Their sizes and Δ
+// against baselineGzip are still printed; the composite they land in is capped.
 //
 // The report is a markdown table on stdout (and appended to
 // $GITHUB_STEP_SUMMARY when set), with the minified bytes each entry spends on
 // effect, zod, the MCP SDK, @cfworker, and connecta's own src/. It fails when a
 // neutral bundle is left with an unresolved `node:` import, which would not
-// load on Workers, or when an entry's gzip size passes its `maxGzip` in
-// scripts/bundle-budget.json. Budgets move deliberately, in the change that
-// explains why, never to make this pass.
+// load on Workers, when a capped entry's gzip size passes its `maxGzip` in
+// scripts/bundle-budget.json, or when a provider entry carries a cap. Budgets
+// move deliberately, in the change that explains why, never to make this pass.
 //
 // Optional peers (@clerk/backend, @cloudflare/codemode, quickjs-emscripten)
 // stay external: a deployment installs and pays for them by choice, and
@@ -31,6 +35,7 @@ const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const budget = JSON.parse(readFileSync(join(root, "scripts", "bundle-budget.json"), "utf8")).entries;
 
 const NODE_ENTRIES = new Set(["./node", "./quickjs", "./sqlite"]);
+const isReported = (name) => name.startsWith("./providers/");
 const OPTIONAL_PEERS = Object.keys(manifest.peerDependencies ?? {});
 const WORKER_EXAMPLE = "examples/worker";
 
@@ -171,13 +176,24 @@ const rows = results.map((result) => {
     if (!limits) {
       failures.push(`${result.name}: no entry in scripts/bundle-budget.json`);
       cap = "missing";
+    } else if (isReported(result.name)) {
+      delta = signed(result.gzip - limits.baselineGzip);
+      cap = "report";
+      if (limits.maxGzip !== undefined || limits.maxRaw !== undefined) {
+        failures.push(`${result.name}: provider entries are reported, not capped; remove its cap`);
+      }
     } else {
       delta = signed(result.gzip - limits.baselineGzip);
       if (limits.maxRaw && result.raw > limits.maxRaw)
         failures.push(`${result.name}: ${result.raw} B exceeds raw cap ${limits.maxRaw} B`);
-      cap = exact(limits.maxGzip);
-      if (result.gzip > limits.maxGzip) {
-        failures.push(`${result.name}: ${result.gzip} B gzip exceeds its ${limits.maxGzip} B cap`);
+      if (!Number.isSafeInteger(limits.maxGzip)) {
+        failures.push(`${result.name}: a deployed shape needs a maxGzip cap`);
+        cap = "missing";
+      } else {
+        cap = exact(limits.maxGzip);
+        if (result.gzip > limits.maxGzip) {
+          failures.push(`${result.name}: ${result.gzip} B gzip exceeds its ${limits.maxGzip} B cap`);
+        }
       }
     }
     for (const path of result.nodeImports) {
@@ -209,7 +225,8 @@ const report =
   "### Bundle size\n\n" +
   table +
   "\n\nΔ is against `baselineGzip` in scripts/bundle-budget.json; `info` rows " +
-  "are Node-only and uncapped. Attribution is minified bytes before gzip.\n";
+  "are Node-only and uncapped, and `report` rows are per-provider entries, " +
+  "reported but not capped. Attribution is minified bytes before gzip.\n";
 
 console.log(report);
 if (process.env.GITHUB_STEP_SUMMARY) {
