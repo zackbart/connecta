@@ -5,12 +5,15 @@
 // call and operation services with explicit lifetimes, and the OAuth
 // refresh-once rule that reads the call's classification, not the method.
 import { Context, Effect, Schema, Stream } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { HttpClientResponse } from "effect/http/HttpClientResponse";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { recoveryFor } from "../src/call-recovery.js";
 import { apiConnector, type ApiTool } from "../src/connectors/api-connector.js";
 import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import { guardedClient, type GuardedOptions } from "../src/http/client.js";
 import {
   RedirectRefused,
@@ -19,11 +22,15 @@ import {
   StatusFailure,
   TransportFailure,
   toConnectorCallError,
+  writeOutcomeOf,
+  type Classified,
   type HttpFailure,
   type OperationRef,
+  type StatusRule,
+  type Verdict,
   type VendorErrors,
 } from "../src/http/errors.js";
-import { Integer, catalogSchema } from "../src/http/json-schema.js";
+import { Integer, catalogSchema, codePoints, isMaxChars, isMinChars } from "../src/http/json-schema.js";
 import { Grant, bearer, refreshOnce } from "../src/http/oauth.js";
 import { allRows, boundCursor, lookahead } from "../src/http/paging.js";
 import { resultSafety } from "../src/http/safety.js";
@@ -57,7 +64,9 @@ import { SentSecrets } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
-import { silentLogger } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
+
+const BASE = "https://connecta.example";
 
 let sent: Array<{ url: string; method: string; headers: Record<string, string> }> = [];
 let answers: Array<() => Response> = [];
@@ -265,9 +274,9 @@ const VENDOR: VendorErrors = {
   detail: ({ status }) => `Acme returned HTTP ${status}.`,
   unreadable: "Acme returned a successful response that is not JSON.",
   statuses: {
-    401: ({ detail }) => new ConnectorCallError("auth_required", `${detail} Acme rejected the token.`),
-    403: ({ detail }) => new ConnectorCallError("provider_permission_denied", String(detail), { retryable: false }),
-    404: ({ detail }) => new ConnectorCallError("not_found", String(detail)),
+    401: () => ({ code: "auth_required", words: (detail) => `${detail} Acme rejected the token.` }),
+    403: () => ({ code: "provider_permission_denied", retryable: false }),
+    404: () => ({ code: "not_found" }),
   },
 };
 
@@ -276,10 +285,19 @@ const status = (code: number, headers: Record<string, string> = {}, body?: unkno
 
 const dispatch = (state: Dispatch["state"], extra: Partial<Dispatch> = {}): Dispatch => ({
   write: true,
+  step: "write",
   operation: OPERATION,
   state,
   ...extra,
 });
+
+/** A write request whose own answer settled into `failure`, as the transport records it. */
+const answered = (failure: HttpFailure, extra: Partial<Dispatch> = {}): Dispatch =>
+  dispatch(failure._tag === "TransportFailure" ? "lost" : "answered", {
+    ...(failure._tag === "StatusFailure" ? { status: failure.status } : {}),
+    failure,
+    ...extra,
+  });
 
 describe("failure mapping (decision 0010, B.3)", () => {
   it("applies the vendor's 401/403/404 and the shared defaults for the rest", () => {
@@ -294,26 +312,33 @@ describe("failure mapping (decision 0010, B.3)", () => {
     expect(map(status(418))).toMatchObject({ code: "connector_call_failed", retryable: false });
   });
 
-  it("INV-6: classifies on bounded facts and allowlisted headers, never on prose", () => {
-    let seen: unknown;
-    const vendor: VendorErrors<{ code?: string; codes?: readonly number[] }> = {
+  it("INV-6: classifies on token facts and allowlisted headers, and renders prose only after the verdict", () => {
+    const order: string[] = [];
+    let seen: { facts: { codes?: readonly number[] }; headers: object } | undefined;
+    let tokens: unknown;
+    const vendor: VendorErrors<{ code?: string; codes?: readonly number[]; expired?: boolean }> = {
       ...VENDOR,
       facts: (body) => {
-        const error = (body as { error?: { code?: unknown; codes?: unknown } } | undefined)?.error;
-        return { code: error?.code as string, codes: error?.codes as number[] };
+        tokens = body;
+        const error = (body as { error?: { code?: unknown; codes?: unknown; message?: unknown } } | undefined)?.error;
+        // A careless extractor that sniffs the message finds no message to sniff.
+        return {
+          code: error?.code as string,
+          codes: error?.codes as number[],
+          expired: String(error?.message).includes("expired"),
+        };
       },
       headers: ["x-request-id"],
       detail: (input) => {
+        order.push("detail");
         seen = input;
         return "Acme failed.";
       },
       classify: [
-        (facts) => {
-          // @ts-expect-error Prose has no string methods: a rule cannot branch on wording.
-          const branchOnProse = () => facts.detail.includes("auth");
-          void branchOnProse;
-          return facts.facts.code === "token_expired" || facts.facts.codes?.includes(1001)
-            ? new ConnectorCallError("auth_required", `${facts.detail} Request ${facts.headers["x-request-id"]}.`)
+        ({ facts, headers }) => {
+          order.push("rule");
+          return facts.code === "token_expired" || facts.codes?.includes(1001) || facts.expired
+            ? { code: "auth_required", words: (detail) => `${detail} Request ${headers["x-request-id"]}.` }
             : undefined;
         },
       ],
@@ -326,13 +351,98 @@ describe("failure mapping (decision 0010, B.3)", () => {
       code: "auth_required",
       message: "Acme failed. Request req_42.",
     });
+    // The verdict is decided before the detail line exists.
+    expect(order).toEqual(["rule", "detail"]);
     expect(map({ error: { codes: [7, 1001] } }).code).toBe("auth_required");
-    // Prose in a fact's place is dropped before any rule runs; so are objects and long lists.
-    expect(map({ error: { code: "token expired, see https://acme.example/help" } }).code).toBe("invalid_args");
-    expect(seen).toMatchObject({ facts: { code: undefined }, headers: { "x-request-id": "req_42" } });
-    expect((seen as { headers: object }).headers).not.toHaveProperty("set-cookie");
-    expect(map({ error: { codes: Array.from({ length: 20 }, (_, n) => n + 2000) } }).code).toBe("invalid_args");
-    expect((seen as { facts: { codes: unknown[] } }).facts.codes).toHaveLength(8);
+    // Prose never reaches the extractor: not as a value, not as a key.
+    const prose = "the token expired, see https://acme.example/help";
+    expect(map({ error: { code: "x", message: prose, [prose]: true } }).code).toBe("invalid_args");
+    expect(tokens).toEqual({ error: { code: "x" } });
+    expect(JSON.stringify(tokens)).not.toContain("expired");
+    expect(seen?.headers).toEqual({ "x-request-id": "req_42" });
+    // Lists are complete for classification: a code in twenty-first place still
+    // decides. The detail line sees the first eight.
+    const many = [...Array.from({ length: 20 }, (_, n) => n + 2000), 1001];
+    expect(map({ error: { codes: many } }).code).toBe("auth_required");
+    expect(seen?.facts.codes).toEqual(many.slice(0, 8));
+  });
+
+  it("INV-6: a rule's input carries no prose, so reading the detail line or the body does not compile", () => {
+    expectTypeOf<Classified>().not.toHaveProperty("detail");
+    expectTypeOf<Classified>().not.toHaveProperty("body");
+    expectTypeOf<Parameters<StatusRule>[0]>().toEqualTypeOf<Classified>();
+    // `words` receives the line once the code is fixed; it returns words, not a verdict.
+    expectTypeOf<NonNullable<Verdict["words"]>>().toEqualTypeOf<(detail: string) => string>();
+    const rules: NonNullable<VendorErrors["classify"]> = [
+      // @ts-expect-error The detail line is rendered after classification; a rule cannot read it.
+      (input) => (String(input.detail).includes("expired") ? { code: "auth_required" } : undefined),
+      // @ts-expect-error Nor the body.
+      (input) => (`${input.body}`.includes("expired") ? { code: "auth_required" } : undefined),
+      // What a rule can read: tokens, headers, the status, the operation.
+      ({ status: code, facts, headers }) =>
+        code === 401 || facts["code"] === "expired" || headers["x-reason"] === "expired"
+          ? { code: "auth_required" }
+          : undefined,
+    ];
+    expect(rules).toHaveLength(3);
+  });
+
+  it("INV-6: classifies over every reason before the detail line's list is cut, as Google's mapper does today", () => {
+    // decision 0010's restatement of `classifyApiFailure` (_shared/google/workspace.ts),
+    // whose `reasonsOf` reads every errors[] and details[] reason before deciding.
+    const record = (value: unknown) =>
+      (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as Record<string, unknown>;
+    const google: VendorErrors<{ reasons: readonly string[] }> = {
+      provider: "Gmail",
+      facts: (tokens) => {
+        const error = record(record(tokens)["error"]);
+        const listed = [error["errors"], error["details"]].flatMap((entries) =>
+          Array.isArray(entries) ? entries.map((entry) => record(entry)["reason"]) : [],
+        );
+        return {
+          reasons: [...listed, error["status"]].filter((reason): reason is string => typeof reason === "string"),
+        };
+      },
+      detail: ({ status: code, facts }) => `Gmail returned HTTP ${code} (${facts.reasons.join(", ")}).`,
+      unreadable: "Gmail returned a successful response that is not JSON.",
+      classify: [
+        ({ facts, retryAfterMs }) =>
+          ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"].some((reason) =>
+            facts.reasons.includes(reason),
+          )
+            ? { code: "rate_limited", retryAfterMs }
+            : undefined,
+      ],
+      statuses: {
+        401: () => ({ code: "auth_required" }),
+        403: () => ({ code: "provider_permission_denied" }),
+        404: () => ({ code: "not_found" }),
+      },
+    };
+    const ordinary = [
+      "required",
+      "invalid",
+      "notFound",
+      "badRequest",
+      "duplicate",
+      "conditionNotMet",
+      "parseError",
+      "keyInvalid",
+    ];
+    const body = {
+      error: {
+        code: 403,
+        message: "Quota exceeded for quota metric 'Queries' of service 'gmail.googleapis.com'.",
+        errors: [...ordinary.map((reason) => ({ reason, message: "Ordinary." })), { reason: "RATE_LIMIT_EXCEEDED" }],
+      },
+    };
+    const error = toConnectorCallError(
+      new StatusFailure({ status: 403, headers: new Headers({ "Retry-After": "3" }), body, operation: OPERATION }),
+      google,
+      { classification: "read", dispatches: [] },
+    );
+    expect(error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 3000 });
+    expect(error.message).toBe(`Gmail returned HTTP 403 (${ordinary.join(", ")}).`);
   });
 
   it("INV-5 INV-6: withholds a value-safety operation's vendor text before any detail is built", () => {
@@ -355,23 +465,23 @@ describe("failure mapping (decision 0010, B.3)", () => {
   it("INV-9: never advertises a write that may have landed as retryable, whatever the vendor says", () => {
     const write = (failure: HttpFailure, dispatches: Dispatch[], idempotent = false) =>
       toConnectorCallError(failure, VENDOR, { classification: "write", idempotent, dispatches });
-    const landed = write(status(503), [dispatch("answered", { status: 503 })]);
+    const outage = status(503);
+    const landed = write(outage, [answered(outage)]);
     expect(landed).toMatchObject({ code: "connector_call_failed", retryable: false });
-    // The REST kit's unknownOutcome words, so REST-family goldens hold on the kit.
+    expect(writeOutcomeOf(landed)).toBe("unknown");
+    // A.2's unknownOutcome words, so REST-family goldens hold on the kit.
     expect(landed.message).toBe(
       "Acme returned HTTP 503. Whether the write took effect at Acme is unknown: it carried no idempotency key, so check the target before repeating it.",
     );
     const reset = new TransportFailure({ failure: { cause: { code: "ECONNRESET" } }, host: "https://acme.example" });
-    expect(write(reset, [dispatch("lost")]).retryable).toBe(false);
-    // Refused, already final, or protected by an idempotency key: the verdict stands.
-    expect(write(status(400), [dispatch("answered", { status: 400 })]).code).toBe("invalid_args");
-    expect(write(new RedirectRefused({ status: 302 }), [dispatch("answered", { status: 302 })]).message).not.toContain(
-      "unknown",
-    );
-    expect(write(status(503), [dispatch("answered", { status: 503 })], true)).toMatchObject({
-      code: "unavailable",
-      retryable: true,
-    });
+    expect(write(reset, [answered(reset)]).retryable).toBe(false);
+    // Refused, already final, or protected by an idempotency key: the vendor's verdict on the write stands.
+    const refused = status(400);
+    expect(write(refused, [answered(refused)])).toMatchObject({ code: "invalid_args" });
+    expect(writeOutcomeOf(write(refused, [answered(refused)]))).toBeUndefined();
+    const redirect = new RedirectRefused({ status: 302 });
+    expect(write(redirect, [answered(redirect, { status: 302 })]).message).not.toContain("unknown");
+    expect(write(outage, [answered(outage)], true)).toMatchObject({ code: "unavailable", retryable: true });
   });
 
   it("INV-9: decides from what each request did, not from how many were sent", () => {
@@ -379,9 +489,13 @@ describe("failure mapping (decision 0010, B.3)", () => {
       toConnectorCallError(failure, VENDOR, { classification: "write", dispatches });
     const dns = new TransportFailure({ failure: { cause: { code: "ENOTFOUND" } }, host: "https://acme.example" });
     // The write itself never connected: nothing was sent, and the outage stays retryable.
-    expect(write(dns, [dispatch("unconnected")])).toMatchObject({ code: "unavailable", retryable: true });
+    expect(write(dns, [dispatch("unconnected", { failure: dns })])).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
     // An auxiliary read found no host after the write was answered: the write may have landed.
-    expect(write(dns, [dispatch("answered", { status: 200 }), { write: false, state: "unconnected" }])).toMatchObject({
+    const aux: Dispatch = { write: false, state: "unconnected", failure: dns };
+    expect(write(dns, [dispatch("answered", { status: 200 }), aux])).toMatchObject({
       code: "connector_call_failed",
       retryable: false,
     });
@@ -453,7 +567,26 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {
     "",
     " ",
     "a",
+    "x".repeat(512),
     "x".repeat(513),
+    // Lengths count code points, as api()'s validator does, never UTF-16 units.
+    "😀",
+    "😀".repeat(256),
+    "/" + "😀".repeat(300),
+    "😀".repeat(512),
+    "😀".repeat(513),
+    "x".repeat(511) + "😀",
+    // A combining mark is its own code point.
+    "e\u0301",
+    "e\u0301".repeat(256),
+    "e\u0301".repeat(257),
+    // A lone surrogate counts as one, high or low, alone or in a run.
+    "\ud800",
+    "\udc00",
+    "\udc00\ud800",
+    "\ud800".repeat(512),
+    "\ud800".repeat(513),
+    "x".repeat(511) + "\ud83d",
     "POST",
     "GET",
     "asc",
@@ -481,6 +614,51 @@ describe("catalog JSON Schema dialect (decision 0010, B.4)", () => {
     }
     return out;
   }
+
+  it("INV-1: counts string length in code points in both renderings, and refuses a check the catalog cannot state", () => {
+    const tool = read(acme(), {
+      name: "names",
+      description: "Bounded names.",
+      input: Schema.Struct({
+        code: Schema.String.check(isMinChars(2), isMaxChars(3)),
+        note: Schema.optionalKey(Schema.String.check(isMaxChars(4))),
+      }),
+      output: Schema.Unknown,
+      run: () => Effect.succeed(null),
+    });
+    expect(tool.inputSchema).toMatchObject({
+      properties: { code: { type: "string", minLength: 2, maxLength: 3 }, note: { type: "string", maxLength: 4 } },
+    });
+    const values = ["😀", "😀😀", "😀😀😀", "😀😀😀😀", "e\u0301", "\ud800", "\ud800\ud800", "ab\udc00", "abcd"];
+    const input = kitInput(tool)!;
+    for (const name of ["code", "note"]) {
+      for (const value of values) {
+        const args = { code: "ab", [name]: value };
+        const validated =
+          validateToolInput(tool.inputSchema!, args, { address: "acme.names", failClosed: true }) === null;
+        const decoded = Schema.decodeUnknownExit(input as Schema.Codec<unknown>)(args)._tag === "Success";
+        expect(decoded, `${name} = ${JSON.stringify(value)}`).toBe(validated);
+      }
+    }
+    expect(codePoints("😀e\u0301\ud800")).toBe(4);
+    // Effect's own string lengths count UTF-16 units and render an approximation: refused.
+    const approximate = (check: Schema.Codec<unknown, unknown, never, never>) => () =>
+      read(acme(), {
+        name: "loose",
+        description: "Loose.",
+        input: Schema.Struct({ value: check }),
+        output: Schema.Unknown,
+        run: () => Effect.succeed(null),
+      });
+    expect(approximate(Schema.String.check(Schema.isMaxLength(512)))).toThrow(/no exact catalog spelling/);
+    expect(approximate(Schema.String.check(Schema.isMinLength(2)))).toThrow(/no exact catalog spelling/);
+    expect(approximate(Schema.String.check(Schema.makeFilter((value: string) => value !== "x")))).toThrow(
+      /no exact catalog spelling/,
+    );
+    // Exact checks stay allowed: a one-character minimum, an array's maxItems.
+    expect(approximate(Schema.String.check(Schema.isMinLength(1)))).not.toThrow();
+    expect(approximate(Schema.Array(Schema.String).check(Schema.isMaxLength(2)))).not.toThrow();
+  });
 
   it("INV-1: every kit tool's catalog and decoder accept the same boundary values", () => {
     const bases: Record<string, Record<string, unknown>> = {
@@ -743,6 +921,64 @@ describe("call services (decision 0010, B.1)", () => {
     request.own(() => closed++);
     expect(closed).toBe(2);
   });
+
+  it.each([0, 1, 2])(
+    "INV-7: a finalizer that throws (registered %i of three) stops no other cleanup, and views and leases are revoked first",
+    async (position) => {
+      const base = context();
+      const request = openRequest(base.requestScope!);
+      const operation = operationView(base, alice);
+      const { call } = lease();
+      const view = callView(operation, call);
+      const ran: number[] = [];
+      const thrown = new Error(`finalizer ${position} failed`);
+      for (const index of [0, 1, 2]) {
+        request.own(() => {
+          ran.push(index);
+          if (index === position) throw thrown;
+        });
+      }
+      let caught: unknown;
+      try {
+        request.close();
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(AggregateError);
+      expect((caught as AggregateError).errors).toEqual([thrown]);
+      expect(ran).toEqual([2, 1, 0]);
+      expect(request.signal.aborted).toBe(true);
+      expect(viewCaller(operation)).toBeUndefined();
+      expect(viewCaller(view)).toBeUndefined();
+      expect(call.closed()).toBe(true);
+      await expect(view.credential!.getAll()).rejects.toThrow(/call has ended/);
+      // A second close has nothing left to do, and throws nothing.
+      expect(() => request.close()).not.toThrow();
+      expect(ran).toEqual([2, 1, 0]);
+      // A view opened on the closed request resolves nothing.
+      expect(viewCaller(operationView(base, alice))).toBeUndefined();
+    },
+  );
+
+  it("INV-7: when every finalizer throws, each still runs and all failures arrive together", () => {
+    const base = context();
+    const request = openRequest(base.requestScope!);
+    const operation = operationView(base, bob);
+    const failures = [0, 1, 2].map((index) => new Error(`finalizer ${index} failed`));
+    for (const failure of failures) {
+      request.own(() => {
+        throw failure;
+      });
+    }
+    let caught: unknown;
+    try {
+      request.close();
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as AggregateError).errors).toEqual([...failures].reverse());
+    expect(viewCaller(operation)).toBeUndefined();
+  });
 });
 
 // --- OAuth refresh-once and the served classification (B.2, B.3) -------------------------
@@ -797,7 +1033,11 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     return built === "read" ? read(kit, spec) : write(kit, { ...spec, destructive: true });
   }
 
-  async function call(apiTool: ApiTool, served: "read" | "write", signal?: AbortSignal) {
+  async function call(
+    apiTool: ApiTool,
+    served: "read" | "write",
+    signal?: AbortSignal,
+  ): Promise<{ value?: unknown; error?: unknown }> {
     const ctx = context(signal);
     attachServedClassification(ctx, served);
     return apiConnector("acme", { tools: [apiTool] })
@@ -833,18 +1073,28 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     expect(state.latched).toBe(true);
   });
 
+  /**
+   * A write answered 401 whose credential still needs recovery: the vendor's
+   * 401 code and words, so invocation keeps the authorize_connector handoff,
+   * never retryable, and explicitly unknown (#902's writeOutcome).
+   */
   const unknownWrite = (outcome: { error?: unknown; value?: unknown }) => {
     expect(outcome.error).toBeInstanceOf(ConnectorCallError);
-    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+    expect(writeOutcomeOf(outcome.error)).toBe("unknown");
     expect((outcome.error as Error).message).toBe(
       "Acme returned HTTP 401. Acme rejected the token. The write was sent before Acme rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
     );
   };
 
-  it("INV-9: renews but never resends a write, and its answer is the write's unknown outcome", async () => {
+  it("INV-9: renews but never resends a write; the renewed credential needs no handoff, and the write is still unknown", async () => {
     const { state, layer } = grant();
     answers.push(() => new Response(null, { status: 401 }));
-    unknownWrite(await call(tool("write", layer), "write"));
+    const outcome = await call(tool("write", layer), "write");
+    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect((outcome.error as Error).message).toBe(
+      "Acme answered this write with HTTP 401. The credential is renewed for the next call, but the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
+    );
     expect(sent).toHaveLength(1);
     expect(state.refreshes).toBe(1);
   });
@@ -863,7 +1113,7 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
   ];
 
   it.each(renewalFailures)(
-    "INV-9: a write answered 401 keeps its unknown outcome when renewal fails with %s",
+    "INV-9: a write answered 401 keeps its auth code and handoff, never retryable, with an unknown outcome, when renewal fails with %s",
     async (_name, failure) => {
       const { state, layer } = grant(() => Effect.fail(failure));
       answers.push(() => new Response(null, { status: 401 }));
@@ -873,7 +1123,7 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     },
   );
 
-  it("INV-7 INV-9: a write answered 401 keeps its unknown outcome when the caller leaves during renewal", async () => {
+  it("INV-7 INV-9: a write answered 401 keeps its auth code and unknown outcome when the caller leaves during renewal", async () => {
     let renewing!: () => void;
     const started = new Promise<void>((resolve) => (renewing = resolve));
     const { layer } = grant(() =>
@@ -891,6 +1141,25 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("INV-9: a direct call reports a write answered 401 with the authorize_connector handoff, reconciliation, and no retry", async () => {
+    const { layer } = grant(() => Effect.fail(new Refusal({ error: REJECTED })));
+    answers.push(() => new Response(null, { status: 401 }));
+    const tools = createMetaTools(makeRegistry([apiConnector("acme", { tools: [tool("write", layer)] })]), BASE, {
+      readOnly: false,
+    });
+    const result = await tools.callDestructiveTool({ address: "acme.items", resultMode: "value" });
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: {
+        code: "auth_required",
+        retryable: false,
+        reconciliationRequired: true,
+        nextAction: { tool: "authorize_connector", arguments: { connector: "acme" } },
+      },
+    });
+    expect(sent).toHaveLength(1);
+  });
+
   it("INV-9: a vendor that documents authenticating first gets its 401 refusal, renewal or not", async () => {
     const documented: VendorErrors = { ...VENDOR, authBeforeExecution: { evidence: "https://acme.example/docs/auth" } };
     const { layer } = grant(() => Effect.fail(new Refusal({ error: REJECTED })));
@@ -902,7 +1171,7 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
   });
 
   it("INV-1 INV-9: the served classification decides, not the builder: a read the deployment serves as a write is not replayed", async () => {
-    const { layer } = grant();
+    const { layer } = grant(() => Effect.fail(new Refusal({ error: REJECTED })));
     answers.push(
       () => new Response(null, { status: 401 }),
       () => Response.json({ ok: true }),
@@ -925,5 +1194,301 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     expect(await call(tool("write", layer, { effect: "read" }), "write")).toEqual({ value: { ok: true } });
     expect(sent).toHaveLength(2);
     expect(state.refreshes).toBe(1);
+  });
+});
+
+// --- One dispatch per logical write, and what a later failure may say (B.2, B.3) -------
+
+const POST_ITEMS = { method: "POST", path: "/items", template: "/items" } as const;
+const LOOKUP = { method: "GET", path: "/items/1", template: "/items/:id" } as const;
+
+/** Something above the transport that sends again: a retry, a redirect follower, a replaying renewal. */
+function over(
+  around: (
+    execute: (
+      request: HttpClientRequest.HttpClientRequest,
+    ) => Effect.Effect<HttpClientResponse, HttpFailure, CallServices>,
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<HttpClientResponse, HttpFailure, CallServices>,
+): Connection {
+  const guarded = guardedClient({ ...OPTIONS, maxResponseBytes: 4096 });
+  const client = HttpClient.makeWith(
+    (request: Effect.Effect<HttpClientRequest.HttpClientRequest, HttpFailure, CallServices>) =>
+      Effect.flatMap(request, (prepared) => around((next) => guarded.client.execute(next), prepared)),
+    (request: HttpClientRequest.HttpClientRequest) => Effect.succeed(request),
+  );
+  return connect(
+    ACME_API,
+    { ...guarded, client },
+    {
+      errors: VENDOR,
+      safety: resultSafety({
+        review: "A test vendor that returns no secrets.",
+        sensitiveFields: { names: [], choice: "drop" },
+      }),
+    },
+  ) as Connection;
+}
+
+/** A write tool whose program is `run`, called as the deployment serves it. */
+async function invoke(
+  connection: Connection,
+  run: (connection: Connection) => Effect.Effect<unknown, HttpFailure, CallServices>,
+  served: "read" | "write" = "write",
+): Promise<{ value?: unknown; error?: unknown }> {
+  const tool = write(connection, {
+    name: "items",
+    description: "Sends a write.",
+    destructive: false,
+    input: Schema.Struct({}),
+    output: Schema.Unknown,
+    run: () => run(connection),
+  });
+  const ctx = context();
+  attachServedClassification(ctx, served);
+  return apiConnector("acme", { tools: [tool] })
+    .callTool("items", {}, ctx)
+    .then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+}
+
+const STOPPED = "A second attempt to send it was stopped before it left: connecta sends a write once.";
+const UNKNOWN = "Whether the write took effect at Acme is unknown: check the target before repeating it.";
+
+const lost = (code: string) => () => {
+  throw Object.assign(new TypeError("fetch failed"), { cause: { code } });
+};
+
+describe("one dispatch per logical write (decision 0010, B.2)", () => {
+  it.each([307, 308])(
+    "INV-9: Effect.retry after a %i hands the write to fetch once and reports it unknown",
+    async (code) => {
+      answers.push(
+        () => new Response(null, { status: code, headers: { Location: "https://api.acme.example/v1/items" } }),
+      );
+      const outcome = await invoke(acme(), (connection) =>
+        connection.sendPath(POST_ITEMS).pipe(Effect.retry({ times: 1 })),
+      );
+      expect(sent).toHaveLength(1);
+      expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect((outcome.error as Error).message).toBe(
+        `Acme answered HTTP ${code} with a redirect; this connector talks to exactly one origin and never forwards its credential to another. ${STOPPED} ${UNKNOWN}`,
+      );
+    },
+  );
+
+  it("INV-9: a retried program that runs Send again is the same logical write, not a new one", async () => {
+    answers.push(() => new Response(null, { status: 503 }));
+    const outcome = await invoke(acme(), (connection) =>
+      Effect.gen(function* () {
+        return (yield* connection.sendPath(POST_ITEMS)).data;
+      }).pipe(Effect.retry({ times: 2 })),
+    );
+    expect(sent).toHaveLength(1);
+    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect((outcome.error as Error).message).toBe(`Acme returned HTTP 503. ${STOPPED} ${UNKNOWN}`);
+  });
+
+  it.each([307, 308])(
+    "INV-9: a redirect follower above the transport cannot send the write to the new location (%i)",
+    async (code) => {
+      answers.push(
+        () => new Response(null, { status: code, headers: { Location: "https://api.acme.example/v1/moved" } }),
+      );
+      const follower = over((execute, request) =>
+        execute(request).pipe(
+          Effect.catchTag("RedirectRefused", () => execute(HttpClientRequest.setUrl(request, "/moved"))),
+        ),
+      );
+      const outcome = await invoke(follower, (connection) => connection.sendPath(POST_ITEMS));
+      expect(sent.map((request) => request.url)).toEqual(["https://api.acme.example/v1/items"]);
+      expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    },
+  );
+
+  it("INV-9: a renewal that replays a write after its 401 is stopped, and the write keeps its auth code and unknown outcome", async () => {
+    answers.push(
+      () => new Response(null, { status: 401 }),
+      () => Response.json({ ok: true }),
+    );
+    // Google's transport today: mint a new token and resend whatever was refused.
+    const replaying = over((execute, request) =>
+      execute(request).pipe(
+        Effect.flatMap((response) => (response.status === 401 ? execute(request) : Effect.succeed(response))),
+      ),
+    );
+    const outcome = await invoke(replaying, (connection) => connection.sendPath(POST_ITEMS));
+    expect(sent).toHaveLength(1);
+    expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+    expect((outcome.error as Error).message).toBe(
+      `Acme returned HTTP 401. Acme rejected the token. The write was sent before Acme rejected its credential, so whether it took effect is unknown: check the target before repeating it. ${STOPPED}`,
+    );
+  });
+
+  it("INV-9: a reconnect after the connection broke mid-write is stopped; one that never connected reports that attempt", async () => {
+    const reconnecting = over((execute, request) =>
+      execute(request).pipe(Effect.catchTag("TransportFailure", () => execute(request))),
+    );
+    answers.push(lost("ECONNRESET"));
+    const reset = await invoke(reconnecting, (connection) => connection.sendPath(POST_ITEMS));
+    expect(sent).toHaveLength(1);
+    expect(reset.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect((reset.error as Error).message).toBe(`Could not reach the Acme API. ${STOPPED} ${UNKNOWN}`);
+
+    sent = [];
+    answers = [lost("ECONNREFUSED")];
+    const refused = await invoke(reconnecting, (connection) => connection.sendPath(POST_ITEMS));
+    expect(sent).toHaveLength(1);
+    // Nothing left connecta, so nothing is uncertain: the outage stays retryable.
+    expect(refused.error).toMatchObject({ code: "unavailable", retryable: true });
+    expect(writeOutcomeOf(refused.error)).toBeUndefined();
+  });
+
+  it("INV-9: a retry under a new request id is still the same logical write", async () => {
+    answers.push(
+      () => new Response(null, { status: 409 }),
+      () => Response.json({ ok: true }),
+    );
+    // A relist-and-retry: the same call re-encoded with a fresh id, as an SDK does after a header mismatch.
+    const relisting = over((execute, request) =>
+      execute(request).pipe(
+        Effect.flatMap((response) =>
+          response.status === 409
+            ? execute(
+                HttpClientRequest.setHeader(
+                  HttpClientRequest.bodyText(request, "id=2", "application/x-www-form-urlencoded"),
+                  "x-request-id",
+                  "req_2",
+                ),
+              )
+            : Effect.succeed(response),
+        ),
+      ),
+    );
+    const outcome = await invoke(relisting, (connection) => connection.sendPath({ ...POST_ITEMS, form: { id: "1" } }));
+    expect(sent).toHaveLength(1);
+    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect((outcome.error as Error).message).toBe(`Acme returned HTTP 409. ${STOPPED} ${UNKNOWN}`);
+  });
+
+  it("INV-9: each named step of a write is sent once; reads are replayed freely", async () => {
+    answers.push(
+      () => Response.json({ session: "s_1" }),
+      () => Response.json({ ok: true }),
+    );
+    // A resumable upload: open a session, then send the bytes. Two steps, each once.
+    const upload = await invoke(acme(), (connection) =>
+      connection.sendPath(POST_ITEMS, { step: "session" }).pipe(
+        Effect.flatMap(() => connection.sendPath({ ...POST_ITEMS, method: "PUT" }, { step: "bytes" })),
+        Effect.map(({ data }) => data),
+      ),
+    );
+    expect(upload).toEqual({ value: { ok: true } });
+    expect(sent.map((request) => request.method)).toEqual(["POST", "PUT"]);
+
+    sent = [];
+    answers = [() => new Response(null, { status: 503 })];
+    const again = await invoke(acme(), (connection) =>
+      connection
+        .sendPath(POST_ITEMS, { step: "rows" })
+        .pipe(Effect.catch(() => connection.sendPath(POST_ITEMS, { step: "rows" }))),
+    );
+    expect(sent).toHaveLength(1);
+    expect(again.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+
+    sent = [];
+    answers = [() => new Response(null, { status: 503 }), () => Response.json({ ok: true })];
+    const read = await invoke(
+      acme(),
+      (connection) =>
+        connection.sendPath(LOOKUP).pipe(
+          Effect.retry({ times: 1 }),
+          Effect.map(({ data }) => data),
+        ),
+      "read",
+    );
+    expect(read).toEqual({ value: { ok: true } });
+    expect(sent).toHaveLength(2);
+  });
+});
+
+describe("write outcomes after the write left (decision 0010, B.3)", () => {
+  const writeThenLookup = (connection: Connection) =>
+    connection.sendPath(POST_ITEMS).pipe(Effect.flatMap(() => connection.sendPath(LOOKUP, { effect: "read" })));
+  const ACCEPTED =
+    "Acme had already accepted this call's write (HTTP 201), so it has probably taken effect: check the target before repeating the call.";
+
+  it.each([
+    [401, "auth_required"],
+    [400, "connector_call_failed"],
+    [403, "connector_call_failed"],
+    [404, "connector_call_failed"],
+    [409, "connector_call_failed"],
+    [429, "connector_call_failed"],
+    [503, "connector_call_failed"],
+  ])(
+    "INV-9: an auxiliary read answered %i after the vendor accepted the write reports the write unknown, never retryable",
+    async (code, expected) => {
+      answers.push(
+        () => Response.json({ id: 1 }, { status: 201 }),
+        () => new Response(null, { status: code, headers: { "Retry-After": "2" } }),
+      );
+      const outcome = await invoke(acme(), writeThenLookup);
+      expect(sent.map((request) => request.method)).toEqual(["POST", "GET"]);
+      expect(outcome.error).toMatchObject({
+        code: expected,
+        retryable: false,
+        retryAfterMs: undefined,
+        writeOutcome: "unknown",
+      });
+      expect((outcome.error as Error).message).toMatch(
+        new RegExp(`^Acme returned HTTP ${code}\\..* ${ACCEPTED.replace(/[().]/g, "\\$&")}$`),
+      );
+    },
+  );
+
+  it("INV-9: an auxiliary read that never connects, or the provider's own refusal, after the write is no better", async () => {
+    answers.push(() => Response.json({ id: 1 }, { status: 201 }), lost("ECONNREFUSED"));
+    const unreachable = await invoke(acme(), writeThenLookup);
+    expect(unreachable.error).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect((unreachable.error as Error).message).toBe(`Could not reach the Acme API. ${ACCEPTED}`);
+
+    sent = [];
+    answers = [() => new Response(null, { status: 500 })];
+    // A write whose answer was not a success: nothing says it was accepted.
+    const own = await invoke(acme(), (connection) =>
+      connection
+        .sendPath(POST_ITEMS)
+        .pipe(
+          Effect.catch(() => Effect.fail(new Refusal({ error: new ConnectorCallError("not_found", "No such item.") }))),
+        ),
+    );
+    expect(own.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect((own.error as Error).message).toBe(
+      "No such item. This call had already sent its write to Acme, so whether the write took effect is unknown: check the target before repeating it.",
+    );
+  });
+
+  it("INV-9: a failure before the write left keeps its verdict, and the write's own refusal stands after a lookup", async () => {
+    answers.push(() => new Response(null, { status: 429, headers: { "Retry-After": "2" } }));
+    const before = await invoke(acme(), (connection) =>
+      connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
+    );
+    expect(sent).toHaveLength(1);
+    expect(before.error).toMatchObject({ code: "rate_limited", retryable: true, retryAfterMs: 2000 });
+
+    sent = [];
+    answers = [() => Response.json({ id: 1 }), () => new Response(null, { status: 400 })];
+    const refused = await invoke(acme(), (connection) =>
+      connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
+    );
+    expect(refused.error).toMatchObject({ code: "invalid_args", message: "Acme returned HTTP 400." });
+    expect(writeOutcomeOf(refused.error)).toBeUndefined();
   });
 });

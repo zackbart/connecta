@@ -4,12 +4,13 @@
 // requires the same code, message, retry advice, and wait.
 //
 // What it shows: a 429 that is a lock conflict, decided by Stripe's
-// machine-readable `code` and never by its prose; the `request-id` and
-// `stripe-rate-limited-reason` headers, read only because they are on the
-// reviewed allowlist; and the value-safety verdict, known before any detail
-// is built, so a withheld operation's message never reaches the wording.
+// machine-readable `code` and never by its prose (rules return a verdict, and
+// the message is rendered from the detail line afterwards); the `request-id`
+// and `stripe-rate-limited-reason` headers, read only because they are on
+// the reviewed allowlist; and the value-safety verdict, known before any
+// detail is built, so a withheld operation's message never reaches the
+// wording.
 
-import { ConnectorCallError } from "../../errors.js";
 import type { VendorErrors } from "../../http/errors.js";
 import { withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
 
@@ -58,42 +59,44 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
   classify: [
     // Stripe did not process the request (docs.stripe.com/rate-limits#object-lock-timeouts):
     // a definite conflict, safe to retry once the other request finishes.
-    ({ status, facts, detail }) =>
+    ({ status, facts }) =>
       status === 429 && facts.code === "lock_timeout"
-        ? new ConnectorCallError(
-            "conflict",
-            `${detail} Another request is changing this object and Stripe did not process this one; retry after it finishes. This is a lock conflict, not a rate limit.`,
-            { retryable: true, retryAfterMs: 1_000 },
-          )
+        ? {
+            code: "conflict",
+            retryable: true,
+            retryAfterMs: 1_000,
+            words: (detail) =>
+              `${detail} Another request is changing this object and Stripe did not process this one; retry after it finishes. This is a lock conflict, not a rate limit.`,
+          }
         : undefined,
   ],
   statuses: {
-    429: ({ detail, headers, retryAfterMs }) => {
+    429: ({ headers, retryAfterMs }) => {
       const reason = headers["stripe-rate-limited-reason"];
-      return new ConnectorCallError(
-        "rate_limited",
-        `${detail}${reason ? ` Limited by ${reason}.` : ""} Back off before retrying.`,
-        { retryAfterMs: retryAfterMs ?? 1_000 },
-      );
+      return {
+        code: "rate_limited",
+        retryAfterMs: retryAfterMs ?? 1_000,
+        words: (detail) => `${detail}${reason ? ` Limited by ${reason}.` : ""} Back off before retrying.`,
+      };
     },
-    401: ({ detail }) =>
-      new ConnectorCallError(
-        "auth_required",
+    401: () => ({
+      code: "auth_required",
+      words: (detail) =>
         `${detail} The configured Stripe key was rejected; an operator must replace it in this connection.`,
-      ),
-    403: ({ detail }) =>
-      new ConnectorCallError(
-        "provider_permission_denied",
+    }),
+    403: () => ({
+      code: "provider_permission_denied",
+      words: (detail) =>
         `${detail} A restricted key lacks this permission; an operator must grant it on the key or use another key.`,
-      ),
-    404: ({ detail }) => new ConnectorCallError("not_found", `${detail} Resolve the id with a list or search read.`),
-    400: ({ detail }) => new ConnectorCallError("invalid_args", String(detail)),
-    409: ({ detail }) => new ConnectorCallError("invalid_args", String(detail)),
-    422: ({ detail }) => new ConnectorCallError("invalid_args", String(detail)),
-    402: ({ detail }) => new ConnectorCallError("connector_call_failed", String(detail), { retryable: false }),
-    424: ({ detail }) => new ConnectorCallError("unavailable", String(detail)),
+    }),
+    404: () => ({ code: "not_found", words: (detail) => `${detail} Resolve the id with a list or search read.` }),
+    400: () => ({ code: "invalid_args" }),
+    409: () => ({ code: "invalid_args" }),
+    422: () => ({ code: "invalid_args" }),
+    402: () => ({ code: "connector_call_failed", retryable: false }),
+    424: () => ({ code: "unavailable" }),
     // Stripe's 5xx carries no wait; Retry-After is not passed on.
-    serverError: ({ detail }) => new ConnectorCallError("unavailable", String(detail)),
+    serverError: () => ({ code: "unavailable" }),
   },
   unreadable: "Stripe returned a successful response that is not JSON.",
 };

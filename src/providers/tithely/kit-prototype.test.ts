@@ -106,6 +106,8 @@ function observed(outcome: { value: unknown } | { error: unknown }): unknown {
     retryable: error.retryable,
     retryAfterMs: error.retryAfterMs,
     details: error.details,
+    // #902's explicit outcome: index.ts on main never sets it.
+    writeOutcome: (error as { writeOutcome?: unknown }).writeOutcome,
   };
 }
 
@@ -339,6 +341,13 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
       args: { accountId: "u", createdAfter: 9007199254740992 },
       responses: [{ body: { data: [] } }],
     },
+    {
+      // 301 code points, 601 UTF-16 units: the catalog and today's handler accept it, so the kit's decoder must too.
+      name: "a path of astral characters",
+      tool: "tithely_api_mutate",
+      args: { method: "POST", path: "/" + "😀".repeat(300) },
+      responses: [{ body: { status: "success" } }],
+    },
     { name: "a form write", tool: "tithely_api_mutate", args: MUTATE, responses: [{ body: { status: "success" } }] },
     {
       name: "a write with a query and no form",
@@ -435,21 +444,24 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
   });
 
   it("INV-9: reports a dispatched write's unknown outcome where index.ts advertised a retry or a refusal (A.2, decision 0010)", async () => {
-    const unknown = (message: string) => ({
+    const unknown = (message: string, code = "connector_call_failed") => ({
       name: "ConnectorCallError",
-      code: "connector_call_failed",
+      code,
       message,
       retryable: false,
       retryAfterMs: undefined,
       details: undefined,
+      writeOutcome: "unknown",
     });
     const deliberate: Array<{ responses: Stub[]; was: string; now: ReturnType<typeof unknown> }> = [
       {
-        // Decision 0010 (Q8): Tithe.ly documents no check of its keys before acting.
+        // Decision 0010 (Q8, #902): Tithe.ly documents no check of its keys before
+        // acting. The code and its authorize_connector handoff stay; the outcome is unknown.
         responses: [{ status: 401, body: { status: "fail", reason: "Bad keys" } }],
         was: "auth_required",
         now: unknown(
           "Tithe.ly: Bad keys Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection. The write was sent before Tithe.ly rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
+          "auth_required",
         ),
       },
       {
@@ -505,7 +517,7 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     expect(write.result).toMatchObject({ code: "unavailable", retryable: true });
   });
 
-  it("INV-7 INV-9: a caller who leaves while a write's 401 is still being read gets the write's unknown outcome", async () => {
+  it("INV-7 INV-9: a caller who leaves while a write's 401 is still being read gets its auth code and unknown outcome", async () => {
     const controller = new AbortController();
     let reading!: () => void;
     const reached = new Promise<void>((resolve) => (reading = resolve));
@@ -532,7 +544,7 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
       () => undefined,
       (caught: unknown) => caught,
     );
-    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
     expect((error as Error).message).toContain("whether it took effect is unknown");
   });
 

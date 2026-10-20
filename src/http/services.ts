@@ -32,7 +32,7 @@ import { ConnectorCallError } from "../errors.js";
 import { runEdge } from "../runtime/run.js";
 import { sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import type { ConnectorContext, ConnectorCredentialValues } from "../types.js";
-import type { OperationRef } from "./errors.js";
+import type { HttpFailure, OperationRef } from "./errors.js";
 
 /** Who admitted the operation; absent for a probe or a callback no request admitted. */
 export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>()("connecta/http/Caller") {}
@@ -76,11 +76,17 @@ export class Classification extends Context.Service<Classification, "read" | "wr
 export interface Dispatch {
   /** It counts as the call's write: every request of a write call except one sent with `{ effect: "read" }`. */
   readonly write: boolean;
+  /** Which logical write it is (`Send`'s `step`, else the call's one write). Each is handed to `fetch` once. */
+  readonly step?: string;
   readonly operation?: OperationRef;
   /** `unconnected` only when `fetch` rejected with an errno proving no connection; `lost` for any other rejection. */
   state: "pending" | "unconnected" | "lost" | "answered";
   status?: number;
   headers?: Headers;
+  /** The failure this request's own answer settled into, so the mapping can tell it from a later one. */
+  failure?: HttpFailure;
+  /** Its 401 earned a renewal that succeeded: the next call has a fresh credential. */
+  renewed?: true;
 }
 
 /** Every resource request this call handed to `fetch`, in order. The write-outcome rule (B.3) reads it. */
@@ -88,13 +94,17 @@ export class Dispatches extends Context.Service<Dispatches, Dispatch[]>()("conne
 
 /**
  * What one request inside a call is: the call's own effect, or an auxiliary
- * read inside a write tool. Set by `Send`, read by the transport and the
- * OAuth middleware.
+ * read inside a write tool, and which logical write. Set by `Send`, read by
+ * the transport and the OAuth middleware. `sent` is filled by the transport
+ * with the request it handed to `fetch`, so `Send` can record that request's
+ * own failure in the ledger.
  */
-export const RequestFacts = Context.Reference<{ readonly effect: "call" | "read"; readonly operation?: OperationRef }>(
-  "connecta/http/RequestFacts",
-  { defaultValue: () => ({ effect: "call" }) },
-);
+export const RequestFacts = Context.Reference<{
+  readonly effect: "call" | "read";
+  readonly step?: string;
+  readonly operation?: OperationRef;
+  readonly sent?: { dispatch?: Dispatch };
+}>("connecta/http/RequestFacts", { defaultValue: () => ({ effect: "call" }) });
 
 type OperationServices = Caller;
 export type CallServices =
@@ -198,8 +208,12 @@ function entryOf(view: object): Entry | undefined {
  */
 export function operationView(base: ConnectorContext, caller: ConnectorCaller | undefined): ConnectorContext {
   const view = { ...base, requestScope: base.requestScope ?? {} };
-  entries.set(view, { caller, request: view.requestScope });
-  requestOf(view.requestScope).views.push(view);
+  const request = requestOf(view.requestScope);
+  // A view of a request that already closed resolves nothing.
+  if (request.open) {
+    entries.set(view, { caller, request: view.requestScope });
+    request.views.push(view);
+  }
   return view;
 }
 
@@ -239,9 +253,10 @@ export function callView(operation: ConnectorContext, lease: CallLease): Connect
   });
   const entry = entryOf(operation);
   origins.delete(view);
-  if (entry) {
+  const request = entry ? requestOf(entry.request) : undefined;
+  if (entry && request?.open) {
     entries.set(view, { ...entry, call: lease });
-    requestOf(entry.request).views.push(view);
+    request.views.push(view);
   }
   return view;
 }
@@ -276,6 +291,13 @@ function requestOf(scope: object): RequestState {
  * Resources that outlive one call but not the request (an MCP session, a
  * request-token flight). They see the request's signal, never a call's, and
  * close when the request does (D.1 makes this a RequestScope service).
+ *
+ * `close` cannot be cut short. Revocation comes first and cannot throw: the
+ * request's views stop resolving and every call lease reached through them
+ * closes, so no credential, charge, or caller outlives the request whatever a
+ * finalizer does. Then the signal aborts and every finalizer runs, each on
+ * its own, in reverse order. Failures are collected and thrown together once
+ * all of it ran, so a second `close` has nothing left to do.
  */
 export function openRequest(scope: object): {
   readonly signal: AbortSignal;
@@ -292,10 +314,23 @@ export function openRequest(scope: object): {
     close: () => {
       if (!state.open) return;
       state.open = false;
-      state.controller.abort(new Error("The request ended."));
-      for (const finalizer of state.finalizers.splice(0).reverse()) finalizer();
-      // Its views stop resolving: a kept operation view reads no caller.
-      for (const view of state.views.splice(0)) entries.delete(view);
+      for (const view of state.views.splice(0)) {
+        entries.get(view)?.call?.close();
+        entries.delete(view);
+      }
+      const failures: unknown[] = [];
+      const attempt = (step: () => void) => {
+        try {
+          step();
+        } catch (failure) {
+          failures.push(failure);
+        }
+      };
+      attempt(() => state.controller.abort(new Error("The request ended.")));
+      for (const finalizer of state.finalizers.splice(0).reverse()) attempt(finalizer);
+      if (failures.length > 0) {
+        throw new AggregateError(failures, `Closing the request: ${failures.length} cleanup step(s) failed.`);
+      }
     },
   };
 }

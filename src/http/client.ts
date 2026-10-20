@@ -6,7 +6,9 @@
 // bodies read under a byte ceiling, and network failures normalized. It is
 // built with `HttpClient.makeWith`, not `HttpClient.make`, so it carries no
 // span, no `traceparent`/`b3` header, and no response registry: what leaves
-// connecta is exactly what this file assembles.
+// connecta is exactly what this file assembles. It is also the one place a
+// request reaches `fetch`, so it keeps the call's dispatch ledger and refuses
+// a second dispatch of any logical write, whatever above it asked for one.
 //
 // effect/http is annotated unstable in 4.0.5. This file and src/http/vendor.ts
 // are the only kit modules that import it; providers never do.
@@ -20,6 +22,7 @@ import * as Url from "effect/http/Url";
 import {
   RedirectRefused,
   RequestRefused,
+  ResendRefused,
   ResponseTooLarge,
   TransportFailure,
   neverConnected,
@@ -151,20 +154,40 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
 
   const postprocess = (prepared: Effect.Effect<HttpClientRequest.HttpClientRequest, HttpFailure, R | CallServices>) =>
     Effect.gen(function* () {
+      const facts = yield* RequestFacts;
+      const ledger = yield* Dispatches;
+      // A new attempt: until it is handed to `fetch`, no failure is its answer.
+      if (facts.sent) delete facts.sent.dispatch;
+      const write = (yield* Classification) === "write" && facts.effect === "call";
+      const step = facts.step ?? "write";
+      // One dispatch per logical write, enforced here because nothing sits
+      // below this point but `fetch`: an Effect retry, a redirect follower, a
+      // renewal that replays, a reconnect, or a retry under a new request id
+      // all arrive here again, and none of them is the call's write being
+      // sent for the first time. The ledger is the call's, so no request id
+      // and no re-run of `Send` resets it. Refused before the request is
+      // even prepared, so nothing is read or sent.
+      const first = write ? ledger.find((dispatch) => dispatch.write && dispatch.step === step) : undefined;
+      if (first) return yield* Effect.fail(new ResendRefused({ first }));
       const request = yield* prepared;
       const url = wireUrl(request);
       const callSignal = yield* Signal;
       const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== "content-length"));
       // Recorded as it happens, per request: the write-outcome rule (B.3)
-      // reads what each one did, so a token renewal that fails afterwards
-      // is never mistaken for the write.
-      const facts = yield* RequestFacts;
+      // reads what each one did, so a token renewal that fails afterwards,
+      // or an auxiliary request, is never mistaken for the write.
       const dispatch: Dispatch = {
-        write: (yield* Classification) === "write" && facts.effect === "call",
+        write,
+        ...(write ? { step } : {}),
         ...(facts.operation ? { operation: facts.operation } : {}),
         state: "pending",
       };
-      (yield* Dispatches).push(dispatch);
+      ledger.push(dispatch);
+      if (facts.sent) facts.sent.dispatch = dispatch;
+      const refused = (failure: HttpFailure) => {
+        dispatch.failure = failure;
+        return Effect.fail(failure);
+      };
       const response = yield* Effect.tryPromise({
         try: (interrupted) =>
           globalThis.fetch(url, {
@@ -177,7 +200,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           }),
         catch: (failure) => {
           dispatch.state = neverConnected(failure) ? "unconnected" : "lost";
-          return new TransportFailure({ failure, host: url.href });
+          return (dispatch.failure = new TransportFailure({ failure, host: url.href }));
         },
       });
       dispatch.state = "answered";
@@ -185,12 +208,12 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
       dispatch.headers = response.headers;
       if (REDIRECT_STATUSES.has(response.status)) {
         yield* cancel(response);
-        return yield* Effect.fail(new RedirectRefused({ status: response.status }));
+        return yield* refused(new RedirectRefused({ status: response.status }));
       }
       const declared = Number(response.headers.get("content-length"));
       if (Number.isFinite(declared) && declared > limit && request.method !== "HEAD") {
         yield* cancel(response);
-        return yield* Effect.fail(tooLarge(provider, limit, `a declared ${declared} bytes`));
+        return yield* refused(tooLarge(provider, limit, `a declared ${declared} bytes`));
       }
       return HttpClientResponse.fromWeb(request, response);
     });

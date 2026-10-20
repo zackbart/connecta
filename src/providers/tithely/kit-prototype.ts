@@ -15,7 +15,7 @@ import { defined } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { guardedClient } from "../../http/client.js";
 import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
-import { Integer } from "../../http/json-schema.js";
+import { Integer, isMaxChars } from "../../http/json-schema.js";
 import { Cursor, lookahead, PageInfo } from "../../http/paging.js";
 import { resultSafety } from "../../http/safety.js";
 import { Credentials } from "../../http/services.js";
@@ -86,37 +86,36 @@ const errors: VendorErrors = {
   detail: ({ body, status }) => detailFor(body, status),
   unreadable: "Tithe.ly returned a successful response that is not JSON.",
   statuses: {
-    401: ({ detail }) =>
-      new ConnectorCallError(
-        "auth_required",
+    401: () => ({
+      code: "auth_required",
+      words: (detail) =>
         `${detail} Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection.`,
-      ),
-    403: ({ detail }) =>
-      new ConnectorCallError(
-        "provider_permission_denied",
+    }),
+    403: () => ({
+      code: "provider_permission_denied",
+      retryable: false,
+      words: (detail) =>
         `${detail} Tithe.ly refused the request: the key pair may not reach this resource, or API access may not be enabled for this environment. Tithe.ly does not say which. Ask the account administrator to grant API access to this resource and environment.`,
-        { retryable: false },
-      ),
+    }),
     // Not `not_found`: nothing documents whether an id outside this key's
     // reach answers 404 too, so absence cannot be told from a permission gap.
-    404: ({ detail }) =>
-      new ConnectorCallError(
-        "connector_call_failed",
+    404: () => ({
+      code: "connector_call_failed",
+      retryable: false,
+      words: (detail) =>
         `${detail} The path does not exist, or the id is unknown or outside this key pair's reach; Tithe.ly does not distinguish them. Re-read the id from its list tool.`,
-        { retryable: false },
-      ),
-    429: ({ detail, retryAfterMs }) =>
-      new ConnectorCallError(
-        "rate_limited",
+    }),
+    429: ({ retryAfterMs }) => ({
+      code: "rate_limited",
+      retryAfterMs,
+      words: (detail) =>
         `${detail} Tithe.ly publishes no rate limit; wait before retrying, and add a callAdmission budget if this recurs.`,
-        retryAfterMs === undefined ? {} : { retryAfterMs },
-      ),
-    serverError: ({ detail, retryAfterMs }) =>
-      new ConnectorCallError(
-        "unavailable",
-        `${detail} Tithe.ly is failing upstream.`,
-        retryAfterMs === undefined ? {} : { retryAfterMs },
-      ),
+    }),
+    serverError: ({ retryAfterMs }) => ({
+      code: "unavailable",
+      retryAfterMs,
+      words: (detail) => `${detail} Tithe.ly is failing upstream.`,
+    }),
   },
 };
 
@@ -219,7 +218,7 @@ export function kitTools(
           description:
             "POST creates, updates, charges, or refunds; DELETE cancels a recurring gift or removes a payment method.",
         }),
-        path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)).annotate({
+        path: Schema.String.check(Schema.isMinLength(1), isMaxChars(512)).annotate({
           description:
             "Path below /api/v1 beginning with '/', such as /charges-list or /refunds/ch_123. No query string.",
         }),

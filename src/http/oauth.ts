@@ -12,7 +12,10 @@
 // the one mapping (src/http/errors.ts) reads it from there: unknown, unless
 // the vendor documents that it authenticates first. A renewal that fails,
 // for any reason, is the authorization server's failure and is discarded,
-// so it can neither turn the write into a refusal nor advertise a retry.
+// so it can neither turn the write into a refusal nor advertise a retry; the
+// ledger notes only a renewal that succeeded, so the agent is not sent to
+// re-authorize a credential that already works. Even a wrapper here that
+// did resend would be stopped by the transport's one-dispatch guard.
 //
 // Whether a request is a write comes from the call's served classification
 // and the request's own effect (an auxiliary read inside a write tool may be
@@ -62,8 +65,13 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
       const reply = yield* guarded.read(response);
       const grant = yield* Grant;
       const stale = (response.request.headers["authorization"] ?? "").replace(/^Bearer /, "");
-      if ((yield* Classification) === "write" && (yield* RequestFacts).effect === "call") {
-        yield* Effect.exit(grant.refresh(stale));
+      const facts = yield* RequestFacts;
+      if ((yield* Classification) === "write" && facts.effect === "call") {
+        // Whatever renewal meets is the authorization server's, not the
+        // write's. The ledger keeps only whether it succeeded, which decides
+        // whether the agent still needs the handoff, never the outcome.
+        const renewal = yield* Effect.exit(grant.refresh(stale));
+        if (renewal._tag === "Success" && facts.sent?.dispatch) facts.sent.dispatch.renewed = true;
         return HttpClientResponse.fromWeb(
           request,
           new Response(reply.text ?? "", { status: reply.status, headers: reply.headers }),

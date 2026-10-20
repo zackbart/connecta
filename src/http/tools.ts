@@ -15,7 +15,7 @@
 import { Context, Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { runEdge } from "../runtime/run.js";
-import { answeredVerdict, toConnectorCallError, type HttpFailure } from "./errors.js";
+import { departedVerdict, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { catalogSchema } from "./json-schema.js";
 import { Classification, Dispatches, fromConnectorContext, type CallServices } from "./services.js";
 import type { Connection } from "./vendor.js";
@@ -97,10 +97,10 @@ function build<I extends Input, O extends Schema.Top>(
         ),
         { signal: ctx.signal },
       ).catch((error: unknown) => {
-        // Cancelled after the vendor answered the write: that answer fixed the
-        // outcome, and the caller's departure does not unsay it.
+        // Cancelled after the vendor answered the write 401: that answer fixed
+        // the outcome and its handoff, and the caller's departure does not unsay it.
         if (ctx.signal?.aborted === true && error === ctx.signal.reason) {
-          throw answeredVerdict(undefined, connection.errors, map) ?? error;
+          throw departedVerdict(connection.errors, map) ?? error;
         }
         throw error;
       });

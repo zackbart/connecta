@@ -26,7 +26,7 @@ import * as OpenApi from "effect/http-api/OpenApi";
 import type { GuardedClient } from "./client.js";
 import { StatusFailure, UnreadableBody, type HttpFailure, type OperationRef, type VendorErrors } from "./errors.js";
 import type { ResultSafety } from "./safety.js";
-import { RequestFacts, type CallServices } from "./services.js";
+import { RequestFacts, type CallServices, type Dispatch } from "./services.js";
 
 /** Declare a GET operation: `get("getCharge", "/charges/:chargeId", { params, query, success })`. */
 export const get = HttpApiEndpoint.get;
@@ -62,6 +62,13 @@ interface Answer {
 interface SendOptions {
   /** An auxiliary lookup inside a write tool: it is not the write, and may be replayed after a 401. Never inferred. */
   readonly effect?: "read";
+  /**
+   * Which logical write this request is, for a tool that sends more than one
+   * (a resumable upload's session and its bytes, one request per row of a
+   * bulk change). Each step is handed to `fetch` at most once per call; a
+   * tool that names none has one write.
+   */
+  readonly step?: string;
   /** Named facts the vendor's error rules read for this request, such as Google's `revisionGuarded`. */
   readonly flags?: Readonly<Record<string, true>>;
 }
@@ -129,30 +136,43 @@ export function connect<R>(vendor: Vendor, guarded: GuardedClient<R>, options: C
     response: Effect.Effect<HttpClientResponse.HttpClientResponse, HttpFailure, R>,
     sendOptions: SendOptions | undefined,
   ): Effect.Effect<Answer, HttpFailure, R> =>
-    Effect.gen(function* () {
-      const reply = yield* Effect.flatMap(response, guarded.read);
-      const parsed = parse(reply.text);
-      if (reply.status < 200 || reply.status > 299) {
-        return yield* Effect.fail(
-          new StatusFailure({ status: reply.status, headers: reply.headers, body: parsed?.value, operation }),
-        );
-      }
-      if (!parsed) return yield* Effect.fail(new UnreadableBody());
-      const kept = options.result
-        ? yield* options.result(parsed.value, {
-            status: reply.status,
-            headers: reply.headers,
-            operation,
-            withheld: options.safety.withholdsErrors(operation),
-          })
-        : parsed.value;
-      return { status: reply.status, data: options.safety.redact(kept, operation) };
-    }).pipe(
-      Effect.provideService(RequestFacts, {
-        effect: sendOptions?.effect === "read" ? "read" : "call",
-        operation,
-      }),
-    );
+    Effect.suspend(() => {
+      // The transport names the request it handed to `fetch` here; whatever
+      // its answer settles into is recorded on it in the ledger, so the
+      // write-outcome rule can tell the write's own failure from a later one.
+      const sent: { dispatch?: Dispatch } = {};
+      return Effect.gen(function* () {
+        const reply = yield* Effect.flatMap(response, guarded.read);
+        const parsed = parse(reply.text);
+        if (reply.status < 200 || reply.status > 299) {
+          return yield* Effect.fail(
+            new StatusFailure({ status: reply.status, headers: reply.headers, body: parsed?.value, operation }),
+          );
+        }
+        if (!parsed) return yield* Effect.fail(new UnreadableBody());
+        const kept = options.result
+          ? yield* options.result(parsed.value, {
+              status: reply.status,
+              headers: reply.headers,
+              operation,
+              withheld: options.safety.withholdsErrors(operation),
+            })
+          : parsed.value;
+        return { status: reply.status, data: options.safety.redact(kept, operation) };
+      }).pipe(
+        Effect.tapError((failure) =>
+          Effect.sync(() => {
+            if (sent.dispatch && sent.dispatch.failure === undefined) sent.dispatch.failure = failure;
+          }),
+        ),
+        Effect.provideService(RequestFacts, {
+          effect: sendOptions?.effect === "read" ? "read" : "call",
+          ...(sendOptions?.step === undefined ? {} : { step: sendOptions.step }),
+          operation,
+          sent,
+        }),
+      );
+    });
 
   return {
     provider: guarded.provider,
@@ -217,6 +237,7 @@ const TAGS = new Set([
   "TransportFailure",
   "RedirectRefused",
   "ResponseTooLarge",
+  "ResendRefused",
   "StatusFailure",
   "UnreadableBody",
   "Refusal",
