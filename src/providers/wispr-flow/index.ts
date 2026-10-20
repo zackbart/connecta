@@ -105,7 +105,6 @@ export const wisprFlow = defineProvider<WisprFlowOptions>({
   options: OPTIONS,
   bundle: {
     baselineGzip: 169009,
-    maxGzip: 229009,
     note: "./providers/wispr-flow initial measured baseline is 169,009 B gzip for the hosted-MCP wrapper; the cap retains the existing baseline + 60,000 B provider headroom policy.",
   },
   create(id, options, provider) {

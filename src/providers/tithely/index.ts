@@ -1248,7 +1248,7 @@ export const tithely = asProviderFactory<TithelyOptions>({
   title: "Tithe.ly",
   kind: "api",
   readme: "Tithe.ly",
-  bundle: { "baselineGzip": 18076, "maxGzip": 78076 },
+  bundle: { "baselineGzip": 18076 },
   skill,
   options: TITHELY_OPTIONS,
   create: tithelyConnector,

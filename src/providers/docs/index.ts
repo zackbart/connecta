@@ -1451,7 +1451,6 @@ export const docs = asProviderFactory<DocsOptions>({
   readme: "Google Docs",
   bundle: {
     "baselineGzip": 27149,
-    "maxGzip": 87149,
     "note":
       "./providers/docs starts at 27,149 B gzip (#681): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
   },

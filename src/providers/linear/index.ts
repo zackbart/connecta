@@ -527,7 +527,7 @@ export const linear = defineProvider<LinearOptions>({
   title: "Linear",
   kind: "mcp",
   readme: "Linear",
-  bundle: { "baselineGzip": 127244, "maxGzip": 187244 },
+  bundle: { "baselineGzip": 127244 },
   skill,
   options: LINEAR_OPTIONS,
   classify: LINEAR_CLASSIFICATION,

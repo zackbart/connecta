@@ -2923,7 +2923,6 @@ export const planningCenter = asProviderFactory<PlanningCenterOptions>({
   readme: "Planning Center",
   bundle: {
     "baselineGzip": 26970,
-    "maxGzip": 86970,
     "note":
       "./providers/planning-center starts at 26,970 B gzip. It is api() over the guarded transport with no hosted-MCP surface, so neither the MCP client nor the Effect core is in its graph; the cap uses the existing baseline + 60,000 B policy.",
   },

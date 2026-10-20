@@ -534,22 +534,14 @@ try {
       throw new Error("Packed gate declarations reference consumer Clerk types: " + declaration);
     }
   }
-  // One Effect, inside the declared v4 range. A second copy means two
+  // One Effect, at the exact pinned version. A second copy means two
   // runtimes whose fibers, services, and errors do not recognize each other.
-  const effectRange = rootManifest.dependencies?.effect ?? "";
+  const effectPin = rootManifest.dependencies?.effect ?? "";
   const installedEffect = JSON.parse(
     await readFile(join(work, "node_modules", "effect", "package.json"), "utf8"),
   ).version;
-  const caret = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(effectRange);
-  const installed = /^(\d+)\.(\d+)\.(\d+)$/.exec(installedEffect);
-  const satisfies =
-    caret &&
-    installed &&
-    installed[1] === caret[1] &&
-    (Number(installed[2]) > Number(caret[2]) ||
-      (installed[2] === caret[2] && Number(installed[3]) >= Number(caret[3])));
-  if (!satisfies) {
-    throw new Error(`Installed effect ${installedEffect} does not satisfy ${effectRange}`);
+  if (!/^\d+\.\d+\.\d+$/.test(effectPin) || installedEffect !== effectPin) {
+    throw new Error(`Installed effect ${installedEffect} does not match the exact pin ${effectPin}`);
   }
   const consumerLock = JSON.parse(await readFile(join(work, "package-lock.json"), "utf8"));
   const nestedEffect = Object.keys(consumerLock.packages ?? {}).filter((path) => path.endsWith("/node_modules/effect"));

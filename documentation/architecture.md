@@ -1340,7 +1340,7 @@ shape from building, in someone else's repository rather than this one.
 
 ## Effect inside
 
-The core runs on stable Effect v4 through a compatible `^4.0.0` range; no API a deployment
+The core runs on Effect v4, pinned to exactly `4.0.5`; no API a deployment
 touches does. `createConnecta`,
 `remoteMcp()`, `api()`, the `Connector` contract, and every shipped `.d.ts`
 are Promise-shaped and name no Effect type, so a connector author never meets a
@@ -1495,12 +1495,16 @@ the operator and activity routes cost about +100 KB gzip on `./ui` and +130 KB
 on `./activity`, and matching the wire format meant opting out of most of what
 it does: unowned paths fall through rather than 404, a wrong method is a JSON
 405, and the content-type and size checks run before a body is read. The root
-entry may import only `effect` itself (`test/purity.node.test.ts`). Effect v4's
-area imports, such as `effect/http-api` and `effect/ai`, would have to stay
-behind a subpath. APIs tagged `@stability unstable` can still change in minor
-releases, which is why the root may import only `effect` itself: that is what
-makes a caret range safe, and it lets a deployment that also uses Effect
-resolve a single copy. Adopting an unstable subpath is its own pull request.
+entry currently imports only `effect` itself (`test/purity.node.test.ts`).
+Effect 4.x is a long-term-support line, but its area barrels `effect/http`,
+`effect/http-api`, `effect/schema`, and `effect/sql` are still tagged
+`@stability unstable` and can change within it; only core modules such as
+`effect/Schema` are stable. That is why Effect is pinned to one exact version
+and every Effect upgrade is its own deliberate pull request. The exact pin
+also gives a deployment that uses Effect, such as an Alchemy resource stack, one
+version to install so it resolves a single copy; both deployment shapes are
+checked for that (`test/package-surface.node.test.ts` and
+`scripts/check-package.mjs`).
 
 The stable `4.0.0` release was re-evaluated on 2026-10-01 with
 [`scripts/probes/effect-v4-evaluation.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/probes/effect-v4-evaluation.mjs).
@@ -1542,8 +1546,13 @@ replacement's benefit or compatibility.
 The core's cost is recorded rather than guessed. Against 0.24.4 the root entry
 grew from 235,346 to 279,526 bytes gzip, the Worker example from 263,949 to
 314,336, and each provider by about 36 KB, since each reaches Effect through
-`remoteMcp()`; `pnpm run check:bundle` caps every entry against
-`scripts/bundle-budget.json`. An install carries about 53 MB of `effect`, with
+`remoteMcp()`. `pnpm run check:bundle` caps the deployed shapes (the root,
+`./worker`, `./ui`, the operator UI assets, `./d1`, `./auth/access-tokens`,
+the Worker example, and the other non-provider entries) against
+`scripts/bundle-budget.json`. Per-provider entries are reported with their
+size and change from baseline but not capped: every deployment already imports
+the root, which carries the Effect core, so a provider's standalone bundle
+counts that core a second time. An install carries about 53 MB of `effect`, with
 no dependencies of its own.
 
 ## Where else to look

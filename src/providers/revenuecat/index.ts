@@ -706,7 +706,7 @@ export const revenuecat = defineProvider<RevenueCatOptions>({
   title: "RevenueCat",
   kind: "mcp",
   readme: "RevenueCat",
-  bundle: { "baselineGzip": 128548, "maxGzip": 188548 },
+  bundle: { "baselineGzip": 128548 },
   skill,
   options: REVENUECAT_OPTIONS,
   classify: REVENUECAT_CLASSIFICATION,

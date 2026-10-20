@@ -153,7 +153,7 @@ Keep this example's Worker on Wrangler. A copied deployment may use
 [Alchemy](https://alchemy.run) to manage its D1 database, optional R2 bucket,
 and the Access application without adding Alchemy to connecta or
 changing this template. In that deployment, install `alchemy@2.0.0-beta.79`
-and `effect@4.0.0` at exact versions. The latter is connecta's own
+and `effect@4.0.5` at exact versions. The latter is connecta's own exact
 Effect pin; check `npm ls effect` for one resolved copy after installation.
 The following `alchemy.run.ts` is a resource stack, not a Worker deployment:
 
@@ -212,12 +212,10 @@ configures no `migrations`: connecta creates its tables on first use. Remote
 Durable Object and Secrets Store entries for its credentials. Retain them:
 deleting the state store loses Alchemy's record of what it owns.
 
-Verification for this optional path stops at the API and types. The 0.28
-form of this snippet (a KV namespace and two D1 databases with `migrations`)
+Verification for this optional path stops at the API and types. This snippet
 was copied to an isolated `alchemy.run.ts` and passed `tsc --noEmit` with
-TypeScript 5.9.3, Alchemy 2.0.0-beta.79, and Effect 4.0.0, with `npm ls
-effect` confirming one resolved copy; this form only removes resources and the
-optional `migrations` field. No Alchemy deploy or adoption was run.
+TypeScript 5.9.3, Alchemy 2.0.0-beta.79, and Effect 4.0.5, with `npm ls
+effect` confirming one resolved copy. No Alchemy deploy or adoption was run.
 [Alchemy's Worker resource](https://alchemy.run/cloudflare/compute/workers/)
 can declare `WorkerLoader`, domains, Browser Rendering, and cron wiring, but
 those properties are coupled to its script deploy. Its current full deploy

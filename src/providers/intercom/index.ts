@@ -107,7 +107,6 @@ export const intercom = defineProvider<IntercomOptions>({
   classify: CLASSIFICATION,
   bundle: {
     baselineGzip: 170245,
-    maxGzip: 230245,
     note: "./providers/intercom initial measured hosted-MCP baseline is 170,245 B gzip; the cap reserves 60,000 B of headroom.",
   },
   create(id, options, provider) {

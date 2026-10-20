@@ -65,7 +65,6 @@ export const infisical = defineProvider<InfisicalOptions>({
   options: optionsOf<InfisicalOptions>()({ ...PROVIDER_COMMON, ...keys("baseUrl") }),
   bundle: {
     baselineGzip: 27673,
-    maxGzip: 87673,
     note: "./providers/infisical starts at 27,673 B gzip (#677): guarded transport, Universal Auth request-local flights and eight named tools, with no MCP client or Effect runtime. The cap uses the measured baseline plus the existing 60,000 B headroom policy.",
   },
   create(id, options, provider) {

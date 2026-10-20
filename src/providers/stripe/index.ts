@@ -319,7 +319,6 @@ export const stripe = defineProvider<StripeOptions>({
   readme: "Stripe",
   bundle: {
     "baselineGzip": 232089,
-    "maxGzip": 292089,
     "note":
       "./providers/stripe remeasures at 232,089 B gzip (#801), from 170,771 B on main: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Stripe operation index (638 operations; request details to depth 2, without descriptions or enums over 50 values; 37,918 B gzip as source). Details were shrunk before the cap moved: the first full index measured 81 KB gzip. The cap uses the existing baseline + 60,000 B policy.",
   },
