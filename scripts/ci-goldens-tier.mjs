@@ -75,8 +75,8 @@ async function providerDependencies(repository) {
   return new Set([...graph].map((file) => relative(repository, file)));
 }
 
-/** Exported for fault-injection tests; CI uses the NUL-delimited stdin wrapper. */
-export async function selectGoldensTier(paths, { repository = root, dependencies = providerDependencies } = {}) {
+/** Dependency-free first pass. "graph" alone requires installing TypeScript. */
+export function selectGoldensFastTier(paths, { repository = root } = {}) {
   try {
     if (
       !paths.length ||
@@ -93,6 +93,23 @@ export async function selectGoldensTier(paths, { repository = root, dependencies
     if (paths.some((path) => explicit.test(path))) return "full";
     const code = paths.filter((path) => !documentation.test(path));
     if (!code.length) return "always";
+    // Only existing source/test modules need the TypeScript graph. All other
+    // unknown inputs fail full without paying for dependency setup.
+    if (code.some((path) => !/^(?:src|test)\/.*\.[cm]?[jt]sx?$/.test(path) || !existsSync(join(repository, path))))
+      return "full";
+    return "graph";
+  } catch (error) {
+    console.error(`Goldens fast classification failed; running full: ${error.message}`);
+    return "full";
+  }
+}
+
+/** Exported for fault-injection tests; CI uses the NUL-delimited stdin wrapper. */
+export async function selectGoldensTier(paths, { repository = root, dependencies = providerDependencies } = {}) {
+  try {
+    const fast = selectGoldensFastTier(paths, { repository });
+    if (fast !== "graph") return fast;
+    const code = paths.filter((path) => !documentation.test(path));
     const graph = await dependencies(repository);
     for (const path of code) {
       if (graph.has(path)) return "full";
@@ -110,7 +127,8 @@ export async function selectGoldensTier(paths, { repository = root, dependencies
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const input = readFileSync(0, "utf8");
-    console.log(!input.endsWith("\0") ? "full" : await selectGoldensTier(input.slice(0, -1).split("\0")));
+    const select = process.argv[2] === "--fast" ? selectGoldensFastTier : selectGoldensTier;
+    console.log(!input.endsWith("\0") ? "full" : await select(input.slice(0, -1).split("\0")));
   } catch (error) {
     console.error(`Goldens tier input failed; running full: ${error.message}`);
     console.log("full");
