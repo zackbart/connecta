@@ -45,7 +45,10 @@ function jwt(userId: string): string {
 }
 
 /** One request to the Worker, answered with its status and denial reasons. */
-async function authorize(token: string, signal?: AbortSignal): Promise<{ status: number; denials: unknown[] }> {
+async function authorize(
+  token: string,
+  signal?: AbortSignal,
+): Promise<{ status: number; denials: unknown[]; retryAfter?: string }> {
   const response = await worker!.fetch(`${PUBLIC_URL}/mcp`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -175,5 +178,85 @@ describe.skipIf(!worker)("clerkAuth organization lookups in workerd", () => {
     expect((await first).status).toBe(older ? 200 : 403);
     expect((await authorize(jwt(userId))).status).toBe(newer ? 200 : 403);
     expect(await exchanges(userId)).toHaveLength(2);
+  });
+  it("INV-6 INV-7: separate requests share only counters for the two-lookups-per-identity cap", async () => {
+    const userId = newUser();
+    await script(userId, ["hold", "hold", "member"]);
+    const first = authorize(jwt(userId));
+    await sent(userId, 1);
+    const second = authorize(jwt(userId));
+    await sent(userId, 2);
+    await expect(authorize(jwt(userId))).resolves.toEqual({
+      status: 503,
+      denials: [{ reason: "organization_lookup_busy" }],
+      retryAfter: "1",
+    });
+    expect(await exchanges(userId)).toHaveLength(2);
+    await release(userId, 0, false);
+    expect((await first).status).toBe(403);
+    await release(userId, 1, true);
+    expect((await second).status).toBe(200);
+    // The cache is served; the busy refusal did not become a cached denial.
+    expect((await authorize(jwt(userId))).status).toBe(200);
+    expect(await exchanges(userId)).toHaveLength(2);
+  });
+
+  it("INV-7: separate requests enforce the sixteen-lookup isolate cap and release every slot", async () => {
+    const users = Array.from({ length: 16 }, newUser);
+    const pending: Promise<{ status: number }>[] = [];
+    try {
+      for (const userId of users) {
+        await script(userId, ["hold"]);
+        pending.push(authorize(jwt(userId)));
+        await sent(userId, 1);
+      }
+      const extra = newUser();
+      await script(extra, ["member"]);
+      await expect(authorize(jwt(extra))).resolves.toEqual({
+        status: 503,
+        denials: [{ reason: "organization_lookup_busy" }],
+        retryAfter: "1",
+      });
+      expect(await exchanges(extra)).toHaveLength(0);
+      await Promise.all(users.map((userId) => release(userId, 0, false)));
+      expect((await Promise.all(pending)).map(({ status }) => status)).toEqual(Array(16).fill(403));
+      expect((await authorize(jwt(extra))).status).toBe(200);
+      expect(await exchanges(extra)).toHaveLength(1);
+    } finally {
+      await Promise.all(users.map((userId) => release(userId, 0, false)));
+      await Promise.allSettled(pending);
+    }
+  }, 15_000);
+
+  it("INV-6 INV-7: a separate request's native 429 starts backoff for other misses while cache hits still work", async () => {
+    const member = newUser();
+    await script(member, ["member"]);
+    expect((await authorize(jwt(member))).status).toBe(200);
+    const limited = newUser();
+    await script(limited, ["rate-limited", "member"]);
+    await expect(authorize(jwt(limited))).resolves.toEqual({
+      status: 503,
+      denials: [{ reason: "organization_lookup_busy" }],
+      retryAfter: "1",
+    });
+    const other = newUser();
+    await expect(authorize(jwt(other))).resolves.toEqual({
+      status: 503,
+      denials: [{ reason: "organization_lookup_busy" }],
+      retryAfter: "1",
+    });
+    expect(await exchanges(other)).toHaveLength(0);
+    expect((await authorize(jwt(member))).status).toBe(200);
+    expect(await exchanges(member)).toHaveLength(1);
+    await vi.waitFor(async () => expect((await authorize(jwt(limited))).status).toBe(200), {
+      timeout: 5_000,
+      interval: 50,
+    });
+    expect(await exchanges(limited)).toEqual([
+      { path: membershipPath(limited), outcome: "answered" },
+      { path: membershipPath(limited), outcome: "answered" },
+    ]);
+    expect((await authorize(jwt(other))).status).toBe(403);
+    expect(await exchanges(other)).toHaveLength(1);
   });
 });

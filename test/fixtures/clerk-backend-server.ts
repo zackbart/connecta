@@ -12,7 +12,7 @@ declare module "vitest" {
   }
 }
 
-type Step = "member" | "non-member" | "redirect" | "hold" | "valid";
+type Step = "member" | "non-member" | "redirect" | "hold" | "valid" | "rate-limited";
 
 interface Exchange {
   path: string;
@@ -80,6 +80,10 @@ export default async function setup(project: TestProject) {
         }
         if (step === "redirect") {
           json(response, 302, {}, { location: `https://api.clerk.com/v1/followed/${id}` });
+          return;
+        }
+        if (step === "rate-limited") {
+          json(response, 429, { error: "planted-upstream-text" }, { "Retry-After": "1" });
           return;
         }
         const data =

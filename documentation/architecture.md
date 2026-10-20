@@ -1486,7 +1486,17 @@ storage is the root's namespaced to its principal.
 
 ### Across requests
 
-Work shared across requests meets only through a Deferred that the owning
+Organization-mode Clerk Backend API reads share only plain membership verdicts,
+start times and sequences, active-call counters (16 per isolate, two per
+identity), and a bounded 429 backoff timestamp. They never share a promise,
+queue, signal, controller, or body across requests. A refused busy lookup is
+not cached. Each admitted read owns its ten-second deadline and cleanup;
+`finally` releases its counters after ending its upstream I/O, and the owning
+request's abort handler also releases them idempotently if workerd discards the
+pending continuation on disconnect. Membership cache
+hits precede these bounds; see [organization admission](./auth.md#one-clerk-instance-one-organization-per-deployment).
+
+Asynchronous work shared across requests meets only through a Deferred that the owning
 request completes, never through a fiber that outlives its request. Two
 workerd rules follow, and both have bitten.
 

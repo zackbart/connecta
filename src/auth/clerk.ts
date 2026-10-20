@@ -116,6 +116,15 @@ function fapiUrl(publishableKey: string): string {
 const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
 const BACKEND_LOOKUP_TIMEOUT_MS = 10_000;
+// Per organization-mode clerkAuth/isolate, shared by membership and the extra
+// opaque verification. Clerk's quota is per instance (100/10s development,
+// 1,000/10s production), not per deployment. These cap bursts, not request
+// rates: ingress rate limiting must protect the shared quota. No queue or
+// request-owned object is retained; only counters and a backoff timestamp.
+const ORGANIZATION_MAX_BACKEND_LOOKUPS = 16;
+const ORGANIZATION_MAX_BACKEND_LOOKUPS_PER_IDENTITY = 2;
+const BACKEND_RETRY_DEFAULT_MS = 10_000;
+const BACKEND_RETRY_MAX_MS = 60_000;
 // A user-filtered membership list holds at most one row, and a token
 // verification describes one token.
 const MAX_BACKEND_RESPONSE_BYTES = 65_536;
@@ -322,6 +331,7 @@ async function backendJson(url: URL | string, init: RequestInit, signal: AbortSi
     // unfollowed, and a redirect is not an answer. Workers and Node return
     // its 3xx; an `opaqueredirect` has status 0, which `ok` refuses.
     response = await fetch(url, { ...init, redirect: "manual", signal: request });
+    if (response.status === 429) throw new BackendRateLimited(backendRetryMs(response.headers.get("Retry-After")));
     if (response.status >= 300 && response.status < 400) throw new Error("Clerk Backend API request redirected");
     if (!response.ok) throw new Error("Clerk Backend API request failed");
     return JSON.parse(await boundedText(response, request));
@@ -329,6 +339,33 @@ async function backendJson(url: URL | string, init: RequestInit, signal: AbortSi
     settled.abort();
     void response?.body?.cancel().catch(() => {});
   }
+}
+
+/** Only locally parsed, bounded timing facts leave the response's request. */
+class BackendRateLimited extends Error {
+  constructor(readonly retryMs: number) {
+    super("Clerk Backend API rate limited");
+  }
+}
+
+class OrganizationLookupBusy extends Error {
+  constructor(readonly retrySeconds: number) {
+    super("Clerk organization lookup busy");
+  }
+}
+
+/** Clerk sends seconds; accept an HTTP date too. Never trust an unbounded delay. */
+function backendRetryMs(value: string | null): number {
+  let delay = BACKEND_RETRY_DEFAULT_MS;
+  if (value !== null) {
+    const parsed = /^\d+$/.test(value)
+      ? Number(value) * 1_000
+      : /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value)
+        ? Date.parse(value) - Date.now()
+        : NaN;
+    if (!Number.isNaN(parsed)) delay = parsed;
+  }
+  return Math.max(1_000, Math.min(BACKEND_RETRY_MAX_MS, delay));
 }
 
 /**
@@ -513,6 +550,51 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   // entries the cache has evicted.
   let membershipLookupsStarted = 0;
   let evictedMembershipSequence = 0;
+  let activeOrganizationLookups = 0;
+  const organizationLookupsByIdentity = new Map<string, number>();
+  let organizationRetryUntil = 0;
+
+  const organizationLookup = async <T>(userId: string, signal: AbortSignal, lookup: () => Promise<T>): Promise<T> => {
+    const now = Date.now();
+    if (now < organizationRetryUntil) {
+      throw new OrganizationLookupBusy(Math.ceil((organizationRetryUntil - now) / 1_000));
+    }
+    const activeForIdentity = organizationLookupsByIdentity.get(userId) ?? 0;
+    if (
+      activeOrganizationLookups >= ORGANIZATION_MAX_BACKEND_LOOKUPS ||
+      activeForIdentity >= ORGANIZATION_MAX_BACKEND_LOOKUPS_PER_IDENTITY
+    ) {
+      throw new OrganizationLookupBusy(1);
+    }
+    signal.throwIfAborted();
+    activeOrganizationLookups++;
+    organizationLookupsByIdentity.set(userId, activeForIdentity + 1);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      activeOrganizationLookups--;
+      const remaining = organizationLookupsByIdentity.get(userId)! - 1;
+      if (remaining === 0) organizationLookupsByIdentity.delete(userId);
+      else organizationLookupsByIdentity.set(userId, remaining);
+    };
+    // workerd may discard the awaited continuation when its caller leaves.
+    // Release in that request's own abort handler too; finally is idempotent.
+    // The same caller signal cancels backendJson's request-owned upstream.
+    signal.addEventListener("abort", release, { once: true });
+    try {
+      return await lookup();
+    } catch (error) {
+      if (error instanceof BackendRateLimited) {
+        organizationRetryUntil = Math.max(organizationRetryUntil, Date.now() + error.retryMs);
+        throw new OrganizationLookupBusy(Math.ceil((organizationRetryUntil - Date.now()) / 1_000));
+      }
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", release);
+      release();
+    }
+  };
   const activityLabelCache = new Map<string, { label?: string; exp: number }>();
   const pendingActivityLabels = new Map<string, Promise<string | undefined>>();
   const inFlightActivityLabelIds = new Set<string>();
@@ -605,6 +687,20 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       headers: { "Content-Type": "application/json" },
     });
 
+  const organizationBusy = (error: OrganizationLookupBusy): Response => {
+    logDenial("organization_lookup_busy");
+    return Response.json(
+      {
+        error: {
+          code: "organization_lookup_busy",
+          message: "Organization admission is temporarily busy. Retry later.",
+          retryable: true,
+        },
+      },
+      { status: 503, headers: { "Retry-After": String(error.retrySeconds) } },
+    );
+  };
+
   /**
    * The domain half of admission. Fails CLOSED on every uncertainty — no
    * primary email, an unverified one, a malformed address, or the lookup
@@ -654,11 +750,20 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * written this key. Evicting an entry raises a floor under every key,
    * because the evicted entry no longer guards its own: a lookup that started
    * before it never writes. Either way an older answer never replaces a
-   * newer verdict.
+   * newer verdict. A floor-suppressed answer invalidates an older entry for
+   * its own key rather than leaving that older verdict authoritative.
    */
   const cacheMembership = (key: string, verdict: MembershipVerdict & { member: boolean }): void => {
     const current = membershipCache.get(key);
-    if (verdict.sequence <= evictedMembershipSequence || (current && current.sequence > verdict.sequence)) return;
+    if (current && current.sequence > verdict.sequence) return;
+    if (verdict.sequence <= evictedMembershipSequence) {
+      // The floor may have advanced past both lookups while an older verdict
+      // for this key remained cached. Suppressing the newer answer must not
+      // preserve that older admission. Forget it; the floor still prevents
+      // either lookup (or an evicted, newer one) from being overwritten.
+      if (current && current.sequence < verdict.sequence) membershipCache.delete(key);
+      return;
+    }
     membershipCache.delete(key);
     membershipCache.set(key, verdict);
     if (membershipCache.size <= GATE_CACHE_MAX_IDENTITIES) return;
@@ -675,16 +780,18 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * whichever organization they chose at consent. Membership always comes
    * from the Backend API, cached per organization and user for 60 seconds
    * from the start of the lookup that answered (30 for a non-member), since
-   * Clerk answered no earlier. So every request that reaches this check 60
-   * seconds or more after a member's removal is refused.
+   * Clerk answered no earlier. With a clock that does not step back unseen
+   * within the TTL window, every request reaching this check 60 seconds or
+   * more after a member's removal is refused. An unseen rollback within that
+   * window can extend admission beyond 60 seconds of elapsed time.
    *
    * Each request that misses the cache runs and owns its own lookup. On
    * Workers one request may not touch another's fetch, signal, or body, so
-   * concurrent misses each ask Clerk, and a caller that leaves cancels only
+   * concurrent misses within the plain-counter bounds each ask Clerk, and a caller that leaves cancels only
    * its own lookup. A failed or abandoned lookup is not an answer, so it
    * refuses without being cached.
    */
-  const checkOrganization = async (userId: string, signal: AbortSignal): Promise<boolean> => {
+  const checkOrganization = async (userId: string, signal: AbortSignal): Promise<boolean | Response> => {
     if (!organizationId) return true;
     const key = `${organizationId}/${userId}`;
     const cached = cachedMembership(key);
@@ -693,8 +800,11 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     const sequence = ++membershipLookupsStarted;
     let member: boolean;
     try {
-      member = await organizationMember(opts.secretKey, organizationId, userId, signal);
-    } catch {
+      member = await organizationLookup(userId, signal, () =>
+        organizationMember(opts.secretKey, organizationId, userId, signal),
+      );
+    } catch (error) {
+      if (error instanceof OrganizationLookupBusy) return organizationBusy(error);
       logDenial("organization_lookup_failed");
       return false;
     }
@@ -835,8 +945,12 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
           let claims: Record<string, unknown>;
           if (token.startsWith("oat_")) {
             try {
-              claims = await opaqueOAuthClaims(token, opts.secretKey, auth.userId, auth.clientId, request.signal);
-            } catch {
+              const verify = () => opaqueOAuthClaims(token, opts.secretKey, auth.userId, auth.clientId, request.signal);
+              claims = await (organizationId
+                ? organizationLookup(auth.userId ?? "", request.signal, verify)
+                : verify());
+            } catch (error) {
+              if (error instanceof OrganizationLookupBusy) return { ok: false, response: organizationBusy(error) };
               logDenial("oauth_verification_failed");
               return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
             }
@@ -887,7 +1001,9 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         logDenial("user_missing");
         return { ok: false, response: unauthorized(baseUrl, true, request) };
       }
-      if (!(await checkOrganization(userId, request.signal)) || !(await checkGate(userId))) {
+      const membership = await checkOrganization(userId, request.signal);
+      if (membership instanceof Response) return { ok: false, response: membership };
+      if (!membership || !(await checkGate(userId))) {
         return { ok: false, response: forbidden() };
       }
       return { ok: true, userId, ...(sessionCookies?.length ? { sessionCookies } : {}) };

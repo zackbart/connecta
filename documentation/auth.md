@@ -1669,31 +1669,34 @@ Admission in organization mode:
   for MCP OAuth tokens (JWT and opaque) and for operator sessions. It caches
   each answer per Organization and user, counted from when the lookup
   started: a member for 60 seconds, a non-member for 30. Each request that
-  misses the cache runs its own lookup, so concurrent requests for one user
-  each ask Clerk. An answer is cached only if no lookup that started later
-  has already cached one, so an older answer never replaces a newer one.
-  Every request that reaches the check 60 seconds or more after a member's
-  removal in Clerk is refused, even while their day-long access token remains
-  valid; a person added is admitted 30 seconds after the addition at the
-  latest.
+  misses the cache runs its own lookup, subject to the bounds below. An answer
+  is cached only if no lookup that started later has already cached one, so an
+  older answer never replaces a newer one. If eviction suppresses a newer
+  answer, any older answer for that user is invalidated. Assuming the clock
+  does not step back unseen within the TTL window described below, every
+  request reaching the check 60 seconds or more after a member's removal in
+  Clerk is refused, even while their day-long access token remains valid.
+  Under the same clock assumption, a non-member answer expires within 30
+  seconds of an addition; admission then requires a successful lookup.
 - The cache reads the deployment's clock. An answer is used only while the
   clock reads from its lookup's start to that start plus 60 or 30 seconds.
   A step forward only ends it early. A step back to before the start ends it
   too, and once an answer has been found expired no later step revives it. A
   step back that lands within that window before any request has seen the
   answer expire cannot be detected, and keeps the answer until the clock
-  again reads its start plus the TTL.
+  again reads its start plus the TTL. That unseen rollback can extend cached
+  admission beyond 60 seconds of elapsed time after removal.
 - Organization claims are never read. A token's `org_id` and a session's
   active Organization neither admit nor refuse. A member's token is bound to
   this deployment's URL whichever Organization they chose in Clerk, and a
   non-member gets `403` from the lookup.
-- A lookup that fails, answers with a redirect, an error status, or an
-  unreadable or oversized body, or times out ten seconds after it started
+- A lookup that fails, answers with a redirect, an error status other than
+  `429` (handled below), or an unreadable or oversized body, or times out ten seconds after it started
   refuses its request with `403`. Redirects are never followed. A caller that
   leaves cancels its own lookup and is refused; other requests' lookups go
   on. Connecta ends the Backend API request and its body on every outcome and
   caches neither a failure nor a cancelled lookup, so the next request asks
-  Clerk again.
+  Clerk again, subject to the bounds and 429 backoff below.
 - Connecta checks the token's audience, issuer, and subject before the lookup.
   The issuer must be the Frontend API origin encoded in `publishableKey`, and
   the subject must be the user the lookup names. An opaque token's
@@ -1710,6 +1713,42 @@ Admission in organization mode:
   one deployment's token out of another.
 - Advertised scopes are unchanged. Organization mode needs no Clerk
   organization scope, operator page, or sign-in page setting.
+
+Protect the shared Backend API quota:
+
+- Put ingress rate limiting in front of every deployment. Budget the combined
+  traffic of all deployments and other applications using the instance,
+  including authenticated non-members and opaque-token authentication. For
+  example, rate limit both `crm.example.com` and `tickets.example.com` within
+  one shared quota budget when they use the same Clerk instance; independent
+  limits that each consume the whole quota do not protect the other deployment.
+  [Clerk's system limits](https://clerk.com/docs/guides/how-clerk-works/system-limits)
+  apply per instance identified by the secret key: 1,000 Backend API requests
+  per ten seconds in production, 100 in development. Membership reads use that
+  general limit. A deployment's MCP concurrency setting does not bound all
+  authentication paths, including `subscriptions/listen` and operator routes.
+- Organization mode permits at most 16 concurrent membership/extra opaque
+  verification calls per `clerkAuth` instance (per isolate on Workers), with at
+  most two per user. Each call owns its signal, deadline, and response body;
+  there is no shared promise or waiting queue. Excess calls immediately get
+  HTTP `503`, fixed code `organization_lookup_busy`, `retryable: true`, and
+  `Retry-After: 1`. These fixed caps limit bursts relative to the documented
+  quotas; they do not limit sustained request rates or coordinate isolates,
+  deployments, or the SDK's own authentication calls. Do not treat them as a
+  substitute for ingress rate limiting.
+- A `429` from a membership read or extra opaque verification starts backoff
+  shared by those calls in that isolate. Connecta honors `Retry-After` seconds
+  (or an HTTP date), clamped to 1–60 seconds; missing or malformed values use
+  ten seconds. Concurrent 429s can extend, never shorten, the current backoff.
+  The triggering request and new misses during backoff receive the same
+  retryable `503` and a `Retry-After` for the remaining whole seconds, rounded
+  up. No membership verdict is cached for these refusals. Valid cached
+  membership answers remain usable; opaque tokens still need verification.
+  After backoff expires the next miss asks Clerk again, with no automatic
+  retry of the original request. Monitor the payload-free
+  `organization_lookup_busy` log reason and adjust the ingress budget when it
+  recurs. A quota exhausted by another deployment can still refuse uncached
+  admission here.
 
 Set up a shared instance:
 

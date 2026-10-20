@@ -33,6 +33,11 @@ export default {
   async fetch(request: Request): Promise<Response> {
     const logged: unknown[] = [];
     const result = await denials.run(logged, () => authorization().authorize(request, PUBLIC_URL));
-    return Response.json({ status: result.ok ? 200 : result.response.status, denials: logged });
+    const retryAfter = result.ok ? null : result.response.headers.get("Retry-After");
+    return Response.json({
+      status: result.ok ? 200 : result.response.status,
+      denials: logged,
+      ...(retryAfter ? { retryAfter } : {}),
+    });
   },
 };

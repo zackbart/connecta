@@ -135,8 +135,9 @@ function mcp(signal?: AbortSignal) {
  * The next membership lookup answers only when `answer` says so and, like a
  * real fetch, rejects once its signal aborts. `sent` resolves once it is sent.
  */
-function heldLookup() {
+function heldLookup(userId = ALICE) {
   let answer!: (member: boolean) => void;
+  let respond!: (response: Response) => void;
   let send!: () => void;
   const sent = new Promise<void>((resolve) => {
     send = resolve;
@@ -144,14 +145,15 @@ function heldLookup() {
   mocks.fetch.mockImplementationOnce((_input, { signal }: RequestInit) => {
     send();
     return new Promise<Response>((resolve, reject) => {
+      respond = resolve;
       signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
       answer = (member) => {
-        const data = member ? [membershipRow(ORG, ALICE)] : [];
+        const data = member ? [membershipRow(ORG, userId)] : [];
         resolve(Response.json({ data, total_count: data.length }));
       };
     });
   });
-  return { sent, answer: (member: boolean) => answer(member) };
+  return { sent, answer: (member: boolean) => answer(member), respond: (response: Response) => respond(response) };
 }
 
 function lookupSignal(index = 0) {
@@ -227,6 +229,7 @@ describe("clerkAuth organizationId construction", () => {
       "token_identity_mismatch",
       "organization_membership_denied",
       "organization_lookup_failed",
+      "organization_lookup_busy",
     ] as const) {
       expect(failureRecord({ reason })).toEqual({ reason });
     }
@@ -709,6 +712,263 @@ describe("clerkAuth membership lookups, one per request", () => {
     expect(lookups()).toHaveLength(1_027);
     // Real loops of 1,027 authorizations run slowly on a loaded workerd.
   }, 15_000);
+});
+
+describe("clerkAuth membership cache eviction completion order", () => {
+  it.each([1_024, 1_023])(
+    "INV-4: suppressing a newer refusal invalidates an older admission with %i other cached identities",
+    async (warmIdentities) => {
+      oauth(jwt());
+      const stale = heldLookup();
+      const fresh = heldLookup();
+      const extra = warmIdentities === 1_023 ? heldLookup(BOB) : undefined;
+      const auth = orgAuth();
+      const older = auth.authorize(mcp(), BASE);
+      await stale.sent;
+      const newer = auth.authorize(mcp(), BASE);
+      await fresh.sent;
+      let third;
+      if (extra) {
+        oauth(jwt({ sub: BOB }), BOB);
+        third = auth.authorize(mcp(), BASE);
+        await extra.sent;
+      }
+      // These start later than Alice's lookups, so evicting any of them
+      // raises the floor above both. The 1,023 case needs a third completion.
+      for (let index = 0; index < warmIdentities; index++) {
+        const user = `user_${index}`;
+        oauth(jwt({ sub: user }), user);
+        expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+      }
+      stale.answer(true);
+      expect((await older).ok).toBe(true);
+      if (extra) {
+        extra.answer(false);
+        expect((await third!).ok).toBe(false);
+      }
+      fresh.answer(false);
+      expect((await newer).ok).toBe(false);
+      oauth(jwt());
+      // The floor may suppress the refusal, but must not preserve the older
+      // cached member answer. A fresh lookup still refuses Alice.
+      expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+      expect(lookups()).toHaveLength(1_027);
+    },
+    15_000,
+  );
+});
+
+/** Assert the fixed, retryable refusal without treating it as a membership answer. */
+async function busy(result: Awaited<ReturnType<ReturnType<typeof orgAuth>["authorize"]>>, retry = "1") {
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected busy refusal");
+  expect(result.response.status).toBe(503);
+  expect(result.response.headers.get("Retry-After")).toBe(retry);
+  expect(await result.response.json()).toEqual({
+    error: {
+      code: "organization_lookup_busy",
+      message: "Organization admission is temporarily busy. Retry later.",
+      retryable: true,
+    },
+  });
+}
+
+describe("clerkAuth organization Backend API bounds", () => {
+  beforeEach(() => oauth(jwt()));
+
+  it("INV-6 INV-7: caps one identity at two request-owned lookups, refuses fast, and releases cancelled slots", async () => {
+    const first = heldLookup();
+    const second = heldLookup();
+    const auth = orgAuth();
+    const caller = new AbortController();
+    const leaving = auth.authorize(mcp(caller.signal), BASE);
+    await first.sent;
+    const staying = auth.authorize(mcp(), BASE);
+    await second.sent;
+    for (const result of await Promise.all(Array.from({ length: 126 }, () => auth.authorize(mcp(), BASE)))) {
+      await busy(result);
+    }
+    expect(lookups()).toHaveLength(2);
+    expect(denials(warn)).toEqual(Array.from({ length: 126 }, () => ({ reason: "organization_lookup_busy" })));
+    caller.abort();
+    expect((await leaving).ok).toBe(false);
+    // A cancelled lookup releases its slot. The busy refusals were not cached.
+    const third = heldLookup();
+    const replacement = auth.authorize(mcp(), BASE);
+    await third.sent;
+    third.answer(true);
+    expect((await replacement).ok).toBe(true);
+    second.answer(false);
+    expect((await staying).ok).toBe(false);
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(true);
+    expect(lookups()).toHaveLength(3);
+  });
+
+  it("INV-4 INV-7: caps Backend API calls at sixteen even for a full-server subscriptions/listen header probe", async () => {
+    mocks.authenticateRequest.mockImplementation(async (request: Request) => {
+      const userId = request.headers.get("Authorization")!.slice("Bearer ".length);
+      return {
+        toAuth: () => ({
+          isAuthenticated: true,
+          tokenType: "oauth_token",
+          userId,
+          clientId: "client_connecta",
+          getToken: async () => jwt({ sub: userId }),
+        }),
+      };
+    });
+    const auth = orgAuth();
+    const app = createTestConnecta({
+      connectors: [],
+      auth,
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      maintainers: [ALICE],
+      logger: "silent",
+    });
+    const request = (userId: string) => {
+      const req = mcp();
+      req.headers.set("Authorization", `Bearer ${userId}`);
+      req.headers.set("Mcp-Method", "subscriptions/listen");
+      return app.fetch(req);
+    };
+    const held = Array.from({ length: 16 }, (_, index) => heldLookup(`user_${index}`));
+    const pending: Promise<Response>[] = [];
+    try {
+      for (let index = 0; index < held.length; index++) {
+        pending.push(request(`user_${index}`));
+        await held[index]!.sent;
+      }
+      const refused = await Promise.all(Array.from({ length: 48 }, (_, index) => request(`user_over_${index}`)));
+      for (const response of refused) await busy({ ok: false, response });
+      expect(lookups()).toHaveLength(16);
+      for (const lookup of held) lookup.answer(false);
+      for (const response of await Promise.all(pending)) {
+        expect(response.status).toBe(403);
+        await response.text();
+      }
+      // All successful upstream completions release their counters too.
+      const response = await request("user_next");
+      expect(response.status).toBe(403);
+      await response.text();
+      expect(lookups()).toHaveLength(17);
+    } finally {
+      for (const lookup of held) lookup.answer(false);
+      await Promise.allSettled(pending);
+      await app.close();
+    }
+  });
+
+  it("INV-7: caps the extra opaque verification in the same identity budget as membership", async () => {
+    const held = [heldLookup(), heldLookup()];
+    const auth = orgAuth();
+    const pending = [auth.authorize(mcp(), BASE), auth.authorize(mcp(), BASE)];
+    await Promise.all(held.map((lookup) => lookup.sent));
+    oauth("oat_private");
+    await busy(await auth.authorize(mcp(), BASE));
+    expect(mocks.fetch).toHaveBeenCalledTimes(2);
+    held.forEach((lookup) => lookup.answer(false));
+    await Promise.all(pending);
+  });
+
+  it.each([
+    ["seconds", "2", 2_000],
+    ["missing", null, 10_000],
+    ["malformed", "planted-upstream-text", 10_000],
+    ["negative", "-1", 10_000],
+    ["fractional", "1.5", 10_000],
+    ["bounded maximum", "99999999999999999999999", 60_000],
+    ["bounded minimum", "0", 1_000],
+    ["HTTP date", "Tue, 20 Oct 2026 12:00:03 GMT", 3_000],
+  ])(
+    "INV-6 INV-7: backs off on 429 with %s Retry-After, serves cache hits, and retries only after expiry",
+    async (_name, retryAfter, delay) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const start = new Date("2026-10-20T12:00:00Z").getTime();
+      vi.setSystemTime(start);
+      members.add(`${ORG}/${ALICE}`);
+      const auth = orgAuth();
+      expect((await auth.authorize(mcp(), BASE)).ok).toBe(true);
+      oauth(jwt({ sub: BOB }), BOB);
+      const { response, cancelled } = stalledResponse(429, "planted-upstream-text");
+      if (retryAfter !== null) response.headers.set("Retry-After", retryAfter);
+      mocks.fetch.mockResolvedValueOnce(response);
+      await busy(await auth.authorize(mcp(), BASE), String(delay / 1_000));
+      expect(cancelled).toHaveBeenCalledTimes(1);
+      expect(lookupSignal(1).aborted).toBe(true);
+      // An instance-level backoff blocks other identities too, without caching a denial.
+      oauth(jwt({ sub: "user_other" }), "user_other");
+      vi.setSystemTime(start + delay - 1);
+      await busy(await auth.authorize(mcp(), BASE));
+      oauth(jwt());
+      expect((await auth.authorize(mcp(), BASE)).ok).toBe(true);
+      expect(lookups()).toHaveLength(2);
+      oauth(jwt({ sub: BOB }), BOB);
+      vi.setSystemTime(start + delay);
+      expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+      expect(lookups()).toHaveLength(3);
+      expect(denials(warn)).toEqual([
+        { reason: "organization_lookup_busy" },
+        { reason: "organization_lookup_busy" },
+        { reason: "organization_membership_denied" },
+      ]);
+    },
+  );
+
+  it("INV-7: releases failed lookup counters without caching the failure", async () => {
+    const auth = orgAuth();
+    for (let index = 0; index < 3; index++) {
+      mocks.fetch.mockRejectedValueOnce(new Error("planted-upstream-text"));
+      const result = await auth.authorize(mcp(), BASE);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(403);
+    }
+    expect(lookups()).toHaveLength(3);
+    expect(denials(warn)).toEqual(Array(3).fill({ reason: "organization_lookup_failed" }));
+  });
+
+  it("INV-7: concurrent 429s never shorten backoff, and cached non-members remain refused without upstream I/O", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.now();
+    const auth = orgAuth();
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    oauth(jwt({ sub: BOB }), BOB);
+    const long = heldLookup(BOB);
+    const short = heldLookup(BOB);
+    const first = auth.authorize(mcp(), BASE);
+    await long.sent;
+    const second = auth.authorize(mcp(), BASE);
+    await short.sent;
+    long.respond(new Response(null, { status: 429, headers: { "Retry-After": "10" } }));
+    await busy(await first, "10");
+    vi.setSystemTime(start + 1_000);
+    short.respond(new Response(null, { status: 429, headers: { "Retry-After": "1" } }));
+    await busy(await second, "9");
+    oauth(jwt());
+    const cached = await auth.authorize(mcp(), BASE);
+    expect(cached.ok).toBe(false);
+    if (!cached.ok) expect(cached.response.status).toBe(403);
+    expect(lookups()).toHaveLength(3);
+    oauth(jwt({ sub: BOB }), BOB);
+    vi.setSystemTime(start + 9_999);
+    await busy(await auth.authorize(mcp(), BASE));
+    vi.setSystemTime(start + 10_000);
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    expect(lookups()).toHaveLength(4);
+  });
+
+  it("INV-6: a 429 on opaque verification starts the same backoff before membership", async () => {
+    oauth("oat_private");
+    const auth = orgAuth();
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 429, headers: { "Retry-After": "5" } }));
+    await busy(await auth.authorize(mcp(), BASE), "5");
+    oauth(jwt({ sub: BOB }), BOB);
+    const result = await auth.authorize(mcp(), BASE);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(503);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(lookups()).toHaveLength(0);
+  });
 });
 
 describe("clerkAuth membership cache under clock steps", () => {
