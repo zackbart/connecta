@@ -31,7 +31,7 @@ import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type { GuardedClient } from "./client.js";
 import type { HttpFailure } from "./errors.js";
-import { Classification, RequestFacts, type CallServices } from "./services.js";
+import { Classification, RequestFacts, duringCall, type CallServices } from "./services.js";
 
 /** The calling owner's renewable token, as the operations a transport needs from it. */
 export class Grant extends Context.Service<
@@ -43,6 +43,7 @@ export class Grant extends Context.Service<
      * Renew because `stale` was refused: the token another call already
      * rotated in, else one coordinated refresh.
      */
+    // Call-owned: use interruptible Effects and abort their I/O on interruption.
     readonly refresh: (stale: string) => Effect.Effect<string, HttpFailure>;
     /** The renewed token was refused too: latch the request scope and fail with the grant's own verdict. */
     readonly rejected: Effect.Effect<never, HttpFailure>;
@@ -83,7 +84,7 @@ export function refreshOnce(guarded: GuardedClient<CallServices | Grant>): Guard
       if (replay.status !== 401) return replay;
       yield* Effect.ignore(guarded.read(replay));
       return yield* grant.rejected;
-    });
+    }).pipe(duringCall);
   return {
     provider: guarded.provider,
     client: HttpClient.makeWith(

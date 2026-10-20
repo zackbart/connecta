@@ -15,7 +15,8 @@
 // the message from it. A rule's input has no prose to read, and when a rule
 // runs, this failure's prose does not exist yet.
 //
-// Write outcomes are decided here, not per provider, from the call's
+// Write verdicts delegate to the core contract through core-write-outcome.ts.
+// This file composes those verdicts over the call's
 // dispatch ledger (src/http/services.ts): what each resource request did,
 // recorded when it happened, and which failure each one's own answer settled
 // into. A write keeps the meaning of its own answer whatever happens after it
@@ -26,7 +27,7 @@
 // onto the kit keeps its goldens.
 
 import { Data } from "effect";
-import { classifyWriteOutcome } from "../write-outcome.js";
+import { classifyWriteOutcome, providerCallFailure, unsentAfterUnauthorized } from "./core-write-outcome.js";
 import { retryAfterMs } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError, networkErrorCode, unavailableCallError, type ConnectorCallErrorCode } from "../errors.js";
 import type { Dispatch } from "./services.js";
@@ -358,7 +359,7 @@ function writeOutcome(
       : error;
   }
   // The entire ledger owns the call outcome, including blocked retries and cancellation.
-  const uncertain = left.filter((entry) => !provesNonExecution(entry, vendor, options));
+  const uncertain = left.filter((entry) => !knownWriteFailure(entry, vendor, options));
   const is401 = (entry: Dispatch) => entry.status === 401 && entry.state === "answered";
   const unauthorizedWrite = left.find((entry) => is401(entry) && !entry.renewed) ?? left.find(is401);
   if (unauthorizedWrite) {
@@ -371,12 +372,13 @@ function writeOutcome(
     return uncertain.some((entry) => entry !== failure.first) ? afterWrite(decided, uncertain, vendor) : decided;
   }
   if (uncertain.length === 0) return error;
-  const network = error.details?.code;
-  if (error.code === "timeout" || network === "timeout" || network === "ETIMEDOUT" || network?.endsWith("_TIMEOUT")) {
-    return unknownWrite(error.code, error.message, error.details);
-  }
   const own = options.dispatches.find((dispatch) => dispatch.failure === failure);
-  if (own !== undefined && uncertain.length === 1 && uncertain[0] === own)
+  if (
+    own !== undefined &&
+    uncertain.length === 1 &&
+    uncertain[0] === own &&
+    (failure._tag !== "StatusFailure" || failure.status === own.status)
+  )
     return writeAnswer(own, error, vendor, options);
   return afterWrite(error, uncertain, vendor);
 }
@@ -387,14 +389,13 @@ function writeAnswer(
   vendor: VendorErrors<any>,
   options: MapOptions,
 ): ConnectorCallError {
-  if (provesNonExecution(own, vendor, options)) return error;
-  // Already non-retryable vendor answers keep their bytes; the explicit field carries uncertainty.
-  if (!error.retryable) return unknownWrite(error.code, error.message, error.details);
-  return unknownWrite(
-    error.code === "unavailable" ? "connector_call_failed" : error.code,
-    `${error.message} Whether the write took effect at ${vendor.provider} is unknown: it carried no idempotency key, ` +
-      "so check the target before repeating it.",
-  );
+  if (knownWriteFailure(own, vendor, options)) return error;
+  return providerCallFailure({ classification: options.classification }, { title: vendor.provider }, error, {
+    dispatched: true,
+    responded: own.state === "answered",
+    ...(own.status === undefined ? {} : { status: own.status }),
+    fallback: "write",
+  }) as ConnectorCallError;
 }
 
 const RESEND = "A second attempt to send it was stopped before it left: connecta sends a write once.";
@@ -415,7 +416,7 @@ function resend(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions)
     const decided = unauthorized(first, vendor, options);
     return reworded(decided, `${decided.message} ${RESEND}`);
   }
-  if (answer && provesNonExecution(first, vendor, options)) return reworded(answer, `${answer.message} ${RESEND}`);
+  if (answer && knownWriteFailure(first, vendor, options)) return reworded(answer, `${answer.message} ${RESEND}`);
   const was =
     answer?.message ??
     `This call had already sent its write to ${vendor.provider}` +
@@ -443,14 +444,8 @@ function unauthorized(
   options: Pick<MapOptions, "withholds" | "signal">,
 ): ConnectorCallError {
   const error = verdict(recordedAnswer(answer), vendor, options);
-  if (provesNonExecution(answer, vendor, options)) return error;
-  if (answer.renewed) {
-    return unknownWrite(
-      "connector_call_failed",
-      `${vendor.provider} answered this write with HTTP 401. The credential is renewed for the next call, but the ` +
-        "write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
-    );
-  }
+  if (knownWriteFailure(answer, vendor, options)) return error;
+  if (answer.renewed) return unsentAfterUnauthorized(vendor.provider);
   return unknownWrite(
     error.code,
     `${error.message} The write was sent before ${vendor.provider} rejected its credential, so whether it took ` +
@@ -518,12 +513,13 @@ function recordedAnswer(dispatch: Dispatch): StatusFailure {
     : answerOf(dispatch);
 }
 
-function provesNonExecution(
+function knownWriteFailure(
   dispatch: Dispatch,
   vendor: VendorErrors<any>,
   options: Pick<MapOptions, "withholds">,
 ): boolean {
-  if (dispatch.state !== "answered") return false;
+  if (dispatch.state !== "answered" || (ok(dispatch.status) && !dispatch.failure)) return false;
+  if (dispatch.failure?._tag === "StatusFailure" && dispatch.failure.status !== dispatch.status) return false;
   const answer = recordedAnswer(dispatch);
   const input = classificationInput(answer, vendor, options.withholds?.(answer.operation) === true);
   if (dispatch.status === 401) {
@@ -531,17 +527,18 @@ function provesNonExecution(
     return proof !== undefined && proof.evidence.trim().length > 0 && proof.matches(input);
   }
   if (vendor.nonExecution?.some((proof) => proof.evidence.trim().length > 0 && proof.matches(input))) return true;
-  // A definite own 4xx refusal adopts the core's REFUSALS contract. A 5xx
-  // mapped to the same code is still ambiguous; so is a body we could not read.
-  return (
-    dispatch.status !== undefined &&
-    dispatch.status >= 400 &&
-    dispatch.status < 500 &&
-    dispatch.failure?._tag === "StatusFailure" &&
-    !dispatch.failure.unreadable &&
-    dispatch.failure.status === dispatch.status &&
-    classifyWriteOutcome({ ok: false, dispatched: true, error: { code: classified(input, vendor).code } }) === "failed"
-  );
+  // Ask the same failure decision and classifier as today's providers. HTTP
+  // answers (including non-retryable 404/409) and timeouts keep exactly the
+  // core's fields; HTTP responses are not MCP isError answers, so the
+  // classifier's `answered` flag is deliberately absent here.
+  const error = verdict(dispatch.failure ?? answer, vendor, options);
+  const decided = providerCallFailure({ classification: "write" }, { title: vendor.provider }, error, {
+    dispatched: true,
+    responded: true,
+    ...(dispatch.status === undefined ? {} : { status: dispatch.status }),
+    fallback: "write",
+  }) as ConnectorCallError & { writeOutcome?: "unknown" };
+  return classifyWriteOutcome({ ok: false, dispatched: true, error: decided }) === "failed";
 }
 
 /** A recorded answer as the failure it was, from the facts the ledger kept (its body is gone). */

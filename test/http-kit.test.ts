@@ -46,6 +46,8 @@ import {
   Secrets,
   Signal,
   WriteCapacity,
+  RequestFacts,
+  writeRequestKey,
   attachServedClassification,
   callView,
   chargeView,
@@ -489,6 +491,29 @@ describe("failure mapping (decision 0010, B.3)", () => {
     expect(writeOutcomeOf(write(redirect, [answered(redirect, { status: 302 })]))).toBe("unknown");
   });
 
+  it.each([404, 409, "timeout"] as const)(
+    "INV-9: a write's own %s failure retains exactly the core fields, without extra writeOutcome",
+    (kind) => {
+      const failure =
+        kind === "timeout"
+          ? new TransportFailure({
+              failure: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
+              host: "https://acme.example",
+            })
+          : status(kind);
+      const vendor = {
+        ...VENDOR,
+        statuses: { ...VENDOR.statuses, 404: () => ({ code: "connector_call_failed" as const, retryable: false }) },
+      };
+      const read = toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] });
+      const own = kind === "timeout" ? dispatch("lost", { failure }) : answered(failure);
+      const write = toConnectorCallError(failure, vendor, { classification: "write", dispatches: [own] });
+      expect(write).toEqual(read);
+      expect(Object.keys(write).sort()).toEqual(Object.keys(read).sort());
+      expect(writeOutcomeOf(write)).toBeUndefined();
+    },
+  );
+
   it("INV-9: decides from what each request did, not from how many were sent", () => {
     const write = (failure: HttpFailure, dispatches: Dispatch[]) =>
       toConnectorCallError(failure, VENDOR, { classification: "write", dispatches });
@@ -526,12 +551,13 @@ describe("failure mapping (decision 0010, B.3)", () => {
         facts: (tokens) => tokens as { reason: string },
         classify: [() => ({ code: mapped, retryable: true, retryAfterMs: 2000 })],
       };
+      expect(toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] }).code).toBe(mapped);
       const result = toConnectorCallError(failure, vendor, {
         classification: "write",
         dispatches: [answered(failure)],
       });
       expect(result).toMatchObject({
-        code: mapped,
+        code: "connector_call_failed",
         retryable: false,
         retryAfterMs: undefined,
         writeOutcome: "unknown",
@@ -609,7 +635,7 @@ describe("failure mapping (decision 0010, B.3)", () => {
     ).toBeUndefined();
   });
 
-  it("INV-9: an unreadable own 4xx body cannot supply a definite refusal", () => {
+  it("INV-9: an unreadable own 4xx body retains the core's verdict without an extra outcome", () => {
     const failure = new StatusFailure({
       status: 400,
       headers: new Headers(),
@@ -619,7 +645,7 @@ describe("failure mapping (decision 0010, B.3)", () => {
     });
     expect(
       toConnectorCallError(failure, VENDOR, { classification: "write", dispatches: [answered(failure)] }),
-    ).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
+    ).toMatchObject({ code: "invalid_args", retryable: false });
   });
 
   it("INV-9: cancellation after an accepted step and a proven 401 considers the whole ledger", () => {
@@ -1012,14 +1038,46 @@ describe("call services (decision 0010, B.1)", () => {
     expect(recorded).toEqual([]);
   });
 
-  it("INV-7: a credential read pending when its call closes does not deliver", async () => {
-    let resolve!: (values: Record<string, string>) => void;
-    const { call } = lease(() => new Promise((done) => (resolve = done)));
+  it.each(["call", "request"])(
+    "INV-7: closing the %s settles paused credentials and budget without releasing either operation",
+    async (boundary) => {
+      const signals: AbortSignal[] = [];
+      const paused = (signal: AbortSignal) => {
+        signals.push(signal);
+        return new Promise<never>(() => {});
+      };
+      const call = openCall({
+        caller: alice,
+        classification: "write",
+        credentials: paused,
+        charge: paused,
+        record: () => {},
+        secrets: new SentSecrets(),
+        signal: undefined,
+      });
+      const scope = {};
+      const request = openRequest(scope);
+      callView(operationView({ ...context(), requestScope: scope }, alice), call);
+      const credentials = runEdge(Effect.result(Context.get(call.services, Credentials).values));
+      const budget = runEdge(Effect.result(Context.get(call.services, Budget).charge));
+      expect(signals).toHaveLength(2);
+      (boundary === "call" ? call : request).close();
+      const results = await Promise.all([credentials, budget]);
+      for (const result of results)
+        expect(result._tag === "Failure" && (result.failure as Error).message).toMatch(/call has ended/);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+    },
+  );
+
+  it("INV-7: the Promise bridge registers pending capabilities with their containing request", async () => {
+    const ctx = context();
+    const request = openRequest(ctx.requestScope!);
+    ctx.credential = { get: async () => null, getAll: () => new Promise<never>(() => {}) };
+    const call = fromConnectorContext(ctx, "read");
     const pending = runEdge(Effect.result(Context.get(call.services, Credentials).values));
-    call.close();
-    resolve({ token: "t-123" });
-    const result = await pending;
-    expect(result._tag === "Failure" && result.failure.message).toMatch(/call has ended/);
+    request.close();
+    expect((await pending)._tag).toBe("Failure");
+    expect(call.closed()).toBe(true);
   });
 
   it("INV-7: the builder closes its call when the run ends, so a capability its program kept refuses afterwards", async () => {
@@ -1233,6 +1291,47 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
         (error: unknown) => ({ error }),
       );
   }
+
+  it.each(["call", "request"])(
+    "INV-7: closing the %s interrupts a paused grant renewal without releasing it or changing token state",
+    async (boundary) => {
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let renewalSignal: AbortSignal | undefined;
+      let updates = 0;
+      const { layer, state } = grant(() =>
+        Effect.promise(async (signal) => {
+          renewalSignal = signal;
+          entered();
+          await new Promise<never>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+          updates++;
+          return "late-token";
+        }),
+      );
+      const { call } = lease();
+      const scope = {};
+      const request = openRequest(scope);
+      callView(operationView({ ...context(), requestScope: scope }, alice), call);
+      answers = [() => new Response(null, { status: 401 })];
+      const connection = acme({ refresh: true }) as unknown as Connection<CallServices | Grant>;
+      const pending = runEdge(
+        connection
+          .sendPath(POST_ITEMS)
+          .pipe(Effect.result, Effect.provideContext(layer), Effect.provideContext(call.services)),
+      );
+      await started;
+      (boundary === "call" ? call : request).close();
+      expect((await pending)._tag).toBe("Failure");
+      expect(renewalSignal?.aborted).toBe(true);
+      expect(updates).toBe(0);
+      expect(state.token).toBe("access-one-123");
+      expect(sent).toHaveLength(1);
+    },
+  );
 
   it("INV-9: replays a read once after one refresh, whatever its method", async () => {
     const { state, layer } = grant();
@@ -1662,6 +1761,110 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       rotated.handler!({ ids: ["a", "b"] }, { ...context(), fetch: globalThis.fetch }),
     ).rejects.toMatchObject({ retryable: false, writeOutcome: "unknown" });
     expect(sent).toHaveLength(1);
+  });
+
+  it.each(["query", "form", "json"] as const)(
+    "INV-9: repeated %s keys cannot bind a retry for b to the vendor's first value a",
+    async (encoding) => {
+      let attempt = 0;
+      const guarded = guardedClient({ ...OPTIONS, maxResponseBytes: 4096 });
+      const connection = acme();
+      const bound = (id: string) => ({
+        ...POST_ITEMS,
+        ...(encoding === "json" ? { json: JSON.stringify({ nested: { id } }) } : { [encoding]: { id } }),
+      });
+      const tool = write(connection, {
+        name: "bulk",
+        description: "Update selected items.",
+        destructive: false,
+        input: Schema.Struct({}),
+        output: Schema.Unknown,
+        writeSteps: { rows: { maxItems: 2, items: () => ["a", "b"], request: bound } },
+        run: () =>
+          Effect.suspend(() => {
+            const duplicate = attempt++ > 0;
+            let request = HttpClientRequest.post(
+              "/items",
+              encoding === "query"
+                ? {
+                    urlParams: duplicate
+                      ? [
+                          ["id", "a"],
+                          ["id", "b"],
+                        ]
+                      : [["id", "a"]],
+                  }
+                : {},
+            );
+            if (encoding !== "query")
+              request = HttpClientRequest.bodyText(
+                request,
+                encoding === "json"
+                  ? duplicate
+                    ? '{"nested":{"id":"a","i\\u0064":"b"}}'
+                    : '{"nested":{"id":"a"}}'
+                  : duplicate
+                    ? "id=a&id=b"
+                    : "id=a",
+                encoding === "json" ? "application/json" : "application/x-www-form-urlencoded",
+              );
+            return guarded.client.execute(request).pipe(
+              Effect.flatMap((response) =>
+                response.status === 503 ? Effect.fail(status(503)) : Effect.succeed(response),
+              ),
+              Effect.provideService(RequestFacts, { effect: "call", step: "rows", item: duplicate ? "b" : "a" }),
+            );
+          }).pipe(Effect.retry({ times: 1 })),
+      });
+      answers = [() => new Response(null, { status: 503 }), () => Response.json({ ok: true })];
+      await expect(tool.handler!({}, { ...context(), fetch: globalThis.fetch })).rejects.toMatchObject({
+        retryable: false,
+      });
+      expect(sent).toHaveLength(1);
+      // A declaration itself is checked before any operation starts, too.
+      const invalid = write(connection, {
+        name: "invalid",
+        description: "Invalid.",
+        destructive: false,
+        input: Schema.Struct({}),
+        output: Schema.Unknown,
+        writeSteps: {
+          rows: {
+            maxItems: 1,
+            items: () => ["a"],
+            request: () => ({
+              ...POST_ITEMS,
+              ...(encoding === "json"
+                ? { json: '{"id":"a","id":"b"}' }
+                : {
+                    [encoding]: [
+                      ["id", "a"],
+                      ["id", "b"],
+                    ] as Array<[string, string]>,
+                  }),
+            }),
+          },
+        },
+        run: () => Effect.succeed(null),
+      });
+      sent = [];
+      await expect(invalid.handler!({}, { ...context(), fetch: globalThis.fetch })).rejects.toThrow(/Duplicate/);
+      expect(sent).toEqual([]);
+    },
+  );
+
+  it("INV-9: explicit multi-value contracts preserve value order and JSON paths", () => {
+    for (const encoding of ["query", "form", "json"] as const) {
+      const request = (ids: string[]) => ({
+        ...POST_ITEMS,
+        ...(encoding === "json"
+          ? { json: `{"nested":{${ids.map((id) => `"id":"${id}"`).join(",")}}}` }
+          : { [encoding]: ids.map((id): [string, string] => ["id", id]) }),
+        multiValue: { [encoding]: [encoding === "json" ? "/nested/id" : "id"] },
+      });
+      expect(writeRequestKey(request(["a", "b"]))).not.toBe(writeRequestKey(request(["b", "a"])));
+      expect(writeRequestKey(request(["a", "b"]))).not.toBe(writeRequestKey(request(["b"])));
+    }
   });
 
   it.each(["call", "request"])(

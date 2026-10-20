@@ -201,20 +201,29 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
       const expected = slot ? capacity.get(slot.step!)?.get(slot.item) : undefined;
       if (expected) {
         const text = bodyText(request);
-        // Bulk requests currently support path/query/form content. Other bodies
-        // fail closed rather than omit identifying content from the reservation.
+        const contentType = request.headers["content-type"]?.split(";")[0]?.trim();
         if (
           request.body._tag !== "Empty" &&
-          (text === undefined || request.headers["content-type"] !== "application/x-www-form-urlencoded")
+          (text === undefined || !["application/x-www-form-urlencoded", "application/json"].includes(contentType ?? ""))
         ) {
-          return yield* refuse("A bulk item request must use its declared form body.");
+          return yield* refuse("A bulk item request must use its declared form or JSON body.");
         }
-        const actual = writeRequestKey({
-          method: request.method as typeof expected.method,
-          path: url.pathname.slice(basePath.length),
-          template: expected.template,
-          query: Object.fromEntries(url.searchParams),
-          form: text === undefined ? {} : Object.fromEntries(new URLSearchParams(text)),
+        const actual = yield* Effect.try({
+          try: () =>
+            writeRequestKey({
+              method: request.method as typeof expected.method,
+              path: url.pathname.slice(basePath.length),
+              template: expected.template,
+              query: [...url.searchParams],
+              ...(text === undefined
+                ? {}
+                : contentType === "application/json"
+                  ? { json: text }
+                  : { form: [...new URLSearchParams(text)] }),
+              ...(expected.multiValue ? { multiValue: expected.multiValue } : {}),
+            }),
+          catch: () =>
+            new RequestRefused({ message: "Duplicate or invalid identifying content in this write item's request." }),
         });
         if (actual !== writeRequestKey(expected))
           return yield* refuse("This write item's request differs from its declared identifying content.");

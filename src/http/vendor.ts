@@ -23,6 +23,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as OpenApi from "effect/http-api/OpenApi";
+import { parameterPairs } from "./write-request.js";
 import type { GuardedClient } from "./client.js";
 import {
   validateVendorErrors,
@@ -248,15 +249,16 @@ export function connect<R>(
         Effect.suspend(() => {
           let built = HttpClientRequest.make(request.method)(
             request.path,
-            request.query ? { urlParams: request.query } : {},
+            request.query ? { urlParams: parameterPairs(request.query) } : {},
           );
           if (request.form && Object.keys(request.form).length > 0) {
             built = HttpClientRequest.bodyText(
               built,
-              new URLSearchParams(request.form).toString(),
+              new URLSearchParams(parameterPairs(request.form)).toString(),
               "application/x-www-form-urlencoded",
             );
           }
+          if (request.json !== undefined) built = HttpClientRequest.bodyText(built, request.json, "application/json");
           return guarded.client.execute(built);
         }),
         sendOptions,

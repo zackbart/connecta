@@ -153,7 +153,8 @@ function tithelyConnection(baseUrl: string, sensitiveFields: "drop" | "return"):
 
 const Id = Schema.String.check(Schema.isMinLength(1));
 const Raw = Schema.Boolean.annotate({
-  description: "Return Tithe.ly's untouched records instead of the lean projection.",
+  description:
+    "Return Tithe.ly's records instead of the lean projection. The guide says whether bank and legal details stay dropped.",
 });
 const Text = Schema.optionalKey(Schema.String);
 const Cents = Schema.optionalKey(Integer);
@@ -238,7 +239,10 @@ export function kitTools(
       output: Schema.Struct({
         // Effect drops a value annotation on Unknown; a key annotation renders.
         result: Schema.Unknown.pipe(
-          Schema.annotateKey({ description: "Tithe.ly's untouched response body, or null when empty." }),
+          Schema.annotateKey({
+            description:
+              "Tithe.ly's response body, less the sensitive fields this connection drops, or null when empty.",
+          }),
         ),
       }),
       run: (args) =>

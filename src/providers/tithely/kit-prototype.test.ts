@@ -170,11 +170,18 @@ const ROWS = [1, 2, 3].map((n) => ({
 }));
 
 describe("Tithe.ly on the provider kit (decision 0010)", () => {
-  it("INV-1: renders byte-identical catalog entries, classification included", async () => {
+  it("INV-1: renders catalog entries identical after #902 privacy descriptions, classification included", async () => {
     const before = await current().listTools(context());
     const after = await kit().listTools(context());
     for (const name of ["list_charges", "get_charge", "tithely_api_mutate"]) {
-      const old = before.find((tool) => tool.name === name);
+      const old = structuredClone(before.find((tool) => tool.name === name)!);
+      if (name === "tithely_api_mutate") {
+        (old.outputSchema!["properties"] as Record<string, { description: string }>)["result"]!.description =
+          "Tithe.ly's response body, less the sensitive fields this connection drops, or null when empty.";
+      } else {
+        (old.inputSchema!["properties"] as Record<string, { description: string }>)["raw"]!.description =
+          "Return Tithe.ly's records instead of the lean projection. The guide says whether bank and legal details stay dropped.";
+      }
       const now = after.find((tool) => tool.name === name);
       expect(JSON.stringify(now), name).toBe(JSON.stringify(old));
     }
@@ -405,10 +412,10 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
         });
       } else if (
         tool === "tithely_api_mutate" &&
-        (responses[0]?.status === 404 ||
-          responses[0]?.status === 409 ||
-          (!responses[0]?.status && (responses[0]?.body as { status?: string } | undefined)?.status === "fail"))
+        (responses[0]?.body as { status?: string } | undefined)?.status === "fail" &&
+        !responses[0]?.status
       ) {
+        // #902's helper also owns in-band failures after dispatch.
         expect(after.result).toEqual({ ...(before.result as object), writeOutcome: "unknown" });
       } else expect(after.result).toEqual(before.result);
     },

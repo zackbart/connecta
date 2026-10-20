@@ -29,10 +29,13 @@ import { chargeConnectorCall } from "../call-admission-context.js";
 import { recordRecovery } from "../call-recovery.js";
 import { callerOf, type ConnectorCaller } from "../connector-caller.js";
 import { ConnectorCallError } from "../errors.js";
-import { runEdge } from "../runtime/run.js";
+import { fromSignal, runEdge } from "../runtime/run.js";
 import { sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import type { ConnectorContext, ConnectorCredentialValues } from "../types.js";
 import { RequestRefused, ResendRefused, type HttpFailure, type OperationRef } from "./errors.js";
+
+import type { WriteRequest } from "./write-request.js";
+export { writeRequestKey, type WriteRequest } from "./write-request.js";
 
 /** Who admitted the operation; absent for a probe or a callback no request admitted. */
 export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>()("connecta/http/Caller") {}
@@ -92,27 +95,6 @@ export interface Dispatch {
 
 /** Permanent write reservations plus resource dispatches, in reservation order. The outcome rule reads their states. */
 export class Dispatches extends Context.Service<Dispatches, Dispatch[]>()("connecta/http/Dispatches") {}
-
-/** A bulk item's complete, input-derived request. The kit snapshots it before the program runs. */
-export interface WriteRequest {
-  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  readonly path: string;
-  readonly template: string;
-  readonly query?: Readonly<Record<string, string>>;
-  readonly form?: Readonly<Record<string, string>>;
-}
-
-/** Canonical identifying content, independent of item aliases and form/query property order. No credentials. */
-export function writeRequestKey(request: WriteRequest): string {
-  const pairs = (record: Readonly<Record<string, string>> | undefined) =>
-    Object.entries(record ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify([
-    request.method,
-    new URL(`https://request.example${request.path}`).pathname,
-    pairs(request.query),
-    pairs(request.form),
-  ]);
-}
 
 /** Closed capacity and the requests bound to bulk items, snapshotted before the program runs. */
 export class WriteCapacity extends Context.Service<
@@ -178,6 +160,16 @@ function ended(): ConnectorCallError {
   );
 }
 
+/** Every renewal is call-owned; interrupt it on close, including its underlying abortable I/O. */
+export function duringCall<A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E | RequestRefused, R | Signal> {
+  return Signal.use((signal) => {
+    const closed = () => new RequestRefused({ message: "This call has ended; no renewal work may continue." });
+    if (!signal) return work;
+    if (signal.aborted) return Effect.fail(closed());
+    return Effect.raceFirst(work, fromSignal(signal).pipe(Effect.mapError(closed)));
+  });
+}
+
 /** A call's services and the finalizer that ends them. */
 export interface CallLease {
   readonly services: Context.Context<CallServices>;
@@ -190,8 +182,8 @@ export interface CallLease {
 export interface CallInputs {
   readonly caller: ConnectorCaller | undefined;
   readonly classification: "read" | "write";
-  readonly credentials: () => Promise<ConnectorCredentialValues | null>;
-  readonly charge: () => Promise<void>;
+  readonly credentials: (signal: AbortSignal) => Promise<ConnectorCredentialValues | null>;
+  readonly charge: (signal: AbortSignal) => Promise<void>;
   readonly record: (facts: Readonly<Record<string, string>>) => void;
   readonly secrets: SentSecrets;
   readonly signal: AbortSignal | undefined;
@@ -204,13 +196,21 @@ export function openCall(inputs: CallInputs): CallLease {
   const abort = () => controller.abort(inputs.signal?.reason);
   if (inputs.signal?.aborted) abort();
   else inputs.signal?.addEventListener("abort", abort, { once: true });
-  // Checked before the work starts and again when it settles: a read that
-  // was pending when the call closed does not deliver for it.
-  const live = <A>(work: () => Promise<A>, fail: (error: unknown) => ConnectorCallError | unknown) =>
+  // Closure settles the Effect immediately and interrupts its Promise bridge.
+  // Inputs receive that cancellation too, so their owned I/O can be aborted.
+  const live = <A>(work: (signal: AbortSignal) => Promise<A>, fail: (error: unknown) => unknown) =>
     Effect.suspend(() =>
-      open
-        ? Effect.tryPromise({ try: work, catch: fail }).pipe(
-            Effect.flatMap((value) => (open ? Effect.succeed(value) : Effect.fail(ended()))),
+      open && !controller.signal.aborted
+        ? Effect.raceFirst(
+            Effect.tryPromise({
+              try: (interrupted) => work(AbortSignal.any([interrupted, controller.signal])),
+              catch: fail,
+            }),
+            fromSignal(controller.signal).pipe(Effect.mapError(ended)),
+          ).pipe(
+            Effect.flatMap((value) =>
+              open && !controller.signal.aborted ? Effect.succeed(value) : Effect.fail(ended()),
+            ),
           )
         : Effect.fail(ended()),
     );
@@ -417,13 +417,16 @@ export function attachServedClassification(ctx: ConnectorContext, classification
 export function fromConnectorContext(ctx: ConnectorContext, fallback: "read" | "write"): CallLease {
   trackCredentialReads(ctx);
   const credential = ctx.credential;
-  return openCall({
+  const request = ctx.requestScope ? openRequest(ctx.requestScope) : undefined;
+  const lease = openCall({
     caller: callerOf(ctx),
     classification: served.get(ctx) ?? fallback,
     credentials: async () => (credential ? await credential.getAll() : null),
     charge: () => chargeConnectorCall(ctx),
     record: (facts) => recordRecovery(ctx, facts),
     secrets: sentSecretsFor(ctx),
-    signal: ctx.signal,
+    signal: request ? (ctx.signal ? AbortSignal.any([ctx.signal, request.signal]) : request.signal) : ctx.signal,
   });
+  request?.own(lease.close);
+  return lease;
 }

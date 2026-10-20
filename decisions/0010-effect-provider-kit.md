@@ -43,49 +43,60 @@ The prototype gives three kinds of evidence:
   verdict through `stripeFailure` and through the kit, and requires the same
   code, message, retry advice and wait.
 
-`test/http-kit.test.ts` (98 tests) covers the kit's own rules, and
+`test/http-kit.test.ts` (109 tests) covers the kit's own rules, and
 `test/kit-stability.node.test.ts` the stability guard (Q7). Every suite but the
 Node-only guard passes on Node and workerd.
 
-**Round-4 ruling and evidence.** B.3 now adopts the core refusal contract;
-all verdict paths examine the entire call ledger. The prototype binds bulk
-items to snapshotted requests and aborts pending authentication and fetches
-when a call or its containing request closes. B.5 is strictly Tithe.ly's
-step 1 under 0011; the prerequisite back-port sequence is fixed below.
+**Round-5 ruling and evidence.** The kit delegates single-write verdicts to
+`classifyWriteOutcome` and `providerCallFailure` in the core's
+`src/write-outcome.ts` (#902). It does not restate their verdict table.
+While #902 is unmerged, `src/http/core-write-outcome.ts` vendors the identical
+contract from #902 head `44dd4df3`, with only a pre-merge constructor and
+served-context bridge. When #902 lands, that one adapter must switch to
+imports/re-exports from `src/write-outcome.ts`. The ledger still composes
+whole-call uncertainty and the separate Q8 write-401 policy.
 
-The requested out-of-tree run uses #900's
-`origin/t3/provider-characterization-goldens` at `3ac58733`, with #902's
-`unknownOutcome` + `sendingOnce` write-500 back-port applied to the baseline
-from `8d35416d` (without changing #900's core serialization). Only the three
-prototype tools replace today's tools, with privacy set to `return` to compare
-existing behaviour. No harness, back-port or golden from the run is committed:
+Bulk binding uses lossless ordered multimaps, rejects undeclared duplicate
+query/form/JSON identifying keys before fetch, and preserves declared
+multi-value order. Call closure promptly settles paused credential/budget
+Effects and aborts their underlying work; renewal is call-owned and
+interruptible. Request closure closes attached leases, including those
+opened by the Promise bridge. No shared renewal fiber spans requests.
 
-- `catalog.json`: 34,969 → 34,969 bytes, byte-identical.
+The out-of-tree comparison uses #900's harness and fixtures from
+`origin/t3/provider-characterization-goldens` at `3ac58733` against #902's
+**full head behavior at `44dd4df3`**, including its serialization and shared
+failure-decision helper. Only the three prototype tools replace today's
+tools; both sides set privacy to `return` to compare existing behavior.
+No harness, back-port or golden from the run is committed:
+
+- `catalog.json`: 35,458 → 35,458 bytes, byte-identical. The two `raw`
+  descriptions and the mutate hatch's `result` description match #902.
 - `calls.json`: 18,057 → 18,057 bytes, byte-identical; every request matches.
-- `failures.json`: 23,686 → 23,958 bytes (+272), **only write 401 and 401 echo
-  differ**, in their added unknown-outcome sentence. The auth code and
-  handoff survive. The six reverted 4xx cases and the back-ported 500 match.
-- This older core omits the explicit `writeOutcome` field; unit tests assert
-  it directly. A supplementary run on #902's full core at `8d35416d` also
-  exposes explicit-field differences in write 404, 409 and timeout, in
-  addition to 401/echo; those cases were already classified unknown there.
-  That run also exposes #902's privacy-description changes in three catalog
-  properties. B.5 must use regenerated post-back-port goldens and align those
-  existing descriptions, not claim this prototype is already byte-identical
-  to an unmerged core. This does not permit a B.5 surface change.
+- `failures.json`: 23,725 → 24,075 bytes (+350). **Only write 401 and write
+  401 echo differ**: the unknown-outcome sentence and `writeOutcome: "unknown"`
+  are added; auth codes, handoffs and non-retryability survive. Write
+  404/409 and timeout retain exactly #902's fields, without extra
+  `writeOutcome`. There is no kit-divergence back-port prerequisite.
 
-**Round-4 verification.** `VITEST_MAX_WORKERS=2 pnpm run check` ran once and
-passed: 394 suites passed, 3 skipped; 18,837 tests passed, 313 skipped;
-all 13 invariants and 154 spec references are backed by passing tests. The
-requested kit/prototype, Stripe and Tithe.ly suites pass on both projects
-(231 tests each: kit 98, Tithe.ly prototype 55, Stripe prototype 3, Stripe
-provider 38, Tithe.ly provider 37). Purity, package-surface and stability
-pass (41 Node tests). `check:fast` passes with 368 related tests. Build,
-88 reachable declarations with no Effect types, every bundle cap (root
-379,203 B gzip / 399,882 B cap), examples and all 347 Chromium tests pass.
-`dist/` contains no `http/` or `kit-prototype` files. Observed host load was
-about 10–26; there were no full-gate failures or load timeouts and no isolated
-reruns were needed.
+The only separate B.5 prerequisite after #902 is the write-401-with-handoff
+back-port and goldens regeneration, as specified below. B.5 remains strictly
+Tithe.ly's step 1 under 0011.
+
+**Round-5 verification.** `VITEST_MAX_WORKERS=2 pnpm run check` ran once
+and passed: 394 suites passed, 3 skipped; 18,859 tests passed, 313 skipped;
+all 13 invariants and 154 spec references have passing coverage. All 347
+Chromium tests pass. The requested kit/prototype, Stripe and Tithe.ly suites
+pass on both projects (242 tests each: kit 109, Tithe.ly prototype 55,
+Stripe prototype 3, Stripe provider 38, Tithe.ly provider 37); purity,
+package-surface and stability pass (41 Node tests). `check:fast` passes with
+390 related tests. Build, 88 reachable declarations with no Effect types,
+every bundle cap and examples pass; `dist/` contains no kit/prototype files.
+The out-of-tree Tithe.ly golden comparison passes on Node and workerd.
+No full-gate load timeouts or isolated reruns were needed, despite session
+host load of roughly 18–86. Public-contract scans find no Stripe/Tithe.ly
+endpoint drift; Stripe's standing public-doc omissions and hosted-catalog
+manual review remain advisory.
 
 **Historical round-3 evidence (superseded by the round-4 ruling below).** The fixed-capacity and atomic-reservation regressions,
 raw-status write mapping, recorded 401 body/later-failure cases and suspended
@@ -150,12 +161,12 @@ explicit `writeOutcome: "unknown"` on `ConnectorCallError` and
 codes, so an authorization verdict reached after a write left keeps its code
 and handoff and is still counted unknown. This record uses those names and
 verdicts. The explicit unknown field agrees with A.2. The decided round-4
-contract below adopts the core's `classifyWriteOutcome` and `REFUSALS`;
+contract below delegates verdicts to the core's `classifyWriteOutcome` and
+`providerCallFailure`;
 rounds 2–3's rule that every dispatched failure is unknown is superseded. The static OAuth divergence is explicitly
-planned B.2 work below, not shipped alignment. Each rule lives in one place
-in the kit. Until #902 merges, the prototype carries a ten-line copy
-of `callClassification` (`attachServedClassification`) and sets
-`writeOutcome` itself (`unknownWrite`).
+planned B.2 work below, not shipped alignment. The verdict functions live in the core. Until #902 merges, one temporary
+adapter vendors its identical contract; `attachServedClassification` bridges
+the served verdict and `unknownWrite` carries only Q8/whole-call uncertainty.
 
 ## Decision
 
@@ -248,10 +259,11 @@ explicit finalizer and a closed-state check:
 - `openCall` returns a lease whose `close` is the call's finalizer. Invocation
   registers it on the attempt scope (`Effect.addFinalizer`), so success,
   failure, the deadline and cancellation all close it.
-- `Credentials.values` and `Budget.charge` check the lease before they start
-  and again when their Promise settles. A use after close fails with
-  `connector_call_failed` ("This call has ended…"); a read that was pending
-  at close does not deliver its values. `Recovery.record` drops late facts,
+- `Credentials.values` and `Budget.charge` check the lease before they start,
+  race every await against closure, and pass an abort signal to the underlying
+  work. Closing settles paused uses promptly without waiting for their Promise
+  to settle or a test to release it. A use after close fails with
+  `connector_call_failed` ("This call has ended…"). `Recovery.record` drops late facts,
   because invocation has already read the record. Each lease owns an
   `AbortController`, forwards the admitted parent signal, and aborts its own
   `Signal` on close, removing the parent listener. Closing the containing
@@ -323,7 +335,11 @@ invocation and the registry:
 
 - "INV-7: a service kept past its call refuses to read credentials, charge, or
   record", and the same for a retained Promise view.
-- "INV-7: a credential read pending when its call closes does not deliver".
+- "INV-7: closing a call or request promptly settles paused credentials and
+  budget without releasing their underlying operations", including the
+  Promise bridge's request ownership.
+- "INV-7: closing a call or request aborts paused grant renewal without
+  releasing it or updating renewal state".
 - "INV-4 INV-10: discovery, status, and startAuth views carry each request's
   own caller across two pools", through `RegistryView`s for `alice` on `crm`
   and `bob` on `tickets`: catalog-cache's private fallback, `remoteMcp()`'s
@@ -392,12 +408,16 @@ send an unchanged request twice. `sendPath` and direct-client paths must
 match the bound request at the transport boundary too. An upload declares
 `session` and `bytes` as separate `"once"` steps.
 
-The prototype canonically compares method, normalized path, sorted query and
-form content (not trace/request ids or credential headers). Bulk declarations
-support these path/form requests only and reject other bodies. B.4 extends
-the same binding to typed operations, JSON payloads and uploads with reviewed
-canonical identity adapters (or vendor idempotency keys), never by ignoring
-unsupported content. Each vendor review must verify its identifying content,
+The prototype canonically compares method, normalized path, and lossless
+ordered multimaps of query, form and JSON identifying paths. Distinct keys
+sort canonically; repeated values keep their order and multiplicity. JSON
+structure, nested paths and escaped property names are retained. Duplicate
+identifying keys are rejected before dispatch unless the snapshotted item
+contract declares multi-value semantics for that query/form key or JSON
+Pointer. The comparison never uses `Object.fromEntries` to collapse wire
+parameters. Unrecognized body encodings fail closed. B.4 extends the same
+binding to typed operations and uploads with reviewed canonical identity
+adapters (or vendor idempotency keys), never by ignoring unsupported content. Each vendor review must verify its identifying content,
 including equivalent aliases/encodings, so two ids cannot name the same
 logical request. The kit derives the request from the item, not from the
 program's current retry counter.
@@ -482,8 +502,14 @@ class Grant extends Context.Service<Grant, {
 }>()("connecta/http/Grant") {}
 ```
 
-1. A 401 earns one `refresh(stale)`. The grant coordinates it across isolates
-   (`downstream-oauth.ts`, unchanged). The 401's body is read under the
+1. A 401 earns one `refresh(stale)`. Renewal work is call-owned and every
+   await races the call's close signal. Interruption aborts its I/O and prevents
+   later token/renewal-state updates, at both call and request boundaries.
+   Grant implementations use interruptible Effects and forward cancellation
+   to I/O. Coordination across isolates uses storage (`downstream-oauth.ts`),
+   never a request-owned fiber shared across requests. Any future shared
+   renewal work requires explicit deployment ownership under workerd's
+   ownership rule and abort on last-owner close. The 401's body is read under the
    ceiling first, so nothing stays open while renewing.
 2. A request that is a read (the call's served classification is `read`, or
    the provider sent it with `{ effect: "read" }`) is replayed once.
@@ -706,9 +732,12 @@ ahead of these (Drive's `cannotDownloadAbusiveFile`), reading `facts.reasons`,
 so the `googleReasonsOf` side table goes away. `googleOutcomeOf`'s phases
 become the ledger.
 
-**Write outcome over the entire call ledger — decided, round 4.** The kit
-adopts the core's existing `classifyWriteOutcome` + `REFUSALS` contract in
+**Write outcome over the entire call ledger — decided, rounds 4–5.** The kit
+calls the core's `providerCallFailure` and `classifyWriteOutcome` in
 `src/write-outcome.ts`, including #902's explicit unknown-outcome precedence.
+It never reimplements their failure decision or refusal set. Until #902
+merges, `core-write-outcome.ts` vendors that identical contract behind one
+adapter; then the adapter switches to the core module's exports.
 INV-9 forbids automatically replaying a dispatched write; it does not make
 every vendor answer unknown. This orchestrator ruling supersedes the
 “everything after dispatch is unknown” rule from rounds 2–3.
@@ -738,26 +767,27 @@ never just the last failed or retried step:
    A retryable proven lock refusal for `bytes` cannot erase an accepted
    `session` write; the whole call is unknown, non-retryable, without a wait.
    The same applies when the blocked slot never dispatched or connected.
-4. **The write's OWN definite vendor refusal.** A readable own 4xx answer
-   mapped to a `REFUSALS` code keeps that code and today's retry advice, with
-   no `writeOutcome: "unknown"`: 400/422 → `invalid_args`, 403 →
-   `provider_permission_denied`, 404 → `not_found`, reviewed 409 → `conflict`,
-   429 → `rate_limited`. Vendor-fact refusals precede defaults: Stripe raw
-   429 + `lock_timeout` and Google revision/precondition refusals → `conflict`.
-   A 429 may advise waiting; none is automatically resent. The raw 401
-   exception is rule 2. This is a refusal **for the call** only when no other
-   write step may have executed.
-5. **Everything ambiguous after dispatch.** Raw 5xx (whatever code a vendor
-   fact rule maps it to), transport failure after send, redirect, oversized,
-   unreadable or unparseable body, any non-refusal code, and cancellation
-   after send carry explicit unknown outcome, non-retryable, without a wait.
-   Raw 503 + `RATE_LIMIT_EXCEEDED` stays unknown even though its code is
-   `rate_limited`. Only reviewed `nonExecution` evidence with a narrow
-   predicate over the raw status, token facts and reviewed headers proves
-   that step did not execute. An in-band synthetic status cannot replace
-   the raw status. Ordinary `unavailable` becomes `connector_call_failed`
-   using #902's words. Already non-retryable own vendor answers keep their
-   message bytes; the explicit field conveys uncertainty.
+4. **The write's OWN vendor failure.** Map vendor facts into the ordinary
+   error, then call the core's `providerCallFailure` with the served verdict
+   and transport's dispatch/response/status facts. Return its exact error
+   fields; do not add `writeOutcome` or alter timeout retryability locally.
+   Definite refusals preserve the core's code and retry advice, including
+   429's wait. Tithe.ly's answered 404/409 preserve `connector_call_failed`,
+   non-retryability and **no extra `writeOutcome`**, just as #902 does.
+   `classifyWriteOutcome` still accounts those non-refusal errors as unknown:
+   an HTTP response is not an MCP tool's `isError`, so it does not set the
+   classifier's `answered` flag. Raw 401 uses rule 2. The call's verdict
+   must also account for every other write step (rule 6).
+5. **Ambiguous single-write failures.** The shared helper decides these,
+   including raw 5xx mapped by vendor facts, network loss, redirects and
+   body failures. The kit never copies a second verdict table. For example,
+   raw 503 mapped to `rate_limited` becomes the core's non-retryable
+   `connector_call_failed` with explicit unknown outcome. A timeout carries
+   exactly #902's error fields: the invocation classifies it unknown, without
+   the kit adding `writeOutcome` or replacing its diagnostics. Reviewed
+   `nonExecution` evidence with a narrow predicate over raw facts can prove
+   a step did not execute; a synthetic status cannot replace the transport's
+   raw status. Any other step that may have run still triggers rule 6.
 6. **Another step may have executed.** Every verdict path, including refusal
    exceptions, a blocked retry, `departedVerdict`, auxiliary failures and
    provider checks, must retain whole-call uncertainty. Preserve an auth
@@ -776,8 +806,9 @@ non-processing guarantee is the model, checked for this prototype. A broad
 predicate or a link with no supporting guarantee is not proof. These
 predicates are trusted code: types cannot verify vendor semantics.
 
-Timeouts carry explicit unknown outcome and stay non-retryable; invocation
-may promote them to `write_outcome_unknown`. Idempotency keys never allow an
+Timeouts keep exactly the core helper's fields and retryability; invocation
+owns their unknown-outcome classification and any promotion to
+`write_outcome_unknown`. Idempotency keys never allow an
 automatic resend or erase ambiguous outcome; they supply reconciliation
 facts. #902 reads `writeOutcome` before refusal codes in direct calls and
 caught/uncaught program accounting.
@@ -800,9 +831,9 @@ reconciling it is one read.
 The goldens show invocation already marks an entered write's `auth_required`
 `reconciliationRequired`, while `classifyWriteOutcome` on `main` counts it as
 a refusal. #902 adds the explicit outcome, and rule 2 uses it, so the code,
-the accounting and the wording agree and the handoff survives. The prototype
-sets #902's field itself (`unknownWrite` in `src/http/errors.ts`) until #902
-merges; after that it is `ConnectorCallError`'s constructor option.
+the accounting and the wording agree and the handoff survives. The kit delegates the base verdict to the core contract through the single
+adapter. Q8 and whole-call ledger composition use the same explicit outcome
+field; #902's constructor owns it once merged.
 
 ### B.4 The kit
 
@@ -1098,10 +1129,13 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
     auth verdict and handoff until renewal succeeds; the parity matrix and
     direct/program accounting checks above are required, planned B.2 work.
     `ctx.oauth.fetch` shares the decision.
-- **B.3.** Adds `errors.ts`. The REST kit's failure mappers and A.2's
-  `unknownOutcome`/`sendingOnce` move onto `toConnectorCallError`. Each
-  vendor's mapper is restated as facts, an allowlist and rules, with a suite
-  like Stripe's that maps its fixtures through both and requires equality.
+- **B.3.** Adds `errors.ts` for vendor facts, wording and ledger composition.
+  It calls the core's `providerCallFailure` and `classifyWriteOutcome` from
+  `src/write-outcome.ts`; neither function moves into the kit or gains a
+  divergent copy. The temporary pre-merge adapter must switch to that module
+  when #902 lands. Vendor mappers become facts, an allowlist and rules, with
+  parity suites like Stripe's. Single-write fields, including timeout and
+  answered 404/409, match the shared helper exactly.
 - **B.4.** Adds `safety.ts`, `vendor.ts`, `tools.ts` with all five builders,
   `paging.ts` with all five strategies, `json-schema.ts` with `Integer` and
   the agreement check, `hatch.ts`, `provider.ts`, and the stability guard
@@ -1115,15 +1149,15 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
     are back-ported into today's providers first; routine kit differences
     are not exceptions. Hatch renames, the catalog's `raw` union and every
     other surface change belong to Tithe.ly's separate step 2, never B.5.
-  - **Prerequisite sequence, decided by the orchestrator:** of round 3's
-    nine write-case differences, 400/403/404/409/422/429 revert to today's
-    behaviour under the round-4 ruling; 500 is already back-ported by #902.
-    The 401 and 401-echo cases need one prerequisite back-port into today's
-    providers: a write answered 401 keeps its auth code and handoff, gains
-    `writeOutcome: "unknown"`, and is non-retryable. The orchestrator will
-    land that as a separate PR after #902 merges and before B.5, then
-    regenerate the goldens. B.5 migrates against those regenerated bytes.
-    No back-port or golden regeneration is part of this design PR.
+  - **Prerequisite sequence, decided by the orchestrator (round 5):** merge
+    #902, switch the kit adapter to its shared core helpers, then land one
+    separate write-401 back-port and regenerate goldens. The 401 and 401-echo
+    back-port keeps the auth code and handoff, adds `writeOutcome: "unknown"`,
+    and is non-retryable. The kit delegates every other base verdict to the
+    core: **do not back-port divergent kit wording or fields**. The answered
+    404/409 and timeout errors, plus `raw` and hatch `result` descriptions,
+    already match #902. B.5 migrates against the regenerated bytes. No
+    back-port or goldens regeneration is part of this design PR.
   - It reports, against today's provider: code lines, cyclomatic complexity
     per tool, the provider entry's gzip size, and catalog render time apart
     from per-call decode time (Q4).
@@ -1192,9 +1226,10 @@ The previous draft asked eight questions. The orchestrator decided them:
 2. **Defer the wire-code change.** Promoting ambiguous writes to
    `write_outcome_unknown` waits for the contract phase and its evals, which
    then promote every dispatched write whose `classifyWriteOutcome` is
-   `unknown`. Until then the kit keeps truthful uncertainty and
-   non-retryability now, including through recovery failures and failures
-   after the write (B.3's ledger rules). The handoff is not deferred: a
+   `unknown`. The kit delegates single-write verdicts, retryability and
+   explicit fields to the core helper, and composes whole-call uncertainty
+   through recovery failures and failures after the write (B.3's ledger).
+   It never adds a second timeout/404/409 contract. The handoff is not deferred: a
    write answered 401 keeps its auth code and `authorize_connector` handoff
    and carries #902's explicit `writeOutcome: "unknown"`, which
    `classifyWriteOutcome` reads before its refusal codes, so direct calls and
@@ -1233,14 +1268,20 @@ The previous draft asked eight questions. The orchestrator decided them:
    (`connector_call_failed`, still unknown), because the credential then
    needs no recovery. A write is never resent automatically: refresh-once
    does not, and the transport's one-dispatch guard stops anything that
-   tries.
+   tries. This is the separate Q8 policy composed over the core's base
+   verdict, not a second kit verdict table. B.3 delegates those base verdicts
+   to `providerCallFailure` and `classifyWriteOutcome`; B.5 needs only the
+   separate write-401-with-handoff back-port after #902 and regenerated
+   goldens, with no divergent timeout/404/409 or description back-port.
 
 ## Consequences
 
 - **Provider authors write declarations.** A provider becomes operations, a
   facts extractor and status table, a value-safety review, Schemas and
-  projections. Error, paging, write-outcome, redirect, ceiling, secret and
-  value-safety rules come from the kit and cannot be skipped.
+  projections. Paging, ledger, redirect, ceiling, secret and value-safety
+  rules come from the kit; base write verdicts delegate to the core's shared
+  failure decision and classifier. Q8 and whole-call uncertainty compose over
+  that contract. No provider or kit copy forks its verdict table.
 - **Call state stops depending on object identity, and stops outliving its
   call.** Kit tools receive services on a fiber; every capability closes with
   its call, and request-owned resources close with their request. The
@@ -1260,8 +1301,10 @@ The previous draft asked eight questions. The orchestrator decided them:
   unknown outcome instead of a retryable `unavailable`. A write answered 401
   keeps `auth_required` and its handoff, but is never retryable and its
   outcome is unknown. A failure after a write left reports the write as
-  unknown instead of the later failure's retry advice. Back-port those changes
-  and regenerate goldens first, then migrate byte-identically in step 1.
+  unknown instead of the later failure's retry advice. Base verdicts come
+  from #902's shared helper. After #902, only the separate answered-401
+  back-port and goldens regeneration remain before B.5's byte-identical step
+  1; today's providers never receive divergent kit wording or fields.
 - **Classification cannot read prose.** Vendor rules see tokens and
   allowlisted headers and return a code; the message is rendered afterwards.
   A vendor whose current mapper branches on message text must find a code or
