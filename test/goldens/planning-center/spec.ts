@@ -101,7 +101,8 @@ export default defineGoldenSpec({
     planningCenter("church", {
       purpose: "Grace Church staff operations",
     }),
-  credential: { applicationId: "golden-application-id-123456", secret: "golden-pat-secret-654321" },
+  credential: { applicationId: "golden-application-id/123+456=", secret: "golden-pat-secret/654+321=" },
+  basic: [["applicationId", "secret"]],
   failureReply: (status, message) => ({
     status,
     body: {

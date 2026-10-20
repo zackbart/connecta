@@ -1216,16 +1216,6 @@
     "requests": [
       {
         "method": "GET",
-        "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20?include=plan_times",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-          "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-          "x-pco-api-version": "2018-11-01"
-        }
-      },
-      {
-        "method": "GET",
         "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/items?per_page=100",
         "headers": {
           "accept": "application/json",
@@ -1237,6 +1227,16 @@
       {
         "method": "GET",
         "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/team_members?include=team&per_page=100",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+          "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+          "x-pco-api-version": "2018-11-01"
+        }
+      },
+      {
+        "method": "GET",
+        "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20?include=plan_times",
         "headers": {
           "accept": "application/json",
           "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
@@ -2411,7 +2411,7 @@
             "type": "Episode",
             "id": "71",
             "attributes": {
-              "title": "[redacted] [redacted]"
+              "title": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
             }
           }
         }

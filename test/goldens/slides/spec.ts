@@ -8,7 +8,7 @@ const keys = (await crypto.subtle.generateKey(
 )) as CryptoKeyPair;
 const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer);
 const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
-const ACCESS_TOKEN = "golden-slides-access-token-123456";
+const ACCESS_TOKEN = "golden-slides-access-token/123+456=";
 
 function textContent(...runs: string[]) {
   return {

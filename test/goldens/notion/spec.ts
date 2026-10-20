@@ -75,7 +75,7 @@ const NESTED = {
 export default defineGoldenSpec({
   provider: "notion",
   create: () => notion("workspace", { auth: { type: "token" }, purpose: "Team knowledge base" }),
-  credential: "golden-notion-token-123456",
+  credential: "golden-notion-token/123+456=",
   failureReply: (status, message) => ({
     status,
     body: { object: "error", status, code: `golden_${status}`, message },

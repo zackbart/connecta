@@ -51,7 +51,7 @@ function tokenFor(installation: string, body: MintBody): string {
   const permissions = Object.entries(body.permissions)
     .map(([name, level]) => `${name}-${level}`)
     .join("_");
-  return `ghs_golden_${installation}_${permissions}${body.repository_ids ? `_repos-${body.repository_ids.join("-")}` : ""}`;
+  return `ghs_golden_${installation}_${permissions}${body.repository_ids ? `_repos-${body.repository_ids.join("-")}` : ""}/+=`;
 }
 
 /** The token a search scoped to other/one sends: the one its echo fixture echoes. */
@@ -60,7 +60,7 @@ const SEARCH_TOKEN = tokenFor("22", { permissions: { metadata: "read" }, reposit
 const json = (request: SeenRequest): unknown => (request.body as { json?: unknown } | undefined)?.json;
 const MINT = /^\/app\/installations\/(\d+)\/access_tokens$/;
 /** AppAuth's resolver token: metadata-only and unbound to repositories. */
-const RESOLVER = /^Bearer ghs_golden_(\d+)_metadata-read$/;
+const RESOLVER = /^Bearer ghs_golden_(\d+)_metadata-read\/\+=$/;
 
 const release = (id: number, tag: string, draft: boolean) => ({
   id,

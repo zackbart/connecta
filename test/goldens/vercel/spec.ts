@@ -21,7 +21,7 @@ export default defineGoldenSpec({
   provider: "vercel",
   create: () =>
     vercel("hosting", { purpose: "Production web applications", auth: { type: "token" }, teamId: "team_default" }),
-  credential: "golden-vercel-token-123456",
+  credential: "golden-vercel-token/123+456=",
   failureReply: (status, message) => ({
     status,
     body: { error: { code: VERCEL_CODES[status] ?? `golden_${status}`, message: `${message}.` } },

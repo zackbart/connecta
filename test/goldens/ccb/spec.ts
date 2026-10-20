@@ -2,9 +2,9 @@ import { ccb } from "../../../src/providers/ccb/index.js";
 import { defineGoldenSpec, type StubResponse } from "../harness.js";
 
 const API = "https://api.ccbchurch.com";
-const CLIENT_SECRET = "golden-ccb-client-secret-123456";
-const ACCESS_TOKEN = "golden-ccb-access-token-123456";
-const REFRESH_TOKEN = "golden-ccb-refresh-token-123456";
+const CLIENT_SECRET = "golden-ccb-client-secret/123+456=";
+const ACCESS_TOKEN = "golden-ccb-access-token/123+456=";
+const REFRESH_TOKEN = "golden-ccb-refresh-token/123+456=";
 
 const json = (body: unknown, headers: Record<string, string> = {}): StubResponse[] => [{ body, headers }];
 

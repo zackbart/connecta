@@ -1273,7 +1273,14 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   builds it, so `init.headers` replaces a Request's headers as Fetch does,
   and a body gets its implied `content-type`. Form bodies are recorded as
   fields when they re-encode to the exact bytes sent; FormData as its parts,
-  with the runtime's boundary as `<boundary>`.
+  with the runtime's boundary as `<boundary>`. A JSON body is recorded as
+  `json` alone only when it is exactly that value's compact serialization;
+  any other spacing, key order, or escape also keeps the exact `text`.
+- The fake network holds requests until the provider goes quiet, then
+  records and answers each batch in canonical order (method, URL, headers,
+  body). A batch is one causal step: concurrent requests share one, and
+  sequential requests (a token exchange before its call, a retry, a write's
+  single attempt) each get their own, in the order sent.
 - Auxiliary routes answer token exchanges and other requests that are not
   the tool's own, and are recorded by name with headers and body. A JWT in a
   header or field is recorded as its decoded header and claims, with
@@ -1282,13 +1289,26 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   every scenario and are recorded once.
 - Determinism: a fixed clock (`Date` only), counted `crypto.randomUUID`, and
   fixed `crypto.getRandomValues` and `Math.random`, all restarted per
-  scenario. `create(scenario)` receives a slug unique within the capture, for
-  specs that must defeat a process-wide cache.
+  scenario. `create(scenario)` receives a slug unique in the process: the
+  scenario name plus a per-capture suffix the goldens never show, so a
+  process-wide cache (Google's delegated tokens) never carries over from an
+  earlier scenario or capture.
 - Secrets: every credential field and secret becomes `<secret:field>`, with
   HTTP Basic shown decoded. Before that placeholdering, the harness fails
-  the capture if any secret reaches a caller-visible result in any form
-  (INV-5). The echo call and the `401 echo` case send every secret not
-  listed in `unsent`, so they characterize sent-secret redaction.
+  the capture if any secret reaches a caller-visible result (INV-5). The
+  guard decodes the result itself: JSON escapes, percent escapes in either
+  hex case, and base64 or base64url at any alignment, up to three layers
+  deep. It also finds any start of a secret at least 12 characters long, so a
+  truncated echo is a leak. A later fragment, a shorter one, or a secret with
+  its case changed is not detected.
+- The echo call carries every secret not listed in `unsent` in each
+  encoding redaction covers: raw, percent-encoded with upper- and lowercase
+  hex, base64, unpadded base64url, and `\uXXXX` escapes with upper- and
+  lowercase hex, plus the base64 of each `basic` pair. Every sent secret
+  contains `/`, `+`, and `=`, so its percent and base64url forms differ from
+  its raw and base64 forms. The `401 echo` case echoes the raw secrets only.
+  Some providers cap a vendor message before redaction sees it (Google at
+  500 characters), and a cut through a secret would leak its start.
 
 Object keys keep the order the provider produced. A migration changes the
 provider, never the spec or harness.
@@ -1298,8 +1318,12 @@ provider folder is neither covered nor listed as remote-MCP-only, a tool
 has no call, or a golden file is missing or extra. It never writes.
 `test/goldens-harness.test.ts` proves the harness catches the mutations it
 exists for: Authorization moved onto a Request that `init.headers`
-replaces, an emptied Infisical login body, and disabled sent-secret
-redaction. `pnpm run goldens:update [provider...]` rewrites the named
+replaces, an emptied, respaced, or reordered Infisical login body, and
+sent-secret redaction disabled or missing its percent, base64, or base64url
+forms. It checks the leak guard against each encoding directly. It also
+captures every spec twice in one process with seeded scheduling jitter
+(reordered arrivals, delayed and shuffled answers) and compares both with
+the stored goldens. `pnpm run goldens:update [provider...]` rewrites the named
 goldens (all when none are named) on Node; it is not part of `check`. A PR
 that changes agent-facing output on purpose regenerates the affected goldens
 and says why in its description; any other golden diff is a regression.

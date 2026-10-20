@@ -211,7 +211,7 @@ const page = (data: unknown[], totalCount?: number) => [
 export default defineGoldenSpec({
   provider: "overflow",
   create: () => overflow("giving", { environment: "production", purpose: "Grace Church giving and deposits" }),
-  credential: { clientId: "golden-client-id-123456", apiKey: "golden-api-key-abcdef" },
+  credential: { clientId: "golden-client-id/123+456=", apiKey: "golden-api-key/abc+def=" },
   // NestJS framing: `{ statusCode, message, error }`.
   failureReply: (status, message) => ({
     status,

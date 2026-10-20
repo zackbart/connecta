@@ -44,7 +44,7 @@ const CONTRIBUTION = {
 export default defineGoldenSpec({
   provider: "breeze",
   create: () => breeze("church", { subdomain: "gracechurch", purpose: "Pastoral care and giving reports" }),
-  credential: "golden-breeze-api-key-123456",
+  credential: "golden-breeze-api-key/123+4567=",
   // Breeze's failures are short plain text (or an HTML page), labelled text/html.
   failureReply: (status, message) => ({ status, text: message, headers: HTML }),
   calls: [

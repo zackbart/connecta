@@ -7,7 +7,7 @@ const SECRET_ID = "33333333-3333-4333-8333-333333333333";
 const FOLDER_ID = "44444444-4444-4444-8444-444444444444";
 const NESTED_FOLDER_ID = "55555555-5555-4555-8555-555555555555";
 const APPROVAL_ID = "66666666-6666-4666-8666-666666666666";
-const ACCESS_TOKEN = "golden-access-token-7f3a9c";
+const ACCESS_TOKEN = "golden-access-token/7f3+a9c=";
 
 const SECRET = {
   id: SECRET_ID,
@@ -39,7 +39,7 @@ const SECRET_IDENTIFIERS = {
 export default defineGoldenSpec({
   provider: "infisical",
   create: () => infisical("infisical", { purpose: "Deployment secrets for the crm and tickets services" }),
-  credential: { clientId: "golden-client-id-4d2e81", clientSecret: "golden-client-secret-9b51f0" },
+  credential: { clientId: "golden-client-id/4d2+e81=", clientSecret: "golden-client-secret/9b5+1f0=" },
   secrets: { accessToken: ACCESS_TOKEN },
   auxiliary: [
     {

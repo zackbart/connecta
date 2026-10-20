@@ -772,7 +772,7 @@
       "format": "json",
       "value": {
         "documentId": "doc-1",
-        "title": "[redacted]",
+        "title": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]",
         "revisionId": "rev-1",
         "url": "https://docs.google.com/document/d/doc-1/edit",
         "tabs": [

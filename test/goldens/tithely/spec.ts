@@ -69,7 +69,8 @@ const list = (data: unknown[]) => [{ body: { status: "success", type: "List", da
 export default defineGoldenSpec({
   provider: "tithely",
   create: () => tithely("giving", { purpose: "Weekly giving reports for Grace Church", environment: "live" }),
-  credential: { publicKey: "pub_golden_public_key", privateKey: "pri_golden_private_key" },
+  credential: { publicKey: "pub_golden_public_key/+=", privateKey: "pri_golden_private_key/+=" },
+  basic: [["publicKey", "privateKey"]],
   failureReply: (status, message) => ({ status, body: { status: "fail", reason: message } }),
   calls: [
     {

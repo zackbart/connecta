@@ -3,6 +3,8 @@ import { defineGoldenSpec } from "../harness.js";
 
 const RANGE = { from_date: "2025-12-01", to_date: "2025-12-31" };
 
+const SERVICE_ACCOUNT_SECRET = "golden-sa-secret/123+456=";
+
 const ACCOUNT = {
   status: "ok",
   results: {
@@ -75,7 +77,9 @@ export default defineGoldenSpec({
       purpose: "Product reporting",
       defaultProjectId: 42,
     }),
-  credential: "golden-sa-user:golden-sa-secret-123456",
+  credential: `golden-sa-user:${SERVICE_ACCOUNT_SECRET}`,
+  // The credential's own password half, so an echo of it alone is a leak too.
+  secrets: { secret: SERVICE_ACCOUNT_SECRET },
   failureReply: (status, message) => ({ status, body: { status: "error", error: message } }),
   calls: [
     { tool: "mixpanel_api_search", args: { query: "retention", limit: 3 } },

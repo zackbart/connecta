@@ -1049,7 +1049,7 @@
         "subject": "Elders meeting",
         "messageIdHeader": "<m2@mail.example.com>",
         "inReplyTo": "<m1@mail.example.com>",
-        "snippet": "[redacted]",
+        "snippet": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]",
         "body": "Can we move Tuesday’s meeting to 7pm?",
         "bodyTruncated": false,
         "bodyFormat": "text",

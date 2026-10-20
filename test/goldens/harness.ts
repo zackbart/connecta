@@ -74,7 +74,8 @@ export interface GoldenSpec {
   provider: string;
   /**
    * A fresh connector; called once per scenario. `scenario` is a slug unique
-   * within the capture (`catalog`, a call's label, `read-401-echo`), for
+   * in the process: the scenario's name (`catalog`, a call's label,
+   * `read-401-echo`) and a per-capture suffix the goldens never show, for
    * specs that must defeat a process-wide cache without a counter.
    */
   create(scenario: string): Connector;
@@ -91,6 +92,12 @@ export interface GoldenSpec {
    * and secret in the echo fixtures. No secret may reach a result, sent or not.
    */
   unsent?: readonly string[];
+  /**
+   * HTTP Basic pairs the provider sends, as `[user, password]` secret names.
+   * The echo also carries each pair's base64, the bytes an echoed
+   * Authorization header would show.
+   */
+  basic?: readonly (readonly [user: string, password: string])[];
   /** Token exchanges and other requests that are not the tool's own. */
   auxiliary?: readonly AuxiliaryRoute[];
   /**
@@ -104,8 +111,9 @@ export interface GoldenSpec {
   calls: readonly GoldenCall[];
   /**
    * A call whose success reply carries `text` into the caller-visible
-   * result. The harness passes every sent secret in `text`, as a vendor that
-   * echoes a credential would, and records the call last in `calls.json`.
+   * result. The harness passes every sent secret in `text`, in each of its
+   * `secretEncodings` and as each `basic` pair, as a vendor that echoes a
+   * credential would, and records the call last in `calls.json`.
    */
   echo: Omit<GoldenCall, "label" | "replies"> & { replies(text: string): Replies };
   /** One read and one write tool driven through every failure status. */
@@ -222,11 +230,15 @@ async function bodyOf(request: Request): Promise<unknown> {
     const form = new URLSearchParams(text);
     if (form.toString() === text) return { form: [...form] };
   }
+  let json: unknown;
   try {
-    return { json: JSON.parse(text) };
+    json = JSON.parse(text);
   } catch {
     return text;
   }
+  // `json` alone means the body is exactly its compact serialization; any other
+  // spacing, key order, number spelling, or escape keeps the exact text too.
+  return JSON.stringify(json) === text ? { json } : { json, text };
 }
 
 /**
@@ -275,26 +287,125 @@ type Answer = (request: SeenRequest, index: number) => StubResponse | "network" 
 /** Test-only: wraps the fake network, standing in for a provider that calls fetch differently. */
 export type FetchSeam = (send: typeof fetch) => typeof fetch;
 
-function installFetch(spec: GoldenSpec, answer: Answer, seam?: FetchSeam): { recorded: Recorded[]; restore(): void } {
+/** Test-only scheduling noise for the fake network, from a seeded generator. */
+interface Jitter {
+  /** An integer in [0, bound). */
+  below(bound: number): number;
+}
+
+function jitterFrom(seed: number): Jitter {
+  // mulberry32: independent of the faked Math.random.
+  let state = seed >>> 0;
+  return {
+    below(bound) {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let mixed = Math.imul(state ^ (state >>> 15), state | 1);
+      mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+      return Math.floor((((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296) * bound);
+    },
+  };
+}
+
+async function microtasks(count: number): Promise<void> {
+  for (let left = count; left > 0; left--) await Promise.resolve();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Timer turns with no new request before a batch is answered. */
+const QUIET_TURNS = 2;
+
+interface Waiting {
+  request: SeenRequest;
+  /** Method, URL, headers, and body: the order requests in one batch are recorded and answered in. */
+  key: string;
+  resolve(response: Response): void;
+  reject(error: Error): void;
+}
+
+/**
+ * The fake network holds every request until the provider has gone quiet,
+ * then records and answers the batch in canonical order. A batch is one
+ * causal step: the requests sent before any of them was answered, which is
+ * what concurrent requests are, sorted by method, URL, headers, and body.
+ * Sequential requests are each their own batch, so a token exchange before
+ * its call, a retry after its failure, and a write's single attempt keep the
+ * order they were sent in. `jitter` reorders arrivals, delays answers, and
+ * answers a batch in a shuffled order, none of which may change a golden.
+ */
+function installFetch(
+  spec: GoldenSpec,
+  answer: Answer,
+  options: { seam?: FetchSeam; jitter?: Jitter },
+): { recorded: Recorded[]; settled(): Promise<void>; restore(): void } {
+  const { seam, jitter } = options;
   const recorded: Recorded[] = [];
   const realFetch = globalThis.fetch;
   let index = 0;
-  const fake = (async (input: unknown, init?: RequestInit) => {
-    const request = await seen(input, init);
-    const route = spec.auxiliary?.find((candidate) => candidate.match(request));
-    if (route) {
-      recorded.push({ request, auxiliary: route.name });
-      return respond(typeof route.reply === "function" ? route.reply(request) : route.reply);
+  let started = 0;
+  let queued = 0;
+  let waiting: Waiting[] = [];
+  let flushing: Promise<void> | undefined;
+  const flush = async () => {
+    for (let quiet = 0; quiet < QUIET_TURNS;) {
+      const before = started;
+      await sleep(0);
+      quiet = started === before && queued === started ? quiet + 1 : 0;
     }
-    recorded.push({ request });
-    const reply = answer(request, index++);
-    if (reply === "network") throw networkFailure();
-    if (reply === "timeout") throw timeoutFailure();
-    return respond(reply);
+    if (jitter) await sleep(jitter.below(3));
+    const batch = waiting.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    waiting = [];
+    flushing = undefined;
+    const settle: (() => void)[] = batch.map((entry) => {
+      const { request } = entry;
+      const route = spec.auxiliary?.find((candidate) => candidate.match(request));
+      if (route) {
+        recorded.push({ request, auxiliary: route.name });
+        const response = respond(typeof route.reply === "function" ? route.reply(request) : route.reply);
+        return () => entry.resolve(response);
+      }
+      recorded.push({ request });
+      const reply = answer(request, index++);
+      if (reply === "network") return () => entry.reject(networkFailure());
+      if (reply === "timeout") return () => entry.reject(timeoutFailure());
+      const response = respond(reply);
+      return () => entry.resolve(response);
+    });
+    if (!jitter) {
+      for (const release of settle) release();
+      return;
+    }
+    for (let left = settle.length; left > 0; left--) {
+      const [release] = settle.splice(jitter.below(left), 1);
+      release!();
+      await microtasks(jitter.below(4));
+    }
+  };
+  const fake = (async (input: unknown, init?: RequestInit) => {
+    started++;
+    let request: SeenRequest;
+    try {
+      request = await seen(input, init);
+    } catch (error) {
+      started--;
+      throw error;
+    }
+    if (jitter) await microtasks(jitter.below(8));
+    const { method, url, headers, body } = request;
+    const key = JSON.stringify([method, url.href, headers, body ?? null]);
+    const response = new Promise<Response>((resolve, reject) => waiting.push({ request, key, resolve, reject }));
+    queued++;
+    flushing ??= flush();
+    return response;
   }) as typeof fetch;
   globalThis.fetch = seam ? seam(fake) : fake;
   return {
     recorded,
+    async settled() {
+      while (flushing) await flushing;
+    },
     restore() {
       globalThis.fetch = realFetch;
     },
@@ -383,16 +494,131 @@ interface Capture {
   restart(): void;
   /** Every credential field and secret, by the name its placeholder shows. */
   secrets: Record<string, string>;
-  /** What a vendor echoing every sent secret says. */
+  /** What a vendor echoing every sent secret, in every encoding, says. */
   echo: string;
+  /**
+   * What a vendor error echoing every sent secret says: raw only, because
+   * some providers cap a vendor message before redaction sees it (Google at
+   * 500 characters), and a cut through a secret leaks its first part.
+   */
+  errorEcho: string;
+  /** Appended to every scenario slug and removed from the goldens: unique to this capture in the process. */
+  nonce: string;
   seam?: FetchSeam;
+  jitter?: Jitter;
   setup?: string;
 }
 
-function textForms(value: string): string[] {
+function base64(value: string): string {
   let binary = "";
   for (const byte of new TextEncoder().encode(value)) binary += String.fromCharCode(byte);
-  return [...new Set([JSON.stringify(value).slice(1, -1), encodeURIComponent(value), btoa(binary)])];
+  return btoa(binary);
+}
+
+/**
+ * Every encoding a vendor might echo a sent secret in, and that sent-secret
+ * redaction covers: raw, percent-encoded with upper- and lowercase hex,
+ * base64, unpadded base64url, and JSON `\uXXXX` escapes with upper- and
+ * lowercase hex. Percent and `\u` hex digits are case-insensitive; base64 and
+ * the secret itself are not, so no case variant of them is the same secret.
+ */
+export function secretEncodings(value: string): string[] {
+  const percent = encodeURIComponent(value);
+  const encoded = base64(value);
+  const escaped = [...Array(value.length).keys()]
+    .map((at) => `\\u${value.charCodeAt(at).toString(16).padStart(4, "0")}`)
+    .join("");
+  return [
+    ...new Set([
+      value,
+      percent,
+      percent.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase()),
+      encoded,
+      encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+      escaped,
+      escaped.toUpperCase().replace(/\\U/g, "\\u"),
+    ]),
+  ];
+}
+
+/**
+ * The shortest start of a secret the leak guard treats as the secret, so a
+ * truncated echo still leaks. Longer than public token-format prefixes such
+ * as `sk_test_` or `github_pat_`, which guides and fixtures may print.
+ */
+export const LEAK_PREFIX_UNITS = 12;
+
+const SHORT_ESCAPES: Record<string, string> = {
+  '"': '"',
+  "\\": "\\",
+  "/": "/",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+};
+
+function fromBase64(run: string): string {
+  const normalized = run.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+  const usable = normalized.slice(0, normalized.length - (normalized.length % 4 === 1 ? 1 : 0));
+  try {
+    return new TextDecoder().decode(
+      Uint8Array.from(atob(usable.padEnd(Math.ceil(usable.length / 4) * 4, "=")), (char) => char.charCodeAt(0)),
+    );
+  } catch {
+    return "";
+  }
+}
+
+/** One layer of each encoding a secret can hide in, decoded wherever it occurs. */
+const DECODERS: readonly ((text: string) => string)[] = [
+  (text) =>
+    text.replace(/\\(?:u([0-9a-fA-F]{4})|(["\\/bfnrt]))/g, (_whole, unit: string | undefined, short: string) =>
+      unit ? String.fromCharCode(Number.parseInt(unit, 16)) : SHORT_ESCAPES[short]!,
+    ),
+  (text) =>
+    text.replace(/(?:%[0-9a-fA-F]{2})+/g, (run) =>
+      new TextDecoder().decode(Uint8Array.from(run.slice(1).split("%"), (pair) => Number.parseInt(pair, 16))),
+    ),
+  // A run may start inside its encoding, so it is decoded at every alignment.
+  (text) =>
+    (text.match(/[A-Za-z0-9+/_-]{11,}={0,2}/g) ?? [])
+      .flatMap((run) => [0, 1, 2, 3].map((offset) => fromBase64(run.slice(offset))))
+      .join("\n"),
+];
+const DECODE_LAYERS = 3;
+
+/**
+ * The secret a caller-visible value leaks, or undefined. The guard decodes
+ * the value itself rather than trusting redaction's list of forms: JSON
+ * escapes, percent escapes in either hex case, and base64 or base64url runs
+ * at any alignment, nested up to three layers. It finds any start of a
+ * secret at least `LEAK_PREFIX_UNITS` long, so a truncated echo leaks too.
+ * Shorter fragments, fragments that do not start the secret, and a secret
+ * whose case was changed are not detected.
+ */
+export function leakedSecret(value: unknown, secrets: Record<string, string>): string | undefined {
+  const views = new Set([JSON.stringify(value) ?? ""]);
+  let layer = [...views];
+  for (let depth = 0; depth < DECODE_LAYERS && layer.length; depth++) {
+    const next: string[] = [];
+    for (const view of layer) {
+      for (const decode of DECODERS) {
+        const decoded = decode(view);
+        if (!views.has(decoded)) {
+          views.add(decoded);
+          next.push(decoded);
+        }
+      }
+    }
+    layer = next;
+  }
+  for (const [name, secret] of Object.entries(secrets)) {
+    const start = secret.slice(0, LEAK_PREFIX_UNITS);
+    if (start && [...views].some((view) => view.includes(start))) return name;
+  }
+  return undefined;
 }
 
 /**
@@ -401,11 +627,9 @@ function textForms(value: string): string[] {
  * placeholder can never hide a leak.
  */
 function assertNoLeak(capture: Capture, where: string, value: unknown): void {
-  const text = JSON.stringify(value);
-  for (const [name, secret] of Object.entries(capture.secrets)) {
-    if (secret && textForms(secret).some((form) => text.includes(form))) {
-      throw new Error(`${capture.spec.provider} ${where}: the caller-visible result leaks <secret:${name}>`);
-    }
+  const name = leakedSecret(value, capture.secrets);
+  if (name !== undefined) {
+    throw new Error(`${capture.spec.provider} ${where}: the caller-visible result leaks <secret:${name}>`);
   }
 }
 
@@ -419,7 +643,7 @@ function slug(where: string): string {
 async function run(capture: Capture, where: string, call: GoldenCall, answer: Answer) {
   const { spec } = capture;
   capture.restart();
-  const connector = spec.create(slug(where));
+  const connector = spec.create(slug(where) + capture.nonce);
   const registry = await registryFor(spec, connector);
   const tools =
     connector.staticTools ?? (await connector.listTools(registry.contextFor(connector.id, GOLDEN_BASE_URL)));
@@ -427,9 +651,10 @@ async function run(capture: Capture, where: string, call: GoldenCall, answer: An
   if (!tool) throw new Error(`${spec.provider}: no tool "${call.tool}"`);
   const write = classifyTool(tool) !== "read";
   if (spec.setup) {
-    const consent = installFetch(spec, () => ({}), capture.seam);
+    const consent = installFetch(spec, () => ({}), capture);
     try {
       await spec.setup(connector, registry.contextFor(connector.id, GOLDEN_BASE_URL));
+      await consent.settled();
     } finally {
       consent.restore();
     }
@@ -439,13 +664,14 @@ async function run(capture: Capture, where: string, call: GoldenCall, answer: An
     }
     capture.setup = setup;
   }
-  const network = installFetch(spec, answer, capture.seam);
+  const network = installFetch(spec, answer, capture);
   try {
     const result = await new InvocationService(registry, new CatalogService(registry, GOLDEN_BASE_URL)).invoke(
       `${connector.id}.${call.tool}`,
       call.args ?? {},
       { source: write ? "call_destructive_tool" : "call_tool", readOnly: false },
     );
+    await network.settled();
     const visible = outcome(result);
     assertNoLeak(capture, where, visible);
     return { requests: network.recorded.map(requestRecord), result: visible };
@@ -472,7 +698,7 @@ function toolRecord(tool: ToolDef): unknown {
 async function catalog(capture: Capture): Promise<unknown> {
   const { spec } = capture;
   capture.restart();
-  const connector = spec.create("catalog");
+  const connector = spec.create(`catalog${capture.nonce}`);
   const registry = await registryFor(spec, connector);
   try {
     const tools = await connector.listTools(registry.contextFor(connector.id, GOLDEN_BASE_URL));
@@ -529,7 +755,7 @@ async function failures(capture: Capture): Promise<unknown> {
         if (failure === "network" || failure === "timeout") return failure;
         const status = Number.parseInt(failure, 10);
         const message =
-          failure === "401 echo" ? `Golden 401 failure: rejected ${capture.echo}` : `Golden ${status} failure`;
+          failure === "401 echo" ? `Golden 401 failure: rejected ${capture.errorEcho}` : `Golden ${status} failure`;
         const reply = (spec.failureReply ?? defaultFailureReply)(status, message);
         return status === 429
           ? { ...reply, headers: { ...reply.headers, "retry-after": String(GOLDEN_RETRY_AFTER_SECONDS) } }
@@ -550,8 +776,10 @@ async function failures(capture: Capture): Promise<unknown> {
  * order the provider produced them in: that order is part of what an agent
  * reads, so a migration that reorders a schema or a result changes a golden.
  */
-function stable(value: unknown, secrets: Record<string, string>): string {
-  return `${redact(JSON.stringify(value, null, 2), secrets)}\n`;
+function stable(value: unknown, capture: Capture): string {
+  return `${redact(JSON.stringify(value, null, 2), capture.secrets)
+    .split(capture.nonce)
+    .join("")}\n`;
 }
 
 function redact(text: string, secrets: Record<string, string>): string {
@@ -585,33 +813,54 @@ export function goldenFiles(spec: GoldenSpec): GoldenFile[] {
   return GOLDEN_FILES.filter((file) => file !== "setup" || spec.setup !== undefined);
 }
 
-function captureFor(spec: GoldenSpec, restart: () => void, seam?: FetchSeam): Capture {
+/** Test-only inputs: `seam` stands in for a provider that calls fetch differently; `jitter` seeds scheduling noise. */
+export interface CaptureOptions {
+  seam?: FetchSeam;
+  jitter?: number;
+}
+
+let captures = 0;
+
+function captureFor(spec: GoldenSpec, restart: () => void, options: CaptureOptions): Capture {
   const secrets: Record<string, string> = {
     ...(typeof spec.credential === "string" ? { credential: spec.credential } : (spec.credential ?? {})),
     ...spec.secrets,
   };
   const sent = Object.entries(secrets).filter(([name]) => !spec.unsent?.includes(name));
   if (sent.length === 0) throw new Error(`${spec.provider}: no sent secret to echo`);
-  return { spec, restart, secrets, echo: sent.map(([, value]) => value).join(" "), ...(seam ? { seam } : {}) };
+  const pairs = (spec.basic ?? []).map(([user, password]) => {
+    if (secrets[user] === undefined || secrets[password] === undefined) {
+      throw new Error(`${spec.provider}: basic names an unknown secret`);
+    }
+    return base64(`${secrets[user]}:${secrets[password]}`);
+  });
+  return {
+    spec,
+    restart,
+    secrets,
+    echo: [...sent.flatMap(([, value]) => secretEncodings(value)), ...pairs].join(" "),
+    errorEcho: sent.map(([, value]) => value).join(" "),
+    // Process-wide caches (Google's delegated tokens) never carry over from an earlier capture.
+    nonce: `--capture-${++captures}--`,
+    ...(options.seam ? { seam: options.seam } : {}),
+    ...(options.jitter !== undefined ? { jitter: jitterFrom(options.jitter) } : {}),
+  };
 }
 
-/**
- * Every golden file's exact bytes for one spec. `seam` is for the harness's
- * own tests: it stands in for a provider that calls fetch differently.
- */
+/** Every golden file's exact bytes for one spec. */
 export async function captureGoldens(
   spec: GoldenSpec,
-  options: { seam?: FetchSeam } = {},
+  options: CaptureOptions = {},
 ): Promise<Partial<Record<GoldenFile, string>>> {
   const clock = deterministic();
   try {
-    const capture = captureFor(spec, clock.restart, options.seam);
+    const capture = captureFor(spec, clock.restart, options);
     const files: Partial<Record<GoldenFile, string>> = {
-      catalog: stable(await catalog(capture), capture.secrets),
-      calls: stable(await calls(capture), capture.secrets),
-      failures: stable(await failures(capture), capture.secrets),
+      catalog: stable(await catalog(capture), capture),
+      calls: stable(await calls(capture), capture),
+      failures: stable(await failures(capture), capture),
     };
-    if (spec.setup) files.setup = stable(JSON.parse(capture.setup ?? "[]"), capture.secrets);
+    if (spec.setup) files.setup = stable(JSON.parse(capture.setup ?? "[]"), capture);
     return files;
   } finally {
     clock.restore();
@@ -622,7 +871,7 @@ export async function captureGoldens(
 export async function captureEcho(spec: GoldenSpec): Promise<void> {
   const clock = deterministic();
   try {
-    const capture = captureFor(spec, clock.restart);
+    const capture = captureFor(spec, clock.restart, {});
     const call = echoCall(capture);
     await run(capture, call.label!, call, fromReplies(call.replies));
   } finally {

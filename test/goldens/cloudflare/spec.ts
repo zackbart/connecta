@@ -22,7 +22,7 @@ const ZONE_RECORD = {
 export default defineGoldenSpec({
   provider: "cloudflare",
   create: () => cloudflare("cf", { purpose: "Production DNS and Workers", auth: { type: "apiToken" } }),
-  credential: "golden-cloudflare-token-123456",
+  credential: "golden-cloudflare-token/123+456=",
   failureReply: (status, message) => ({
     status,
     headers: { "cf-ray": "8abc-golden" },

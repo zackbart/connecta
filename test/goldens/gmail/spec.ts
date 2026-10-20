@@ -13,7 +13,7 @@ const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", keys.privateK
 const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const ACCESS_TOKEN = "golden-google-access-token-gmail";
+const ACCESS_TOKEN = "golden-google-access-token/gmail+=";
 
 function b64url(value: string): string {
   let binary = "";
