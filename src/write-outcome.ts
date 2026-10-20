@@ -17,19 +17,23 @@ export type WriteState = "ok" | "failed" | "unknown";
  * not sending it could leave it undone. That is a dispatched call that timed
  * out, was cancelled, found the service unavailable, or failed any way that
  * is not a verdict. A refusal code (`REFUSALS`) or a downstream tool's own
- * `isError` is an answer, so it is `failed`. Response text does not decide
- * whether an outcome is unknown. A call that was never dispatched is
- * `failed`: nothing was sent.
+ * `isError` is an answer, so it is `failed`, unless the connector said the
+ * outcome is unknown (`writeOutcome`): a verdict reached only after the
+ * downstream had the write, such as a renewal that failed after a 401, keeps
+ * its code for the handoff but proves nothing about the write. Response text
+ * does not decide whether an outcome is unknown. A call that was never
+ * dispatched is `failed`: nothing was sent.
  * `result_processing_failed` means the downstream call completed.
  */
 export function classifyWriteOutcome(outcome: {
   ok: boolean;
   dispatched: boolean;
   answered?: boolean;
-  error?: Pick<CallErrorDetails, "code">;
+  error?: Pick<CallErrorDetails, "code" | "writeOutcome">;
 }): WriteState {
   if (outcome.ok) return "ok";
   if (!outcome.dispatched) return "failed";
+  if (outcome.error?.writeOutcome === "unknown") return "unknown";
   const code = outcome.error?.code;
   if (code === "result_processing_failed") return "ok";
   if (code === "timeout" || code === "cancelled" || code === "unavailable") {
@@ -97,7 +101,7 @@ export function unknownOutcome(vendor: { title: string }, error: unknown, respon
     "connector_call_failed",
     `${error.message} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
       "so check the target before repeating it.",
-    { retryable: false },
+    { retryable: false, writeOutcome: "unknown" },
   );
 }
 
@@ -109,16 +113,20 @@ export function unknownOutcome(vendor: { title: string }, error: unknown, respon
  * reported as safe to retry. `renewal` is renewal's failure, or undefined
  * when the credential was renewed and a deliberate repeat will use it.
  *
- * An authorization verdict stays one, never retryable, so its recovery
- * handoff survives: the invocation layer marks it `reconciliationRequired`
- * for a write that was dispatched. Anything else leaves the outcome unknown.
+ * An authorization verdict keeps its code, never retryable, so its recovery
+ * handoff survives: the invocation layer marks it `reconciliationRequired`.
+ * Either way the write's outcome is unknown (`writeOutcome`), so a program
+ * that catches the failure still reports it.
  */
 export function unsentAfterUnauthorized(subject: string, renewal?: unknown): ConnectorCallError {
   if (
     renewal instanceof ConnectorCallError &&
     (renewal.code === "auth_required" || renewal.code === "downstream_oauth_required")
   ) {
-    return renewal.retryable ? new ConnectorCallError(renewal.code, renewal.message, { retryable: false }) : renewal;
+    return carryFailureFacts(
+      renewal,
+      new ConnectorCallError(renewal.code, renewal.message, { retryable: false, writeOutcome: "unknown" }),
+    );
   }
   // Only the class of what renewal met: its own text may say to try again,
   // which this write must not be told. Operator records keep its facts.
@@ -130,7 +138,7 @@ export function unsentAfterUnauthorized(subject: string, renewal?: unknown): Con
     "connector_call_failed",
     `${subject} answered this write with HTTP 401. ${renewed} was not sent again, so whether it took effect is ` +
       "unknown: check the target before repeating it.",
-    { retryable: false },
+    { retryable: false, writeOutcome: "unknown" },
   );
   return renewal === undefined ? unsent : carryFailureFacts(renewal, unsent);
 }

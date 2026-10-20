@@ -1653,10 +1653,21 @@ compiling and configuring the real thing.
   failure that may follow the downstream acting (a 5xx, a gateway's 502 to
   504, a lost connection or reply) into a non-retryable `connector_call_failed`,
   and `unsentAfterUnauthorized` reports a write answered 401, which is never
-  resent whatever credential renewal meets. `remoteMcp()` keeps per-transport
-  write flights by JSON-RPC id, stops the SDK's post-refresh resend in its
-  tracked fetch, and classifies by the invocation's verdict
-  (`src/call-classification.ts`), falling back to `classifyTool`. `api()` OAuth
+  resent whatever credential renewal meets. Both mark the error
+  `writeOutcome: "unknown"`, which `classifyWriteOutcome` honors before any
+  refusal code, so an authorization verdict reached after the write left still
+  counts as unknown in program write accounting (`src/program-writes.ts`),
+  whose result is then that verdict with its handoff, caught or not.
+  `remoteMcp()` classifies by the invocation's verdict
+  (`src/call-classification.ts`), falling back to `classifyTool`, and holds a
+  write to one send per logical call, never per JSON-RPC message: `callTool`
+  puts a dispatch record on the `tools/call` params under a symbol key (spread
+  copies it; `JSON.stringify` drops it), the transport's `send` refuses a
+  second message for that call whatever its id, and the tracked fetch refuses
+  a second request within one message (the SDK's resend after a 401 or a
+  step-up, a redirect hop) and fails a write answered with a redirect. A write
+  always gives the SDK a tool definition, so `callTool` never relists and
+  resends it after a `HeaderMismatch` answer. `api()` OAuth
   (`src/auth/static-oauth.ts`), the Google Workspace client, Infisical, and the
   hand-written providers' `sendingOnce` apply the same rules. Tests:
   `test/remote-mcp-write-once.test.ts` (real SDK transport),

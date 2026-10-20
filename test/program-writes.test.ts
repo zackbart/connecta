@@ -596,7 +596,7 @@ describe("writable-endpoint programs (#706, #820)", () => {
 });
 
 describe("write outcomes", () => {
-  it("classifies a write's outcome by what is known", () => {
+  it("INV-9: classifies a write's outcome by what is known", () => {
     const table: Array<[Parameters<typeof classifyWriteOutcome>[0], string]> = [
       [{ ok: true, dispatched: true }, "ok"],
       [{ ok: false, dispatched: false, error: { code: "timeout" } }, "failed"],
@@ -614,6 +614,16 @@ describe("write outcomes", () => {
       // A stale base is a verdict: the connector refused before changing anything.
       [{ ok: false, dispatched: true, answered: false, error: { code: "conflict" } }, "failed"],
       [{ ok: false, dispatched: true, error: { code: "result_processing_failed" } }, "ok"],
+      // An authorization verdict reached after the write left (a 401, then a
+      // failed renewal) keeps its code, but the connector says the write's
+      // outcome is unknown, and that wins over the refusal.
+      [
+        { ok: false, dispatched: true, error: { code: "downstream_oauth_required", writeOutcome: "unknown" } },
+        "unknown",
+      ],
+      [{ ok: false, dispatched: true, error: { code: "auth_required", writeOutcome: "unknown" } }, "unknown"],
+      [{ ok: false, dispatched: true, error: { code: "auth_required" } }, "failed"],
+      [{ ok: false, dispatched: false, error: { code: "auth_required", writeOutcome: "unknown" } }, "failed"],
     ];
     for (const [outcome, expected] of table) {
       expect(classifyWriteOutcome(outcome), JSON.stringify(outcome)).toBe(expected);

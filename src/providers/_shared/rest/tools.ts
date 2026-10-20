@@ -719,6 +719,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
               ...(error.validation ? { validation: error.validation } : {}),
               ...(error.repair ? { repair: error.repair } : {}),
               ...(error.details ? { details: error.details } : {}),
+              ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
             },
           );
         }

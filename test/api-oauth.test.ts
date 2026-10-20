@@ -3,14 +3,16 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import type { ApiOAuthConfig, ApiOptions } from "../src/connectors/api.js";
 import { CredentialVault } from "../src/credentials.js";
+import { recordRecovery } from "../src/call-recovery.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { createExecuteTool } from "../src/execute.js";
 import { identityStorageKey } from "../src/identity.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthFlowKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
-import { createTestConnecta, makeRegistry } from "./helpers.js";
-import { deferred } from "./fixtures/misc.js";
+import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { CLERK_OPTIONS } from "./fixtures/ui.js";
 
 const BASE = "https://connecta.test";
@@ -964,16 +966,68 @@ describe("api() oauth replay is for reads only", () => {
           code: "downstream_oauth_required",
           retryable: false,
           reconciliationRequired: true,
+          writeOutcome: "unknown",
           nextAction: { tool: "authorize_connector" },
         });
       } else {
-        expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
         // The reset fenced the grant mid-refresh: no verdict, and nothing to retry.
         expect(error.message).toBe(
           `Connector "ccb"'s API answered this write with HTTP 401. Renewing the credential failed (unavailable), ` +
             "and the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
         );
       }
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+    },
+  );
+
+  it.each([true, false])(
+    "INV-9: a program whose write met a 401 and a dead grant reports it unknown, keeping its recovery facts and handoff (caught: %s)",
+    async (caught) => {
+      const provider = fakeProvider();
+      const keyed: ApiOptions["tools"][number] = {
+        name: "post_keyed_note",
+        description: "Write a note under a key the handler chose",
+        annotations: { readOnlyHint: false },
+        async handler(_args, ctx) {
+          recordRecovery(ctx, { idempotencyKey: "note-key-1" });
+          return (await ctx.oauth!.fetch(`${API}/notes`, { method: "POST", body: "{}" })).json();
+        },
+      };
+      const connector = ccb({ tools: [...tools, keyed] });
+      const registry = makeRegistry([connector]);
+      const ctx = () => registry.contextFor("ccb", BASE);
+      install(provider);
+      await authorize(connector, ctx, provider);
+      provider.expireAccess();
+      provider.control.refresh = "dead";
+      const execute = createExecuteTool(
+        registry,
+        BASE,
+        scriptedExecutor(async (fns) => {
+          try {
+            await fns.call!("ccb.post_keyed_note", {});
+          } catch (error) {
+            if (!caught) throw error;
+          }
+          return "done";
+        }),
+        silentLogger,
+        undefined,
+        { readOnly: false },
+      );
+      const result = (await execute({ code: "async () => null" })).structuredContent as Record<string, unknown>;
+      expect(result.result).toBeUndefined();
+      expect(result.error).toMatchObject({
+        code: "downstream_oauth_required",
+        retryable: false,
+        writeOutcome: "unknown",
+        writes: { succeeded: 0, failed: 0, unknown: 1 },
+        uncertainCall: { address: "ccb.post_keyed_note", recovery: { idempotencyKey: "note-key-1" } },
+        reconciliationRequired: true,
+        connector: "ccb",
+        nextAction: { tool: "authorize_connector", arguments: { connector: "ccb" } },
+      });
       expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
     },
   );

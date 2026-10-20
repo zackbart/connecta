@@ -487,6 +487,13 @@ export class ConnectorCallError extends Error {
    * `{ revision: 12, view: 7 }`. Bounded to 20 whole-number entries.
    */
   readonly current: Readonly<Record<string, number>> | undefined;
+  /**
+   * `"unknown"` when the write this call sent may have taken effect, whatever
+   * `code` says: an authorization verdict reached after the downstream already
+   * had the write (a 401, then a failed renewal) is still an unknown outcome
+   * (INV-9). Undefined when the code alone tells the outcome.
+   */
+  readonly writeOutcome: "unknown" | undefined;
 
   constructor(
     code: ConnectorCallErrorCode,
@@ -499,6 +506,7 @@ export class ConnectorCallError extends Error {
       repair?: ArgumentRepairDetails;
       details?: UnavailableDetails;
       current?: Readonly<Record<string, number>>;
+      writeOutcome?: "unknown";
     } = {},
   ) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
@@ -510,6 +518,7 @@ export class ConnectorCallError extends Error {
     this.validation = code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
     this.repair = code === "invalid_args" ? boundedRepair(opts.repair) : undefined;
     this.current = code === "conflict" ? boundedCurrent(opts.current) : undefined;
+    this.writeOutcome = opts.writeOutcome === "unknown" ? "unknown" : undefined;
   }
 }
 
@@ -547,6 +556,11 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
   recovery?: AuthRecoveryMode;
   /** An auth failure followed a write's downstream send. Reconcile before retry. */
   reconciliationRequired?: true;
+  /**
+   * The write this call sent may have taken effect, whatever `code` says (see
+   * {@link ConnectorCallError.writeOutcome}). Check its target before repeating it.
+   */
+  writeOutcome?: "unknown";
   /** The single model-facing entry point for every credential class. */
   nextAction?:
     | {
@@ -641,6 +655,7 @@ export function classifyCallError(
       ...(err.repair ? { repair: err.repair } : {}),
       ...(err.details ? { details: err.details } : {}),
       ...(err.current ? { current: err.current } : {}),
+      ...(err.writeOutcome ? { writeOutcome: err.writeOutcome } : {}),
     };
   }
   if (err instanceof WithheldTextError) {

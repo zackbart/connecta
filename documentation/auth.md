@@ -1216,9 +1216,10 @@ again (INV-9). The SDK still refreshes the grant, and connecta stops its
 resend before it leaves, so a deliberate repeat uses the fresh token. The call
 fails with a non-retryable `connector_call_failed` whose outcome is unknown.
 If the refresh fails instead, an authorization verdict stays
-`downstream_oauth_required` (never retryable, `reconciliationRequired` for a
-dispatched write) and anything else, a waiter deadline included, is the same
-unknown outcome. A read is refreshed and sent once more. The invocation's
+`downstream_oauth_required` (never retryable, `reconciliationRequired` and
+`writeOutcome: "unknown"` for a dispatched write) and anything else, a waiter
+deadline included, is the same unknown outcome. A read is refreshed and sent
+once more. The invocation's
 classification decides; a direct call outside one uses the dispatched
 definition, a reviewed write verdict, or the tool's hints, and fails closed as
 a write.

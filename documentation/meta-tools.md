@@ -975,6 +975,16 @@ renewed (an OAuth refresh, Google Workspace's next token, Infisical's login)
 for a deliberate repeat, and the call reports the same unknown outcome. If
 renewal fails, an authorization verdict keeps its code with `retryable: false`
 and `reconciliationRequired: true`, and anything else is the unknown outcome.
+A `remoteMcp()` write answered with a redirect is not sent to the new location,
+whatever the connector's `redirects` setting, and reports the unknown outcome;
+reads follow same-origin redirects as configured. An error whose write outcome
+is unknown carries `writeOutcome: "unknown"` unless its code is already
+`write_outcome_unknown`, and a program that sent the write fails with it counted
+in `writes.unknown` even when the program caught the failure. When that write
+met an authorization verdict, the program's error is that verdict, as a direct
+call reports it: its code, `connector`, `recovery`, and `nextAction`, with
+`writeOutcome: "unknown"` and `reconciliationRequired: true`. Any other unknown
+write makes it `write_outcome_unknown`.
 
 Retryability comes from typed errors, HTTP status, registered OAuth error codes,
 SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:

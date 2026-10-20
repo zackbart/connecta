@@ -267,7 +267,9 @@ export interface RemoteMcpOptions {
    * rejected. `"same-origin"` follows at most five redirects while preserving
    * standard 301/302/303/307/308 method semantics. Cross-origin redirects and
    * HTTPS downgrades are always refused, so credentials never cross the
-   * configured request's origin.
+   * configured request's origin. A write is never sent to a redirect target
+   * under either policy: a redirect answering a write fails it as an unknown
+   * outcome (INV-9), so set `url` to the endpoint that answers directly.
    */
   redirects?: RemoteMcpRedirectPolicy;
   /**
@@ -1348,6 +1350,7 @@ function withheldAs(message: string, verdict: unknown): Error {
       ...(verdict.details ? { details: verdict.details } : {}),
       ...(verdict.validation ? { validation: verdict.validation } : {}),
       ...(verdict.current ? { current: verdict.current } : {}),
+      ...(verdict.writeOutcome ? { writeOutcome: verdict.writeOutcome } : {}),
     });
   }
   return new WithheldTextError(message, verdict);
@@ -1410,14 +1413,59 @@ function registrationErrorCode(body: string): string | undefined {
   }
 }
 
-/** What one write's request met on the wire, as its transport saw it. */
-interface WriteFlight {
+/**
+ * One logical `tools/call` as its requests meet the wire. The pinned SDK can
+ * send one call more than once: after a 401 it renews the grant and resends
+ * the message, a redirect hop sends its body again, and a `HeaderMismatch`
+ * answer makes `callTool` relist and send the call again under a new JSON-RPC
+ * id. So a write is held to one send by its call, never by any one message
+ * (INV-9). Reads keep the SDK's recoveries.
+ */
+interface CallDispatch {
+  /** At most one request for this call may leave connecta. */
+  write: boolean;
+  /** A request for this call was handed to fetch; no other one may be. */
+  sent: boolean;
   /** An HTTP answer arrived: a later network code proves nothing unsent. */
   responded: boolean;
-  /** The answer was a 401, so the SDK recovers the grant and resends. */
+  /** The answer was a 401, so the SDK renews the grant and resends. */
   unauthorized: boolean;
-  /** Recovery succeeded and the resend was stopped before it left. */
-  resendRefused?: boolean;
+  /** The answer was a redirect, whose next hop would send the write again. */
+  redirected: boolean;
+  /** A further send of this call was stopped before it left. */
+  resendRefused: boolean;
+}
+
+/**
+ * The key a `tools/call`'s params carry its dispatch under. Object spread
+ * copies a symbol-keyed property, and the pinned SDK only spreads a request's
+ * params (to add a progress token or its `_meta` envelope); `JSON.stringify`
+ * skips symbol keys, so nothing of it reaches the wire.
+ */
+const DISPATCH = Symbol("connecta.dispatch");
+
+function newDispatch(write: boolean): CallDispatch {
+  return { write, sent: false, responded: false, unauthorized: false, redirected: false, resendRefused: false };
+}
+
+function withDispatch<T extends object>(params: T, dispatch: CallDispatch): T {
+  Object.defineProperty(params, DISPATCH, { value: dispatch, enumerable: true });
+  return params;
+}
+
+function dispatchOf(params: unknown): CallDispatch | undefined {
+  return params !== null && typeof params === "object"
+    ? (params as { [DISPATCH]?: CallDispatch })[DISPATCH]
+    : undefined;
+}
+
+/** A further request for a write that already left, stopped before it does. */
+function resendRefused(dispatch: CallDispatch): ConnectorCallError {
+  dispatch.resendRefused = true;
+  return new ConnectorCallError("connector_call_failed", "This write was already sent once; it was not sent again.", {
+    retryable: false,
+    writeOutcome: "unknown",
+  });
 }
 
 interface ConnectionState {
@@ -1538,32 +1586,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       else secrets.request(input, init);
     }
   };
-  // A tools/call on the wire names its tool but not its call, so the calls in
-  // flight in each request scope say which names are writes. A name no read
-  // holds is a write (INV-1).
-  const callsInFlight = new WeakMap<object, Map<string, { reads: number; writes: number }>>();
-  const holdCall = (ctx: ConnectorContext, name: string, write: boolean): (() => void) => {
-    const scope = ctx.requestScope ?? ctx;
-    let names = callsInFlight.get(scope);
-    if (!names) callsInFlight.set(scope, (names = new Map()));
-    const held = names.get(name) ?? { reads: 0, writes: 0 };
-    names.set(name, held);
-    if (write) held.writes += 1;
-    else held.reads += 1;
-    return () => {
-      if (write) held.writes -= 1;
-      else held.reads -= 1;
-      if (held.reads === 0 && held.writes === 0 && names.get(name) === held) names.delete(name);
-    };
-  };
-  const sendsWrite = (ctx: ConnectorContext, name: unknown): boolean => {
-    const held = typeof name === "string" ? callsInFlight.get(ctx.requestScope ?? ctx)?.get(name) : undefined;
-    return !held || held.writes > 0 || held.reads === 0;
-  };
-  // What one write's request met on the wire, keyed by the error its call
-  // failed with: whether any HTTP answer arrived, and whether that answer was
-  // a 401 the SDK then tried to recover from by sending the write again.
-  const writeFlights = new WeakMap<object, WriteFlight>();
   const connectingWaiters = new WeakMap<Deferred.Deferred<Client, unknown>, number>();
   const isOauth = opts.auth?.type === "oauth";
   // Long-lived enough for distinct request scopes in this connector runtime to
@@ -2297,7 +2319,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
     // This transport's writes on the wire, by JSON-RPC id, while each is sent.
-    const flights = new Map<string | number, WriteFlight>();
+    const flights = new Map<string | number, CallDispatch>();
     const trackedFetch: FetchLike = async (input, init) => {
       let rpc: unknown;
       if (typeof init?.body === "string") {
@@ -2309,28 +2331,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       const toolCall = init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call" ? rpc : undefined;
       const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) && toolCall !== undefined;
-      // A write continuation has its own guard below. Any other write is
-      // sent once (INV-9): after a 401 the SDK refreshes the grant, which a
-      // deliberate repeat then uses, and sends the same message again, which
-      // stops here, before it leaves.
-      let flight: WriteFlight | undefined;
-      if (
-        toolCall &&
-        !writeContinuation &&
-        (typeof toolCall.id === "string" || typeof toolCall.id === "number") &&
-        sendsWrite(ctx, skillObject(toolCall.params) ? toolCall.params.name : undefined)
-      ) {
-        flight = flights.get(toolCall.id);
-        if (flight?.unauthorized) {
-          flight.resendRefused = true;
-          throw new ConnectorCallError(
-            "connector_call_failed",
-            "The downstream answered this write with HTTP 401; it was not sent again.",
-            { retryable: false },
-          );
-        }
-        if (!flight) flights.set(toolCall.id, (flight = { responded: false, unauthorized: false }));
-      }
+      // Every request a write sends passes here. The first leaves; any other
+      // stops before it does (INV-9), whatever sent it: the SDK's resend after
+      // a 401 or a step-up, which still renews the grant for a deliberate
+      // repeat, or a redirect hop.
+      const flight =
+        toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
+          ? flights.get(toolCall.id)
+          : undefined;
+      if (flight?.sent) throw resendRefused(flight);
+      if (flight) flight.sent = true;
       trackSentRequest(ctx, input, init);
       const response = writeContinuation
         ? await fetch(input, { ...init, redirect: "manual" })
@@ -2338,6 +2348,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (flight) {
         flight.responded = true;
         if (response.status === 401) flight.unauthorized = true;
+        else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
       }
       if (writeContinuation && (response.status === 401 || (response.status >= 300 && response.status < 400))) {
         await response.body?.cancel().catch(() => {});
@@ -2347,7 +2358,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         throw new ConnectorCallError(
           "connector_call_failed",
           "The downstream redirected a write continuation; it was not repeated.",
-          { retryable: false },
+          { retryable: false, writeOutcome: "unknown" },
+        );
+      }
+      if (flight?.redirected) {
+        await response.body?.cancel().catch(() => {});
+        // A 307 or 308 keeps the method and body, so following it would send
+        // the write again; the server may have acted before redirecting.
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "The downstream answered this write with a redirect; it was not sent again.",
+          { retryable: false, writeOutcome: "unknown" },
         );
       }
       if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
@@ -2391,7 +2412,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         ),
       });
       boundOAuthFlows(ctx, transport, url, [signal, ctx.signal]);
-      return recordingWriteFlights(transport, flights);
+      return sendingEachWriteOnce(transport, flights);
     }
     const headers =
       opts.auth?.type === "headers"
@@ -2399,7 +2420,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         : (credentialAuth || requestAuth) && credentialFramed !== null
           ? { ...requestAuth?.headers, [credentialHeader]: credentialFramed }
           : undefined;
-    return recordingWriteFlights(
+    return sendingEachWriteOnce(
       new StreamableHTTPClientTransport(url, {
         ...(headers ? { requestInit: { headers } } : {}),
         fetch: guardedFetch,
@@ -2409,24 +2430,29 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   };
 
   /**
-   * Hand each write's wire facts to the error its send failed with, which is
-   * the error the SDK rejects that call with, and forget them once it settles.
+   * Admit a write's call to the wire once, whatever JSON-RPC id a later
+   * message for it carries, and show `trackedFetch` which call each message
+   * belongs to while it is sent. A `tools/call` that `callTool` did not
+   * dispatch is a write (INV-1).
    */
-  const recordingWriteFlights = (
+  const sendingEachWriteOnce = (
     transport: StreamableHTTPClientTransport,
-    flights: Map<string | number, WriteFlight>,
+    flights: Map<string | number, CallDispatch>,
   ): StreamableHTTPClientTransport => {
     const send = transport.send.bind(transport);
     transport.send = async (message, options) => {
-      const id = !Array.isArray(message) && "method" in message && "id" in message ? message.id : undefined;
+      const request =
+        !Array.isArray(message) && "method" in message && message.method === "tools/call" && "id" in message
+          ? message
+          : undefined;
+      const dispatch = request ? (dispatchOf(request.params) ?? newDispatch(true)) : undefined;
+      if (!request || !dispatch?.write) return await send(message, options);
+      if (dispatch.sent) throw resendRefused(dispatch);
+      flights.set(request.id, dispatch);
       try {
         return await send(message, options);
-      } catch (error) {
-        const flight = id === undefined ? undefined : flights.get(id);
-        if (flight && typeof error === "object" && error !== null) writeFlights.set(error, flight);
-        throw error;
       } finally {
-        if (id !== undefined) flights.delete(id);
+        flights.delete(request.id);
       }
     };
     return transport;
@@ -3178,7 +3204,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           (verdict !== undefined && verdict !== "read"
             ? "write"
             : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
-      const release = holdCall(ctx, name, write);
+      const dispatch = newDispatch(write);
       try {
         const toolDefinition = definition
           ? {
@@ -3205,25 +3231,31 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         const result = await client
           .callTool(
-            {
-              name,
-              arguments: (args ?? {}) as Record<string, unknown>,
-              ...options?.input,
-            },
+            withDispatch(
+              {
+                name,
+                arguments: (args ?? {}) as Record<string, unknown>,
+                ...options?.input,
+              },
+              dispatch,
+            ),
             {
               ...requestOptions(ctx),
               allowInputRequired: true,
               // SDK 2.3.1's callTool checks outputSchema even for a suspension.
               // Retain its header mirroring, then validate only final results.
-              ...(toolDefinition ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } } : {}),
+              // Given a definition, it never relists and sends a call again
+              // after a HeaderMismatch answer, so a write always has one.
+              ...(toolDefinition
+                ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } }
+                : write
+                  ? { toolDefinition: { name, inputSchema: { type: "object" } as Tool["inputSchema"] } }
+                  : {}),
             },
           )
           .catch((err: unknown) => {
             assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
-            const bounded = atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
-            const flight = typeof err === "object" && err !== null ? writeFlights.get(err) : undefined;
-            if (flight && typeof bounded === "object" && bounded !== null) writeFlights.set(bounded, flight);
-            throw bounded;
+            throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
           });
         if (isInputRequiredResult(result)) {
           return result;
@@ -3247,15 +3279,23 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             : downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
         if (!write) throw failure;
         // A write that left is never advertised as safe to repeat (INV-9):
-        // not after a 401, whatever the grant's recovery met, and not after a
-        // gateway's 502 to 504 or a connection lost once it was sent.
-        const flight = typeof err === "object" && err !== null ? writeFlights.get(err) : undefined;
-        const settled = flight?.unauthorized
-          ? unsentAfterUnauthorized(`Connector "${id}"'s MCP server`, flight.resendRefused ? undefined : failure)
-          : unknownOutcome({ title: `connector "${id}"` }, failure, flight?.responded === true);
+        // not after a 401, whatever the grant's recovery met; not after a
+        // redirect or a further send stopped here; and not after a gateway's
+        // 502 to 504 or a connection lost once it was sent.
+        const settled = dispatch.unauthorized
+          ? unsentAfterUnauthorized(`Connector "${id}"'s MCP server`, dispatch.resendRefused ? undefined : failure)
+          : dispatch.redirected || dispatch.resendRefused
+            ? new ConnectorCallError(
+                "connector_call_failed",
+                `Connector "${id}"'s MCP server ` +
+                  (dispatch.redirected
+                    ? "answered this write with a redirect, and the write was not sent again, "
+                    : "was sent this write, and a second send of it was stopped, ") +
+                  "so whether it took effect is unknown: check the target before repeating it.",
+                { retryable: false, writeOutcome: "unknown" },
+              )
+            : unknownOutcome({ title: `connector "${id}"` }, failure, dispatch.responded);
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
-      } finally {
-        release();
       }
     },
 

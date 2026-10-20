@@ -58,14 +58,15 @@ const FRAMING_KEYS = new Set(
   (
     "content structuredContent isError _meta resultType dev.connecta/format type text data mimeType resource uri " +
     "blob annotations ok format valueFormat error code message stack name cause details retryable retryAfterMs " +
-    "nextAction uncertainCall result logs failure inputRequests requestState method params mode requestedSchema url"
+    "nextAction uncertainCall result logs failure inputRequests requestState method params mode requestedSchema url " +
+    "writeOutcome"
   ).split(" "),
 );
 const TAGS = new Set(
   (
     "type:text type:image type:audio type:resource type:resource_link format:json format:text format:paged " +
     "valueFormat:json valueFormat:text dev.connecta/format:json dev.connecta/format:text resultType:complete " +
-    "resultType:input_required mode:form mode:url method:elicitation/create jsonrpc:2.0"
+    "resultType:input_required mode:form mode:url method:elicitation/create jsonrpc:2.0 writeOutcome:unknown"
   ).split(" "),
 );
 const FACTS = new Set(["isError", "ok", "retryable", "retryAfterMs", "truncated", "hasMore"]);
