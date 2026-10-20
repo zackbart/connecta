@@ -4,6 +4,8 @@ playwright-report/
 test-results/
 .dev.vars
 .env
+# Alchemy local state holds deployed secret values in plaintext.
+.alchemy/
 .connecta-state.json
 # Agent state stays local; the repository's skills are checked in.
 .claude/*

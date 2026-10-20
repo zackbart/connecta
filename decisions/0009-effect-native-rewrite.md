@@ -142,10 +142,16 @@ multiplying on the account.
 ### Deployment shapes
 
 There are two shapes: **Docker** for Node (`templates/node`) and **Alchemy** for
-Workers. Alchemy currently manages only resources. The Worker itself stays on
-Wrangler until an end-to-end Alchemy deploy shows that `ctx.access` survives
-(`examples/worker/README.md`). The owner approved one throwaway verification
-deployment on 2026-10-20, with every created resource removed afterwards.
+Workers. The owner approved throwaway verification deployments on 2026-10-20,
+with every created resource removed afterwards. They showed that an
+Alchemy-deployed Worker (alchemy 2.0.0-beta.83, effect 4.0.5) receives
+`ctx.access` from its Worker-level Access application, keeps its script tag
+and `ctx.access` across code updates, and serves the `/agent/*` bypass. F.1
+therefore moves the Worker itself to Alchemy (`examples/worker/alchemy.run.ts`)
+and keeps `wrangler.jsonc` for `wrangler dev` only, because `alchemy dev` does
+not supply `ctx.access` to a plain fetch Worker. The verification also found
+that Alchemy's local state stores secret values in plaintext and that each
+deploy drops bindings the stack does not declare, so secrets live in the stack.
 
 ## Plan
 

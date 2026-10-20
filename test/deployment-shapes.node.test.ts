@@ -1,7 +1,8 @@
 // Node-only: walks the template and example trees and runs the Node template's
 // configuration, which opens a SQLite file and a QuickJS pool.
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { devNull, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -64,6 +65,7 @@ describe("deployment shapes", () => {
     const agents = readWorker("AGENTS.md");
     const readme = readWorker("README.md");
     const source = readWorker("src", "connecta.config.ts");
+    const stack = readWorker("alchemy.run.ts");
     const callbacks = [
       "https://claude.ai/api/mcp/auth_callback",
       "https://chatgpt.com/connector_platform_oauth_redirect",
@@ -73,10 +75,96 @@ describe("deployment shapes", () => {
       expect(agents).toContain(callback);
       expect(readme).toContain(callback);
       expect(source).toContain(callback);
+      expect(stack).toContain(`"${callback}"`);
     }
     expect(agents).toContain("oauth_configuration.dynamic_client_registration.allowed_uris");
     expect(readme).toContain('"dynamic_client_registration": {');
     expect(readme).toContain('"allowed_uris": [');
+  });
+
+  // Alchemy deploys the Worker; wrangler.jsonc stays for `wrangler dev`.
+  it("deploys the Worker with an Alchemy stack that keeps its state and secrets", () => {
+    const stack = readWorker("alchemy.run.ts");
+    const code = stack
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n");
+    // The database survives `alchemy destroy`.
+    expect(code).toMatch(/D1\.Database\("ConnectaDB", \{[^}]*\}\)\.pipe\(\s*Alchemy\.RemovalPolicy\.retain\(\)/);
+    // Bindings match the configuration's Env; secrets are declared in-stack,
+    // since each deploy deletes bindings set any other way.
+    for (const binding of [
+      "CONNECTA_DB: database",
+      "LOADER: Cloudflare.WorkerLoader()",
+      "PUBLIC_URL: Cloudflare.Worker.URL",
+      "CONNECTA_MAINTAINERS:",
+      'DOWNSTREAM_TOKEN: Config.Redacted("DOWNSTREAM_TOKEN")',
+      'CREDENTIAL_ENCRYPTION_KEY: Config.Redacted("CREDENTIAL_ENCRYPTION_KEY")',
+    ]) {
+      expect(code).toContain(binding);
+    }
+    expect(code).toContain('flags: ["nodejs_compat", "enable_request_signal"]');
+    // Access is attached to the Worker itself, and the bypass covers only /agent/*.
+    expect(code).toMatch(/Cloudflare\.Worker\("Connecta", \{[\s\S]*\n\s+access,\n/);
+    expect(code).toContain("/agent/*`");
+    expect(code.match(/decision: "bypass"/g)).toHaveLength(1);
+    expect(code).toContain("Alchemy.localState()");
+    expect(readFileSync(join(ROOT, ".gitignore"), "utf8")).toContain(".alchemy/");
+    expect(readWorker("wrangler.jsonc")).toContain("Local development only");
+
+    // The documented pins are the repository's own, and Effect is connecta's.
+    const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+    const effect = manifest.dependencies["effect"];
+    expect(effect).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(manifest.devDependencies["@effect/platform-node"]).toBe(effect);
+    const readme = readWorker("README.md");
+    for (const pin of [
+      `alchemy@${manifest.devDependencies["alchemy"]}`,
+      `effect@${effect}`,
+      `@effect/platform-node@${effect}`,
+    ]) {
+      expect(readme).toContain(pin);
+    }
+    expect(readme).toContain("npx alchemy deploy --stage production");
+  });
+
+  it("keeps a copied Worker deployment's local state and secrets out of git", () => {
+    // npm strips .gitignore from packages, so the example ships `gitignore`
+    // and its README renames it in the copy. scripts/check-package.mjs repeats
+    // this against the packed tarball.
+    expect(readdirSync(WORKER)).not.toContain(".gitignore");
+    expect(readWorker("README.md")).toContain("mv gitignore .gitignore");
+    const copy = mkdtempSync(join(tmpdir(), "connecta-worker-copy-"));
+    try {
+      cpSync(WORKER, copy, { recursive: true });
+      renameSync(join(copy, "gitignore"), join(copy, ".gitignore"));
+      execFileSync("git", ["init", "--quiet"], { cwd: copy });
+      const secrets = [
+        ".alchemy/state/production/connecta.json",
+        ".env",
+        ".env.production",
+        ".dev.vars",
+        ".dev.vars.production",
+        ".wrangler/state/d1.sqlite",
+        "node_modules/alchemy/package.json",
+      ];
+      for (const path of secrets) {
+        mkdirSync(dirname(join(copy, path)), { recursive: true });
+        writeFileSync(join(copy, path), "secret\n");
+      }
+      const untracked = execFileSync(
+        "git",
+        ["-c", `core.excludesFile=${devNull}`, "ls-files", "--others", "--exclude-standard"],
+        { cwd: copy, encoding: "utf8" },
+      ).split("\n");
+      expect(secrets.filter((path) => untracked.includes(path))).toEqual([]);
+      expect(untracked).toEqual(expect.arrayContaining([".gitignore", "alchemy.run.ts", "src/index.ts"]));
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
   });
 
   it("ships one Node deployment that is also its own container", () => {
