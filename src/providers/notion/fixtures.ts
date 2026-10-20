@@ -10,3 +10,5 @@ export const fixture = {
   create(id = "fixture", overrides: Partial<Options> = {}) { return notion(id, { ...options, ...overrides } as Options); },
   conventions: {"verbs":["integration","notion"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };
+
+export const createAuthored = () => fixture.create();
