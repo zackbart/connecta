@@ -733,7 +733,8 @@ describe("overflow() failures map to the caller's next move", () => {
     );
     expect(write.code).toBe("connector_call_failed");
     expect(write.retryable).toBe(false);
-    expect(write.message).toContain("may or may not have taken effect");
+    expect(write.message).toContain("Whether the write took effect at Overflow is unknown");
+    expect(write.writeOutcome).toBe("unknown");
   });
 
   it("INV-9: a write whose connection broke after sending is an unknown outcome, never retryable", async () => {

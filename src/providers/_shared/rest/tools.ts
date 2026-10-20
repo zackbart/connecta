@@ -1,4 +1,3 @@
-import { callClassification } from "../../../call-classification.js";
 // Connecta's generic REST connector over one vendor's pinned operation index.
 //
 // `restTools(vendor)` returns four tools named `<vendor>_api_search`,
@@ -39,7 +38,6 @@ import {
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
 import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
-import { unknownOutcome } from "../../../write-outcome.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
 import type { ValueSafety } from "./value-safety.js";
@@ -301,18 +299,16 @@ export async function callRest(
   if (typeof send === "string") invalid(send);
   await vendor.admit?.(call, ctx);
   const framing = vendor.encode ? vendor.encode(call) : defaultFraming(vendor, call);
-  // Safe to repeat: a read, or a write that carried the vendor's idempotency key.
   const header = vendor.idempotencyHeader?.toLowerCase();
-  const repeatable =
-    (callClassification(ctx) ??
-      (call.method === "GET" ||
+  const request: GuardedRequest = {
+    method: call.method,
+    classification:
+      call.method === "GET" ||
       call.method === "HEAD" ||
       (vendor.readPosts ?? []).some(([method, path]) => method === call.method && path === call.op.path)
         ? "read"
-        : "write")) === "read" ||
-    (header !== undefined && Object.keys(visibleHeaders).some((name) => name.toLowerCase() === header));
-  const request: GuardedRequest = {
-    method: call.method,
+        : "write",
+    repeatable: header !== undefined && Object.keys(visibleHeaders).some((name) => name.toLowerCase() === header),
     path: call.path,
     ...(framing.query ? { query: framing.query } : {}),
     ...(framing.headers ? { headers: framing.headers } : {}),
@@ -323,28 +319,19 @@ export async function callRest(
         ? { body: framing.body }
         : {}),
   };
-  // Set once a response exists: from then on the connection is proven, and no
-  // network failure means nothing was sent.
-  let responded = false;
-  try {
-    return await send(request, ctx, async (response) => {
-      responded = true;
-      if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call);
-      // HEAD answers with headers alone; they are its data.
-      const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
-      // Order: unwrap the vendor's envelope, then redact (every success, HEAD
-      // header data and named tools included), then cursors (and, in the
-      // tools, `select`). Cursors read the envelope when the vendor unwraps
-      // one, and the redacted body otherwise.
-      const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response) : body;
-      const data = vendor.valueSafety.redact(unwrapped, call.method, call.op.path);
-      const page = vendor.page?.(vendor.result ? body : data, call);
-      return { status: response.status, data, ...(page ? { page } : {}) };
-    });
-  } catch (error) {
-    // The whole transport call: connect/send failures, 5xx, and a lost body alike.
-    throw repeatable ? error : unknownOutcome(vendor, error, responded);
-  }
+  return await send(request, ctx, async (response) => {
+    if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call);
+    // HEAD answers with headers alone; they are its data.
+    const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
+    // Order: unwrap the vendor's envelope, then redact (every success, HEAD
+    // header data and named tools included), then cursors (and, in the
+    // tools, `select`). Cursors read the envelope when the vendor unwraps
+    // one, and the redacted body otherwise.
+    const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response) : body;
+    const data = vendor.valueSafety.redact(unwrapped, call.method, call.op.path);
+    const page = vendor.page?.(vendor.result ? body : data, call);
+    return { status: response.status, data, ...(page ? { page } : {}) };
+  });
 }
 
 /** A HEAD response's headers as data, without cookies. */

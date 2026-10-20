@@ -36,7 +36,6 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
-import { sendingOnce } from "../_shared/write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import type {
   Connector,
@@ -260,8 +259,8 @@ function windowResetMs(headers: Headers): number | undefined {
  * owns — the status cannot tell those apart, so a write's message says so.
  * A 404 is an absence: credentials are per nonprofit and Overflow scopes every
  * read to it, so a missing id is missing from this nonprofit's view and the
- * next move is to re-resolve it. And a 5xx on a write is never retryable from
- * here: Overflow's own contract returns 500 from `POST /contributions` after
+ * next move is to re-resolve it. The shared transport makes a served write's
+ * 5xx non-retryable: Overflow returns 500 from `POST /contributions` after
  * work has started, so the charge may exist, and a blind retry could charge a
  * donor twice.
  */
@@ -306,13 +305,6 @@ function overflowFailure(
     );
   }
   if (status >= 500) {
-    if (method !== "GET") {
-      return new ConnectorCallError(
-        "connector_call_failed",
-        `Overflow failed while processing a write (HTTP ${status}): ${detail} The write may or may not have taken effect. Read the affected contribution, donor, or recurring gift before retrying; repeating a charge, refund, or subscription change can apply it twice.`,
-        { retryable: false },
-      );
-    }
     const wait = windowResetMs(headers);
     return new ConnectorCallError(
       "unavailable",
@@ -1109,7 +1101,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       handler: async (args, ctx) => ({
         result:
           (await callOverflow(
-            sendingOnce(send, { title: "Overflow" }),
+            send,
             {
               method: args["method"],
               path: String(args["path"]),

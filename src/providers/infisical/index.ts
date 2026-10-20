@@ -8,13 +8,12 @@ import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../pro
 import type { ConnectorContext, JsonSchema } from "../../types.js";
 import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
-import { unknownOutcome, unsentAfterUnauthorized } from "../../write-outcome.js";
+import { unsentAfterUnauthorized } from "../../write-outcome.js";
 import { skill } from "./skill.generated.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
 /** Connecta's response ceiling, before JSON parsing; not an Infisical limit. */
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const INFISICAL = { title: "Infisical" };
 export interface InfisicalOptions extends ProviderOptions {
   /** API base including /api; US cloud by default, EU cloud or self-hosted HTTPS allowed. */
   baseUrl?: string;
@@ -86,7 +85,7 @@ export const infisical = defineProvider<InfisicalOptions>({
       sentSecretsFor(ctx).secret(clientSecret);
       const issuedAt = Date.now();
       return await send(
-        { method: "POST", path: "/v1/auth/universal-auth/login", body: { clientId, clientSecret } },
+        { method: "POST", path: "/v1/auth/universal-auth/login", auxiliary: true, body: { clientId, clientSecret } },
         ctx,
         async (response) => {
           if (!response.ok) {
@@ -134,15 +133,15 @@ export const infisical = defineProvider<InfisicalOptions>({
     const call = async (request: GuardedRequest, ctx: ConnectorContext): Promise<unknown> => {
       // The served verdict decides; direct requests fall back to the method.
       const write = (callClassification(ctx) ?? (request.method === "GET" ? "read" : "write")) === "write";
-      let responded = false;
       try {
         const attempt = (token: string) =>
           send({ ...request, headers: { Authorization: `Bearer ${token}` } }, ctx, async (response) => {
-            responded = true;
             // Even failures are drained through the bound; their text is never rendered.
             if (!response.ok) {
               await response.bytes();
-              return { rejected: response.status === 401, error: failure(response.status, response.headers) };
+              const error = failure(response.status, response.headers);
+              if (response.status !== 401) throw error;
+              return { rejected: true, error };
             }
             const parsed = await response.jsonResult();
             if (!("value" in parsed) && request.method !== "GET") return { rejected: false, value: undefined };
@@ -153,12 +152,7 @@ export const infisical = defineProvider<InfisicalOptions>({
             return { rejected: false, value: parsed.value };
           });
         const token = await tokens.token(ctx);
-        let result: Awaited<ReturnType<typeof attempt>>;
-        try {
-          result = await attempt(token);
-        } catch (error) {
-          throw write ? unknownOutcome(INFISICAL, error, responded) : error;
-        }
+        let result = await attempt(token);
         if (result.rejected && write) {
           // A 401 can arrive after a write reached downstream code. Log in
           // again so an explicit repeat finds a fresh token, but never replay
@@ -172,8 +166,7 @@ export const infisical = defineProvider<InfisicalOptions>({
           throw unsentAfterUnauthorized("Infisical", renewal);
         }
         if (result.rejected) result = await attempt(await tokens.token(ctx, token));
-        // A write's 5xx may follow the change it reports as failed.
-        if (result.error) throw write ? unknownOutcome(INFISICAL, result.error, true) : result.error;
+        if (result.error) throw result.error;
         return result.value;
       } catch (error) {
         if (error instanceof ConnectorCallError && error.message.includes("response ceiling"))

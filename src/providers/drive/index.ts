@@ -809,7 +809,11 @@ async function adding<T>(work: () => Promise<T>, check: string): Promise<T> {
       outcome.phase !== "refused" &&
       outcome.phase !== "before-send"
     ) {
-      throw new ConnectorCallError(error.code, `${error.message} ${check}`, { retryable: false, cause: error });
+      throw new ConnectorCallError(error.code, `${error.message} ${check}`, {
+        retryable: error.retryable,
+        ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
+        cause: error,
+      });
     }
     throw error;
   }

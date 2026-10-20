@@ -2,7 +2,9 @@
 // invocation layer (which attaches recovery facts to every unknown outcome),
 // trusted-program write accounting, and every connector that must tell an
 // agent a write it sent once is not safe to repeat (INV-9). It imports only
-// errors and operator facts, so none of them depends on another.
+// classification, errors and operator facts, without depending on a provider.
+import { callClassification } from "./call-classification.js";
+import type { ConnectorContext } from "./types.js";
 import { classifyCallError, ConnectorCallError, WithheldTextError, type CallErrorDetails } from "./errors.js";
 import { carryFailureFacts } from "./operator-record.js";
 
@@ -102,6 +104,65 @@ export function unknownOutcome(vendor: { title: string }, error: unknown, respon
     `${error.message} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
       "so check the target before repeating it.",
     { retryable: false, writeOutcome: "unknown" },
+  );
+}
+
+/**
+ * One failure decision for API providers. The served verdict outranks every
+ * transport default and replay-safety hint. Dispatch facts come from the
+ * transport, never from a provider's interpretation of its HTTP method.
+ * Definite refusals and proven pre-connection failures remain known failures.
+ */
+export function providerCallFailure(
+  ctx: ConnectorContext,
+  vendor: { title: string },
+  error: unknown,
+  facts: {
+    dispatched: boolean;
+    responded: boolean;
+    status?: number;
+    fallback: "read" | "write";
+    repeatable?: boolean;
+  },
+): unknown {
+  const served = callClassification(ctx);
+  if ((served ?? facts.fallback) !== "write" || !facts.dispatched) return error;
+  // A direct transport user may prove idempotency. A deployment's served
+  // write verdict still requires reconciliation rather than retry advice.
+  if (served === undefined && facts.repeatable === true) return error;
+  if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error, facts.responded);
+  if (error.writeOutcome === "unknown") return error;
+  const code = error.details?.code;
+  if (!facts.responded && code !== undefined && NEVER_CONNECTED.has(code)) return error;
+  if (error.code === "timeout" || code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT")) {
+    return error; // The invocation owns timeout/cancellation outcomes.
+  }
+  // A 5xx cannot prove refusal, even when its body names a quota/auth reason.
+  const serverError = facts.status !== undefined && facts.status >= 500;
+  if (
+    !serverError &&
+    (REFUSALS.has(error.code) || (facts.status !== undefined && facts.status >= 400 && error.code !== "unavailable"))
+  )
+    return error;
+  if (error.code !== "unavailable" && error.code !== "connector_call_failed" && !serverError) return error;
+  if (facts.repeatable === true && error.retryable) {
+    return carryFailureFacts(
+      error,
+      new ConnectorCallError(
+        "connector_call_failed",
+        `${error.message} Whether the write took effect at ${vendor.title} is unknown; check the target before repeating it.`,
+        { retryable: false, writeOutcome: "unknown" },
+      ),
+    );
+  }
+  const converted = unknownOutcome(vendor, error, facts.responded);
+  if (converted instanceof ConnectorCallError && converted !== error) return carryFailureFacts(error, converted);
+  return carryFailureFacts(
+    error,
+    new ConnectorCallError(serverError ? "connector_call_failed" : error.code, error.message, {
+      retryable: false,
+      writeOutcome: "unknown",
+    }),
   );
 }
 

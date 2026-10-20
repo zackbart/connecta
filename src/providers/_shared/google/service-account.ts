@@ -330,6 +330,7 @@ async function signAssertion(
 // --- Token exchange --------------------------------------------------------------
 
 const tokenTransport: GuardedTransport = guardedFetch({
+  auxiliary: true,
   provider: "Google OAuth",
   baseUrl: GOOGLE_TOKEN_ORIGIN,
   headers: { Accept: "application/json" },

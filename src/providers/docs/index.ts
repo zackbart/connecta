@@ -26,6 +26,7 @@ import { skill } from "./skill.generated.js";
  */
 import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";
 import type { GuardedRequest } from "../../connectors/guarded-fetch.js";
+import { providerCallFailure } from "../../write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import {
@@ -591,8 +592,18 @@ function revisionAfter(reply: JsonRecord, dropped: string[]): string | undefined
 }
 
 // No cause: what it would carry is a transport, stream, or parser error that can quote the reply (#695).
-function uncertain(message: string): ConnectorCallError {
-  return new ConnectorCallError("connector_call_failed", message, { retryable: false });
+function uncertain(message: string, ctx: ConnectorContext): unknown {
+  return providerCallFailure(
+    ctx,
+    { title: "Google Docs" },
+    new ConnectorCallError("connector_call_failed", message, { retryable: false }),
+    {
+      dispatched: true,
+      responded: true,
+      status: 200,
+      fallback: "write",
+    },
+  );
 }
 
 /**
@@ -679,15 +690,18 @@ async function sendWrite(
     const outcome = writeOutcome(error);
     if (outcome === "not-sent" || outcome === "refused") throw error;
     const message = outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error));
-    throw error instanceof ConnectorCallError && error.writeOutcome === "unknown"
-      ? new ConnectorCallError(error.code, message, { retryable: false, writeOutcome: "unknown" })
-      : uncertain(message);
+    throw error instanceof ConnectorCallError
+      ? new ConnectorCallError(error.code, message, {
+          retryable: error.retryable,
+          ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
+        })
+      : uncertain(message, ctx);
   }
   if (reply.text.trim() === "") return {};
   try {
     return asRecord(JSON.parse(reply.text));
   } catch {
-    throw uncertain(words.applied);
+    throw uncertain(words.applied, ctx);
   }
 }
 
@@ -1180,7 +1194,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
         const dropped: string[] = [];
         // An id that could not be passed back is no id at all.
         const documentId = keptId(created["documentId"], "documentId", "documentId", dropped);
-        if (!documentId) throw uncertain(createdButUnknown);
+        if (!documentId) throw uncertain(createdButUnknown, ctx);
         let revisionId = keptId(created["revisionId"], "revisionId", "revisionId", dropped);
         if (typeof args["text"] === "string") {
           try {

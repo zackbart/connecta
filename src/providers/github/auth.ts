@@ -1,5 +1,4 @@
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
-import { sendingOnce } from "../_shared/write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import { attachFailureFacts } from "../../operator-record.js";
 import type { ConnectorContext } from "../../types.js";
@@ -117,8 +116,7 @@ export class AppAuth {
       },
       authenticate: () => ({ Authorization: `Bearer ${bearer}` }),
     });
-    const transport = write ? sendingOnce(guarded, { title: "GitHub" }) : guarded;
-    return transport(request, ctx, async (response) => {
+    return guarded({ classification: write ? "write" : "read", ...request }, ctx, async (response) => {
       if (!response.ok) {
         // Dispose of the body without interpreting error text or Content-Type.
         await response.prefix(0);

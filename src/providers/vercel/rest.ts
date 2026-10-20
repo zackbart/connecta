@@ -18,7 +18,6 @@ import {
   type RestReadPost,
   type RestVendor,
 } from "../_shared/rest/tools.js";
-import { unknownOutcome } from "../../write-outcome.js";
 import { openapi } from "./openapi.generated.js";
 import {
   valueSafety,
@@ -1062,60 +1061,55 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
         for (const [name, value] of Object.entries(call.query)) {
           if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") query[name] = value;
         }
-        // A keyless write whose request may have reached Vercel has an unknown
-        // outcome (INV-9): never advertised as retryable, except a
-        // content-addressed upload, where repeating it stores the same bytes.
-        const repeatable = CONTENT_ADDRESSED.has(`${call.method} ${call.op.path}`);
-        let responded = false;
-        try {
-          return await transport(
-            {
-              method: call.method,
-              path: call.path,
-              query,
-              headers: {
-                "Content-Type":
-                  typeof args["contentType"] === "string" ? args["contentType"] : "application/octet-stream",
-                ...(digest ? { "x-vercel-digest": digest } : {}),
-              },
-              rawBody: bytes,
+        // The shared decision treats a served write's failure as unknown.
+        // A content-addressed upload supplies repeatability proof only for a
+        // direct transport call without a served verdict (INV-9).
+
+        return await transport(
+          {
+            method: call.method,
+            repeatable: CONTENT_ADDRESSED.has(`${call.method} ${call.op.path}`),
+            path: call.path,
+            query,
+            headers: {
+              "Content-Type":
+                typeof args["contentType"] === "string" ? args["contentType"] : "application/octet-stream",
+              ...(digest ? { "x-vercel-digest": digest } : {}),
             },
-            ctx,
-            async (response) => {
-              responded = true;
-              if (!response.ok) {
-                throw vercelFailure(response.status, response.headers, await failureBody(response), family(call));
-              }
-              let body: string;
+            rawBody: bytes,
+          },
+          ctx,
+          async (response) => {
+            if (!response.ok) {
+              throw vercelFailure(response.status, response.headers, await failureBody(response), family(call));
+            }
+            let body: string;
+            try {
+              body = await response.text();
+            } catch (error) {
+              if (error instanceof ConnectorCallError) throw error;
+              // Sent, answered, unread: whether the upload took effect is unknown (INV-9).
+              throw new ConnectorCallError(
+                "connector_call_failed",
+                "Vercel answered the upload, but its response could not be read, so whether it took effect is unknown. Check the target before repeating it.",
+                { retryable: false },
+              );
+            }
+            // Only JSON comes back, made value-safe; other bodies are described, never echoed.
+            let data: unknown = null;
+            if (body !== "") {
               try {
-                body = await response.text();
-              } catch (error) {
-                if (error instanceof ConnectorCallError) throw error;
-                // Sent, answered, unread: whether the upload took effect is unknown (INV-9).
-                throw new ConnectorCallError(
-                  "connector_call_failed",
-                  "Vercel answered the upload, but its response could not be read, so whether it took effect is unknown. Check the target before repeating it.",
-                  { retryable: false },
-                );
+                data = SAFETY.redact(JSON.parse(body), call.method, call.op.path);
+              } catch {
+                data = {
+                  contentType: response.headers.get("content-type") ?? "",
+                  bytes: new TextEncoder().encode(body).length,
+                };
               }
-              // Only JSON comes back, made value-safe; other bodies are described, never echoed.
-              let data: unknown = null;
-              if (body !== "") {
-                try {
-                  data = SAFETY.redact(JSON.parse(body), call.method, call.op.path);
-                } catch {
-                  data = {
-                    contentType: response.headers.get("content-type") ?? "",
-                    bytes: new TextEncoder().encode(body).length,
-                  };
-                }
-              }
-              return { status: response.status, data, ...(digest ? { digest } : {}) };
-            },
-          );
-        } catch (error) {
-          throw repeatable ? error : unknownOutcome(vendor, error, responded);
-        }
+            }
+            return { status: response.status, data, ...(digest ? { digest } : {}) };
+          },
+        );
       },
     },
   ];

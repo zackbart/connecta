@@ -9,7 +9,7 @@ import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
-import { unknownOutcome } from "../write-outcome.js";
+import { providerCallFailure } from "../write-outcome.js";
 import { deriveContext } from "../derived-context.js";
 import type {
   Connector,
@@ -431,7 +431,11 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         // A handler is opaque: by the time its fetch failed it may already
         // have sent the write, so no network code proves a write unsent.
         const unreachable = unavailableCallError(error, undefined, undefined, ctx.signal);
-        throw write ? unknownOutcome({ title: opts.title ?? id }, unreachable, true) : unreachable;
+        throw providerCallFailure(ctx, { title: opts.title ?? id }, unreachable, {
+          dispatched: true,
+          responded: true,
+          fallback: classifyTool(tool),
+        });
       }
     },
   };

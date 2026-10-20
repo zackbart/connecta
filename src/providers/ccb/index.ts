@@ -39,7 +39,6 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
-import { sendingOnce } from "../_shared/write-outcome.js";
 import { sensitiveFieldsOption, unprojectedResults } from "../_shared/sensitive-fields.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
@@ -436,7 +435,7 @@ interface CcbResult {
 }
 
 async function callCcb(send: GuardedTransport, request: GuardedRequest, ctx: ConnectorContext): Promise<CcbResult> {
-  return await send(request, ctx, async (response) => {
+  return await send({ classification: "read", ...request }, ctx, async (response) => {
     const parsed = await response.jsonResult();
     if (!response.ok) {
       throw ccbFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
@@ -1933,9 +1932,10 @@ function tools(
       outputSchema: RESULT_OUTPUT,
       handler: async (args, ctx) => {
         const { body } = await callCcb(
-          sendingOnce(send, { title: "CCB" }),
+          send,
           {
             method: args["method"],
+            classification: "write",
             path: hatchPath(args["path"]),
             query: hatchQuery(args["query"]),
             ...(args["body"] !== undefined ? { body: args["body"] } : {}),

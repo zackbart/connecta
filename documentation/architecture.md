@@ -1648,7 +1648,7 @@ compiling and configuring the real thing.
   registry's context (`test/derived-context.test.ts`). A deployment handler that
   spreads its context still loses this state; decision 0009 (B.1) replaces the
   tables with `Context` services.
-- **A write leaves once (INV-9).** `src/write-outcome.ts` owns the two rules
+- **A write leaves once (INV-9).** `src/write-outcome.ts` owns the shared rules
   every transport applies to a write: `unknownOutcome` turns a retryable
   failure that may follow the downstream acting (a 5xx, a gateway's 502 to
   504, a lost connection or reply) into a non-retryable `connector_call_failed`,
@@ -1671,11 +1671,25 @@ compiling and configuring the real thing.
   loss gives a non-retryable unknown outcome, never a fresh write attempt. A write
   always gives the SDK a tool definition, so `callTool` never relists and
   resends it after a `HeaderMismatch` answer. `api()` OAuth
-  (`src/auth/static-oauth.ts`), the Google Workspace client, Infisical, and the
-  hand-written providers' `sendingOnce` apply the same rules. Google Workspace,
-  Infisical and the REST family consult the served classification before a
-  method fallback for replay or retryability decisions; the REST family also
-  honors a supplied vendor idempotency key. Tests:
+  (`src/auth/static-oauth.ts`), the Google Workspace client, and Infisical
+  apply the same one-send rule to credential recovery. All maintained API
+  provider failure mappers run inside `guardedFetch`, which records entry to
+  fetch and any response before calling `providerCallFailure` in
+  `src/write-outcome.ts`. That helper alone decides retry advice and the
+  unknown-outcome marker, from `callClassification(ctx)` before a tool/method
+  fallback. Providers choose error codes and wording, and product recovery
+  wrappers preserve both the retry verdict and `writeOutcome`. Google uses
+  the same helper while retaining its response phases and reason codes.
+  A served write requires reconciliation even with an idempotency key or a
+  provider's idempotent-operation hint; direct transport calls without a
+  served verdict can still prove repeatability. Token acquisition is auxiliary,
+  so a failure before any resource request remains a before-send failure.
+  The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
+  provider/tool in both runtimes, fails on missing provider/tool examples or a
+  dispatched failure bypassing the helper, and covers served write/read
+  overrides with HTTP 503 and a connection reset after send. Local metadata
+  tools prove zero sends; composite calls prove each distinct request leaves
+  once. Additional tests:
   `test/remote-mcp-write-once.test.ts` (real SDK transport),
   `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each
   provider's `INV-9` tests.

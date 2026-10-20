@@ -34,7 +34,6 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
-import { sendingOnce } from "../_shared/write-outcome.js";
 import { unprojectedResults } from "../_shared/sensitive-fields.js";
 import { ConnectorCallError } from "../../errors.js";
 import { CONNECTA_VERSION } from "../../version.js";
@@ -673,12 +672,11 @@ function planningCenterCall(
   excluded: ReadonlySet<PlanningCenterApp>,
 ): Call {
   const apps = PLANNING_CENTER_APPS.filter((app) => !excluded.has(app));
-  // Every Planning Center write is a POST, PATCH, or DELETE, and every GET a read.
-  const sendWrite = sendingOnce(send, { title: "Planning Center" });
+  // The shared transport settles failures using the served classification.
   return async (request, ctx) => {
     if (excluded.size > 0) refuseExcluded(literalSegments(request.path), [], request, excluded);
     const app = appForPath(request.path, apps);
-    return await (request.method === "GET" ? send : sendWrite)(
+    return await send(
       compact({
         method: request.method,
         path: request.path,

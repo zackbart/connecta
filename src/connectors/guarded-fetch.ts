@@ -2,17 +2,20 @@
  * The safety machinery every hand-written HTTP surface needs, extracted once
  * (#341): path confinement, encoded query and framed bodies, per-request
  * credential headers applied last, a refused redirect, a bounded read, and
- * network-failure normalization. It owns no *meaning* — it never reads a status
- * code and never invents an auth scheme, because the same 403 means an ungranted
+ * network-failure normalization. It owns no vendor-specific meaning and never
+ * invents an auth scheme, because the same 403 means an ungranted
  * capability at one provider and a token scope at another, and those want
  * opposite next moves. The provider's `authenticate` supplies headers and its
- * mapper turns one `GuardedResponse` into a result or a typed failure.
+ * mapper turns one `GuardedResponse` into a result or a typed failure. Core
+ * then settles retry advice and write outcome from the served classification
+ * and dispatch facts, consistently across every provider (INV-9).
  *
  * Not exported this release: the migrations proved the shape preserves behavior
  * for connectors that already had this machinery, not that it is the right
  * public surface. Web APIs only.
  */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
+import { providerCallFailure } from "../write-outcome.js";
 import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
@@ -68,6 +71,12 @@ export interface GuardedRequest {
    * up front: the ceiling still bounds what is read, never what is sent.
    */
   prefixOnly?: boolean;
+  /** Fallback only without a served verdict (e.g. Breeze writes use GET). */
+  classification?: "read" | "write";
+  /** Authentication/lookup request before resource dispatch. */
+  auxiliary?: boolean;
+  /** Replay proof for direct transport users; never overrides a served write. */
+  repeatable?: boolean;
 }
 
 /**
@@ -132,6 +141,8 @@ export interface GuardedFetchOptions {
    * "Notion". Used for messages only; it is never parsed.
    */
   provider: string;
+  /** Token acquisition is auxiliary, not dispatch of the resource call. */
+  auxiliary?: boolean;
   /**
    * Absolute base URL. Its origin and path prefix are the confinement: every
    * request resolves beneath it or is refused.
@@ -474,86 +485,106 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   const send = options.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
 
   return async function guarded(request, ctx, map) {
-    if (request.body !== undefined && request.rawBody !== undefined) {
-      throw new Error(`A ${provider} request cannot carry both a JSON body and a raw body.`);
-    }
-    const url = confinedUrl(provider, base, basePath, request);
-    options.admit?.(url, request);
-
-    const headers: Record<string, string> = { ...constantHeaders };
-    for (const [name, value] of Object.entries(request.headers ?? {})) {
-      if (value !== undefined) headers[name] = value;
-    }
-    if (request.body !== undefined && !hasHeader(headers, "content-type")) {
-      headers["Content-Type"] = "application/json";
-    }
-    // Authentication is applied last and may not be shadowed. A caller-shaped
-    // header that reaches this point wearing the credential's name is a bug
-    // worth failing on, not a precedence question worth resolving quietly.
-    for (const [name, value] of Object.entries(await options.authenticate(ctx))) {
-      const shadow = hasHeader(headers, name);
-      if (shadow) {
-        throw new ConnectorCallError(
-          "invalid_args",
-          `A ${provider} request may not set the ${shadow} header; authentication is connector-owned.`,
-        );
-      }
-      headers[name] = value;
-      sentSecretsFor(ctx).header(value);
-    }
-
-    let response: Response;
+    let dispatched = false;
+    let response: Response | undefined;
     try {
-      const init: RequestInit = {
-        method: request.method,
-        headers,
-        ...(request.body !== undefined
-          ? { body: JSON.stringify(request.body) }
-          : request.rawBody !== undefined
-            ? { body: request.rawBody }
-            : {}),
-        // A redirect is an instruction to re-send the credential to whatever
-        // origin `Location` names, and a confinement a redirect can undo was
-        // never one. Refused below rather than followed.
-        redirect: "manual",
-        ...(ctx.signal ? { signal: ctx.signal } : {}),
-      };
-      sentSecretsFor(ctx).request(url, init);
-      for (const [name, value] of Object.entries(request.visibleHeaders ?? {})) {
+      return await requestOnce(request, ctx, map);
+    } catch (error) {
+      throw providerCallFailure(ctx, { title: provider }, error, {
+        dispatched: dispatched && options.auxiliary !== true && request.auxiliary !== true,
+        responded: response !== undefined,
+        ...(response ? { status: response.status } : {}),
+        fallback: request.classification ?? (request.method === "GET" || request.method === "HEAD" ? "read" : "write"),
+        ...(request.repeatable === undefined ? {} : { repeatable: request.repeatable }),
+      });
+    }
+
+    async function requestOnce<T>(
+      request: GuardedRequest,
+      ctx: ConnectorContext,
+      map: GuardedResponseMapper<T>,
+    ): Promise<T> {
+      if (request.body !== undefined && request.rawBody !== undefined) {
+        throw new Error(`A ${provider} request cannot carry both a JSON body and a raw body.`);
+      }
+      const url = confinedUrl(provider, base, basePath, request);
+      options.admit?.(url, request);
+
+      const headers: Record<string, string> = { ...constantHeaders };
+      for (const [name, value] of Object.entries(request.headers ?? {})) {
+        if (value !== undefined) headers[name] = value;
+      }
+      if (request.body !== undefined && !hasHeader(headers, "content-type")) {
+        headers["Content-Type"] = "application/json";
+      }
+      // Authentication is applied last and may not be shadowed. A caller-shaped
+      // header that reaches this point wearing the credential's name is a bug
+      // worth failing on, not a precedence question worth resolving quietly.
+      for (const [name, value] of Object.entries(await options.authenticate(ctx))) {
         const shadow = hasHeader(headers, name);
         if (shadow) {
-          throw new ConnectorCallError("invalid_args", `A ${provider} request sets the ${shadow} header twice.`);
+          throw new ConnectorCallError(
+            "invalid_args",
+            `A ${provider} request may not set the ${shadow} header; authentication is connector-owned.`,
+          );
         }
         headers[name] = value;
+        sentSecretsFor(ctx).header(value);
       }
-      response = await send(url.toString(), init, ctx);
-    } catch (cause) {
-      if (cause instanceof ConnectorCallError) throw cause;
-      throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);
+
+      try {
+        const init: RequestInit = {
+          method: request.method,
+          headers,
+          ...(request.body !== undefined
+            ? { body: JSON.stringify(request.body) }
+            : request.rawBody !== undefined
+              ? { body: request.rawBody }
+              : {}),
+          // A redirect is an instruction to re-send the credential to whatever
+          // origin `Location` names, and a confinement a redirect can undo was
+          // never one. Refused below rather than followed.
+          redirect: "manual",
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        };
+        sentSecretsFor(ctx).request(url, init);
+        for (const [name, value] of Object.entries(request.visibleHeaders ?? {})) {
+          const shadow = hasHeader(headers, name);
+          if (shadow) {
+            throw new ConnectorCallError("invalid_args", `A ${provider} request sets the ${shadow} header twice.`);
+          }
+          headers[name] = value;
+        }
+        dispatched = true;
+        response = await send(url.toString(), init, ctx);
+      } catch (cause) {
+        if (cause instanceof ConnectorCallError) throw cause;
+        throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);
+      }
+      if (REDIRECT_STATUSES.has(response.status)) {
+        await response.body?.cancel().catch(() => {});
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          `${provider} answered HTTP ${response.status} with a redirect; this connector talks to exactly one origin and never forwards its credential to another.`,
+          { retryable: false },
+        );
+      }
+      const declared = Number(response.headers.get("content-length"));
+      // A prefix read takes only what it was asked for, so a long body is not
+      // a reason to refuse it; the ceiling still bounds what is read. A HEAD
+      // response has no body: its Content-Length describes the GET
+      // representation, which is exactly what a HEAD asks about.
+      if (
+        Number.isFinite(declared) &&
+        declared > limit &&
+        request.method !== "HEAD" &&
+        !(request.prefixOnly && response.ok)
+      ) {
+        await response.body?.cancel().catch(() => {});
+        throw oversized(provider, limit, `a declared ${declared} bytes`);
+      }
+      return await map(boundedResponse(provider, response, limit), ctx);
     }
-    if (REDIRECT_STATUSES.has(response.status)) {
-      await response.body?.cancel().catch(() => {});
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        `${provider} answered HTTP ${response.status} with a redirect; this connector talks to exactly one origin and never forwards its credential to another.`,
-        { retryable: false },
-      );
-    }
-    const declared = Number(response.headers.get("content-length"));
-    // A prefix read takes only what it was asked for, so a long body is not
-    // a reason to refuse it; the ceiling still bounds what is read. A HEAD
-    // response has no body: its Content-Length describes the GET
-    // representation, which is exactly what a HEAD asks about.
-    if (
-      Number.isFinite(declared) &&
-      declared > limit &&
-      request.method !== "HEAD" &&
-      !(request.prefixOnly && response.ok)
-    ) {
-      await response.body?.cancel().catch(() => {});
-      throw oversized(provider, limit, `a declared ${declared} bytes`);
-    }
-    return await map(boundedResponse(provider, response, limit), ctx);
   };
 }
 

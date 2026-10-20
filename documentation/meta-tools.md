@@ -986,6 +986,16 @@ call reports it: its code, `connector`, `recovery`, and `nextAction`, with
 `writeOutcome: "unknown"` and `reconciliationRequired: true`. Any other unknown
 write makes it `write_outcome_unknown`.
 
+The classification served for the call decides this advice, including deployment
+`classification` overrides. For example, `classification: { crm: { get_person:
+"write" } }` makes a dispatched `crm.get_person` that receives HTTP 503 report
+`retryable: false` and `writeOutcome: "unknown"`, even if its request uses GET.
+A served read keeps the provider's read retry advice even if its request uses
+POST. Tool defaults and HTTP methods supply a fallback only when no served
+classification exists. A vendor idempotency key or an idempotent-operation hint
+does not change an uncertain served write into retry advice; its recovery facts
+still help reconcile the target before a deliberate repeat.
+
 Retryability comes from typed errors, HTTP status, registered OAuth error codes,
 SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:
 "timeout", "temporarily unavailable", "rate limit", or "503" in a body, tool

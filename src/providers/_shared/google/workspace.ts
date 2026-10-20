@@ -55,7 +55,7 @@ import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connec
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
 import { callClassification } from "../../../call-classification.js";
-import { unsentAfterUnauthorized } from "../../../write-outcome.js";
+import { providerCallFailure, unsentAfterUnauthorized } from "../../../write-outcome.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../../errors.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
@@ -618,9 +618,9 @@ interface GoogleRequestOptions {
   revisionGuarded?: boolean;
   /**
    * Sending this write twice leaves the same state as sending it once — a
-   * PUT of a whole resource, a Sheets `values.update` of fixed cells. Only
-   * then does a 5xx on a write stay a retryable `unavailable`; otherwise its
-   * outcome is unknown and it is not retried. Reads are always idempotent.
+   * PUT of a whole resource, a Sheets `values.update` of fixed cells. This
+   * proves repeatability only for a direct request with no served verdict.
+   * A served write still reports an unknown outcome rather than retry advice.
    */
   idempotent?: boolean;
 }
@@ -713,19 +713,26 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   function serverErrorOnWrite(
     mapped: ConnectorCallError,
     status: number,
-    write: boolean,
+    method: string,
+    ctx: ConnectorContext,
     requestOptions: GoogleRequestOptions,
   ): ConnectorCallError | undefined {
     // Any 5xx, whatever reason it names: a quota reason on a 503 does not
     // prove the write was turned away before it committed. Only a 429, or a
     // 4xx naming a quota, is a rejection that applied nothing.
-    if (status < 500 || !write || requestOptions.idempotent === true) {
-      return undefined;
-    }
+    if (status < 500) return undefined;
+    const decision = providerCallFailure(ctx, { title: provider }, mapped, {
+      dispatched: true,
+      responded: true,
+      status,
+      fallback: method === "GET" ? "read" : "write",
+      repeatable: requestOptions.idempotent === true,
+    });
+    if (!(decision instanceof ConnectorCallError) || decision.writeOutcome !== "unknown") return undefined;
     const unknown = new ConnectorCallError(
       "connector_call_failed",
       `${provider} answered HTTP ${status} after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it.`,
-      { retryable: false, cause: mapped },
+      { retryable: decision.retryable, writeOutcome: decision.writeOutcome, cause: mapped },
     );
     const reasons = googleReasons.get(mapped);
     if (reasons) googleReasons.set(unknown, reasons);
@@ -735,7 +742,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   // The errors built below keep no cause: a stream's or parser's error can
   // quote the body it failed on, and the phase and status already say what
   // happened (#695).
-  function settled(
+  function settledFailure(
     error: unknown,
     facts: SendFacts,
     method: string,
@@ -755,7 +762,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     // still says what to do next.
     if (status !== undefined && status >= 400 && !ctx.signal?.aborted) {
       const mapped = apiFailure(failure, status, facts.headers ?? new Headers(), undefined, requestOptions);
-      const unknown = serverErrorOnWrite(mapped, status, write, requestOptions);
+      const unknown = serverErrorOnWrite(mapped, status, method, ctx, requestOptions);
       return unknown
         ? outcome(unknown, { dispatched: true, status, phase: "server-error" })
         : outcome(mapped, { dispatched: true, status, phase: "refused" });
@@ -817,6 +824,29 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     return outcome(mapped, { dispatched: true, status, phase: "reading-body" });
   }
 
+  function settled(
+    error: unknown,
+    facts: SendFacts,
+    method: string,
+    ctx: ConnectorContext,
+    requestOptions: GoogleRequestOptions,
+  ): unknown {
+    const mapped = settledFailure(error, facts, method, ctx, requestOptions);
+    const decision = providerCallFailure(ctx, { title: provider }, mapped, {
+      dispatched: facts.dispatched,
+      responded: facts.status !== undefined,
+      ...(facts.status === undefined ? {} : { status: facts.status }),
+      fallback: method === "GET" ? "read" : "write",
+      repeatable: requestOptions.idempotent === true,
+    });
+    if (decision instanceof ConnectorCallError && mapped instanceof ConnectorCallError && decision !== mapped) {
+      googleReasons.set(decision, googleReasonsOf(mapped));
+      const facts = googleOutcomeOf(mapped);
+      if (facts) return outcome(decision, facts);
+    }
+    return decision;
+  }
+
   // The served verdict takes precedence even when a write uses GET or a read
   // uses POST. Direct requests without a verdict fall back to the method.
   function isWrite(method: string, ctx: ConnectorContext): boolean {
@@ -841,7 +871,11 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         { dispatched: false, phase: "before-send" },
       );
     }
-    const headed: GuardedRequest = { ...request, headers: { Accept: accept, ...request.headers } };
+    const headed: GuardedRequest = {
+      ...request,
+      repeatable: requestOptions.idempotent === true,
+      headers: { Accept: accept, ...request.headers },
+    };
     for (let attempt = 0; ; attempt += 1) {
       const facts: SendFacts = { dispatched: false };
       let delegated: DelegatedTokenRequest;
@@ -871,7 +905,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
             const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions);
-            const unknown = serverErrorOnWrite(mapped, response.status, isWrite(headed.method, ctx), requestOptions);
+            const unknown = serverErrorOnWrite(mapped, response.status, headed.method, ctx, requestOptions);
             if (unknown) {
               facts.serverError = true;
               throw unknown;

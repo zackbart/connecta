@@ -57,7 +57,6 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
-import { sendingOnce } from "../_shared/write-outcome.js";
 import { sensitiveFieldsOption, unprojectedResults } from "../_shared/sensitive-fields.js";
 import { ConnectorCallError } from "../../errors.js";
 import type {
@@ -904,7 +903,6 @@ function tools(send: GuardedTransport, defaultPageSize: number, sensitiveFields:
   const limit = limitProperty(defaultPageSize);
   const raw = (args: JsonRecord) => args["raw"] === true;
   const unprojected = unprojectedResults(sensitiveFields, TITHELY_SENSITIVE_FIELDS);
-  const sendWrite = sendingOnce(send, { title: "Tithe.ly" });
   return [
     {
       name: "tithely_api_get",
@@ -947,7 +945,7 @@ function tools(send: GuardedTransport, defaultPageSize: number, sensitiveFields:
           result:
             unprojected(
               await callTithely(
-                sendWrite,
+                send,
                 {
                   method: args["method"],
                   path: String(args["path"]),

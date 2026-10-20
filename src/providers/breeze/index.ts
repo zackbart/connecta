@@ -61,7 +61,6 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
-import { sendingOnce } from "../_shared/write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
@@ -749,13 +748,12 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
   ) => callBreeze(send, { method: "GET", path, query }, ctx, options);
   // Breeze writes are GETs too, so the tool, not the method, says which
   // requests must be sent once.
-  const sendWrite = sendingOnce(send, { title: "Breeze" });
   const write = (
     path: string,
     query: NonNullable<GuardedRequest["query"]>,
     ctx: ConnectorContext,
     options?: { raw?: boolean },
-  ) => callBreeze(sendWrite, { method: "GET", path, query }, ctx, options);
+  ) => callBreeze(send, { method: "GET", path, query, classification: "write" }, ctx, options);
 
   return [
     {

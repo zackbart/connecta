@@ -711,7 +711,7 @@ describe("restTools()", () => {
       const key = sent[0]!.headers.get("idempotency-key");
       if (given) expect(key).toBe(given);
       else expect(key).toMatch(/^[0-9a-f-]{36}$/);
-      expect(error.code).toBe("unavailable");
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
       expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
       expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
       expect(sent).toHaveLength(1);
