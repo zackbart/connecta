@@ -1,4 +1,5 @@
 import type { CredentialVault } from "./credential-contract.js";
+import { contextKey } from "./derived-context.js";
 import type { ConnectorContext, Logger } from "./types.js";
 
 /**
@@ -17,7 +18,7 @@ export interface OAuthStateSealer {
  * public ConnectorContext type does not change, and a connector cannot hand
  * itself a sealer another connector's context carries.
  */
-const sealers = new WeakMap<ConnectorContext, OAuthStateSealer>();
+const sealers = new WeakMap<object, OAuthStateSealer>();
 
 /** A sealer over the vault, or undefined when the vault cannot seal. */
 export function vaultOAuthSealer(
@@ -36,17 +37,12 @@ export function vaultOAuthSealer(
 }
 
 export function attachOAuthSealer(ctx: ConnectorContext, sealer: OAuthStateSealer | undefined): ConnectorContext {
-  if (sealer) sealers.set(ctx, sealer);
+  if (sealer) sealers.set(contextKey(ctx), sealer);
   return ctx;
 }
 
 export function oauthSealerFor(ctx: ConnectorContext): OAuthStateSealer | undefined {
-  return sealers.get(ctx);
-}
-
-/** Carry the sealer onto a context derived by spreading another. */
-export function inheritOAuthSealer(from: ConnectorContext, to: ConnectorContext): ConnectorContext {
-  return attachOAuthSealer(to, sealers.get(from));
+  return sealers.get(contextKey(ctx));
 }
 
 /** A separate HMAC key for browser handoffs, derived from the credential key. */

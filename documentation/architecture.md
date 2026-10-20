@@ -1588,6 +1588,30 @@ compiling and configuring the real thing.
 - **Route order is behavior.** Moving a mutation route below the wildcard
   `OPTIONS` opts it into CORS preflight; reordering admission after auth makes
   the cheapest possible attack the most expensive request.
+- **Call state rides beside the context, keyed on the object.** The caller
+  (`src/connector-caller.ts`), admission permit (`src/call-admission-context.ts`),
+  recovery facts (`src/call-recovery.ts`), sent secrets (`src/sent-secrets.ts`),
+  the call's classification (`src/call-classification.ts`), the OAuth sealer and
+  owner partition, and catalog-cache policy live in side tables keyed on the
+  `ConnectorContext`. A `{ ...ctx }` copy is a new key and starts without any of
+  them. In-repo code copies a context only through `deriveContext`
+  (`src/derived-context.ts`): every table resolves the copy to its origin, so
+  state recorded through either object reaches the other, and the copy keeps the
+  request scope. `api()` hands handlers such a copy and never mutates the
+  registry's context (`test/derived-context.test.ts`). A deployment handler that
+  spreads its context still loses this state; decision 0009 (B.1) replaces the
+  tables with `Context` services.
+- **Plain `ctx.fetch` is not confined to an origin, by design.** In an `api()`
+  handler it is the global `fetch` plus sent-secret registration. It carries no
+  grant: only `ctx.oauth.fetch` attaches the OAuth token, and only to
+  `apiOrigins`, and every maintained provider sends through a guarded transport
+  confined to its base URL. A custom handler is deployment code, which owns its
+  destinations (goal 4); no agent program reaches `ctx.fetch`, so INV-3 holds
+  below the sandbox, and a credential a handler sends is redacted from what the
+  agent sees (INV-5). Confining it would need a declared origin list on every
+  `api()` connector and would break handlers that follow a URL their API
+  returned, such as a signed download. `test/api-oauth.test.ts` pins that the
+  plain fetch carries no grant.
 - **`close()` is idempotent and ordered.** Both admission pools, then the
   connector limiters, then the executor; Node's `listen()` calls it on
   SIGTERM/SIGINT.

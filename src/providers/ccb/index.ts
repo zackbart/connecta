@@ -39,6 +39,8 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
+import { sendingOnce } from "../_shared/write-outcome.js";
+import { sensitiveFieldsOption, unprojectedResults } from "../_shared/sensitive-fields.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
@@ -226,6 +228,16 @@ export interface CcbOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /**
+   * Whether results may carry {@link CCB_SENSITIVE_FIELDS}: allergies,
+   * giving numbers and dates, envelope ids, statement dates, attendance
+   * prayer requests and meeting notes, and form payment details. `"drop"`
+   * (default) removes them wherever they appear in every result: the named
+   * tools, `raw: true`, `ccb_api_get`, `ccb_api_search`, and `ccb_api_mutate`
+   * replies. `"return"` lets `raw: true` and the hatches return CCB's rows
+   * untouched. Only deployment code decides; no tool argument can.
+   */
+  sensitiveFields?: "drop" | "return";
 }
 
 type JsonRecord = Record<string, any>;
@@ -482,8 +494,31 @@ function pageInfo(headers: Headers, page: number, perPage: number, rows: number)
 // creator and modifier records are dropped everywhere. Sensitive fields are
 // dropped too — allergies, giving numbers, envelope ids, giving dates and
 // statement dates, prayer requests and meeting notes on attendance, payment
-// details on form responses. `raw: true` returns CCB's row untouched.
+// details on form responses. `raw: true` returns CCB's row without the lean
+// projection, and still without those fields unless the deployment sets
+// `sensitiveFields: "return"`.
 // ---------------------------------------------------------------------------
+
+/**
+ * The CCB v2 fields every result drops by default, by name and at any depth:
+ * an individual's allergy, giving-number, envelope, and giving-statement
+ * fields, attendance prayer requests and meeting notes, and a form
+ * response's payment details. Field names follow CCB's published OpenAPI
+ * document; `notes` there also names baptism and scheduled-gift notes, which
+ * are just as private.
+ */
+export const CCB_SENSITIVE_FIELDS: readonly string[] = [
+  "allergies",
+  "confirmed_no_allergies",
+  "giving_number",
+  "envelope_user_id",
+  "last_giving_date",
+  "date_anyone_run_giving_statement",
+  "date_family_run_giving_statement",
+  "prayer_requests",
+  "notes",
+  "payment",
+];
 
 function phones(value: unknown): JsonRecord | undefined {
   const phone = asRecord(value);
@@ -857,7 +892,8 @@ function idProperty(description: string): JsonSchema {
 
 const RAW: JsonSchema = {
   type: "boolean",
-  description: "Return CCB's untouched rows, including the fields the projection drops.",
+  description:
+    "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped.",
 };
 const PAGE: JsonSchema = {
   type: "integer",
@@ -1154,7 +1190,9 @@ const QUERY: JsonSchema = {
 const RESULT_OUTPUT: JsonSchema = {
   type: "object",
   properties: {
-    result: { description: "CCB's untouched response body, or null when empty." },
+    result: {
+      description: "CCB's response body, less the sensitive fields this connection drops, or null when empty.",
+    },
     page: PAGE_SCHEMA,
   },
   required: ["result"],
@@ -1221,9 +1259,15 @@ const DAY_MS = 86_400_000;
 // Tools
 // ---------------------------------------------------------------------------
 
-function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean): ApiTool[] {
+function tools(
+  send: GuardedTransport,
+  defaultPerPage: number,
+  writable: boolean,
+  sensitiveFields: "drop" | "return",
+): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
   const perPage = perPageProperty(defaultPerPage);
+  const unprojected = unprojectedResults(sensitiveFields, CCB_SENSITIVE_FIELDS);
 
   /** A page-numbered list: one GET, projected rows, and the page signal. */
   const list = (
@@ -1239,7 +1283,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
         const rows = asArray(body);
         const paging = pageQuery(args, defaultPerPage);
         return {
-          [key]: args["raw"] === true ? rows : rows.map(project),
+          [key]: args["raw"] === true ? unprojected(rows) : rows.map(project),
           page: pageInfo(headers, paging.page, paging.per_page, rows.length),
         };
       },
@@ -1254,7 +1298,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
     query: GuardedRequest["query"] = {},
   ) => {
     const { body } = await callCcb(send, { method: "GET", path, query }, ctx);
-    return args["raw"] === true ? body : project(body);
+    return args["raw"] === true ? unprojected(body) : project(body);
   };
 
   const id = (value: unknown) => encodeURIComponent(String(value));
@@ -1637,7 +1681,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
           ctx,
         );
         const rows = Array.isArray(body) ? body : body && typeof body === "object" ? [body] : [];
-        return { categories: args["raw"] === true ? rows : rows.map(projectCategory) };
+        return { categories: args["raw"] === true ? unprojected(rows) : rows.map(projectCategory) };
       },
     },
     {
@@ -1761,7 +1805,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
           ctx,
         );
         const rows = asArray(body);
-        if (args["raw"] === true) return { periods: rows };
+        if (args["raw"] === true) return { periods: unprojected(rows) };
         return {
           periods: rows.map((value) => {
             const row = asRecord(value);
@@ -1796,7 +1840,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
     {
       name: "ccb_api_get",
       description:
-        "Call any CCB v2 GET endpoint and return its untouched body. Use named reads first; they project and page for you.",
+        "Call any CCB v2 GET endpoint and return its body, less the sensitive fields this connection drops. Use named reads first; they project and page.",
       annotations: readOnly,
       inputSchema: input({ path: HATCH_PATH, query: QUERY }, ["path"]),
       outputSchema: RESULT_OUTPUT,
@@ -1810,7 +1854,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
         const page = typeof scalars["page"] === "number" ? scalars["page"] : 1;
         const per = typeof scalars["per_page"] === "number" ? scalars["per_page"] : DEFAULT_PER_PAGE;
         return defined({
-          result: body ?? null,
+          result: unprojected(body) ?? null,
           page:
             Array.isArray(body) && (headers.has("x-page") || headers.has("x-next-page"))
               ? pageInfo(headers, page, per, body.length)
@@ -1821,7 +1865,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
     {
       name: "ccb_api_search",
       description:
-        "Run a CCB advanced search (POST /search/{domain}/results) and return untouched rows. Read-only; individuals allows one call per five seconds.",
+        "Run a CCB advanced search (POST /search/{domain}/results) and return its rows, less dropped sensitive fields. Read-only; individuals allows one call per five seconds.",
       annotations: readOnly,
       inputSchema: input(
         {
@@ -1857,7 +1901,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
           ctx,
         );
         return {
-          result: body ?? null,
+          result: unprojected(body) ?? null,
           page: pageInfo(headers, paging.page, paging.per_page, asArray(body).length),
         };
       },
@@ -1889,7 +1933,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
       outputSchema: RESULT_OUTPUT,
       handler: async (args, ctx) => {
         const { body } = await callCcb(
-          send,
+          sendingOnce(send, { title: "CCB" }),
           {
             method: args["method"],
             path: hatchPath(args["path"]),
@@ -1898,7 +1942,7 @@ function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean
           },
           ctx,
         );
-        return { result: body ?? null };
+        return { result: unprojected(body) ?? null };
       },
     });
   }
@@ -1926,12 +1970,13 @@ function usageGuide(
   mode: CcbMode,
   scopes: readonly string[],
   writable: boolean,
+  sensitiveFields: "drop" | "return",
   instructions: string | undefined,
 ): string {
   const extra = instructions?.trim();
   return `# Church Community Builder (Pushpay ChMS)
 
-${routingLine(environment, mode, writable)}: ${purpose}${skill.fragments.guide_0}${mode === "identity" ? "- Results are what the signed-in person may see in CCB. A 403 means that person lacks the permission, not that the connection is broken.\n" : ""}${skill.fragments.guide_1}${writable ? " `ccb_api_mutate` reaches every POST, PUT, PATCH, and DELETE and always needs approval." : " This connection is read-only, so it ships no write tool."} Paths are below the API origin, such as \`/church/membership_types\`.
+${routingLine(environment, mode, writable)}: ${purpose}${skill.fragments.guide_0}${mode === "identity" ? "- Results are what the signed-in person may see in CCB. A 403 means that person lacks the permission, not that the connection is broken.\n" : ""}${skill.fragments.guide_1}${writable ? " `ccb_api_mutate` reaches every POST, PUT, PATCH, and DELETE and always needs approval." : " This connection is read-only, so it ships no write tool."} Paths are below the API origin, such as \`/church/membership_types\`. ${sensitiveFields === "return" ? "This connection returns sensitive fields: `raw: true` and the hatches return CCB's full rows." : "Every result, `raw: true` and the hatches included, leaves the sensitive fields out."}
 Granted scopes: ${scopes.join(" ")}. A call outside them fails with 403.
 ${extra ? `\n## ${skill.instructionsHeading}\n\n${extra}\n` : ""}`;
 }
@@ -1990,6 +2035,7 @@ const CCB_OPTIONS = optionsOf<CcbOptions>()({
     "defaultPerPage",
     "maxResultBytes",
     "readOnly",
+    "sensitiveFields",
   ),
   callAdmission: CALL_ADMISSION,
 });
@@ -2031,6 +2077,7 @@ function ccbConnector(id: string, options: CcbOptions): Connector {
   if (!(PER_PAGE_VALUES as readonly number[]).includes(defaultPerPage)) {
     throw new Error("ccb() defaultPerPage must be 25, 50, 75, or 100 — the only page sizes CCB accepts.");
   }
+  const sensitiveFields = sensitiveFieldsOption("ccb", options.sensitiveFields);
   const scopes = resolveScopes(options);
   const writable = scopes.some((scope) => !scope.startsWith("read:"));
   const { environment, mode } = options;
@@ -2059,12 +2106,12 @@ function ccbConnector(id: string, options: CcbOptions): Connector {
       apiOrigins: [endpoints.apiOrigin],
     },
     usageGuide: {
-      content: usageGuide(purpose, environment, mode, scopes, writable, options.instructions),
+      content: usageGuide(purpose, environment, mode, scopes, writable, sensitiveFields, options.instructions),
       summary: `${environment === "sandbox" ? "Sandbox" : "Production"} CCB, ${mode === "identity" ? "per person" : "church-wide"}: id resolution, sensitive data, paging, rate limits, hatches.`,
       required: true,
     },
     callAdmission: options.callAdmission === undefined ? CCB_ADMISSION : options.callAdmission,
     ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
-    tools: tools(ccbTransport(endpoints.apiOrigin), defaultPerPage, writable),
+    tools: tools(ccbTransport(endpoints.apiOrigin), defaultPerPage, writable, sensitiveFields),
   });
 }

@@ -5,6 +5,7 @@
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { chargeConnectorCall } from "../../call-admission-context.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import type { Operation } from "../_shared/rest/operation-index.js";
@@ -862,13 +863,13 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     }
   };
 
-  const withValues = (ctx: ConnectorContext, values: Record<string, string>): ConnectorContext => ({
-    ...ctx,
-    credential: {
-      get: async (field?: string) => (field ? (values[field] ?? null) : (values["value"] ?? null)),
-      getAll: async () => values,
-    },
-  });
+  const withValues = (ctx: ConnectorContext, values: Record<string, string>): ConnectorContext =>
+    deriveContext(ctx, {
+      credential: {
+        get: async (field?: string) => (field ? (values[field] ?? null) : (values["value"] ?? null)),
+        getAll: async () => values,
+      },
+    });
 
   const credentialTest = async (ctx: ConnectorContext): Promise<CredentialTestResult> => {
     try {

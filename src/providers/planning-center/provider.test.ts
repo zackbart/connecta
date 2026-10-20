@@ -250,6 +250,25 @@ describe("Planning Center transport", () => {
     expect(error.message).toContain("Provider title: provider detail (/data/attributes/first_name)");
   });
 
+  it("INV-9: a write's 5xx or lost reply is an unknown outcome, never retryable; a read's stays unavailable", async () => {
+    const document = { data: { type: "Batch", attributes: { description: "Sunday" } } };
+    const mutate = { method: "POST", path: "/giving/v2/batches", body: document };
+    queue({ status: 502, body: { errors: [] } });
+    await expect(call("pco_api_mutate", mutate)).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      message: expect.stringContaining("Whether the write took effect at Planning Center is unknown"),
+    });
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new TypeError("connection reset"));
+    await expect(call("create_person", { firstName: "Ada", lastName: "Lovelace" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+    expect(calls.filter((entry) => entry.method === "POST")).toHaveLength(1);
+    queue({ status: 503, body: { errors: [] } });
+    await expect(call("get_person", { personId: "7" })).rejects.toMatchObject({ code: "unavailable", retryable: true });
+  });
+
   it("names the merge possibility on a 404 and the user's permissions on a 403", async () => {
     queue({ status: 404, body: { errors: [] } }, { status: 403, text: "<html>forbidden</html>" });
     await expect(call("get_person", { personId: "7" })).rejects.toMatchObject({

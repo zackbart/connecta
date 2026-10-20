@@ -7,11 +7,13 @@ import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../pro
 import type { ConnectorContext, JsonSchema } from "../../types.js";
 import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
+import { unknownOutcome } from "../_shared/write-outcome.js";
 import { skill } from "./skill.generated.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
 /** Connecta's response ceiling, before JSON parsing; not an Infisical limit. */
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const INFISICAL = { title: "Infisical" };
 export interface InfisicalOptions extends ProviderOptions {
   /** API base including /api; US cloud by default, EU cloud or self-hosted HTTPS allowed. */
   baseUrl?: string;
@@ -129,9 +131,13 @@ export const infisical = defineProvider<InfisicalOptions>({
       };
     });
     const call = async (request: GuardedRequest, ctx: ConnectorContext): Promise<unknown> => {
+      // Every Infisical write is a POST, PATCH, or DELETE, and every GET a read.
+      const write = request.method !== "GET";
+      let responded = false;
       try {
         const attempt = (token: string) =>
           send({ ...request, headers: { Authorization: `Bearer ${token}` } }, ctx, async (response) => {
+            responded = true;
             // Even failures are drained through the bound; their text is never rendered.
             if (!response.ok) {
               await response.bytes();
@@ -146,14 +152,20 @@ export const infisical = defineProvider<InfisicalOptions>({
             return { rejected: false, value: parsed.value };
           });
         const token = await tokens.token(ctx);
-        let result = await attempt(token);
+        let result: Awaited<ReturnType<typeof attempt>>;
+        try {
+          result = await attempt(token);
+        } catch (error) {
+          throw write ? unknownOutcome(INFISICAL, error, responded) : error;
+        }
         if (result.rejected) {
           const refreshed = await tokens.token(ctx, token);
           // A 401 can arrive after a write reached downstream code. Prepare a
           // fresh token for an explicit invocation, but never replay this write.
-          if (request.method === "GET") result = await attempt(refreshed);
+          if (!write) result = await attempt(refreshed);
         }
-        if (result.error) throw result.error;
+        // A write's 5xx may follow the change it reports as failed.
+        if (result.error) throw write ? unknownOutcome(INFISICAL, result.error, true) : result.error;
         return result.value;
       } catch (error) {
         if (error instanceof ConnectorCallError && error.message.includes("response ceiling"))

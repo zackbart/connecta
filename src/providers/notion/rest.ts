@@ -5,6 +5,7 @@
 // authoring its rich-text and block shapes.
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
@@ -1342,7 +1343,7 @@ export function notionRest(defaultPageSize: number): NotionRest {
       // identifying the bot is the cheapest call that proves the token is live.
       try {
         const payload = await notion(
-          { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
+          deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
           "GET",
           "/v1/users/me",
         );

@@ -11,6 +11,7 @@ import guestChanges from "./fixtures/providers-p2-item2-contract-changes.json";
 import poolOwnerChanges from "./fixtures/providers-pool-owner-837-contract-changes.json";
 import docsCorrectnessChanges from "./fixtures/providers-docs-correctness-contract-changes.json";
 import ownerlessChanges from "./fixtures/providers-agent-ownerless-workspace-contract-changes.json";
+import sensitiveFieldChanges from "./fixtures/providers-sensitive-fields-a2-contract-changes.json";
 import { providerContract, type ContractFixture } from "./fixtures/provider-contract.js";
 import { providerFixtures } from "./providers.generated.js";
 
@@ -29,6 +30,8 @@ import { providerFixtures } from "./providers.generated.js";
 // Issue #837 says in each Workspace guide that an agent acts as its pool's owner.
 // The docs correctness pass corrects Overflow, Planning Center, Sheets, and Slides guide claims.
 // Agents no longer see a Workspace connector in an ownerless pool, so its guide stops saying they fail there.
+// Decision 0009 A.2: CCB and Tithe.ly guides say whether raw rows and hatches drop sensitive fields, and
+// the CCB, Tithe.ly, and Breeze hatch descriptions stop calling their results untouched.
 // Providers added after the migration are covered by their own contract tests.
 describe.each(
   providerFixtures.filter(
@@ -61,6 +64,7 @@ describe.each(
     const poolOwners = poolOwnerChanges as Record<string, Record<string, Record<string, string>>>;
     const docsCorrectness = docsCorrectnessChanges as Record<string, Record<string, Record<string, string>>>;
     const ownerless = ownerlessChanges as Record<string, Record<string, Record<string, string>>>;
+    const sensitiveFields = sensitiveFieldChanges as Record<string, Record<string, Record<string, string>>>;
     const expected = before[fixture.name as keyof typeof before].map((row) => ({
       ...row,
       ...changes[fixture.name]?.[row.label],
@@ -73,6 +77,7 @@ describe.each(
       ...poolOwners[fixture.name]?.[row.label],
       ...docsCorrectness[fixture.name]?.[row.label],
       ...ownerless[fixture.name]?.[row.label],
+      ...sensitiveFields[fixture.name]?.[row.label],
     }));
     expect(snapshot).toEqual(expected);
   });

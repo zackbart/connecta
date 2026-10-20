@@ -230,6 +230,37 @@ refuses what that user cannot see. `excludeApps` is defense in depth on top of
 that boundary: it narrows what Connecta exposes, not what the token can do
 elsewhere.
 
+Church Community Builder and Tithe.ly drop sensitive fields from every
+result by default: for `ccb()`, allergies, giving numbers and dates, envelope
+ids, statement dates, attendance prayer requests and meeting notes, and form
+payment details (`CCB_SENSITIVE_FIELDS`); for `tithely()`, an organization's
+payout `bank` and `legal` contact (`TITHELY_SENSITIVE_FIELDS`). The drop goes
+by field name at any depth and covers the named tools, `raw: true`, the read
+hatches, CCB's advanced search, and write replies. No tool argument returns
+them. A deployment that needs them opts in with `sensitiveFields: "return"`,
+after which `raw: true` and the hatches return CCB's or Tithe.ly's rows
+without the drop:
+
+```ts
+import { ccb } from "@zackbart/connecta/providers/ccb";
+
+const church = ccb("church", {
+  purpose: "Pastoral care for the care team",
+  environment: "production",
+  mode: "identity",
+  clientId: env.CCB_CLIENT_ID,
+  clientSecret: env.CCB_CLIENT_SECRET,
+  sensitiveFields: "return",
+});
+```
+
+The option controls a projection, not credential redaction: either way,
+`api()` replaces every credential the connection sent with `[redacted]`
+wherever it appears in a result. The drop removes fields from results only.
+CCB's advanced search can still filter on them, so a value can be inferred
+from which rows match; where that matters, leave `read:advanced_searches` out
+of `scopes`.
+
 ## Another remote MCP server
 
 Declare its endpoint and intended auth mode. This fragment uses a server-stored

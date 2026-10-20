@@ -33,6 +33,8 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
+import { sendingOnce } from "../_shared/write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import { CONNECTA_VERSION } from "../../version.js";
 import type {
@@ -661,10 +663,12 @@ function planningCenterCall(
   excluded: ReadonlySet<PlanningCenterApp>,
 ): Call {
   const apps = PLANNING_CENTER_APPS.filter((app) => !excluded.has(app));
+  // Every Planning Center write is a POST, PATCH, or DELETE, and every GET a read.
+  const sendWrite = sendingOnce(send, { title: "Planning Center" });
   return async (request, ctx) => {
     if (excluded.size > 0) refuseExcluded(literalSegments(request.path), [], request, excluded);
     const app = appForPath(request.path, apps);
-    return await send(
+    return await (request.method === "GET" ? send : sendWrite)(
       compact({
         method: request.method,
         path: request.path,
@@ -2972,13 +2976,12 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
         const document = asRecord(
           await call(
             { method: "GET", path: "/people/v2/me", query: { include: "organization" } },
-            {
-              ...ctx,
+            deriveContext(ctx, {
               credential: {
                 get: async (field?: string) => (field ? (values[field] ?? null) : null),
                 getAll: async () => values,
               },
-            },
+            }),
           ),
         );
         const me = created(document, "person record");

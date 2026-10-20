@@ -117,6 +117,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       { method, path: `${repoPath(t)}${suffix}`, ...(body !== undefined ? { body } : {}) },
       token,
       ctx,
+      true,
     );
     return data ?? { deleted: true };
   };
@@ -390,6 +391,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           },
           token,
           ctx,
+          true,
         );
       },
     },

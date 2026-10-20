@@ -3,12 +3,13 @@
 import { carryFailureFacts } from "./operator-record.js";
 import { ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
+import { contextKey } from "./derived-context.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
-const contexts = new WeakMap<ConnectorContext, SentSecrets>();
+const contexts = new WeakMap<object, SentSecrets>();
 const requests = new WeakMap<object, SentSecrets>();
 const wrappedCredentials = new WeakSet<ConnectorContext>();
 const sensitiveName = /key|token|secret|password|auth|signature|session/i;
@@ -935,10 +936,10 @@ export class SentSecrets {
 }
 
 export function sentSecretsFor(ctx: ConnectorContext): SentSecrets {
-  let secrets = contexts.get(ctx);
+  let secrets = contexts.get(contextKey(ctx));
   if (!secrets) {
     secrets = new SentSecrets();
-    contexts.set(ctx, secrets);
+    contexts.set(contextKey(ctx), secrets);
   }
   sentSecretsForRequest(ctx.requestScope ?? ctx).include(secrets);
   return secrets;

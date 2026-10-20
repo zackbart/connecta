@@ -735,4 +735,17 @@ describe("overflow() failures map to the caller's next move", () => {
     expect(write.retryable).toBe(false);
     expect(write.message).toContain("may or may not have taken effect");
   });
+
+  it("INV-9: a write whose connection broke after sending is an unknown outcome, never retryable", async () => {
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new TypeError("connection reset"));
+    const write = await failure(
+      call(connection(), "overflow_api_mutate", {
+        method: "POST",
+        path: "/contributions",
+        body: { donorId: "d1", paymentMethodId: "pm1", amount: 5000 },
+      }),
+    );
+    expect(write).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(write.message).toContain("Whether the write took effect at Overflow is unknown");
+  });
 });

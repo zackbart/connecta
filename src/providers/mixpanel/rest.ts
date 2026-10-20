@@ -1,5 +1,6 @@
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext, ConnectorCallAdmissionPolicy, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
@@ -623,7 +624,7 @@ export function mixpanelRest(
     async testCredential(value, ctx) {
       try {
         await request(
-          { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
+          deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
           "GET",
           "/api/app/me",
         );

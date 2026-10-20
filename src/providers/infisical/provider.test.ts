@@ -888,8 +888,31 @@ describe("maintained Infisical contract", () => {
     fetch.mockRejectedValueOnce(new Error("ambiguous network failure submitted-value"));
     await expect(
       connector.callTool("create_secret", { ...args, secretValue: "submitted-value" }, context()),
-    ).rejects.toMatchObject({ code: "unavailable" });
+    ).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-9: a write's 5xx is an unknown outcome, never retryable; a login's and a read's stay unavailable", async () => {
+    let fetch = mockFetch(login(), json({ message: "nope" }, 503));
+    await expect(
+      connector.callTool("create_secret", { ...args, secretValue: "submitted-value" }, context()),
+    ).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      message: expect.stringContaining("Whether the write took effect at Infisical is unknown"),
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    // A failed login sends no write, so it stays safe to repeat.
+    fetch = mockFetch(json({ message: "nope" }, 503));
+    await expect(
+      connector.callTool("create_secret", { ...args, secretValue: "submitted-value" }, context()),
+    ).rejects.toMatchObject({ code: "unavailable", retryable: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    mockFetch(login(), json({ message: "nope" }, 503));
+    await expect(connector.callTool("list_projects", {}, context())).rejects.toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
   });
 
   it("rejects dot-segment keys and relative paths before sending", async () => {

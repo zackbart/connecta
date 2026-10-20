@@ -38,6 +38,7 @@ import {
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
 import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
+import { unknownOutcome } from "../write-outcome.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
 import type { ValueSafety } from "./value-safety.js";
@@ -281,40 +282,6 @@ async function successBody(
     // `callRest` decides whether that is safe to repeat.
     throw unavailableCallError(error, undefined, `${vendor.title} answered, but its response could not be read.`);
   }
-}
-
-/**
- * Network failures that prove nothing was sent, but only when `fetch` itself
- * rejected before any response existed: no connection was ever established,
- * so the vendor cannot have acted. Once a response arrived, the same codes
- * while reading its body prove nothing of the kind.
- */
-const NEVER_CONNECTED: ReadonlySet<string> = new Set([
-  "ECONNREFUSED",
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "EAI_FAIL",
-  "EHOSTUNREACH",
-]);
-
-/**
- * A request that is not safe to repeat (a write without an idempotency key)
- * must never be advertised as retryable after it may have reached the vendor
- * (INV-9). Definite answers pass through: refusals and 4xx verdicts, a failure
- * proven to precede any connection, and timeouts, which the invocation layer
- * already reports as `write_outcome_unknown`. Exported so a named write tool
- * with its own transport (an upload) applies the same rule.
- */
-export function unknownOutcome(vendor: RestVendor, error: unknown, responded: boolean): unknown {
-  if (!(error instanceof ConnectorCallError) || error.code !== "unavailable" || !error.retryable) return error;
-  const code = error.details?.code;
-  if (code === "timeout" || (!responded && code !== undefined && NEVER_CONNECTED.has(code))) return error;
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `${error.message} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
-      "so check the target before repeating it.",
-    { retryable: false },
-  );
 }
 
 /**

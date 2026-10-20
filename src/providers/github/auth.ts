@@ -1,4 +1,5 @@
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
+import { sendingOnce } from "../_shared/write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import { attachFailureFacts } from "../../operator-record.js";
 import type { ConnectorContext } from "../../types.js";
@@ -102,9 +103,10 @@ export class AppAuth {
     };
   }
 
-  async json(request: GuardedRequest, bearer: string, ctx: ConnectorContext): Promise<unknown> {
+  /** `write` sends the request once: a failure that may follow the change is not retryable. */
+  async json(request: GuardedRequest, bearer: string, ctx: ConnectorContext, write = false): Promise<unknown> {
     ctx.signal?.throwIfAborted();
-    const transport = guardedFetch({
+    const guarded = guardedFetch({
       provider: "GitHub",
       baseUrl: "https://api.github.com",
       maxResponseBytes: 4 * 1024 * 1024,
@@ -115,6 +117,7 @@ export class AppAuth {
       },
       authenticate: () => ({ Authorization: `Bearer ${bearer}` }),
     });
+    const transport = write ? sendingOnce(guarded, { title: "GitHub" }) : guarded;
     return transport(request, ctx, async (response) => {
       if (!response.ok) {
         // Dispose of the body without interpreting error text or Content-Type.

@@ -60,6 +60,8 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
+import { sendingOnce } from "../_shared/write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
@@ -366,6 +368,20 @@ const READ_ENDPOINTS: ReadonlyMap<string, readonly string[]> = new Map([
 /** A Breeze path: lowercase segments of letters, digits, and underscores. */
 const PATH_PATTERN = /^(\/[a-z0-9_]+)+\/?$/;
 
+/**
+ * `/events/calendars/list` answers each calendar's private iCal feed address,
+ * which reads the calendar without a key, and its embed key. Neither hatch
+ * returns them, any more than `list_calendars` does.
+ */
+function withoutCalendarFeeds(path: string, body: unknown): unknown {
+  if (path !== "/events/calendars/list" || !Array.isArray(body)) return body;
+  return body.map((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+    const { address: _address, embed_key: _embedKey, ...calendar } = row as JsonRecord;
+    return calendar;
+  });
+}
+
 function normalizedPath(raw: unknown): string {
   const path = typeof raw === "string" ? raw : "";
   if (!PATH_PATTERN.test(path)) {
@@ -603,7 +619,7 @@ const PATH_PROPERTY: JsonSchema = {
 
 const RESULT_SCHEMA: JsonSchema = {
   type: "object",
-  properties: { result: { description: "Breeze's untouched response." } },
+  properties: { result: { description: "Breeze's response, less calendar feed addresses and embed keys." } },
   required: ["result"],
 };
 
@@ -731,12 +747,21 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
     ctx: ConnectorContext,
     options?: { raw?: boolean },
   ) => callBreeze(send, { method: "GET", path, query }, ctx, options);
+  // Breeze writes are GETs too, so the tool, not the method, says which
+  // requests must be sent once.
+  const sendWrite = sendingOnce(send, { title: "Breeze" });
+  const write = (
+    path: string,
+    query: NonNullable<GuardedRequest["query"]>,
+    ctx: ConnectorContext,
+    options?: { raw?: boolean },
+  ) => callBreeze(sendWrite, { method: "GET", path, query }, ctx, options);
 
   return [
     {
       name: "breeze_api_get",
       description:
-        "Call a reviewed Breeze read endpoint and return its untouched response. Refuses every path and parameter not on the read allowlist, since Breeze writes are GETs too.",
+        "Call a reviewed Breeze read endpoint and return its response as sent, less calendar feed addresses. Refuses every path and parameter not on the read allowlist, since Breeze writes are GETs too.",
       annotations: readOnly,
       inputSchema: namedInput({ path: PATH_PROPERTY, query: QUERY_PROPERTY }, ["path"]),
       outputSchema: RESULT_SCHEMA,
@@ -751,19 +776,20 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             `breeze_api_get refuses ${stray.join(", ")} on ${path}; its reviewed parameters are ${allowed.join(", ") || "none"}. Use breeze_api_mutate for anything else.`,
           );
         }
-        return { result: await get(path, query, ctx, { raw: true }) };
+        return { result: withoutCalendarFeeds(path, await get(path, query, ctx, { raw: true })) };
       },
     },
     {
       name: "breeze_api_mutate",
       description:
-        "Call any Breeze API endpoint, including writes and undocumented routes, and return its untouched response. The approval-gated hatch; Breeze takes writes as GET query parameters.",
+        "Call any Breeze API endpoint, including writes and undocumented routes, and return its response as sent, less calendar feed addresses. The approval-gated hatch; Breeze takes writes as GET query parameters.",
       annotations: destructive,
       inputSchema: namedInput({ path: PATH_PROPERTY, query: QUERY_PROPERTY }, ["path"]),
       outputSchema: RESULT_SCHEMA,
-      handler: async (args, ctx) => ({
-        result: await get(normalizedPath(args["path"]), queryPairs(args["query"]), ctx, { raw: true }),
-      }),
+      handler: async (args, ctx) => {
+        const path = normalizedPath(args["path"]);
+        return { result: withoutCalendarFeeds(path, await write(path, queryPairs(args["query"]), ctx, { raw: true })) };
+      },
     },
     {
       name: "get_account_summary",
@@ -1508,7 +1534,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       ),
       outputSchema: PERSON_SCHEMA,
       handler: async (args, ctx) => {
-        const payload = await get(
+        const payload = await write(
           "/people/add",
           {
             first: args["firstName"],
@@ -1537,7 +1563,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: PERSON_SCHEMA,
       handler: async (args, ctx) => {
         const fields = fieldsJson(args["fields"]);
-        const payload = await get("/people/update", { person_id: args["personId"], fields_json: fields }, ctx);
+        const payload = await write("/people/update", { person_id: args["personId"], fields_json: fields }, ctx);
         requireTrue(payload, "the person update");
         const person = Array.isArray(payload) ? payload[0] : payload;
         return asRecord(person)["id"] ? projectPerson(person) : { id: String(args["personId"]) };
@@ -1555,7 +1581,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: WROTE_SCHEMA("assigned"),
       handler: async (args, ctx) => {
         requireTrue(
-          await get("/tags/assign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
+          await write("/tags/assign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
           "the tag assignment",
         );
         return { assigned: true };
@@ -1572,7 +1598,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: WROTE_SCHEMA("unassigned"),
       handler: async (args, ctx) => {
         requireTrue(
-          await get("/tags/unassign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
+          await write("/tags/unassign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
           "the tag removal",
         );
         return { unassigned: true };
@@ -1587,7 +1613,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: WROTE_SCHEMA("checkedIn"),
       handler: async (args, ctx) => {
         requireTrue(
-          await get(
+          await write(
             "/events/attendance/add",
             {
               person_id: args["personId"],
@@ -1675,7 +1701,7 @@ function breezeConnector(id: string, options: BreezeOptions): Connector {
           await callBreeze(
             send,
             { method: "GET", path: "/account/summary" },
-            { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
+            deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
           ),
         );
         const reported = typeof account["subdomain"] === "string" ? account["subdomain"].toLowerCase() : undefined;

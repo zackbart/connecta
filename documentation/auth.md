@@ -1924,7 +1924,14 @@ owner's access token as `Authorization: Bearer` with these rules:
   untrusted response URLs. Return redirects unfollowed; handlers cannot set `Authorization`.
 - On 401, recover exactly once using an already rotated token or one coalesced
   refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
-  owner is cancelled after the answer. Replay once; stream bodies are refused.
+  owner is cancelled after the answer. A read-classified call replays once;
+  stream bodies are refused.
+- A write-classified call never replays (INV-9). The served classification
+  decides, deployment `classification` first and the tool's annotation
+  otherwise, never the HTTP method: a write sent with GET is not resent, and a
+  read sent with POST is. After the recovery, the call fails with a
+  non-retryable `connector_call_failed` whose outcome is unknown, and the
+  renewed grant serves the agent's deliberate repeat.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
   `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
   return retryable `unavailable`. Latch second 401s for the request scope,

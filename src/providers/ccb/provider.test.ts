@@ -421,7 +421,7 @@ describe("ccb() reads", () => {
     expect(fake.requests.at(-1)!.url.searchParams.get("per_page")).toBe("25");
   });
 
-  it("drops sensitive individual fields unless raw is asked for", async () => {
+  it("drops sensitive individual fields from the projection", async () => {
     const { fake, call } = await connected();
     const row = {
       ...PERSON,
@@ -443,10 +443,62 @@ describe("ccb() reads", () => {
     for (const secret of ["peanuts", "G-17", "envelope", "last_giving_date", "actions", "thumbnail"]) {
       expect(text).not.toContain(secret);
     }
-    expect(await call("get_individual", { individualId: 42, raw: true })).toMatchObject({
+  });
+
+  it("INV-4: raw rows, hatches, and search drop sensitive fields unless deployment code returns them", async () => {
+    const individual = {
+      ...PERSON,
+      allergies: "peanuts",
+      confirmed_no_allergies: false,
+      giving_number: "G-17",
+      envelope_user_id: 3,
+      last_giving_date: "2026-09-01",
+      date_anyone_run_giving_statement: "2026-01-02",
+      family: { members: [{ id: 43, allergies: "shellfish" }] },
+    };
+    const attendance = { event_id: 12, occurrence: "20260927", prayer_requests: "private", notes: "leader notes" };
+    const response = { id: 5, form_id: 2, payment: { method: "CREDIT_CARD", total: 2500 }, payment_status: "PAID" };
+    const routes = [
+      on("GET", "/individuals/42", () => json(individual)),
+      on("GET", "/events/12/attendance/20260927", () => json(attendance)),
+      on("GET", "/forms/2/responses", () => json([response], { "x-next-page": "" })),
+      on("POST", "/search/individuals/results", () => json([individual], { "x-next-page": "" })),
+      on("PUT", "/individuals/42", () => json(individual)),
+    ];
+    const reads: Array<[string, Record<string, unknown>]> = [
+      ["get_individual", { individualId: 42, raw: true }],
+      ["get_event_attendance", { eventId: 12, occurrence: "2026-09-27", raw: true }],
+      ["list_form_responses", { formId: 2, raw: true }],
+      ["ccb_api_get", { path: "/individuals/42" }],
+      ["ccb_api_get", { path: "/events/12/attendance/20260927" }],
+      ["ccb_api_search", { domain: "individuals", body: { filters: {} } }],
+      ["ccb_api_mutate", { method: "PUT", path: "/individuals/42", body: { first_name: "Ada" } }],
+    ];
+    const secrets = ["peanuts", "shellfish", "G-17", "envelope", "giving", "statement", "private", "leader notes"];
+    const dropped = await connected({ access: "read-write" });
+    dropped.fake.route(...routes);
+    for (const [tool, args] of reads) {
+      const text = JSON.stringify(await dropped.call(tool, args));
+      for (const secret of [...secrets, "allerg", "CREDIT_CARD"])
+        expect(text, `${tool} ${secret}`).not.toContain(secret);
+    }
+    expect(JSON.stringify(await dropped.call("ccb_api_get", { path: "/individuals/42" }))).toContain(
+      '"name":"Grace Hopper"',
+    );
+    expect(guide(dropped.connector).content).toContain("leaves the sensitive fields out");
+
+    // An argument cannot widen it; only the deployment's option can.
+    const returned = await connected({ access: "read-write", sensitiveFields: "return" });
+    returned.fake.route(...routes);
+    expect(await returned.call("get_individual", { individualId: 42, raw: true })).toMatchObject({
       allergies: "peanuts",
       giving_number: "G-17",
     });
+    expect(JSON.stringify(await returned.call("ccb_api_get", { path: "/events/12/attendance/20260927" }))).toContain(
+      "leader notes",
+    );
+    expect(guide(returned.connector).content).toContain("This connection returns sensitive fields");
+    expect(() => connection({ sensitiveFields: "raw" as never })).toThrow(/sensitiveFields/);
   });
 
   it("addresses an event occurrence and drops prayer requests from attendance", async () => {
@@ -593,6 +645,47 @@ describe("ccb() escape hatches (H14)", () => {
     expect(await failure(call("ccb_api_search", { domain: "permission_individuals", body: {} }))).toMatchObject({
       code: "invalid_args",
     });
+  });
+
+  it("INV-9: a mutation's 5xx is an unknown outcome, never retryable; a read's stays unavailable", async () => {
+    const { fake, call } = await connected({ access: "read-write" });
+    fake.route(
+      on("POST", "/individuals/42/notes", () => json({ errors: [{ message: "boom" }] }, {}, 503)),
+      on("GET", "/church/membership_types", () => json({}, {}, 503)),
+    );
+    expect(
+      await failure(
+        call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
+      ),
+    ).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(fake.requests.filter((request) => request.method === "POST")).toHaveLength(1);
+    expect(await failure(call("ccb_api_get", { path: "/church/membership_types" }))).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
+  });
+
+  it("INV-9: after a 401 the grant refreshes, a search (a POST read) replays once, and a mutation is never resent", async () => {
+    const { fake, call } = await connected({ access: "read-write" });
+    fake.route(
+      on("POST", "/search/individuals/results", () => json([{ id: 1 }], { "x-next-page": "" })),
+      on("POST", "/individuals/42/notes", () => json({ id: 3 })),
+    );
+    fake.expireAccess();
+    expect((await call("ccb_api_search", { domain: "individuals", body: {} })).result).toEqual([{ id: 1 }]);
+    expect(fake.requests.filter((request) => request.url.pathname === "/search/individuals/results")).toHaveLength(2);
+
+    fake.expireAccess();
+    expect(
+      await failure(
+        call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
+      ),
+    ).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(fake.requests.filter((request) => request.url.pathname === "/individuals/42/notes")).toHaveLength(1);
+    // The renewed grant serves the deliberate repeat.
+    expect(
+      await call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
+    ).toEqual({ result: { id: 3 } });
   });
 
   it("sends a JSON mutation through the approval-gated hatch", async () => {

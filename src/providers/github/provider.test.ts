@@ -935,6 +935,23 @@ describe("GitHub App provider", () => {
     },
   );
 
+  it("INV-9: a REST write's 5xx is an unknown outcome, never retryable; a read's stays unavailable", async () => {
+    const fixture = apiFixture();
+    fixture.respond((request) =>
+      request.url.pathname === "/repos/acme/one/releases" && request.method === "POST"
+        ? new Response(SENTINEL, { status: 502 })
+        : undefined,
+    );
+    await expect(
+      connection().callTool("create_release", { owner: "acme", repo: "one", tag_name: "v1" }, context()),
+    ).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      message: expect.stringContaining("Whether the write took effect at GitHub is unknown"),
+    });
+    expect(fixture.requests.filter((request) => request.url.pathname === "/repos/acme/one/releases")).toHaveLength(1);
+  });
+
   it("INV-6: permission 403 with unused rate budget is auth failure and evicts its token", async () => {
     const fixture = apiFixture();
     fixture.respond((request) =>

@@ -7,6 +7,8 @@ import { READ_ONLY, CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-sha
 import { assertStaticToolNames } from "../tool-name.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
+import { callClassification } from "../call-classification.js";
+import { deriveContext } from "../derived-context.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -112,9 +114,12 @@ export interface ApiOAuthAccess {
   /**
    * `fetch` with the calling owner's access token as `Authorization: Bearer`.
    * Only to `apiOrigins`; redirects are returned unfollowed. A 401 earns one
-   * coordinated refresh and one replay; a second 401, a refused refresh, or
-   * no grant at all throws `auth_required`, and an authorization-server
-   * outage throws a retryable `unavailable`.
+   * coordinated refresh. A read-classified call's request is then sent once
+   * more; a write's never is, and the call fails with `connector_call_failed`
+   * whose outcome is unknown, so the agent checks the target before
+   * repeating it. A second 401, a refused refresh, or no grant at all throws
+   * `auth_required`, and an authorization-server outage throws a retryable
+   * `unavailable`.
    */
   fetch(input: string | URL, init?: RequestInit): Promise<Response>;
 }
@@ -281,8 +286,8 @@ export interface ApiOAuthHooks {
   consumeAuthError(ctx: ConnectorContext): Promise<void>;
   /** Requires callbackParams with a nonempty state, including without PKCE. */
   finishAuth(code: string, ctx: ConnectorContext, callbackParams: URLSearchParams): Promise<void>;
-  /** The handler-facing accessor for one call's context. */
-  access(ctx: ConnectorContext): ApiOAuthAccess;
+  /** The handler-facing accessor for one call's context; a write's request is never resent. */
+  access(ctx: ConnectorContext, call: { write: boolean }): ApiOAuthAccess;
 }
 
 /**
@@ -380,11 +385,16 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       // its first await never sits handler-less for the thenable-adoption
       // microtask — workerd and vitest both report that gap as an unhandled
       // rejection even though the caller catches the failure.
-      // Preserve the registry's context identity: private caller/provenance
-      // markers belong to it, as does the grant its accessor reaches.
-      const handlerCtx: ApiHandlerContext = Object.assign(ctx, {
+      // Derived, never mutated: the registry's context stays as it was, and
+      // the call state beside it (caller, admission permit, recovery facts,
+      // sent secrets) resolves through the handler's copy. The grant sends a
+      // write once: the registry's classification of this call decides,
+      // else the tool's own annotation.
+      const write =
+        (callClassification(ctx) ?? (tool.annotations.readOnlyHint === true ? "read" : "write")) === "write";
+      const handlerCtx = deriveContext<ApiHandlerContext>(ctx, {
         fetch: sentSecretsFetch(ctx),
-        ...(oauth ? { oauth: oauth.access(ctx) } : {}),
+        ...(oauth ? { oauth: oauth.access(ctx, { write }) } : {}),
       });
       try {
         return redactSentSecrets(ctx, await tool.handler(input, handlerCtx));

@@ -5,6 +5,7 @@ import { Cause, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
 import { attachCallAdmission } from "./call-admission-context.js";
+import { attachCallClassification } from "./call-classification.js";
 import { CatalogService, type ResolvedCatalogTool } from "./catalog-service.js";
 import {
   boundedEchoText,
@@ -708,6 +709,7 @@ export class InvocationService {
               defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
             );
             attachCallAdmission(connectorContext, permit);
+            attachCallClassification(connectorContext, write ? "write" : "read");
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
             dispatchContext = connectorContext;

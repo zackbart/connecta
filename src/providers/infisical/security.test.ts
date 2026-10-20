@@ -156,7 +156,10 @@ describe("Infisical security boundaries", () => {
         ok: false,
         dispatched: true,
         attempts: 1,
-        error: { code: failure === "network" ? "unavailable" : "write_outcome_unknown" },
+        error:
+          failure === "network"
+            ? { code: "connector_call_failed", retryable: false }
+            : { code: "write_outcome_unknown", retryable: false },
       });
       expect(operational).toBe(1);
     });

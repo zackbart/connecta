@@ -35,6 +35,8 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
+import { sendingOnce } from "../_shared/write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import type {
   Connector,
@@ -1107,7 +1109,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       handler: async (args, ctx) => ({
         result:
           (await callOverflow(
-            send,
+            sendingOnce(send, { title: "Overflow" }),
             {
               method: args["method"],
               path: String(args["path"]),
@@ -1785,13 +1787,12 @@ function overflowConnector(id: string, options: OverflowOptions): Connector {
           await callOverflow(
             send,
             { method: "GET", path: "/locations", query: { limit: 1, sortBy: "displayOrder" } },
-            {
-              ...ctx,
+            deriveContext(ctx, {
               credential: {
                 get: async (field?: string) => (field ? (values[field] ?? null) : null),
                 getAll: async () => values,
               },
-            },
+            }),
           ),
         );
         const first = asRecord(asArray(payload["data"])[0]);

@@ -410,11 +410,15 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   /**
    * One request through the owner's grant. A 401 earns exactly one recovery:
    * a token another request has already rotated in, or else one coordinated
-   * refresh. A second 401 is `auth_required`, latched for the request scope
-   * so a program's later calls do not each spend a refresh on it.
+   * refresh. A read is then sent once more; a write never is (INV-9), since
+   * a server may act on a request before it rejects the token, and the call
+   * reports an unknown outcome with the grant renewed for the next call. A
+   * second 401 is `auth_required`, latched for the request scope so a
+   * program's later calls do not each spend a refresh on it.
    */
   const authorizedFetch = async (
     ctx: ConnectorContext,
+    write: boolean,
     input: string | URL,
     init: RequestInit = {},
   ): Promise<Response> => {
@@ -487,6 +491,14 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         const refreshed = await provider.tokens(issuerContext);
         if (!refreshed) throw authRequiredError();
         accessToken = refreshed.access_token;
+      }
+      if (write) {
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          `Connector "${id}" sent a write that the API answered with HTTP 401. The grant is renewed, but the ` +
+            "write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
+          { retryable: false },
+        );
       }
       const second = await send(accessToken);
       if (second.status !== 401) return second;
@@ -636,8 +648,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       await provider.consumeAuthError();
     }, 0),
     finishAuth: retainingOAuthPartition(finishAuth, 1),
-    access: (ctx) => ({
-      fetch: (input, init) => authorizedFetch(ctx, input, init),
+    access: (ctx, call) => ({
+      fetch: (input, init) => authorizedFetch(ctx, call.write, input, init),
     }),
   };
 }

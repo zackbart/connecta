@@ -5,19 +5,20 @@
 // environment variables, bounded logs, raw-byte uploads, teams).
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { guardedFetch, retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
 import {
   callRest,
   restCall,
-  unknownOutcome,
   restTransport,
   type RestCall,
   type RestPage,
   type RestReadPost,
   type RestVendor,
 } from "../_shared/rest/tools.js";
+import { unknownOutcome } from "../_shared/write-outcome.js";
 import { openapi } from "./openapi.generated.js";
 import {
   valueSafety,
@@ -1125,10 +1126,13 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
     async testCredential(value, ctx) {
       const token = value.trim();
       try {
-        const { data } = await callRest(vendor, restCall(vendor, "GET", "/v2/user"), {
-          ...ctx,
-          credential: { get: async () => token, getAll: async () => ({ value: token }) },
-        });
+        const { data } = await callRest(
+          vendor,
+          restCall(vendor, "GET", "/v2/user"),
+          deriveContext(ctx, {
+            credential: { get: async () => token, getAll: async () => ({ value: token }) },
+          }),
+        );
         const payload = record(data);
         const user = record(payload["user"] ?? payload);
         const identity = text(user["username"]) ?? text(user["email"]) ?? text(user["name"]) ?? text(user["id"]);
