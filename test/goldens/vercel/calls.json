@@ -7,7 +7,7 @@
       "method": "PATCH",
       "limit": 2
     },
-    "requests": [],
+    "steps": [],
     "result": {
       "ok": true,
       "format": "json",
@@ -42,7 +42,7 @@
       "path": "/v7/deployments",
       "param": "until"
     },
-    "requests": [],
+    "steps": [],
     "result": {
       "ok": true,
       "format": "json",
@@ -80,15 +80,17 @@
         "deployments.state"
       ]
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.vercel.com/v7/deployments?projectId=web&limit=2&teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.vercel.com/v7/deployments?projectId=web&limit=2&teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -125,21 +127,23 @@
         "framework": "nextjs"
       }
     },
-    "requests": [
-      {
-        "method": "PATCH",
-        "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "framework": "nextjs"
+    "steps": [
+      [
+        {
+          "method": "PATCH",
+          "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "framework": "nextjs"
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -161,15 +165,17 @@
     "args": {
       "limit": 5
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.vercel.com/v2/teams?limit=5",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.vercel.com/v2/teams?limit=5",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -199,15 +205,17 @@
       "projectId": "web app",
       "gitBranch": "main"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.vercel.com/v10/projects/web%20app/env?gitBranch=main&decrypt=false&teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.vercel.com/v10/projects/web%20app/env?gitBranch=main&decrypt=false&teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -241,26 +249,28 @@
       ],
       "upsert": false
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.vercel.com/v10/projects/web/env?upsert=false",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "key": "TOKEN",
-            "value": "golden-env-value",
-            "type": "sensitive",
-            "target": [
-              "preview"
-            ]
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.vercel.com/v10/projects/web/env?upsert=false",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "key": "TOKEN",
+              "value": "golden-env-value",
+              "type": "sensitive",
+              "target": [
+                "preview"
+              ]
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -287,25 +297,27 @@
       ],
       "comment": "Rotated"
     },
-    "requests": [
-      {
-        "method": "PATCH",
-        "url": "https://api.vercel.com/v9/projects/web/env/env_2?teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "target": [
-              "preview",
-              "development"
-            ],
-            "comment": "Rotated"
+    "steps": [
+      [
+        {
+          "method": "PATCH",
+          "url": "https://api.vercel.com/v9/projects/web/env/env_2?teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "target": [
+                "preview",
+                "development"
+              ],
+              "comment": "Rotated"
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -330,15 +342,17 @@
       "projectId": "web",
       "envVarId": "env_2"
     },
-    "requests": [
-      {
-        "method": "DELETE",
-        "url": "https://api.vercel.com/v9/projects/web/env/env_2?teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "DELETE",
+          "url": "https://api.vercel.com/v9/projects/web/env/env_2?teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -357,15 +371,17 @@
       "direction": "backward",
       "limit": 50
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.vercel.com/v3/deployments/dpl_1/events?direction=backward&limit=50&follow=0&teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.vercel.com/v3/deployments/dpl_1/events?direction=backward&limit=50&follow=0&teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -402,15 +418,17 @@
         "error"
       ]
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.vercel.com/v1/projects/web/deployments/dpl_1/runtime-logs?teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.vercel.com/v1/projects/web/deployments/dpl_1/runtime-logs?teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -438,18 +456,20 @@
       "path": "/v2/files",
       "base64Body": "aGVsbG8="
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.vercel.com/v2/files?teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/octet-stream",
-          "x-vercel-digest": "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-        },
-        "body": "hello"
-      }
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.vercel.com/v2/files?teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/octet-stream",
+            "x-vercel-digest": "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+          },
+          "body": "hello"
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -469,17 +489,19 @@
       "path": "/v8/artifacts/abc123",
       "textBody": "artifact"
     },
-    "requests": [
-      {
-        "method": "PUT",
-        "url": "https://api.vercel.com/v8/artifacts/abc123?teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/octet-stream"
-        },
-        "body": "artifact"
-      }
+    "steps": [
+      [
+        {
+          "method": "PUT",
+          "url": "https://api.vercel.com/v8/artifacts/abc123?teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/octet-stream"
+          },
+          "body": "artifact"
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -501,15 +523,17 @@
         "projectId": "web"
       }
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,

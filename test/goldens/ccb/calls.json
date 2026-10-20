@@ -3,15 +3,17 @@
     "label": "get_me",
     "tool": "get_me",
     "args": {},
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/me",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/me",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -38,15 +40,17 @@
       "page": 2,
       "perPage": 50
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/individuals?name=hop&include_inactive=true&page=2&per_page=50",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals?name=hop&include_inactive=true&page=2&per_page=50",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -85,15 +89,17 @@
     "args": {
       "individualId": 42
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/individuals/42",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -142,15 +148,17 @@
       "individualId": 42,
       "raw": true
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/individuals/42",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -169,15 +177,17 @@
     "args": {
       "lastName": "Hop"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/families?last_name=Hop&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/families?last_name=Hop&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -211,15 +221,17 @@
       "familyId": 9,
       "includeInactive": true
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/families/9?include_inactive=true",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/families/9?include_inactive=true",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -269,15 +281,17 @@
       "name": "Tuesday",
       "campusId": 1
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/groups?name=Tuesday&campus_ids=1&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/groups?name=Tuesday&campus_ids=1&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -311,15 +325,17 @@
     "label": "list_groups short page",
     "tool": "list_groups",
     "args": {},
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/groups?page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/groups?page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -345,15 +361,17 @@
     "args": {
       "groupId": 5
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/groups/5",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/groups/5",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -395,15 +413,17 @@
       "groupId": 5,
       "status": "leader"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/groups/5/members?status=leader&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/groups/5/members?status=leader&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -440,15 +460,17 @@
       "individualId": 42,
       "includeInactive": false
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/individuals/42/groups?inactive=false&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42/groups?inactive=false&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -485,15 +507,17 @@
       "name": "Small Group",
       "range": "PAST"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/events?name=Small+Group&range_type=PAST&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/events?name=Small+Group&range_type=PAST&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -528,15 +552,17 @@
       "occurrence": "2026-09-27",
       "withAttendance": true
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/events/12?occurrence=20260927&attendance_info=true",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/events/12?occurrence=20260927&attendance_info=true",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -580,15 +606,17 @@
       "eventId": 12,
       "occurrence": "2026-09-27"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/events/12/attendance/20260927",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/events/12/attendance/20260927",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -610,15 +638,17 @@
       "eventId": 12,
       "occurrence": "20260927"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/events/12/attendance/20260927/attendees?page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/events/12/attendance/20260927/attendees?page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -646,15 +676,17 @@
     "args": {
       "status": "ACTIVE"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/forms?status=ACTIVE&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/forms?status=ACTIVE&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -686,15 +718,17 @@
     "args": {
       "formId": 31
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/forms/31/responses?page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/forms/31/responses?page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -730,15 +764,17 @@
       "status": "ACTIVE",
       "managedByMe": true
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/processes?statuses=ACTIVE&managed_by_me=true&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/processes?statuses=ACTIVE&managed_by_me=true&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -774,15 +810,17 @@
     "args": {
       "processId": 8
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/queues?process_ids=8&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/queues?process_ids=8&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -813,15 +851,17 @@
       "status": "IN_PROCESS",
       "assignment": "ASSIGNED_TO_ME"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/queues_individuals?statuses=IN_PROCESS&assignment=ASSIGNED_TO_ME&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/queues_individuals?statuses=IN_PROCESS&assignment=ASSIGNED_TO_ME&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -855,15 +895,17 @@
     "args": {
       "search": "Worship"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/scheduling/categories?search_term=Worship",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/scheduling/categories?search_term=Worship",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -900,15 +942,17 @@
       "categoryId": 3,
       "after": "2026-09-01"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/scheduling/categories/3/schedules?after=2026-09-01&withMetrics=true&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/scheduling/categories/3/schedules?after=2026-09-01&withMetrics=true&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -952,15 +996,17 @@
       "startDate": "2026-10-01",
       "endDate": "2026-10-31"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/individuals/42/assignments?start_date=2026-10-01&end_date=2026-10-31&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42/assignments?start_date=2026-10-01&end_date=2026-10-31&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -994,15 +1040,17 @@
       "individualId": 42,
       "context": "GENERAL"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/individuals/42/notes?context=GENERAL&include_creator=true&page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42/notes?context=GENERAL&include_creator=true&page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1039,15 +1087,17 @@
       "start": "2026-01-01",
       "end": "2026-09-30"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/families/9/metrics/giving?start=2026-01-01&end=2026-09-30",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/families/9/metrics/giving?start=2026-01-01&end=2026-09-30",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1076,15 +1126,17 @@
       "start": "2026-01-01",
       "end": "2026-09-30"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/individuals/42/metrics/giving?start=2026-01-01&end=2026-09-30",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42/metrics/giving?start=2026-01-01&end=2026-09-30",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1105,15 +1157,17 @@
     "args": {
       "individualId": 42
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/individuals/42/pledges?page=1&per_page=25",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/individuals/42/pledges?page=1&per_page=25",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1150,15 +1204,17 @@
         "per_page": 50
       }
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/church/membership_types?per_page=50",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/church/membership_types?per_page=50",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1195,28 +1251,30 @@
       },
       "perPage": 100
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.ccbchurch.com/search/individuals/results?page=1&per_page=100",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "configuration": {
-              "columns": [
-                "name"
-              ]
-            },
-            "filters": {
-              "name": "Ada"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.ccbchurch.com/search/individuals/results?page=1&per_page=100",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "configuration": {
+                "columns": [
+                  "name"
+                ]
+              },
+              "filters": {
+                "name": "Ada"
+              }
             }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1246,21 +1304,23 @@
         "note": "Visited"
       }
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.ccbchurch.com/individuals/42/notes",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "note": "Visited"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.ccbchurch.com/individuals/42/notes",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "note": "Visited"
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1280,15 +1340,17 @@
       "method": "DELETE",
       "path": "/groups/5/members/42"
     },
-    "requests": [
-      {
-        "method": "DELETE",
-        "url": "https://api.ccbchurch.com/groups/5/members/42",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "DELETE",
+          "url": "https://api.ccbchurch.com/groups/5/members/42",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1302,15 +1364,17 @@
     "label": "get_me echoes sent secrets",
     "tool": "get_me",
     "args": {},
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.ccbchurch.com/me",
-        "headers": {
-          "accept": "application/vnd.ccbchurch.v2+json",
-          "authorization": "Bearer <secret:accessToken>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.ccbchurch.com/me",
+          "headers": {
+            "accept": "application/vnd.ccbchurch.v2+json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,

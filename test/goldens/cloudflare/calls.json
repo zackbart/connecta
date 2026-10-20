@@ -7,7 +7,7 @@
       "method": "PATCH",
       "limit": 2
     },
-    "requests": [],
+    "steps": [],
     "result": {
       "ok": true,
       "format": "json",
@@ -42,7 +42,7 @@
       "path": "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
       "param": "type"
     },
-    "requests": [],
+    "steps": [],
     "result": {
       "ok": true,
       "format": "json",
@@ -103,14 +103,16 @@
         "ttl"
       ]
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records?type=A&per_page=2",
-        "headers": {
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records?type=A&per_page=2",
+          "headers": {
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -145,20 +147,22 @@
         "ttl": 300
       }
     },
-    "requests": [
-      {
-        "method": "PATCH",
-        "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "ttl": 300
+    "steps": [
+      [
+        {
+          "method": "PATCH",
+          "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "ttl": 300
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -179,14 +183,16 @@
     "label": "verify_credential",
     "tool": "verify_credential",
     "args": {},
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.cloudflare.com/client/v4/user/tokens/verify",
-        "headers": {
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.cloudflare.com/client/v4/user/tokens/verify",
+          "headers": {
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -206,14 +212,16 @@
     "args": {
       "perPage": 5
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.cloudflare.com/client/v4/accounts?page=1&per_page=5",
-        "headers": {
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.cloudflare.com/client/v4/accounts?page=1&per_page=5",
+          "headers": {
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -240,14 +248,16 @@
       "status": "active",
       "accountId": "0123456789abcdef0123456789abcdef"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.cloudflare.com/client/v4/zones?page=1&per_page=20&name=example.com&status=active&account.id=0123456789abcdef0123456789abcdef",
-        "headers": {
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.cloudflare.com/client/v4/zones?page=1&per_page=20&name=example.com&status=active&account.id=0123456789abcdef0123456789abcdef",
+          "headers": {
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -285,24 +295,26 @@
       },
       "operationName": "Daily"
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.cloudflare.com/client/v4/graphql",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "query": "query Daily($zone: String!) { viewer { zones(filter: { zoneTag: $zone }) { httpRequests1dGroups(limit: 1) { dimensions { date } sum { requests } } } } }",
-            "variables": {
-              "zone": "023e105f4ecef8ad9ca31a8372d0c353"
-            },
-            "operationName": "Daily"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.cloudflare.com/client/v4/graphql",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "query": "query Daily($zone: String!) { viewer { zones(filter: { zoneTag: $zone }) { httpRequests1dGroups(limit: 1) { dimensions { date } sum { requests } } } } }",
+              "variables": {
+                "zone": "023e105f4ecef8ad9ca31a8372d0c353"
+              },
+              "operationName": "Daily"
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -349,35 +361,37 @@
         }
       ]
     },
-    "requests": [
-      {
-        "method": "PUT",
-        "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/workers/scripts/hello",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "multipart/form-data; boundary=<boundary>"
-        },
-        "body": {
-          "formData": [
-            [
-              "metadata",
-              {
-                "file": "metadata",
-                "type": "application/json",
-                "text": "{\"main_module\":\"index.js\"}"
-              }
-            ],
-            [
-              "index.js",
-              {
-                "file": "index.js",
-                "type": "application/javascript+module",
-                "text": "export default { fetch() { return new Response('hi'); } }"
-              }
+    "steps": [
+      [
+        {
+          "method": "PUT",
+          "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/workers/scripts/hello",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "multipart/form-data; boundary=<boundary>"
+          },
+          "body": {
+            "formData": [
+              [
+                "metadata",
+                {
+                  "file": "metadata",
+                  "type": "application/json",
+                  "text": "{\"main_module\":\"index.js\"}"
+                }
+              ],
+              [
+                "index.js",
+                {
+                  "file": "index.js",
+                  "type": "application/javascript+module",
+                  "text": "export default { fetch() { return new Response('hi'); } }"
+                }
+              ]
             ]
-          ]
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -404,17 +418,19 @@
         "cf-r2-jurisdiction": "eu"
       }
     },
-    "requests": [
-      {
-        "method": "PUT",
-        "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/r2/buckets/b1/objects/logs%2F2026%2Fa.txt",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "cf-r2-jurisdiction": "eu",
-          "content-type": "text/plain"
-        },
-        "body": "hello"
-      }
+    "steps": [
+      [
+        {
+          "method": "PUT",
+          "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/r2/buckets/b1/objects/logs%2F2026%2Fa.txt",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "cf-r2-jurisdiction": "eu",
+            "content-type": "text/plain"
+          },
+          "body": "hello"
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -435,14 +451,16 @@
     "args": {
       "path": "/zones/023e105f4ecef8ad9ca31a8372d0c353"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
-        "headers": {
-          "authorization": "Bearer <secret:credential>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
+          "headers": {
+            "authorization": "Bearer <secret:credential>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,

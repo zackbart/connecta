@@ -6,52 +6,56 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-400@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-400@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -64,97 +68,105 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-401@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-401@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          },
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-401@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+          ],
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-401@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -178,52 +190,56 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-403@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-403@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -239,52 +255,56 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-404@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-404@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -297,52 +317,56 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-409@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-409@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -355,52 +379,56 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-422@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-422@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -413,52 +441,56 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-429@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-429@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -472,52 +504,56 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-500@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-500@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -530,97 +566,105 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-401-echo@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-401-echo@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          },
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-401-echo@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+          ],
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-401-echo@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -644,52 +688,56 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-network@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-network@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -706,52 +754,56 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-read-timeout@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-read-timeout@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -781,68 +833,72 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-400@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-400@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -855,129 +911,137 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-401@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-401@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          },
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-401@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+          ],
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-401@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1002,68 +1066,72 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-403@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-403@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1079,68 +1147,72 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-404@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-404@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1153,68 +1225,72 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-409@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-409@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1227,68 +1303,72 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-422@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-422@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1301,68 +1381,72 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-429@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-429@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1376,68 +1460,72 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-500@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-500@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1450,129 +1538,137 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-401-echo@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-401-echo@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          },
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-401-echo@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+          ],
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-401-echo@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1597,68 +1693,72 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-network@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-network@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1671,68 +1771,72 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "docs-write-timeout@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/documents",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "docs-write-timeout@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/documents",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "requests": [
-                  {
-                    "insertText": {
-                      "text": "\nAction items follow.",
-                      "endOfSegmentLocation": {}
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "requests": [
+                    {
+                      "insertText": {
+                        "text": "\nAction items follow.",
+                        "endOfSegmentLocation": {}
+                      }
                     }
+                  ],
+                  "writeControl": {
+                    "requiredRevisionId": "rev-1"
                   }
-                ],
-                "writeControl": {
-                  "requiredRevisionId": "rev-1"
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,

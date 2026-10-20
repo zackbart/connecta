@@ -1302,15 +1302,15 @@ Every maintained provider with an `api()` surface has goldens under
 for byte. `catalog.json` holds the connector metadata, the rendered guide,
 and each tool's name, description, schemas, and annotations. `calls.json`
 holds at least one fixture call per tool, then an echo call: the exact
-requests sent (method, URL, sorted headers, body) and the agent-visible
-outcome. `failures.json` drives one read and one write through 400, 401,
-403, 404, 409, 422, 429 (with `retry-after`) and 500 responses, a 401 whose
-message echoes every sent secret, a refused connection, and a transport
-timeout (a `TimeoutError` after the request left). `setup.json`, for a
-provider whose spec completes an OAuth consent, holds the consent's
-requests. Calls run through `Registry` and `InvocationService` with a real
-credential vault, so the outcome is what `call_tool` returns before MCP
-rendering.
+requests sent (method, URL, sorted headers, body), grouped into causal
+steps, and the agent-visible outcome. `failures.json` drives one read and
+one write through 400, 401, 403, 404, 409, 422, 429 (with `retry-after`)
+and 500 responses, a 401 whose message echoes every sent secret, a refused
+connection, and a transport timeout (a `TimeoutError` after the request
+left). `setup.json`, for a provider whose spec completes an OAuth consent,
+holds the consent's steps. Calls run through `Registry` and
+`InvocationService` with a real credential vault, so the outcome is what
+`call_tool` returns before MCP rendering.
 
 `test/goldens/<provider>/spec.ts` says only how to build the provider and
 which calls to make, including an `echo` call whose vendor reply carries the
@@ -1323,31 +1323,51 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   with the runtime's boundary as `<boundary>`. A JSON body is recorded as
   `json` alone only when it is exactly that value's compact serialization;
   any other spacing, key order, or escape also keeps the exact `text`.
-- The fake network holds requests until the provider goes quiet, then
-  records and answers each batch in canonical order (method, URL, headers,
-  body). A batch is one causal step: concurrent requests share one, and
-  sequential requests (a token exchange before its call, a retry, a write's
-  single attempt) each get their own, in the order sent.
+- A step loop drives each scenario under fake timers. It runs the provider
+  until nothing can progress without an answer or a timer: microtasks
+  drained, due timers fired, and no request or real work (Web Crypto, body
+  reads) in flight. The requests then waiting are one step, all sent before
+  any was answered. The loop records the step, answers it in canonical order
+  (method, URL, headers, body; identical requests in the order sent), and
+  runs again. With no request waiting and the work unfinished, it advances
+  the virtual clock to the next timer. A row records `steps`, an array of
+  steps each holding its requests, so a write sent with its login differs
+  from one sent after the login's answer, and a request sent twice at once
+  differs from one sent twice in turn.
+- The network answers in zero virtual time. Concurrent requests share a step
+  whatever order they arrive in. A request sent after a provider's own
+  timer (a delay or backoff) lands in a later step, and the row records
+  `waitedMs`, the virtual time the call waited on timers, when it is not
+  zero. Elapsed-time readings, such as a timeout's `elapsedMs`, count only
+  those timers. A timer of 0 ms set outside a timer callback is due at
+  once, so it leaves its request in the current step. A timer set when the
+  call has already finished never fires.
 - Auxiliary routes answer token exchanges and other requests that are not
   the tool's own, and are recorded by name with headers and body. A JWT in a
   header or field is recorded as its decoded header and claims, with
   `<signature>` for the per-run signature.
 - `setup` runs before each scenario; its requests must be identical in
   every scenario and are recorded once.
-- Determinism: a fixed clock (`Date` only), counted `crypto.randomUUID`, and
-  fixed `crypto.getRandomValues` and `Math.random`, all restarted per
-  scenario. `create(scenario)` receives a slug unique in the process: the
-  scenario name plus a per-capture suffix the goldens never show, so a
-  process-wide cache (Google's delegated tokens) never carries over from an
-  earlier scenario or capture.
+- Determinism: a fresh fake clock per scenario (timers, `Date`, and
+  `performance`, starting at 2026-01-02T03:04:05Z), counted
+  `crypto.randomUUID`, and fixed `crypto.getRandomValues` and `Math.random`,
+  all restarted per scenario. `create(scenario)` receives a slug unique in
+  the process: the scenario name plus a per-capture suffix the goldens never
+  show, so a process-wide cache (Google's delegated tokens) never carries
+  over from an earlier scenario or capture.
 - Secrets: every credential field and secret becomes `<secret:field>`, with
   HTTP Basic shown decoded. Before that placeholdering, the harness fails
   the capture if any secret reaches a caller-visible result (INV-5). The
   guard decodes the result itself: JSON escapes, percent escapes in either
   hex case, and base64 or base64url at any alignment, up to three layers
-  deep. It also finds any start of a secret at least 12 characters long, so a
-  truncated echo is a leak. A later fragment, a shorter one, or a secret with
-  its case changed is not detected.
+  deep. It also finds any start of a secret that reaches 12 characters past
+  its public framing, so a truncated echo is a leak. Framing is a PEM armor
+  line and the DER structure that opens every key of its type (tags,
+  lengths, version, algorithm identifier), which guides and example keys
+  print. A later fragment, a shorter one in any encoding, or a secret with
+  its case changed is not detected. A base64 run is decoded only from 11
+  characters (8 bytes), shorter than the base64 of any start the guard
+  looks for.
 - The echo call carries every secret not listed in `unsent` in each
   encoding redaction covers: raw, percent-encoded with upper- and lowercase
   hex, base64, unpadded base64url, and `\uXXXX` escapes with upper- and
@@ -1365,13 +1385,18 @@ provider folder is neither covered nor listed as remote-MCP-only, a tool
 has no call, or a golden file is missing or extra. It never writes.
 `test/goldens-harness.test.ts` proves the harness catches the mutations it
 exists for: Authorization moved onto a Request that `init.headers`
-replaces, an emptied, respaced, or reordered Infisical login body, and
-sent-secret redaction disabled or missing its percent, base64, or base64url
-forms. It checks the leak guard against each encoding directly. It also
-captures every spec twice in one process with seeded scheduling jitter
-(reordered arrivals, delayed and shuffled answers) and compares both with
-the stored goldens. `pnpm run goldens:update [provider...]` rewrites the named
-goldens (all when none are named) on Node; it is not part of `check`. A PR
+replaces, an emptied, respaced, or reordered Infisical login body, a write
+sent before the login is answered, a write sent twice at once or in turn,
+and sent-secret redaction disabled or missing its percent, base64, or
+base64url forms. It checks the leak guard against each encoding directly
+and against PEM framing. A Planning Center request delayed by its
+provider's own 0, 1, 5, or 50 ms timer must give one capture under seven
+schedules. It also captures every spec twice in one process with seeded
+scheduling jitter (requests delayed by microtasks, timers due now, and real
+work before and after they reach the network; each step answered in
+shuffled order) and compares both with the stored goldens.
+`pnpm run goldens:update [provider...]` rewrites the named goldens (all
+when none are named) on Node; it is not part of `check`. A PR
 that changes agent-facing output on purpose regenerates the affected goldens
 and says why in its description; any other golden diff is a regression.
 

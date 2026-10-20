@@ -6,17 +6,19 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -29,17 +31,19 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -63,17 +67,19 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -89,17 +95,19 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -112,17 +120,19 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -135,17 +145,19 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -158,17 +170,19 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -182,17 +196,19 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -205,17 +221,19 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -239,17 +257,19 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -266,17 +286,19 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -305,29 +327,31 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -340,29 +364,31 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -387,29 +413,31 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -425,29 +453,31 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -460,29 +490,31 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -495,29 +527,31 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -530,29 +564,31 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -566,29 +602,31 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -601,29 +639,31 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -648,29 +688,31 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -687,29 +729,31 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.planningcenteronline.com/people/v2/people",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
-              "content-type": "application/json",
-              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
-              "x-pco-api-version": "2026-06-04"
-            },
-            "body": {
-              "json": {
-                "data": {
-                  "type": "Person",
-                  "attributes": {
-                    "first_name": "Bob",
-                    "last_name": "Jones"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.planningcenteronline.com/people/v2/people",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+                "content-type": "application/json",
+                "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+                "x-pco-api-version": "2026-06-04"
+              },
+              "body": {
+                "json": {
+                  "data": {
+                    "type": "Person",
+                    "attributes": {
+                      "first_name": "Bob",
+                      "last_name": "Jones"
+                    }
                   }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,

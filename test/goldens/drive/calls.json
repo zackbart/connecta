@@ -7,52 +7,56 @@
       "orderBy": "modifiedTime desc",
       "limit": 5
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-search-files@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-search-files@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%28name+contains+%27budget%27%29+and+trashed+%3D+false&corpora=user&orderBy=modifiedTime+desc&pageSize=5",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%28name+contains+%27budget%27%29+and+trashed+%3D+false&corpora=user&orderBy=modifiedTime+desc&pageSize=5",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -89,60 +93,66 @@
     "args": {
       "folderId": "folder-1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-list-folder-items@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-list-folder-items@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/folder-1?supportsAllDrives=true&fields=id%2CmimeType%2CdriveId",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/folder-1?supportsAllDrives=true&fields=id%2CmimeType%2CdriveId",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%27folder-1%27+in+parents+and+trashed+%3D+false&corpora=drive&driveId=sd-1&orderBy=folder%2Cname&pageSize=25",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%27folder-1%27+in+parents+and+trashed+%3D+false&corpora=drive&driveId=sd-1&orderBy=folder%2Cname&pageSize=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -181,52 +191,56 @@
       "folderId": "root",
       "limit": 10
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-list-folder-items-root@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-list-folder-items-root@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%27root%27+in+parents+and+trashed+%3D+false&corpora=user&orderBy=folder%2Cname&pageSize=10",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%27root%27+in+parents+and+trashed+%3D+false&corpora=user&orderBy=folder%2Cname&pageSize=10",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -262,52 +276,56 @@
     "args": {
       "fileId": "f1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-get-file@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-get-file@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%2Cdescription%2CcreatedTime%2ClastModifyingUser%28emailAddress%2CdisplayName%29%2Cshared%2Cstarred%2Ccapabilities%28canEdit%2CcanComment%2CcanShare%2CcanDownload%2CcanTrash%2CcanRename%2CcanAddChildren%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%2Cdescription%2CcreatedTime%2ClastModifyingUser%28emailAddress%2CdisplayName%29%2Cshared%2Cstarred%2Ccapabilities%28canEdit%2CcanComment%2CcanShare%2CcanDownload%2CcanTrash%2CcanRename%2CcanAddChildren%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -345,60 +363,66 @@
     "args": {
       "fileId": "d1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-get-file-content@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-get-file-content@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/d1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/d1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/d1/export?mimeType=text%2Fmarkdown",
-        "headers": {
-          "accept": "text/markdown",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/d1/export?mimeType=text%2Fmarkdown",
+          "headers": {
+            "accept": "text/markdown",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -422,61 +446,67 @@
       "fileId": "f3",
       "maxChars": 100
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-get-file-content-text@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-get-file-content-text@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/f3?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f3?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/f3?supportsAllDrives=true&alt=media",
-        "headers": {
-          "accept": "*/*",
-          "authorization": "Bearer <secret:accessToken>",
-          "range": "bytes=0-404"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f3?supportsAllDrives=true&alt=media",
+          "headers": {
+            "accept": "*/*",
+            "authorization": "Bearer <secret:accessToken>",
+            "range": "bytes=0-404"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -498,61 +528,67 @@
     "args": {
       "fileId": "f4"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-get-file-content-binary@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-get-file-content-binary@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/f4?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f4?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/f4?supportsAllDrives=true&alt=media",
-        "headers": {
-          "accept": "*/*",
-          "authorization": "Bearer <secret:accessToken>",
-          "range": "bytes=0-147360"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f4?supportsAllDrives=true&alt=media",
+          "headers": {
+            "accept": "*/*",
+            "authorization": "Bearer <secret:accessToken>",
+            "range": "bytes=0-147360"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -575,52 +611,56 @@
       "fileId": "f1",
       "limit": 50
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-list-permissions@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-list-permissions@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=nextPageToken%2Cpermissions%28id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29%29&pageSize=50",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=nextPageToken%2Cpermissions%28id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29%29&pageSize=50",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -662,52 +702,56 @@
     "args": {
       "query": "name contains 'Fin'"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-list-shared-drives@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-list-shared-drives@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/drives?q=name+contains+%27Fin%27&fields=nextPageToken%2Cdrives%28id%2Cname%2Chidden%29&pageSize=25",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/drives?q=name+contains+%27Fin%27&fields=nextPageToken%2Cdrives%28id%2Cname%2Chidden%29&pageSize=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -733,62 +777,66 @@
       "name": "Elders",
       "parentId": "folder-1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-create-folder@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-create-folder@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
-            ]
-          ]
-        }
-      },
-      {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "name": "Elders",
-            "mimeType": "application/vnd.google-apps.folder",
-            "parents": [
-              "folder-1"
+              ]
             ]
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Elders",
+              "mimeType": "application/vnd.google-apps.folder",
+              "parents": [
+                "folder-1"
+              ]
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -812,54 +860,58 @@
       "content": "# Notes — café",
       "mimeType": "text/markdown"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-create-file@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-create-file@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "POST",
-        "url": "https://www.googleapis.com/upload/drive/v3/files?supportsAllDrives=true&uploadType=multipart&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "multipart/related; boundary=connecta-00000000-0000-4000-8000-000000000001"
-        },
-        "body": "--connecta-00000000-0000-4000-8000-000000000001\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{\"name\":\"notes.md\",\"parents\":[\"folder-1\"],\"mimeType\":\"text/markdown\"}\r\n--connecta-00000000-0000-4000-8000-000000000001\r\nContent-Type: text/markdown\r\n\r\n# Notes — café\r\n--connecta-00000000-0000-4000-8000-000000000001--\r\n"
-      }
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://www.googleapis.com/upload/drive/v3/files?supportsAllDrives=true&uploadType=multipart&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "multipart/related; boundary=connecta-00000000-0000-4000-8000-000000000001"
+          },
+          "body": "--connecta-00000000-0000-4000-8000-000000000001\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{\"name\":\"notes.md\",\"parents\":[\"folder-1\"],\"mimeType\":\"text/markdown\"}\r\n--connecta-00000000-0000-4000-8000-000000000001\r\nContent-Type: text/markdown\r\n\r\n# Notes — café\r\n--connecta-00000000-0000-4000-8000-000000000001--\r\n"
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -882,59 +934,63 @@
       "name": "Roster",
       "convertTo": "spreadsheet"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-create-file-empty-spreadsheet@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-create-file-empty-spreadsheet@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
-        }
-      },
-      {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "name": "Roster",
-            "mimeType": "application/vnd.google-apps.spreadsheet"
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Roster",
+              "mimeType": "application/vnd.google-apps.spreadsheet"
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -954,54 +1010,58 @@
       "content": "new text",
       "mimeType": "text/plain"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-update-file-content@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-update-file-content@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "PATCH",
-        "url": "https://www.googleapis.com/upload/drive/v3/files/f5?supportsAllDrives=true&uploadType=media&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "text/plain"
-        },
-        "body": "new text"
-      }
+      ],
+      [
+        {
+          "method": "PATCH",
+          "url": "https://www.googleapis.com/upload/drive/v3/files/f5?supportsAllDrives=true&uploadType=media&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "text/plain"
+          },
+          "body": "new text"
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1022,59 +1082,63 @@
       "name": "Budget (final)",
       "description": "Approved budget"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-update-file@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-update-file@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
-        }
-      },
-      {
-        "method": "PATCH",
-        "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "name": "Budget (final)",
-            "description": "Approved budget"
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "PATCH",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Budget (final)",
+              "description": "Approved budget"
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1103,64 +1167,70 @@
       "fileId": "f1",
       "folderId": "new-1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-move-file@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-move-file@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=parents",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=parents",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      },
-      {
-        "method": "PATCH",
-        "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29&addParents=new-1&removeParents=old-1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {}
+      ],
+      [
+        {
+          "method": "PATCH",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29&addParents=new-1&removeParents=old-1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {}
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1190,61 +1260,65 @@
       "name": "Budget copy",
       "parentId": "folder-2"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-copy-file@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-copy-file@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
-            ]
-          ]
-        }
-      },
-      {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/files/f1/copy?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "name": "Budget copy",
-            "parents": [
-              "folder-2"
+              ]
             ]
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://www.googleapis.com/drive/v3/files/f1/copy?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "name": "Budget copy",
+              "parents": [
+                "folder-2"
+              ]
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1272,58 +1346,62 @@
     "args": {
       "fileId": "f1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-trash-file@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-trash-file@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
-        }
-      },
-      {
-        "method": "PATCH",
-        "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "trashed": true
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "PATCH",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "trashed": true
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1351,58 +1429,62 @@
     "args": {
       "fileId": "f1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-restore-file@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-restore-file@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
-        }
-      },
-      {
-        "method": "PATCH",
-        "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "trashed": false
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "PATCH",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "trashed": false
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1433,60 +1515,64 @@
       "role": "writer",
       "emailAddress": "bob@example.com"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-share-file@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-share-file@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
-        }
-      },
-      {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29&sendNotificationEmail=false",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "type": "user",
-            "role": "writer",
-            "emailAddress": "bob@example.com"
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29&sendNotificationEmail=false",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "type": "user",
+              "role": "writer",
+              "emailAddress": "bob@example.com"
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1509,61 +1595,65 @@
       "role": "reader",
       "domain": "example.com"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-share-file-domain@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-share-file-domain@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
-        }
-      },
-      {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "type": "domain",
-            "role": "reader",
-            "domain": "example.com",
-            "allowFileDiscovery": false
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "type": "domain",
+              "role": "reader",
+              "domain": "example.com",
+              "allowFileDiscovery": false
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1585,58 +1675,62 @@
       "permissionId": "p1",
       "role": "reader"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-update-permission@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-update-permission@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
-        }
-      },
-      {
-        "method": "PATCH",
-        "url": "https://www.googleapis.com/drive/v3/files/f1/permissions/p1?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "role": "reader"
           }
         }
-      }
+      ],
+      [
+        {
+          "method": "PATCH",
+          "url": "https://www.googleapis.com/drive/v3/files/f1/permissions/p1?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "role": "reader"
+            }
+          }
+        }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1656,52 +1750,56 @@
       "fileId": "f1",
       "permissionId": "anyoneWithLink"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-delete-permission@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-delete-permission@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "DELETE",
-        "url": "https://www.googleapis.com/drive/v3/files/f1/permissions/anyoneWithLink?supportsAllDrives=true",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "DELETE",
+          "url": "https://www.googleapis.com/drive/v3/files/f1/permissions/anyoneWithLink?supportsAllDrives=true",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1719,52 +1817,56 @@
     "args": {
       "fileId": "f1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "drive-get-file-echoes-sent-secrets@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/drive",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "drive-get-file-echoes-sent-secrets@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/drive",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%2Cdescription%2CcreatedTime%2ClastModifyingUser%28emailAddress%2CdisplayName%29%2Cshared%2Cstarred%2Ccapabilities%28canEdit%2CcanComment%2CcanShare%2CcanDownload%2CcanTrash%2CcanRename%2CcanAddChildren%29",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%2Cdescription%2CcreatedTime%2ClastModifyingUser%28emailAddress%2CdisplayName%29%2Cshared%2Cstarred%2Ccapabilities%28canEdit%2CcanComment%2CcanShare%2CcanDownload%2CcanTrash%2CcanRename%2CcanAddChildren%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,

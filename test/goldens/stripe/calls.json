@@ -7,7 +7,7 @@
       "method": "POST",
       "limit": 3
     },
-    "requests": [],
+    "steps": [],
     "result": {
       "ok": true,
       "format": "json",
@@ -50,7 +50,7 @@
       "path": "/v1/payment_intents/pi_123",
       "param": "expand"
     },
-    "requests": [],
+    "steps": [],
     "result": {
       "ok": true,
       "format": "json",
@@ -97,15 +97,17 @@
         "data.amount"
       ]
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.stripe.com/v1/charges?customer=cus_1&expand%5B0%5D=data.customer&created%5Bgte%5D=10&limit=2",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "stripe-version": "2026-09-30.endive"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.stripe.com/v1/charges?customer=cus_1&expand%5B0%5D=data.customer&created%5Bgte%5D=10&limit=2",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -142,24 +144,26 @@
         "customer": "cus_1"
       }
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.stripe.com/v1/invoices/create_preview",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/x-www-form-urlencoded",
-          "stripe-version": "2026-09-30.endive"
-        },
-        "body": {
-          "form": [
-            [
-              "customer",
-              "cus_1"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.stripe.com/v1/invoices/create_preview",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/x-www-form-urlencoded",
+            "stripe-version": "2026-09-30.endive"
+          },
+          "body": {
+            "form": [
+              [
+                "customer",
+                "cus_1"
+              ]
             ]
-          ]
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -210,49 +214,51 @@
         "preferred_locales": []
       }
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.stripe.com/v1/customers/cus_1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/x-www-form-urlencoded",
-          "idempotency-key": "00000000-0000-4000-8000-000000000001",
-          "stripe-version": "2026-09-30.endive"
-        },
-        "body": {
-          "form": [
-            [
-              "email",
-              "alice@example.com"
-            ],
-            [
-              "metadata[tier]",
-              "gold"
-            ],
-            [
-              "metadata[stale]",
-              ""
-            ],
-            [
-              "invoice_settings[custom_fields][0][name]",
-              "PO"
-            ],
-            [
-              "invoice_settings[custom_fields][0][value]",
-              "42"
-            ],
-            [
-              "invoice_settings[default_payment_method]",
-              ""
-            ],
-            [
-              "preferred_locales",
-              ""
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.stripe.com/v1/customers/cus_1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/x-www-form-urlencoded",
+            "idempotency-key": "00000000-0000-4000-8000-000000000001",
+            "stripe-version": "2026-09-30.endive"
+          },
+          "body": {
+            "form": [
+              [
+                "email",
+                "alice@example.com"
+              ],
+              [
+                "metadata[tier]",
+                "gold"
+              ],
+              [
+                "metadata[stale]",
+                ""
+              ],
+              [
+                "invoice_settings[custom_fields][0][name]",
+                "PO"
+              ],
+              [
+                "invoice_settings[custom_fields][0][value]",
+                "42"
+              ],
+              [
+                "invoice_settings[default_payment_method]",
+                ""
+              ],
+              [
+                "preferred_locales",
+                ""
+              ]
             ]
-          ]
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -280,15 +286,17 @@
       "method": "DELETE",
       "path": "/v1/customers/cus_1"
     },
-    "requests": [
-      {
-        "method": "DELETE",
-        "url": "https://api.stripe.com/v1/customers/cus_1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "stripe-version": "2026-09-30.endive"
+    "steps": [
+      [
+        {
+          "method": "DELETE",
+          "url": "https://api.stripe.com/v1/customers/cus_1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -307,15 +315,17 @@
     "label": "get_stripe_account_info",
     "tool": "get_stripe_account_info",
     "args": {},
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.stripe.com/v1/account",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "stripe-version": "2026-09-30.endive"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.stripe.com/v1/account",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -337,15 +347,17 @@
     "label": "get_balance_summary",
     "tool": "get_balance_summary",
     "args": {},
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.stripe.com/v1/balance",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "stripe-version": "2026-09-30.endive"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.stripe.com/v1/balance",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -379,15 +391,17 @@
     "args": {
       "path": "/v1/customers/cus_1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.stripe.com/v1/customers/cus_1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "stripe-version": "2026-09-30.endive"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.stripe.com/v1/customers/cus_1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "stripe-version": "2026-09-30.endive"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,

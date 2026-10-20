@@ -6,52 +6,56 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-400@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-400@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -64,97 +68,105 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-401@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-401@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          },
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-401@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+          ],
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-401@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -178,52 +190,56 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-403@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-403@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -239,52 +255,56 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-404@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-404@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -297,52 +317,56 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-409@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-409@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -355,52 +379,56 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-422@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-422@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -413,52 +441,56 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-429@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-429@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -472,52 +504,56 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-500@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-500@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -530,97 +566,105 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-401-echo@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-401-echo@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          },
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-401-echo@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+          ],
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-401-echo@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -644,52 +688,56 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-network@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-network@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -706,52 +754,56 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-read-timeout@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-read-timeout@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "GET",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>"
+          ],
+          [
+            {
+              "method": "GET",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/t1?format=full",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -783,60 +835,64 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-400@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-400@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -849,113 +905,121 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-401@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-401@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          },
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-401@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+          ],
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-401@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -980,60 +1044,64 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-403@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-403@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1049,60 +1117,64 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-404@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-404@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1115,60 +1187,64 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-409@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-409@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1181,60 +1257,64 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-422@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-422@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1247,60 +1327,64 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-429@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-429@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1314,60 +1398,64 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-500@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-500@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1380,113 +1468,121 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-401-echo@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-401-echo@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          },
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-401-echo@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+          ],
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-401-echo@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1511,60 +1607,64 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-network@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-network@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -1577,60 +1677,64 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "auxiliary": "token",
-            "method": "POST",
-            "url": "https://oauth2.googleapis.com/token",
-            "headers": {
-              "accept": "application/json",
-              "content-type": "application/x-www-form-urlencoded"
-            },
-            "body": {
-              "form": [
-                [
-                  "grant_type",
-                  "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                ],
-                [
-                  "assertion",
-                  {
-                    "jwt": {
-                      "header": {
-                        "alg": "RS256",
-                        "typ": "JWT"
-                      },
-                      "claims": {
-                        "iss": "gmail-write-timeout@project.iam.gserviceaccount.com",
-                        "sub": "alice@example.com",
-                        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
-                        "aud": "https://oauth2.googleapis.com/token",
-                        "iat": 1767323045,
-                        "exp": 1767326645
-                      },
-                      "signature": "<signature>"
+        "steps": [
+          [
+            {
+              "auxiliary": "token",
+              "method": "POST",
+              "url": "https://oauth2.googleapis.com/token",
+              "headers": {
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded"
+              },
+              "body": {
+                "form": [
+                  [
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                  ],
+                  [
+                    "assertion",
+                    {
+                      "jwt": {
+                        "header": {
+                          "alg": "RS256",
+                          "typ": "JWT"
+                        },
+                        "claims": {
+                          "iss": "gmail-write-timeout@project.iam.gserviceaccount.com",
+                          "sub": "alice@example.com",
+                          "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+                          "aud": "https://oauth2.googleapis.com/token",
+                          "iat": 1767323045,
+                          "exp": 1767326645
+                        },
+                        "signature": "<signature>"
+                      }
                     }
-                  }
+                  ]
                 ]
-              ]
+              }
             }
-          },
-          {
-            "method": "POST",
-            "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-            "headers": {
-              "accept": "application/json",
-              "authorization": "Bearer <secret:accessToken>",
-              "content-type": "application/json"
-            },
-            "body": {
-              "json": {
-                "message": {
-                  "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+          ],
+          [
+            {
+              "method": "POST",
+              "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+              "headers": {
+                "accept": "application/json",
+                "authorization": "Bearer <secret:accessToken>",
+                "content-type": "application/json"
+              },
+              "body": {
+                "json": {
+                  "message": {
+                    "raw": "VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogRWxkZXJzIG1lZXRpbmcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9IlVURi04Ig0KQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogYmFzZTY0DQoNClUyVmxJSGx2ZFNCVWRXVnpaR0Y1TGc9PQ0K"
+                  }
                 }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,

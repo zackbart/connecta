@@ -6,7 +6,7 @@
       "query": "query data source",
       "limit": 3
     },
-    "requests": [],
+    "steps": [],
     "result": {
       "ok": true,
       "format": "json",
@@ -32,7 +32,7 @@
       "method": "PATCH",
       "path": "/v1/pages/page-1"
     },
-    "requests": [],
+    "steps": [],
     "result": {
       "ok": true,
       "format": "json",
@@ -918,15 +918,17 @@
         "page_size": 1
       }
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.notion.com/v1/users?page_size=1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "notion-version": "2026-03-11"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.notion.com/v1/users?page_size=1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "notion-version": "2026-03-11"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -968,22 +970,24 @@
         "results.id"
       ]
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.notion.com/v1/search",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json",
-          "notion-version": "2026-03-11"
-        },
-        "body": {
-          "json": {
-            "query": "roadmap",
-            "start_cursor": "c-prev"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/search",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json",
+            "notion-version": "2026-03-11"
+          },
+          "body": {
+            "json": {
+              "query": "roadmap",
+              "start_cursor": "c-prev"
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1016,21 +1020,23 @@
         "in_trash": true
       }
     },
-    "requests": [
-      {
-        "method": "PATCH",
-        "url": "https://api.notion.com/v1/pages/page-1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json",
-          "notion-version": "2026-03-11"
-        },
-        "body": {
-          "json": {
-            "in_trash": true
+    "steps": [
+      [
+        {
+          "method": "PATCH",
+          "url": "https://api.notion.com/v1/pages/page-1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json",
+            "notion-version": "2026-03-11"
+          },
+          "body": {
+            "json": {
+              "in_trash": true
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1170,30 +1176,32 @@
       "object_type": "page",
       "sort": "last_edited_desc"
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.notion.com/v1/search",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json",
-          "notion-version": "2026-03-11"
-        },
-        "body": {
-          "json": {
-            "page_size": 25,
-            "query": "review",
-            "filter": {
-              "property": "object",
-              "value": "page"
-            },
-            "sort": {
-              "timestamp": "last_edited_time",
-              "direction": "descending"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/search",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json",
+            "notion-version": "2026-03-11"
+          },
+          "body": {
+            "json": {
+              "page_size": 25,
+              "query": "review",
+              "filter": {
+                "property": "object",
+                "value": "page"
+              },
+              "sort": {
+                "timestamp": "last_edited_time",
+                "direction": "descending"
+              }
             }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1231,15 +1239,17 @@
     "args": {
       "page_id": "page-1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.notion.com/v1/pages/page-1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "notion-version": "2026-03-11"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.notion.com/v1/pages/page-1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "notion-version": "2026-03-11"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1306,15 +1316,17 @@
     "args": {
       "block_id": "page-1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.notion.com/v1/blocks/page-1/children?page_size=25",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "notion-version": "2026-03-11"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.notion.com/v1/blocks/page-1/children?page_size=25",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "notion-version": "2026-03-11"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1358,23 +1370,27 @@
       "block_id": "page-1",
       "depth": 1
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.notion.com/v1/blocks/page-1/children?page_size=25",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "notion-version": "2026-03-11"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.notion.com/v1/blocks/page-1/children?page_size=25",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "notion-version": "2026-03-11"
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://api.notion.com/v1/blocks/b2/children?page_size=100",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "notion-version": "2026-03-11"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://api.notion.com/v1/blocks/b2/children?page_size=100",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "notion-version": "2026-03-11"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1424,15 +1440,17 @@
     "args": {
       "data_source_id": "ds-1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.notion.com/v1/data_sources/ds-1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "notion-version": "2026-03-11"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.notion.com/v1/data_sources/ds-1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "notion-version": "2026-03-11"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1489,33 +1507,35 @@
         "Status"
       ]
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.notion.com/v1/data_sources/ds-1/query?filter_properties=Name&filter_properties=Status&filter_properties=title",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json",
-          "notion-version": "2026-03-11"
-        },
-        "body": {
-          "json": {
-            "page_size": 25,
-            "filter": {
-              "property": "Status",
-              "status": {
-                "equals": "In progress"
-              }
-            },
-            "sorts": [
-              {
-                "property": "Due",
-                "direction": "ascending"
-              }
-            ]
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/data_sources/ds-1/query?filter_properties=Name&filter_properties=Status&filter_properties=title",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json",
+            "notion-version": "2026-03-11"
+          },
+          "body": {
+            "json": {
+              "page_size": 25,
+              "filter": {
+                "property": "Status",
+                "status": {
+                  "equals": "In progress"
+                }
+              },
+              "sorts": [
+                {
+                  "property": "Due",
+                  "direction": "ascending"
+                }
+              ]
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1571,46 +1591,48 @@
       "markdown": "# Body",
       "icon": "🚀"
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://api.notion.com/v1/pages",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json",
-          "notion-version": "2026-03-11"
-        },
-        "body": {
-          "json": {
-            "parent": {
-              "type": "data_source_id",
-              "data_source_id": "ds-1"
-            },
-            "properties": {
-              "Status": {
-                "status": {
-                  "name": "Todo"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json",
+            "notion-version": "2026-03-11"
+          },
+          "body": {
+            "json": {
+              "parent": {
+                "type": "data_source_id",
+                "data_source_id": "ds-1"
+              },
+              "properties": {
+                "Status": {
+                  "status": {
+                    "name": "Todo"
+                  }
+                },
+                "Name": {
+                  "title": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "content": "New row"
+                      }
+                    }
+                  ]
                 }
               },
-              "Name": {
-                "title": [
-                  {
-                    "type": "text",
-                    "text": {
-                      "content": "New row"
-                    }
-                  }
-                ]
+              "markdown": "# Body",
+              "icon": {
+                "type": "emoji",
+                "emoji": "🚀"
               }
-            },
-            "markdown": "# Body",
-            "icon": {
-              "type": "emoji",
-              "emoji": "🚀"
             }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1683,58 +1705,60 @@
       "position": "after_block",
       "after_block_id": "b3"
     },
-    "requests": [
-      {
-        "method": "PATCH",
-        "url": "https://api.notion.com/v1/blocks/page-1/children",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "content-type": "application/json",
-          "notion-version": "2026-03-11"
-        },
-        "body": {
-          "json": {
-            "children": [
-              {
-                "object": "block",
-                "type": "to_do",
-                "to_do": {
-                  "rich_text": [
-                    {
-                      "type": "text",
-                      "text": {
-                        "content": "Book venue"
+    "steps": [
+      [
+        {
+          "method": "PATCH",
+          "url": "https://api.notion.com/v1/blocks/page-1/children",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "content-type": "application/json",
+            "notion-version": "2026-03-11"
+          },
+          "body": {
+            "json": {
+              "children": [
+                {
+                  "object": "block",
+                  "type": "to_do",
+                  "to_do": {
+                    "rich_text": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "content": "Book venue"
+                        }
                       }
-                    }
-                  ],
-                  "checked": false
-                }
-              },
-              {
-                "object": "block",
-                "type": "to_do",
-                "to_do": {
-                  "rich_text": [
-                    {
-                      "type": "text",
-                      "text": {
-                        "content": "Send invites"
+                    ],
+                    "checked": false
+                  }
+                },
+                {
+                  "object": "block",
+                  "type": "to_do",
+                  "to_do": {
+                    "rich_text": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "content": "Send invites"
+                        }
                       }
-                    }
-                  ],
-                  "checked": false
+                    ],
+                    "checked": false
+                  }
                 }
-              }
-            ],
-            "position": {
-              "type": "after_block",
-              "after_block": {
-                "id": "b3"
+              ],
+              "position": {
+                "type": "after_block",
+                "after_block": {
+                  "id": "b3"
+                }
               }
             }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1768,15 +1792,17 @@
     "args": {
       "path": "/v1/users/user-1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://api.notion.com/v1/users/user-1",
-        "headers": {
-          "authorization": "Bearer <secret:credential>",
-          "notion-version": "2026-03-11"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://api.notion.com/v1/users/user-1",
+          "headers": {
+            "authorization": "Bearer <secret:credential>",
+            "notion-version": "2026-03-11"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,

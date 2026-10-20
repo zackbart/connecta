@@ -19,16 +19,18 @@
         }
       ]
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01?statusBucket%5B%5D=PENDING&statusBucket%5B%5D=FAILED&limit=5",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01?statusBucket%5B%5D=PENDING&statusBucket%5B%5D=FAILED&limit=5",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -57,16 +59,18 @@
     "args": {
       "path": "/health"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/health",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/health",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -89,25 +93,27 @@
         "campaignId": "7710f34fd5061afeec3eab78"
       }
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://server.overflow.co/api/v3/subscriptions",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
-        },
-        "body": {
-          "json": {
-            "donorId": "6710f34fd5061afeec3eab50",
-            "amount": 25,
-            "frequency": "monthly",
-            "campaignId": "7710f34fd5061afeec3eab78"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://server.overflow.co/api/v3/subscriptions",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          },
+          "body": {
+            "json": {
+              "donorId": "6710f34fd5061afeec3eab50",
+              "amount": 25,
+              "frequency": "monthly",
+              "campaignId": "7710f34fd5061afeec3eab78"
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -155,22 +161,24 @@
         "cancellationReason": "Donor request"
       }
     },
-    "requests": [
-      {
-        "method": "DELETE",
-        "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50/5510f34fd5061afeec3eab11",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
-        },
-        "body": {
-          "json": {
-            "cancellationReason": "Donor request"
+    "steps": [
+      [
+        {
+          "method": "DELETE",
+          "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50/5510f34fd5061afeec3eab11",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          },
+          "body": {
+            "json": {
+              "cancellationReason": "Donor request"
+            }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -194,16 +202,18 @@
       "minimumUpdatedDate": "2025-01-01",
       "campaignId": "7710f34fd5061afeec3eab78"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/contributions?minimumUpdatedDate=2025-01-01&statusBucket%5B%5D=PENDING&statusBucket%5B%5D=CONFIRMED&campaignId=7710f34fd5061afeec3eab78&locationIds%5B%5D=6710f34fd5061afeec3eab58&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/contributions?minimumUpdatedDate=2025-01-01&statusBucket%5B%5D=PENDING&statusBucket%5B%5D=CONFIRMED&campaignId=7710f34fd5061afeec3eab78&locationIds%5B%5D=6710f34fd5061afeec3eab58&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -287,16 +297,18 @@
       "page": 3,
       "limit": 1
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/contributions?page=3&limit=1",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/contributions?page=3&limit=1",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -325,16 +337,18 @@
     "args": {
       "contributionId": "6710f34fd5061afeec3eab57"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -379,16 +393,18 @@
       "minimumAmountInCents": 1000,
       "sortDirection": "ASC"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/deposits?types%5B%5D=AUTOMATED&reconciled=false&minimumEstimatedValueInCents=1000&sortDirection=ASC&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/deposits?types%5B%5D=AUTOMATED&reconciled=false&minimumEstimatedValueInCents=1000&sortDirection=ASC&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -428,16 +444,18 @@
     "args": {
       "depositId": "8810f34fd5061afeec3eab67"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/deposits/8810f34fd5061afeec3eab67",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/deposits/8810f34fd5061afeec3eab67",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -476,16 +494,18 @@
     "args": {
       "depositId": "8810f34fd5061afeec3eab67"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/deposits/8810f34fd5061afeec3eab67/summary",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/deposits/8810f34fd5061afeec3eab67/summary",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -526,16 +546,18 @@
       "contributionId": "6710f34fd5061afeec3eab57",
       "sortDirection": "DESC"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/refunds?contributionId=6710f34fd5061afeec3eab57&sortDirection=DESC&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/refunds?contributionId=6710f34fd5061afeec3eab57&sortDirection=DESC&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -570,16 +592,18 @@
       "minimumUpdatedDate": "2025-01-01",
       "limit": 10
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/chargebacks?minimumUpdatedDate=2025-01-01&page=1&limit=10",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/chargebacks?minimumUpdatedDate=2025-01-01&page=1&limit=10",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -616,16 +640,18 @@
       "sortBy": "totalContributionsCount",
       "sortDirection": "DESC"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/donors?sortBy=totalContributionsCount&sortDirection=DESC&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/donors?sortBy=totalContributionsCount&sortDirection=DESC&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -662,16 +688,18 @@
     "args": {
       "donorId": "6710f34fd5061afeec3eab50"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/donors/6710f34fd5061afeec3eab50",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/donors/6710f34fd5061afeec3eab50",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -709,16 +737,18 @@
         "paused"
       ]
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50?status%5B%5D=active&status%5B%5D=paused&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/subscriptions/6710f34fd5061afeec3eab50?status%5B%5D=active&status%5B%5D=paused&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -765,16 +795,18 @@
     "args": {
       "sortBy": "nextContributionAt"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/subscriptions?sortBy=nextContributionAt&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/subscriptions?sortBy=nextContributionAt&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -822,16 +854,18 @@
       "donorId": "6710f34fd5061afeec3eab50",
       "showExpired": true
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/payment-methods/6710f34fd5061afeec3eab50?showExpired=true",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/payment-methods/6710f34fd5061afeec3eab50?showExpired=true",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -857,16 +891,18 @@
       "parentCampaignId": "7710f34fd5061afeec3eab78",
       "search": "Mission"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/campaigns?isSubcampaign=true&parentCampaignId=7710f34fd5061afeec3eab78&search=Mission&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/campaigns?isSubcampaign=true&parentCampaignId=7710f34fd5061afeec3eab78&search=Mission&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -911,16 +947,18 @@
     "args": {
       "sortBy": "name"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/locations?sortBy=name&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/locations?sortBy=name&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -955,16 +993,18 @@
       ],
       "startDate": "2026-05-01"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/tap/events?startDate=2026-05-01&groupIds%5B%5D=6710f34fd5061afeec3eab58&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/tap/events?startDate=2026-05-01&groupIds%5B%5D=6710f34fd5061afeec3eab58&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -998,16 +1038,18 @@
     "args": {
       "status": "enabled"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/webhooks?status=enabled&page=1&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks?status=enabled&page=1&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1043,16 +1085,18 @@
       "webhookId": "6710f34fd5061afeec3eab99",
       "status": "failed"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?status=failed&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?status=failed&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1086,16 +1130,18 @@
       "cursor": "c2",
       "raw": true
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?cursor=c2&limit=25",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/webhooks/6710f34fd5061afeec3eab99/event-logs?cursor=c2&limit=25",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -1133,16 +1179,18 @@
     "args": {
       "path": "/refunds/9910f34fd5061afeec3eab01"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01",
-        "headers": {
-          "accept": "application/json",
-          "x-api-key": "<secret:apiKey>",
-          "x-client-id": "<secret:clientId>"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01",
+          "headers": {
+            "accept": "application/json",
+            "x-api-key": "<secret:apiKey>",
+            "x-client-id": "<secret:clientId>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,

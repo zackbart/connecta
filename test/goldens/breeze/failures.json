@@ -6,15 +6,17 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -27,15 +29,17 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -59,15 +63,17 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -91,15 +97,17 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -112,15 +120,17 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -133,15 +143,17 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -154,15 +166,17 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -176,15 +190,17 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -197,15 +213,17 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -229,15 +247,17 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -254,15 +274,17 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -291,15 +313,17 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -312,15 +336,17 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -345,15 +371,17 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -378,15 +406,17 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -399,15 +429,17 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -420,15 +452,17 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -441,15 +475,17 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -463,15 +499,17 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -484,15 +522,17 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -517,15 +557,17 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -542,15 +584,17 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
-            "headers": {
-              "accept": "application/json",
-              "api-key": "<secret:credential>"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
+              "headers": {
+                "accept": "application/json",
+                "api-key": "<secret:credential>"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,

@@ -1,9 +1,9 @@
 // Characterization goldens for every maintained `api()` provider: the oracle a
 // provider migration must match byte for byte. A spec says how to build the
 // provider and which fixture calls to make; this harness owns everything else
-// (the fetch fake, the fixed clock and ids, secret placeholders and leak
-// checks, failure cases, and the JSON layout), so a migration changes the
-// provider, never the golden.
+// (the fetch fake and its step loop, the virtual clock and fixed ids, secret
+// placeholders and leak checks, failure cases, and the JSON layout), so a
+// migration changes the provider, never the golden.
 import { vi } from "vitest";
 import { CatalogService } from "../../src/catalog-service.js";
 import { CredentialVault } from "../../src/credentials.js";
@@ -159,13 +159,99 @@ function defaultFailureReply(status: number, message: string): StubResponse {
 // Determinism
 
 /**
- * Fix the clock and the ids for one capture. Only `Date` is faked, so timers
- * still run. `crypto.randomUUID` counts, and `crypto.getRandomValues` and
- * `Math.random` are fixed sequences; all restart for every scenario, so adding
- * or reordering a call never moves another call's ids, states, or verifiers.
+ * Every timer a scenario can set, and its clock, are fake: each scenario
+ * starts at `GOLDEN_NOW` with no timers, and time moves only when the step
+ * loop advances it. A provider's delays, deadlines, and backoffs are virtual
+ * and fire in a fixed order. Microtasks stay real.
  */
-function deterministic(): { restart(): void; restore(): void } {
-  vi.useFakeTimers({ now: GOLDEN_NOW, toFake: ["Date"] });
+const FAKED_TIMERS: NonNullable<Parameters<typeof vi.useFakeTimers>[0]>["toFake"] = [
+  "setTimeout",
+  "clearTimeout",
+  "setInterval",
+  "clearInterval",
+  "setImmediate",
+  "clearImmediate",
+  "Date",
+  "performance",
+];
+
+type Callback = () => void;
+type Scheduler = (callback: Callback, ms?: number) => unknown;
+// Captured before any capture fakes timers.
+const realImmediate = (globalThis as { setImmediate?: Scheduler }).setImmediate?.bind(globalThis);
+const realTimeout = (globalThis.setTimeout as Scheduler).bind(globalThis);
+
+/** One turn of the real event loop: every queued microtask runs, and real work can finish. */
+function realTurn(): Promise<void> {
+  return new Promise((resolve) => (realImmediate ? realImmediate(resolve) : realTimeout(resolve, 0)));
+}
+
+/**
+ * Real asynchronous work in flight. Web Crypto finishes outside the
+ * microtask queue on Node, and body reads do on workerd, so the step loop
+ * counts both rather than guessing from elapsed time.
+ */
+interface RealWork {
+  inFlight: number;
+  /** Bumped whenever real work starts or finishes. */
+  events: number;
+}
+
+const SUBTLE_METHODS = [
+  "decrypt",
+  "deriveBits",
+  "deriveKey",
+  "digest",
+  "encrypt",
+  "exportKey",
+  "generateKey",
+  "importKey",
+  "sign",
+  "unwrapKey",
+  "verify",
+  "wrapKey",
+] as const;
+const BODY_METHODS = ["arrayBuffer", "blob", "bytes", "formData", "json", "text"] as const;
+
+type Method = (this: unknown, ...args: unknown[]) => unknown;
+
+function trackRealWork(work: RealWork): Array<{ mockRestore(): void }> {
+  const owners: Array<[object, readonly string[]]> = [
+    [crypto.subtle, SUBTLE_METHODS],
+    [Request.prototype, BODY_METHODS],
+    [Response.prototype, BODY_METHODS],
+    [ReadableStreamDefaultReader.prototype, ["read"]],
+  ];
+  return owners.flatMap(([owner, names]) =>
+    names.flatMap((name) => {
+      const original = (owner as Record<string, unknown>)[name];
+      if (typeof original !== "function") return [];
+      const method = original as Method;
+      return [
+        vi.spyOn(owner as Record<string, Method>, name).mockImplementation(function (this: unknown, ...args) {
+          const result = method.apply(this, args);
+          if (!(result instanceof Promise)) return result;
+          work.inFlight++;
+          work.events++;
+          return result.finally(() => {
+            work.inFlight--;
+            work.events++;
+          });
+        }),
+      ];
+    }),
+  );
+}
+
+/**
+ * Fix the clock and the ids for one capture. `crypto.randomUUID` counts, and
+ * `crypto.getRandomValues` and `Math.random` are fixed sequences; all of them
+ * and the fake clock restart for every scenario, so adding or reordering a
+ * call never moves another call's ids, states, verifiers, or timers.
+ */
+function deterministic(): { real: RealWork; restart(): void; restore(): void } {
+  const fakeClock = () => vi.useFakeTimers({ now: GOLDEN_NOW, toFake: FAKED_TIMERS });
+  fakeClock();
   let uuid = 0;
   const randomUUID = vi
     .spyOn(crypto, "randomUUID")
@@ -180,17 +266,22 @@ function deterministic(): { restart(): void; restore(): void } {
   });
   let seed = 0;
   const random = vi.spyOn(Math, "random").mockImplementation(() => (seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const real: RealWork = { inFlight: 0, events: 0 };
+  const tracked = trackRealWork(real);
   return {
+    real,
     restart() {
       uuid = 0;
       byte = 0;
       seed = 0;
-      vi.setSystemTime(GOLDEN_NOW);
+      // A fresh clock: no timer from an earlier scenario survives into this one.
+      fakeClock();
     },
     restore() {
       randomUUID.mockRestore();
       randomValues.mockRestore();
       random.mockRestore();
+      for (const spy of tracked) spy.mockRestore();
       vi.useRealTimers();
     },
   };
@@ -282,6 +373,9 @@ interface Recorded {
   auxiliary?: string;
 }
 
+/** One causal step: every request sent before any of them was answered, in canonical order. */
+type Step = Recorded[];
+
 type Answer = (request: SeenRequest, index: number) => StubResponse | "network" | "timeout";
 
 /** Test-only: wraps the fake network, standing in for a provider that calls fetch differently. */
@@ -310,102 +404,173 @@ async function microtasks(count: number): Promise<void> {
   for (let left = count; left > 0; left--) await Promise.resolve();
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Delays each request before the fake network sees it, the way a provider's
+ * own work does: microtasks, a timer due now, and real Web Crypto work, in a
+ * seeded mix. None of them may move a request to another step.
+ */
+function jittered(send: typeof fetch, jitter: Jitter): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    for (let left = jitter.below(4); left > 0; left--) {
+      const kind = jitter.below(3);
+      if (kind === 0) await microtasks(jitter.below(8));
+      else if (kind === 1) await new Promise((resolve) => setTimeout(resolve, 0));
+      else await crypto.subtle.digest("SHA-256", new Uint8Array(8));
+    }
+    return send(input, init);
+  }) as typeof fetch;
 }
 
-/** Timer turns with no new request before a batch is answered. */
-const QUIET_TURNS = 2;
+/** Real event-loop turns with no progress and no real work in flight before a step is answered. */
+const STEP_QUIET_TURNS = 2;
+/** The same before the clock moves, which fires a deadline if the call was still working: wait longer. */
+const CLOCK_QUIET_TURNS = 8;
+/** Bounds that turn a call that keeps working, or keeps waiting on timers, into a failure instead of a hang. */
+const MAX_SETTLE_CHANGES = 10_000;
+const MAX_CLOCK_ADVANCES = 1_000;
 
 interface Waiting {
   request: SeenRequest;
-  /** Method, URL, headers, and body: the order requests in one batch are recorded and answered in. */
+  /** Method, URL, headers, and body: the order a step is recorded and answered in. */
   key: string;
+  /** The order requests reached the network, which only orders requests identical in `key`. */
+  sent: number;
   resolve(response: Response): void;
   reject(error: Error): void;
 }
 
+interface Driven<T> {
+  value: T;
+  steps: Step[];
+  /** Virtual milliseconds the work waited on its own timers. */
+  waitedMs: number;
+}
+
+interface Network {
+  /**
+   * Runs `work` to completion and returns its steps. `answer` replies to its
+   * requests; without one, a request fails the capture.
+   */
+  drive<T>(work: () => Promise<T>, answer?: Answer): Promise<Driven<T>>;
+  restore(): void;
+}
+
 /**
- * The fake network holds every request until the provider has gone quiet,
- * then records and answers the batch in canonical order. A batch is one
- * causal step: the requests sent before any of them was answered, which is
- * what concurrent requests are, sorted by method, URL, headers, and body.
- * Sequential requests are each their own batch, so a token exchange before
- * its call, a retry after its failure, and a write's single attempt keep the
- * order they were sent in. `jitter` reorders arrivals, delays answers, and
- * answers a batch in a shuffled order, none of which may change a golden.
+ * The fake network and the step loop that drives a scenario. It lets the
+ * provider run until nothing can progress without an answer or a timer:
+ * microtasks drained, due timers fired, no request still being built, and no
+ * real work in flight. The requests then waiting are one step, sent before
+ * any of them was answered. The loop records the step and answers it in
+ * canonical order (method, URL, headers, body), then runs again. When no
+ * request waits but the work has not finished, it advances the virtual clock
+ * to the next timer. The network answers in zero virtual time, so a request
+ * sent after a provider's own delay lands in a later step than the requests
+ * before the delay, and concurrent requests share a step whatever order they
+ * arrive in. `jitter` delays requests before and after they reach the
+ * network and answers a step in shuffled order, none of which may change a
+ * golden.
  */
-function installFetch(
-  spec: GoldenSpec,
-  answer: Answer,
-  options: { seam?: FetchSeam; jitter?: Jitter },
-): { recorded: Recorded[]; settled(): Promise<void>; restore(): void } {
-  const { seam, jitter } = options;
-  const recorded: Recorded[] = [];
+function installNetwork(capture: Capture): Network {
+  const { spec, seam, jitter, real } = capture;
   const realFetch = globalThis.fetch;
-  let index = 0;
-  let started = 0;
-  let queued = 0;
+  let issued = 0;
+  let arrived = 0;
   let waiting: Waiting[] = [];
-  let flushing: Promise<void> | undefined;
-  const flush = async () => {
-    for (let quiet = 0; quiet < QUIET_TURNS;) {
-      const before = started;
-      await sleep(0);
-      quiet = started === before && queued === started ? quiet + 1 : 0;
-    }
-    if (jitter) await sleep(jitter.below(3));
-    const batch = waiting.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-    waiting = [];
-    flushing = undefined;
-    const settle: (() => void)[] = batch.map((entry) => {
-      const { request } = entry;
-      const route = spec.auxiliary?.find((candidate) => candidate.match(request));
-      if (route) {
-        recorded.push({ request, auxiliary: route.name });
-        const response = respond(typeof route.reply === "function" ? route.reply(request) : route.reply);
-        return () => entry.resolve(response);
-      }
-      recorded.push({ request });
-      const reply = answer(request, index++);
-      if (reply === "network") return () => entry.reject(networkFailure());
-      if (reply === "timeout") return () => entry.reject(timeoutFailure());
-      const response = respond(reply);
-      return () => entry.resolve(response);
-    });
-    if (!jitter) {
-      for (const release of settle) release();
-      return;
-    }
-    for (let left = settle.length; left > 0; left--) {
-      const [release] = settle.splice(jitter.below(left), 1);
-      release!();
-      await microtasks(jitter.below(4));
-    }
-  };
   const fake = (async (input: unknown, init?: RequestInit) => {
-    started++;
+    const sent = issued++;
     let request: SeenRequest;
     try {
+      if (jitter) for (let left = jitter.below(3); left > 0; left--) await realTurn();
       request = await seen(input, init);
-    } catch (error) {
-      started--;
-      throw error;
+    } finally {
+      arrived++;
     }
-    if (jitter) await microtasks(jitter.below(8));
     const { method, url, headers, body } = request;
     const key = JSON.stringify([method, url.href, headers, body ?? null]);
-    const response = new Promise<Response>((resolve, reject) => waiting.push({ request, key, resolve, reject }));
-    queued++;
-    flushing ??= flush();
-    return response;
+    return new Promise<Response>((resolve, reject) => waiting.push({ request, key, sent, resolve, reject }));
   }) as typeof fetch;
-  globalThis.fetch = seam ? seam(fake) : fake;
+  const entry = jitter ? jittered(fake, jitter) : fake;
+  globalThis.fetch = seam ? seam(entry) : entry;
+
+  async function drive<T>(work: () => Promise<T>, answer?: Answer): Promise<Driven<T>> {
+    const steps: Step[] = [];
+    const began = Date.now();
+    let index = 0;
+    const state: { outcome?: { ok: true; value: T } | { ok: false; error: unknown } } = {};
+    void (async () => work())().then(
+      (value) => (state.outcome = { ok: true, value }),
+      (error: unknown) => (state.outcome = { ok: false, error }),
+    );
+    const settle = async (turns: number) => {
+      let last = "";
+      for (let quiet = 0, changes = 0; quiet < turns;) {
+        // Synchronously, so a zero-delay timer set by a microtask stays due
+        // now: one set inside a timer callback is due a millisecond later.
+        vi.advanceTimersByTime(0);
+        await realTurn();
+        const now = [issued, arrived, real.events, vi.getTimerCount(), state.outcome ? 1 : 0].join();
+        if (now !== last && ++changes > MAX_SETTLE_CHANGES)
+          throw new Error(`${spec.provider}: a call never stopped working`);
+        quiet = now === last && issued === arrived && real.inFlight === 0 ? quiet + 1 : 0;
+        last = now;
+      }
+    };
+    const answerStep = async () => {
+      const batch = waiting.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.sent - b.sent));
+      waiting = [];
+      if (!answer) {
+        const { method, url } = batch[0]!.request;
+        throw new Error(`${spec.provider}: ${method} ${url.href} was sent outside a call`);
+      }
+      const step: Step = [];
+      steps.push(step);
+      const releases = batch.map((waiter) => {
+        const { request } = waiter;
+        const route = spec.auxiliary?.find((candidate) => candidate.match(request));
+        if (route) {
+          step.push({ request, auxiliary: route.name });
+          const response = respond(typeof route.reply === "function" ? route.reply(request) : route.reply);
+          return () => waiter.resolve(response);
+        }
+        step.push({ request });
+        const reply = answer(request, index++);
+        if (reply === "network") return () => waiter.reject(networkFailure());
+        if (reply === "timeout") return () => waiter.reject(timeoutFailure());
+        const response = respond(reply);
+        return () => waiter.resolve(response);
+      });
+      if (!jitter) {
+        for (const release of releases) release();
+        return;
+      }
+      for (let left = releases.length; left > 0; left--) {
+        const [release] = releases.splice(jitter.below(left), 1);
+        release!();
+        await microtasks(jitter.below(4));
+      }
+    };
+    for (let advances = 0; ;) {
+      await settle(STEP_QUIET_TURNS);
+      if (waiting.length > 0) {
+        await answerStep();
+        continue;
+      }
+      if (state.outcome) break;
+      await settle(CLOCK_QUIET_TURNS);
+      if (waiting.length > 0 || state.outcome) continue;
+      if (vi.getTimerCount() === 0) {
+        throw new Error(`${spec.provider}: a call waits on something that is neither a request nor a timer`);
+      }
+      if (++advances > MAX_CLOCK_ADVANCES) throw new Error(`${spec.provider}: a call kept waiting on timers`);
+      await vi.advanceTimersToNextTimerAsync();
+    }
+    const outcome = state.outcome!;
+    if (!outcome.ok) throw outcome.error;
+    return { value: outcome.value, steps, waitedMs: Date.now() - began };
+  }
+
   return {
-    recorded,
-    async settled() {
-      while (flushing) await flushing;
-    },
+    drive,
     restore() {
       globalThis.fetch = realFetch;
     },
@@ -488,10 +653,15 @@ function requestRecord(entry: Recorded): unknown {
   });
 }
 
+function stepsRecord(steps: readonly Step[]): unknown[][] {
+  return steps.map((step) => step.map(requestRecord));
+}
+
 /** One capture's fixed inputs, and the setup requests every scenario must repeat. */
 interface Capture {
   spec: GoldenSpec;
   restart(): void;
+  real: RealWork;
   /** Every credential field and secret, by the name its placeholder shows. */
   secrets: Record<string, string>;
   /** What a vendor echoing every sent secret, in every encoding, says. */
@@ -544,9 +714,70 @@ export function secretEncodings(value: string): string[] {
 /**
  * The shortest start of a secret the leak guard treats as the secret, so a
  * truncated echo still leaks. Longer than public token-format prefixes such
- * as `sk_test_` or `github_pat_`, which guides and fixtures may print.
+ * as `sk_test_` or `github_pat_`, which guides and fixtures may print. It is
+ * counted past a secret's public framing (see `publicFraming`).
  */
 export const LEAK_PREFIX_UNITS = 12;
+
+const PEM_ARMOR = /^-----BEGIN [A-Z0-9 ]+-----(?:\s|\\n)*/;
+
+/**
+ * Bytes of DER structure before a key's first secret value: the tags,
+ * lengths, versions, and algorithm identifiers every key of one type and size
+ * shares. The first primitive value of 16 bytes or more that is not an object
+ * identifier is key material; an OCTET STRING that holds DER is opened.
+ */
+function derFraming(der: Uint8Array): number {
+  for (let at = 0; at + 2 <= der.length;) {
+    const tag = der[at]!;
+    let length = der[at + 1]!;
+    let header = 2;
+    if (length & 0x80) {
+      const bytes = length & 0x7f;
+      length = 0;
+      for (let index = 0; index < bytes; index++) length = length * 256 + (der[at + 2 + index] ?? 0);
+      header += bytes;
+    }
+    const content = at + header;
+    if (tag & 0x20 || (tag === 0x04 && der[content] === 0x30)) at = content;
+    else if (length >= 16 && tag !== 0x06) return content;
+    else at = content + length;
+  }
+  return 0;
+}
+
+/**
+ * Leading units of a secret that are public framing, not the secret: a PEM
+ * armor line, and the base64 of the DER structure that opens every key of
+ * its type (`MIIEvQIBADANBgkqhkiG9w0BAQEFAASC…` for a 2048-bit RSA key).
+ * Guides and example keys print both.
+ */
+function publicFraming(secret: string): number {
+  const armor = PEM_ARMOR.exec(secret);
+  if (!armor) return 0;
+  const body = secret
+    .slice(armor[0].length)
+    .split("-----")[0]!
+    .replace(/\\n|\s/g, "");
+  let der: Uint8Array;
+  try {
+    der = Uint8Array.from(atob(body), (char) => char.charCodeAt(0));
+  } catch {
+    return armor[0].length;
+  }
+  // Base64 characters fully determined by the framing bytes.
+  let left = Math.floor((derFraming(der) * 4) / 3);
+  let index = armor[0].length;
+  while (left > 0 && index < secret.length) {
+    if (secret.startsWith("\\n", index)) index += 2;
+    else if (/\s/.test(secret[index]!)) index++;
+    else {
+      index++;
+      left--;
+    }
+  }
+  return index;
+}
 
 const SHORT_ESCAPES: Record<string, string> = {
   '"': '"',
@@ -594,9 +825,13 @@ const DECODE_LAYERS = 3;
  * the value itself rather than trusting redaction's list of forms: JSON
  * escapes, percent escapes in either hex case, and base64 or base64url runs
  * at any alignment, nested up to three layers. It finds any start of a
- * secret at least `LEAK_PREFIX_UNITS` long, so a truncated echo leaks too.
- * Shorter fragments, fragments that do not start the secret, and a secret
- * whose case was changed are not detected.
+ * secret that reaches `LEAK_PREFIX_UNITS` past its public framing, so a
+ * truncated echo leaks too and a printed PEM header does not.
+ *
+ * Not detected: a shorter start, in any encoding; a fragment that does not
+ * start the secret; a secret whose case was changed. A base64 run is decoded
+ * only from 11 characters (8 bytes), so the base64 of a fragment of 7 bytes
+ * or fewer is never read; any start the guard looks for is longer.
  */
 export function leakedSecret(value: unknown, secrets: Record<string, string>): string | undefined {
   const views = new Set([JSON.stringify(value) ?? ""]);
@@ -615,7 +850,7 @@ export function leakedSecret(value: unknown, secrets: Record<string, string>): s
     layer = next;
   }
   for (const [name, secret] of Object.entries(secrets)) {
-    const start = secret.slice(0, LEAK_PREFIX_UNITS);
+    const start = secret.slice(0, publicFraming(secret) + LEAK_PREFIX_UNITS);
     if (start && [...views].some((view) => view.includes(start))) return name;
   }
   return undefined;
@@ -643,41 +878,45 @@ function slug(where: string): string {
 async function run(capture: Capture, where: string, call: GoldenCall, answer: Answer) {
   const { spec } = capture;
   capture.restart();
-  const connector = spec.create(slug(where) + capture.nonce);
-  const registry = await registryFor(spec, connector);
-  const tools =
-    connector.staticTools ?? (await connector.listTools(registry.contextFor(connector.id, GOLDEN_BASE_URL)));
-  const tool = tools.find((candidate) => candidate.name === call.tool);
-  if (!tool) throw new Error(`${spec.provider}: no tool "${call.tool}"`);
-  const write = classifyTool(tool) !== "read";
-  if (spec.setup) {
-    const consent = installFetch(spec, () => ({}), capture);
-    try {
-      await spec.setup(connector, registry.contextFor(connector.id, GOLDEN_BASE_URL));
-      await consent.settled();
-    } finally {
-      consent.restore();
-    }
-    const setup = JSON.stringify(consent.recorded.map(requestRecord));
-    if (capture.setup !== undefined && setup !== capture.setup) {
-      throw new Error(`${spec.provider} ${where}: setup sent different requests than the first scenario`);
-    }
-    capture.setup = setup;
-  }
-  const network = installFetch(spec, answer, capture);
+  const network = installNetwork(capture);
+  let registry: Registry | undefined;
   try {
-    const result = await new InvocationService(registry, new CatalogService(registry, GOLDEN_BASE_URL)).invoke(
-      `${connector.id}.${call.tool}`,
-      call.args ?? {},
-      { source: write ? "call_destructive_tool" : "call_tool", readOnly: false },
+    const connector = spec.create(slug(where) + capture.nonce);
+    const ready = (await network.drive(() => registryFor(spec, connector))).value;
+    registry = ready;
+    const tools =
+      connector.staticTools ??
+      (await network.drive(() => connector.listTools(ready.contextFor(connector.id, GOLDEN_BASE_URL)))).value;
+    const tool = tools.find((candidate) => candidate.name === call.tool);
+    if (!tool) throw new Error(`${spec.provider}: no tool "${call.tool}"`);
+    const write = classifyTool(tool) !== "read";
+    if (spec.setup) {
+      const consent = spec.setup;
+      const { steps } = await network.drive(
+        () => consent(connector, ready.contextFor(connector.id, GOLDEN_BASE_URL)),
+        () => ({}),
+      );
+      const setup = JSON.stringify(stepsRecord(steps));
+      if (capture.setup !== undefined && setup !== capture.setup) {
+        throw new Error(`${spec.provider} ${where}: setup sent different requests than the first scenario`);
+      }
+      capture.setup = setup;
+    }
+    const invocation = new InvocationService(ready, new CatalogService(ready, GOLDEN_BASE_URL));
+    const { value, steps, waitedMs } = await network.drive(
+      () =>
+        invocation.invoke(`${connector.id}.${call.tool}`, call.args ?? {}, {
+          source: write ? "call_destructive_tool" : "call_tool",
+          readOnly: false,
+        }),
+      answer,
     );
-    await network.settled();
-    const visible = outcome(result);
+    const visible = outcome(value);
     assertNoLeak(capture, where, visible);
-    return { requests: network.recorded.map(requestRecord), result: visible };
+    return { steps: stepsRecord(steps), ...(waitedMs ? { waitedMs } : {}), result: visible };
   } finally {
     network.restore();
-    registry.closeCallAdmission();
+    registry?.closeCallAdmission();
   }
 }
 
@@ -698,10 +937,14 @@ function toolRecord(tool: ToolDef): unknown {
 async function catalog(capture: Capture): Promise<unknown> {
   const { spec } = capture;
   capture.restart();
-  const connector = spec.create(`catalog${capture.nonce}`);
-  const registry = await registryFor(spec, connector);
+  const network = installNetwork(capture);
+  let registry: Registry | undefined;
   try {
-    const tools = await connector.listTools(registry.contextFor(connector.id, GOLDEN_BASE_URL));
+    const connector = spec.create(`catalog${capture.nonce}`);
+    const ready = (await network.drive(() => registryFor(spec, connector))).value;
+    registry = ready;
+    const tools = (await network.drive(() => connector.listTools(ready.contextFor(connector.id, GOLDEN_BASE_URL))))
+      .value;
     const record = {
       id: connector.id,
       kind: connector.kind,
@@ -715,13 +958,24 @@ async function catalog(capture: Capture): Promise<unknown> {
     assertNoLeak(capture, "catalog", record);
     return record;
   } finally {
-    registry.closeCallAdmission();
+    network.restore();
+    registry?.closeCallAdmission();
   }
 }
 
 function echoCall(capture: Capture): GoldenCall {
   const { echo } = capture.spec;
   return { ...echo, label: `${echo.tool} echoes sent secrets`, replies: echo.replies(capture.echo) };
+}
+
+async function row(capture: Capture, call: GoldenCall): Promise<unknown> {
+  const label = call.label ?? call.tool;
+  return {
+    label,
+    tool: call.tool,
+    args: call.args ?? {},
+    ...(await run(capture, label, call, fromReplies(call.replies))),
+  };
 }
 
 async function calls(capture: Capture): Promise<unknown> {
@@ -731,12 +985,7 @@ async function calls(capture: Capture): Promise<unknown> {
     const label = call.label ?? call.tool;
     if (labels.has(slug(label))) throw new Error(`${capture.spec.provider}: two calls are labelled "${label}"`);
     labels.add(slug(label));
-    rows.push({
-      label,
-      tool: call.tool,
-      args: call.args ?? {},
-      ...(await run(capture, label, call, fromReplies(call.replies))),
-    });
+    rows.push(await row(capture, call));
   }
   return rows;
 }
@@ -821,7 +1070,7 @@ export interface CaptureOptions {
 
 let captures = 0;
 
-function captureFor(spec: GoldenSpec, restart: () => void, options: CaptureOptions): Capture {
+function captureFor(spec: GoldenSpec, clock: { real: RealWork; restart(): void }, options: CaptureOptions): Capture {
   const secrets: Record<string, string> = {
     ...(typeof spec.credential === "string" ? { credential: spec.credential } : (spec.credential ?? {})),
     ...spec.secrets,
@@ -836,7 +1085,8 @@ function captureFor(spec: GoldenSpec, restart: () => void, options: CaptureOptio
   });
   return {
     spec,
-    restart,
+    restart: clock.restart,
+    real: clock.real,
     secrets,
     echo: [...sent.flatMap(([, value]) => secretEncodings(value)), ...pairs].join(" "),
     errorEcho: sent.map(([, value]) => value).join(" "),
@@ -854,7 +1104,7 @@ export async function captureGoldens(
 ): Promise<Partial<Record<GoldenFile, string>>> {
   const clock = deterministic();
   try {
-    const capture = captureFor(spec, clock.restart, options);
+    const capture = captureFor(spec, clock, options);
     const files: Partial<Record<GoldenFile, string>> = {
       catalog: stable(await catalog(capture), capture),
       calls: stable(await calls(capture), capture),
@@ -867,13 +1117,21 @@ export async function captureGoldens(
   }
 }
 
-/** Run only the echo call: it rejects if a sent secret reaches the result. */
-export async function captureEcho(spec: GoldenSpec): Promise<void> {
+/**
+ * One `calls.json` row's exact bytes, for the call with this label (or tool
+ * name), or for the echo call when `label` is `echo`. It rejects if a secret
+ * reaches the result.
+ */
+export async function captureCall(spec: GoldenSpec, label: string, options: CaptureOptions = {}): Promise<string> {
   const clock = deterministic();
   try {
-    const capture = captureFor(spec, clock.restart, {});
-    const call = echoCall(capture);
-    await run(capture, call.label!, call, fromReplies(call.replies));
+    const capture = captureFor(spec, clock, options);
+    const call =
+      label === "echo"
+        ? echoCall(capture)
+        : spec.calls.find((candidate) => (candidate.label ?? candidate.tool) === label);
+    if (!call) throw new Error(`${spec.provider}: no call labelled "${label}"`);
+    return stable(await row(capture, call), capture);
   } finally {
     clock.restore();
   }

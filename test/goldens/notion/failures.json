@@ -6,15 +6,17 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -27,15 +29,17 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -59,15 +63,17 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -83,15 +89,17 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -104,15 +112,17 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -126,15 +136,17 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -147,15 +159,17 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -169,15 +183,17 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -190,15 +206,17 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -222,15 +240,17 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -247,15 +267,17 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "method": "GET",
-            "url": "https://api.notion.com/v1/pages/page-1",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "notion-version": "2026-03-11"
+        "steps": [
+          [
+            {
+              "method": "GET",
+              "url": "https://api.notion.com/v1/pages/page-1",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "notion-version": "2026-03-11"
+              }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -285,37 +307,39 @@
     },
     "cases": {
       "400": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -328,37 +352,39 @@
         }
       },
       "401": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -383,37 +409,39 @@
         }
       },
       "403": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -429,37 +457,39 @@
         }
       },
       "404": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -472,37 +502,39 @@
         }
       },
       "409": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -515,37 +547,39 @@
         }
       },
       "422": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -558,37 +592,39 @@
         }
       },
       "429": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -602,37 +638,39 @@
         }
       },
       "500": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -645,37 +683,39 @@
         }
       },
       "401 echo": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -700,37 +740,39 @@
         }
       },
       "network": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,
@@ -747,37 +789,39 @@
         }
       },
       "timeout": {
-        "requests": [
-          {
-            "method": "POST",
-            "url": "https://api.notion.com/v1/pages",
-            "headers": {
-              "authorization": "Bearer <secret:credential>",
-              "content-type": "application/json",
-              "notion-version": "2026-03-11"
-            },
-            "body": {
-              "json": {
-                "parent": {
-                  "type": "page_id",
-                  "page_id": "page-1"
-                },
-                "properties": {
-                  "title": {
-                    "title": [
-                      {
-                        "type": "text",
-                        "text": {
-                          "content": "Meeting notes"
+        "steps": [
+          [
+            {
+              "method": "POST",
+              "url": "https://api.notion.com/v1/pages",
+              "headers": {
+                "authorization": "Bearer <secret:credential>",
+                "content-type": "application/json",
+                "notion-version": "2026-03-11"
+              },
+              "body": {
+                "json": {
+                  "parent": {
+                    "type": "page_id",
+                    "page_id": "page-1"
+                  },
+                  "properties": {
+                    "title": {
+                      "title": [
+                        {
+                          "type": "text",
+                          "text": {
+                            "content": "Meeting notes"
+                          }
                         }
-                      }
-                    ]
-                  }
-                },
-                "markdown": "Agenda"
+                      ]
+                    }
+                  },
+                  "markdown": "Agenda"
+                }
               }
             }
-          }
+          ]
         ],
         "result": {
           "ok": false,

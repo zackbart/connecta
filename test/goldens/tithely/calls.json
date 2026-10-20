@@ -11,15 +11,17 @@
         }
       ]
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/payment-methods/pm_9?account_id=user_jane",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/payment-methods/pm_9?account_id=user_jane",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -69,40 +71,42 @@
         }
       ]
     },
-    "requests": [
-      {
-        "method": "POST",
-        "url": "https://tithe.ly/api/v1/charges",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "account_id",
-              "user_jane"
-            ],
-            [
-              "pm_id",
-              "pm_9"
-            ],
-            [
-              "organization_id",
-              "org_1"
-            ],
-            [
-              "amount",
-              "2555"
-            ],
-            [
-              "giving_type",
-              "Tithe"
+    "steps": [
+      [
+        {
+          "method": "POST",
+          "url": "https://tithe.ly/api/v1/charges",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "account_id",
+                "user_jane"
+              ],
+              [
+                "pm_id",
+                "pm_9"
+              ],
+              [
+                "organization_id",
+                "org_1"
+              ],
+              [
+                "amount",
+                "2555"
+              ],
+              [
+                "giving_type",
+                "Tithe"
+              ]
             ]
-          ]
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -213,15 +217,17 @@
         }
       ]
     },
-    "requests": [
-      {
-        "method": "DELETE",
-        "url": "https://tithe.ly/api/v1/payment-methods/pm_9?account_id=user_jane",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "DELETE",
+          "url": "https://tithe.ly/api/v1/payment-methods/pm_9?account_id=user_jane",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -240,15 +246,17 @@
     "args": {
       "limit": 5
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/organizations-list?limit=6&order_by=DESC",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/organizations-list?limit=6&order_by=DESC",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -302,15 +310,17 @@
     "args": {
       "organizationId": "org_1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/organizations/org_1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/organizations/org_1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -354,15 +364,17 @@
     "label": "list_accounts",
     "tool": "list_accounts",
     "args": {},
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/accounts-list-all?limit=26&order_by=DESC",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/accounts-list-all?limit=26&order_by=DESC",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -390,15 +402,17 @@
     "args": {
       "accountId": "user_jane"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/accounts/user_jane",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/accounts/user_jane",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -428,15 +442,17 @@
       "limit": 1,
       "createdAfter": "2026-01-01"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/charges-list?organization_id=org_1&created_after=1767225600&limit=2&order_by=DESC",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/charges-list?organization_id=org_1&created_after=1767225600&limit=2&order_by=DESC",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -484,15 +500,17 @@
     "args": {
       "chargeId": "ch_1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/charges/ch_1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/charges/ch_1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -532,15 +550,17 @@
     "args": {
       "organizationId": "org_1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/recurring-list?organization_id=org_1&limit=26&order_by=DESC",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/recurring-list?organization_id=org_1&limit=26&order_by=DESC",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -577,15 +597,17 @@
     "args": {
       "recurringId": "rc_1"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/recurring/rc_1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/recurring/rc_1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -614,15 +636,17 @@
     "args": {
       "accountId": "user_jane"
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/payment-methods-list?account_id=user_jane",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/payment-methods-list?account_id=user_jane",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -652,15 +676,17 @@
         }
       ]
     },
-    "requests": [
-      {
-        "method": "GET",
-        "url": "https://tithe.ly/api/v1/payment-methods/pm_9?account_id=user_jane",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+    "steps": [
+      [
+        {
+          "method": "GET",
+          "url": "https://tithe.ly/api/v1/payment-methods/pm_9?account_id=user_jane",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,

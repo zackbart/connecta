@@ -5,52 +5,56 @@
     "args": {
       "formId": "form-1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "forms-get-form@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-get-form@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://forms.googleapis.com/v1/forms/form-1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://forms.googleapis.com/v1/forms/form-1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -159,61 +163,65 @@
       "title": "Volunteer roster",
       "documentTitle": "Roster"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "forms-create-form@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-create-form@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "POST",
-        "url": "https://forms.googleapis.com/v1/forms",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "info": {
-              "title": "Volunteer roster",
-              "documentTitle": "Roster"
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://forms.googleapis.com/v1/forms",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "info": {
+                "title": "Volunteer roster",
+                "documentTitle": "Roster"
+              }
             }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -235,60 +243,64 @@
       "title": "Draft survey",
       "unpublished": true
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "forms-create-form-unpublished@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-create-form-unpublished@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "POST",
-        "url": "https://forms.googleapis.com/v1/forms?unpublished=true",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "info": {
-              "title": "Draft survey"
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://forms.googleapis.com/v1/forms?unpublished=true",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "info": {
+                "title": "Draft survey"
+              }
             }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -311,60 +323,64 @@
       "submittedAfter": "2026-09-30T00:00:00Z",
       "limit": 5
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "forms-list-responses@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-list-responses@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://forms.googleapis.com/v1/forms/form-1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://forms.googleapis.com/v1/forms/form-1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        },
+        {
+          "method": "GET",
+          "url": "https://forms.googleapis.com/v1/forms/form-1/responses?filter=timestamp+%3E+2026-09-30T00%3A00%3A00Z&pageSize=5",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://forms.googleapis.com/v1/forms/form-1/responses?filter=timestamp+%3E+2026-09-30T00%3A00%3A00Z&pageSize=5",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
-        }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -438,60 +454,64 @@
       "formId": "form-1",
       "responseId": "r1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "forms-get-response@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-get-response@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://forms.googleapis.com/v1/forms/form-1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://forms.googleapis.com/v1/forms/form-1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        },
+        {
+          "method": "GET",
+          "url": "https://forms.googleapis.com/v1/forms/form-1/responses/r1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://forms.googleapis.com/v1/forms/form-1/responses/r1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
-        }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -561,71 +581,75 @@
       "description": "Bring a coat.",
       "requiredRevisionId": "00000042"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "forms-update-form-info@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-update-form-info@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "POST",
-        "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "requests": [
-              {
-                "updateFormInfo": {
-                  "info": {
-                    "title": "Retreat 2026",
-                    "description": "Bring a coat."
-                  },
-                  "updateMask": "title,description"
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "updateFormInfo": {
+                    "info": {
+                      "title": "Retreat 2026",
+                      "description": "Bring a coat."
+                    },
+                    "updateMask": "title,description"
+                  }
                 }
+              ],
+              "writeControl": {
+                "requiredRevisionId": "00000042"
               }
-            ],
-            "writeControl": {
-              "requiredRevisionId": "00000042"
             }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -678,95 +702,99 @@
         }
       ]
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "forms-batch-update-form@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-batch-update-form@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "POST",
-        "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>",
-          "content-type": "application/json"
-        },
-        "body": {
-          "json": {
-            "requests": [
-              {
-                "createItem": {
-                  "item": {
-                    "title": "Phone number",
-                    "questionItem": {
-                      "question": {
-                        "required": true,
-                        "textQuestion": {}
+      ],
+      [
+        {
+          "method": "POST",
+          "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "createItem": {
+                    "item": {
+                      "title": "Phone number",
+                      "questionItem": {
+                        "question": {
+                          "required": true,
+                          "textQuestion": {}
+                        }
                       }
+                    },
+                    "location": {
+                      "index": 0
                     }
-                  },
-                  "location": {
-                    "index": 0
+                  }
+                },
+                {
+                  "deleteItem": {
+                    "location": {
+                      "index": 4
+                    }
+                  }
+                },
+                {
+                  "updateSettings": {
+                    "settings": {
+                      "quizSettings": {
+                        "isQuiz": true
+                      }
+                    },
+                    "updateMask": "quizSettings.isQuiz"
                   }
                 }
-              },
-              {
-                "deleteItem": {
-                  "location": {
-                    "index": 4
-                  }
-                }
-              },
-              {
-                "updateSettings": {
-                  "settings": {
-                    "quizSettings": {
-                      "isQuiz": true
-                    }
-                  },
-                  "updateMask": "quizSettings.isQuiz"
-                }
+              ],
+              "writeControl": {
+                "requiredRevisionId": "00000043"
               }
-            ],
-            "writeControl": {
-              "requiredRevisionId": "00000043"
             }
           }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
@@ -793,52 +821,56 @@
     "args": {
       "formId": "form-1"
     },
-    "requests": [
-      {
-        "auxiliary": "token",
-        "method": "POST",
-        "url": "https://oauth2.googleapis.com/token",
-        "headers": {
-          "accept": "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        "body": {
-          "form": [
-            [
-              "grant_type",
-              "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            ],
-            [
-              "assertion",
-              {
-                "jwt": {
-                  "header": {
-                    "alg": "RS256",
-                    "typ": "JWT"
-                  },
-                  "claims": {
-                    "iss": "forms-get-form-echoes-sent-secrets@project.iam.gserviceaccount.com",
-                    "sub": "alice@example.com",
-                    "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                    "aud": "https://oauth2.googleapis.com/token",
-                    "iat": 1767323045,
-                    "exp": 1767326645
-                  },
-                  "signature": "<signature>"
+    "steps": [
+      [
+        {
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "forms-get-form-echoes-sent-secrets@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
                 }
-              }
+              ]
             ]
-          ]
+          }
         }
-      },
-      {
-        "method": "GET",
-        "url": "https://forms.googleapis.com/v1/forms/form-1",
-        "headers": {
-          "accept": "application/json",
-          "authorization": "Bearer <secret:accessToken>"
+      ],
+      [
+        {
+          "method": "GET",
+          "url": "https://forms.googleapis.com/v1/forms/form-1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
         }
-      }
+      ]
     ],
     "result": {
       "ok": true,
