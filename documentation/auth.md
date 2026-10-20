@@ -1539,7 +1539,8 @@ Connecta configuration still decides connector access and management: `maintaine
 Protect the Worker with a Worker-level Access application whose destination is
 `{ "type": "worker", "worker_id": "<the Worker script tag>" }`. A traditional
 hostname-level application blocks the URL but does not attach `ctx.access` to
-the Worker. Enable [**Managed OAuth**](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
+the Worker. The Worker example's `alchemy.run.ts` declares this application and
+attaches it through the Worker's `access` property. Enable [**Managed OAuth**](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
 on that Worker-level application for interactive MCP clients. Cloudflare then
 owns the unauthenticated challenge and `/.well-known/` metadata, issues opaque
 RFC 8707 tokens, and resolves them into the same trusted Worker identity.

@@ -35,8 +35,11 @@ import { activitySink, createTestConnecta, makeRegistry } from "./helpers.js";
 // 4xx refusal's text, an isError result's content, or the words a handler
 // put in a ConnectorCallError.
 const planted = (position: string) => `planted-${position}-7f3a9c`;
-/** Any sentinel, including ones shaped as identifiers (an error's name). */
-const ANY_PLANTED = /7f3a9c/;
+/**
+ * Any sentinel, including ones shaped as identifiers (an error's name). The
+ * "planted" prefix keeps a random UUID's hex digits from matching the suffix.
+ */
+const ANY_PLANTED = /planted[\w-]*7f3a9c/i;
 const BASE = "https://connecta.test";
 const MCP_URL = "https://downstream.example/mcp";
 
