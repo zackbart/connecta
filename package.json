@@ -198,6 +198,8 @@
     "test:browser:install": "playwright install chromium",
     "test:browser": "playwright test",
     "test:browser:snapshots": "node scripts/update-operator-snapshots.mjs",
+    "goldens:update": "node scripts/update-goldens.mjs",
+    "pregoldens:update": "node scripts/generate-version.mjs && pnpm run build:operator-ui",
     "pretest:browser:snapshots": "pnpm run build:operator-ui",
     "test:node": "vitest run --project node",
     "test:workers": "vitest run --project workers",

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import goldenSourceBoundary from "./scripts/golden-source-boundary.mjs";
 import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { build, buildSync, type Plugin } from "esbuild";
@@ -100,6 +101,7 @@ export default defineConfig({
     reporters: ["default", new CoverageReporter()],
     projects: [
       {
+        plugins: [goldenSourceBoundary()],
         // The deployment shapes are consumer projects: they import the package
         // by name, and `dist/` does not exist yet when tests run. Point each
         // specifier at its source module so a suite may run the template's and
@@ -131,6 +133,12 @@ export default defineConfig({
         },
         test: {
           name: "node",
+          env: {
+            CONNECTA_GOLDENS_RUNTIME: "node",
+            CONNECTA_GOLDENS_TIER: process.env.CONNECTA_GOLDENS_TIER ?? "full",
+            CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
+          },
+          setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: ["./test/fixtures/oauth-http-server.ts", "./test/fixtures/auth-admission-server.ts"],
           include: TEST_INCLUDE,
           exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
@@ -138,14 +146,13 @@ export default defineConfig({
       },
       {
         plugins: [
+          goldenSourceBoundary(),
           executorBundles(),
           cloudflareTest(async ({ inject }) => ({
             miniflare: {
-              // Match the Worker example's compatibility date, plus a Worker
-              // Loader so the guest API contract suite can run its cases
-              // against a real Dynamic Worker executor rather than a
-              // stand-in. Unlike the example, this also sets the
-              // unhandled-rejection checkpoint flag below.
+              // Match the Worker example's compatibility date and rejection
+              // reporting, plus a Worker Loader so the guest API contract
+              // suite can run against a real Dynamic Worker executor.
               compatibilityDate: "2025-01-01",
               // Before 2026-03-03, workerd reports a rejection as unhandled even
               // when its handler attaches later in the same microtask
@@ -174,6 +181,13 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
+          // workerd does not inherit arbitrary host process.env entries.
+          env: {
+            CONNECTA_GOLDENS_RUNTIME: "workers",
+            CONNECTA_GOLDENS_TIER: process.env.CONNECTA_GOLDENS_TIER ?? "full",
+            CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
+          },
+          setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/clerk-backend-server.ts",

@@ -42,6 +42,8 @@
     "examples/*/alchemy.run.ts",
     "scripts/*.mjs",
     "test/**/*.test.ts",
+    // Golden specs load through import.meta.glob in test/goldens.test.ts.
+    "test/goldens/*/spec.ts",
     // The eval harness: CLI entries, plus the Worker entries wrangler loads.
     "eval/*.ts",
     "eval/deploy/worker-*.ts"

@@ -103,6 +103,13 @@ Access service identity alone is refused. Keep
 through to `fetch`. The example owns those details and
 [the machine-token procedure](../examples/worker/README.md#machine-tokens).
 
+Keep `unhandled_rejection_after_microtask_checkpoint` in both `alchemy.run.ts`
+and `wrangler.jsonc`: it defers unhandled-rejection reporting until the microtask
+checkpoint finishes, avoiding false reports when a handler attaches later in the
+same checkpoint ([Cloudflare compatibility flag](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#defer-unhandled-rejection-processing-to-after-microtask-checkpoint)).
+Existing deployments receive this behavior on their next deploy after adding the
+flag to their stack.
+
 ## Agent endpoints behind Cloudflare Access
 
 Agents use `/agent/<pool>`, which connecta authenticates with the `cta_` token

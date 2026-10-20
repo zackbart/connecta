@@ -38,6 +38,13 @@ on a later request if workerd ends one without delivering a signal or stream
 cancellation. Set it above the longest authorization, tool call, and response
 delivery your deployment expects to serve.
 
+Keep `unhandled_rejection_after_microtask_checkpoint` in both `alchemy.run.ts`
+and `wrangler.jsonc`: it defers unhandled-rejection reporting until the microtask
+checkpoint finishes, avoiding false reports when a handler attaches later in the
+same checkpoint ([Cloudflare compatibility flag](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#defer-unhandled-rejection-processing-to-after-microtask-checkpoint)).
+Existing deployments receive this behavior on their next deploy after adding the
+flag to their stack.
+
 Storage is `d1Storage(env.CONNECTA_DB)` from `@zackbart/connecta/d1`, and
 activity history, when `CONNECTA_ACTIVITY` is `"on"`, is `d1ActivityStore` over
 the same database.
