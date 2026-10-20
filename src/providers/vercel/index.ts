@@ -327,9 +327,8 @@ export const vercel = defineProvider<VercelOptions>({
   readme: "Vercel",
   bundle: {
     "baselineGzip": 228431,
-    "maxGzip": 288431,
     "note":
-      "./providers/vercel remeasures at 228,431 B gzip (#801), from a 143,649 B baseline recorded before the shared entry grew (shared code grew after it was recorded, as other entries measured before #801 show): auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (the shared REST module) plus the pinned Vercel operation index (445 operations; request details to depth 2, without descriptions or enums over 50 values; 26,274 B gzip as source; the reviewed value-safety table adds about 5 KB). Details were shrunk before the cap moved: descriptions alone added 15 KB gzip. The cap uses the existing baseline + 60,000 B policy.",
+      "./providers/vercel remeasures at 228,431 B gzip (#801), from a 143,649 B baseline recorded before the shared entry grew (shared code grew after it was recorded, as other entries measured before #801 show): auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (the shared REST module) plus the pinned Vercel operation index (445 operations; request details to depth 2, without descriptions or enums over 50 values; 26,274 B gzip as source; the reviewed value-safety table adds about 5 KB). Details were shrunk before its former cap moved: descriptions alone added 15 KB gzip. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: VERCEL_OPTIONS,

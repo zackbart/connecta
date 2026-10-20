@@ -72,7 +72,7 @@ function repository() {
         notes: ["Root note", "./providers/retired old note", "Worker note"],
         entries: {
           ".": { baselineGzip: 50, maxGzip: 101 },
-          "./providers/retired": { baselineGzip: 10, maxGzip: 13 },
+          "./providers/retired": { baselineGzip: 10 },
           "./worker": { baselineGzip: 30, maxGzip: 75 },
         },
       },
@@ -97,7 +97,7 @@ function provider(root: string, name: string, node = false) {
     `import { skill } from "./skill.generated.js";
 export const factory = Object.assign((id: string, options: object) => ({ id, kind: "api", options, staticTools: [{ name: "list_items" }] }), {
   definition: { name: ${JSON.stringify(name)}, title: ${JSON.stringify(name.toUpperCase())}, readme: ${JSON.stringify(`Vendor ${name}`)}, kind: "api", skill,
-    bundle: { baselineGzip: 17, maxGzip: 23, note: ${JSON.stringify(`./providers/${name} reviewed cap`)} } }
+    bundle: { baselineGzip: 17, note: ${JSON.stringify(`./providers/${name} reviewed baseline`)} } }
 });\n`,
   );
   write(
@@ -157,14 +157,14 @@ describe("provider folder generation", () => {
     expect(knip).toContain('"src/providers/beta/index.ts"');
     expect(knip).not.toContain("retired");
     const budgets = json(root, "scripts/bundle-budget.json");
-    expect(budgets.entries["./providers/beta"]).toEqual({ baselineGzip: 17, maxGzip: 23 });
+    expect(budgets.entries["./providers/beta"]).toEqual({ baselineGzip: 17 });
     expect(budgets.entries["."]).toEqual({ baselineGzip: 50, maxGzip: 101 });
     expect(budgets.entries["./worker"]).toEqual({ baselineGzip: 30, maxGzip: 75 });
     expect(budgets.notes).toEqual([
       "Root note",
       "Worker note",
-      "./providers/alpha reviewed cap",
-      "./providers/beta reviewed cap",
+      "./providers/alpha reviewed baseline",
+      "./providers/beta reviewed baseline",
     ]);
     const fixtures = read(root, "test/providers.generated.ts");
     expect(fixtures).toContain("../src/providers/beta/fixtures.js");
@@ -252,6 +252,18 @@ describe("provider folder generation", () => {
       expect(snapshot(root)).toEqual(before);
     },
   );
+
+  it("refuses a bundle cap on a provider, whose entry is reported rather than capped", () => {
+    const root = repository();
+    provider(root, "alpha");
+    const index = "src/providers/alpha/index.ts";
+    write(root, index, read(root, index).replace("baselineGzip: 17,", "baselineGzip: 17, maxGzip: 23,"));
+    const before = snapshot(root);
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("bundle baselineGzip and optional note, and no cap");
+    expect(snapshot(root)).toEqual(before);
+  });
 
   it("rejects malformed or duplicated skill fragments before writing outputs", () => {
     const root = repository();
