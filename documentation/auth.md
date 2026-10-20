@@ -224,6 +224,55 @@ Clerk, a `cta_` token refused at `/mcp` or `/mcp/<pool>` still receives Clerk's
 resource metadata challenge.
 An open deployment with connectors warns at construction.
 
+### Authentication capacity and ingress limiting
+
+Connecta admits at most **16 in-progress inbound adapter authorizations** per
+loaded core in a process or Worker isolate. Human MCP endpoints, agent endpoints,
+operator APIs, connection starts (`/connect/<connector>`), and OAuth callbacks
+share this fixed bound, including network calls made inside an adapter's SDK.
+It has no queue and no configuration option. When full, a request receives HTTP
+503 with `Retry-After: 1`, `Cache-Control: no-store`, and
+`error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true }`.
+The operator log records only the checked `authentication_busy` reason, never
+credentials or identity-provider diagnostics. Retry after the indicated delay;
+Connecta does not automatically retry the authentication.
+
+A slot lasts only until the adapter returns, throws, or its owning request
+aborts. Cleanup releases it exactly once, including on Worker disconnects.
+Adapters must keep their work request-owned and honor `request.signal`;
+admission cannot cancel arbitrary custom code that ignores cancellation.
+The current adapters cannot cheaply establish a fully authenticated cache hit
+before verification, so every adapter invocation counts, including one that
+later uses a cached membership or policy verdict. Cache hits finish their slots
+quickly; a cached policy verdict never bypasses credential verification.
+An adapter returning a synchronous local verdict releases before yielding;
+it consumes no pending slot between requests.
+
+This bound is independent of MCP request/program admission and downstream call
+limits. `Mcp-Method: subscriptions/listen` still defers its MCP request permit:
+after authentication and endpoint admission, a body-confirmed modern listen is
+refused promptly even when execution capacity is full. It always passes the
+authentication bound, and no request body is read before authentication.
+
+Routes that do not invoke an inbound verifier consume no authentication slot:
+health, public OAuth discovery and client metadata, UI shells and static assets,
+preflight, redirects, unknown paths, and local header/origin/path refusals.
+An invalid `/connect` handoff or unknown OAuth callback target also refuses
+before a verifier. Downstream OAuth exchanges and display-label reads are
+separate operations, with their existing limits; this bound covers the inbound
+authentication that admits their caller. Cloudflare Access edge authentication
+runs before the Worker; its in-Worker identity lookup is covered.
+
+This is a concurrency bound, **not a rate limit or a shared provider quota**.
+Require ingress rate limiting for public deployments across all authenticated
+paths, including `/agent/*`, `/ui/*`, `/connect/*`, and `/oauth/callback/*`.
+For example, a deployment at `https://assistant.example.com` using Clerk must
+budget all isolates and deployments sharing its Clerk secret key together.
+Fast invalid tokens and repeated cache misses can exhaust a provider's request
+budget without ever exceeding 16 concurrent authentications. Set ingress limits
+to that provider's quota and expected traffic; increasing MCP concurrency does
+not increase authentication capacity.
+
 Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
 addresses, and email domains stay out of denial logs, activity, and status,
 including email lookup failures and admission policy refusals.
@@ -1727,6 +1776,9 @@ Protect the shared Backend API quota:
   per ten seconds in production, 100 in development. Membership reads use that
   general limit. A deployment's MCP concurrency setting does not bound all
   authentication paths, including `subscriptions/listen` and operator routes.
+  The independent [authentication capacity bound](#authentication-capacity-and-ingress-limiting)
+  covers those paths and the SDK's authentication calls before this adapter's
+  organization-specific bounds; it still does not impose a rate budget.
 - Organization mode permits at most 16 concurrent membership/extra opaque
   verification calls per `clerkAuth` instance (per isolate on Workers), with at
   most two per user. Each call owns its signal, deadline, and response body;

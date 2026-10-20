@@ -205,6 +205,15 @@ Several deployments can share one Clerk instance with one Organization each;
 [Clerk Organizations](./auth.md#one-clerk-instance-one-organization-per-deployment)
 owns that setup and its isolation tradeoff.
 
+Public deployments require ingress rate limiting on all authenticated routes,
+including agent, operator, connection-start, and callback paths. Connecta's
+fixed bound of 16 concurrent inbound authorizations per loaded core/process or
+isolate fast-refuses with retryable 503 `authentication_busy` and `Retry-After: 1`.
+It bounds in-flight work, not requests per second or a quota shared by several
+isolates or deployments. Budget ingress across the identity-provider account;
+see [authentication capacity](./auth.md#authentication-capacity-and-ingress-limiting)
+for route coverage and the interaction with MCP execution admission.
+
 Every deployment must set `readOnly` in its configuration; startup fails without
 it, and the template and Worker example set `readOnly: false`. Each named pool
 inherits that value unless it sets its own. A writable endpoint (`false`) allows

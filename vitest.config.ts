@@ -69,6 +69,24 @@ async function clerkOrganizationWorker(backend: string) {
   };
 }
 
+// A separate native Worker: requests share no test-request I/O or promises.
+function authAdmissionWorker() {
+  return {
+    name: "auth-admission",
+    compatibilityDate: "2025-01-01",
+    compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
+    modules: true,
+    script: buildSync({
+      entryPoints: [fileURLToPath(new URL("./test/fixtures/auth-admission/index.ts", import.meta.url))],
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      conditions: ["workerd", "worker", "browser"],
+      write: false,
+    }).outputFiles[0]!.text,
+  };
+}
+
 export default defineConfig({
   test: {
     reporters: ["default", new CoverageReporter()],
@@ -126,14 +144,18 @@ export default defineConfig({
               // one-shot KV → D1 copy (test/kv-to-d1.test.ts).
               kvNamespaces: ["KV_COPY_SOURCE"],
               d1Databases: ["KV_COPY_TARGET"],
-              serviceBindings: { CLERK_ORGANIZATION: "clerk-organization" },
-              workers: [await clerkOrganizationWorker(inject("clerkBackendServer"))],
+              serviceBindings: { CLERK_ORGANIZATION: "clerk-organization", AUTH_ADMISSION: "auth-admission" },
+              workers: [await clerkOrganizationWorker(inject("clerkBackendServer")), authAdmissionWorker()],
             },
           })),
         ],
         test: {
           name: "workers",
-          globalSetup: ["./test/fixtures/oauth-http-server.ts", "./test/fixtures/clerk-backend-server.ts"],
+          globalSetup: [
+            "./test/fixtures/oauth-http-server.ts",
+            "./test/fixtures/clerk-backend-server.ts",
+            "./test/fixtures/auth-admission-server.ts",
+          ],
           include: TEST_INCLUDE,
           exclude: [...NODE_ONLY_EXCLUDE, "**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
         },

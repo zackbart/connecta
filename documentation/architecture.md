@@ -128,10 +128,21 @@ An admitted non-preflight `/mcp` request then takes five steps in
    `-32601`; anything else takes a permit then, so the header alone bypasses
    nothing. Auth and classification share the configured request lifetime.
    Other requests take one permit from the deployment-wide pool, taken before
-   auth so an unauthenticated flood costs a permit rather than a Clerk lookup,
+   auth so an unauthenticated flood costs a request permit before an auth lookup,
    and held until the response _body_ completes, the caller leaves, or its
    configured lifetime ends, not until the handler returns.
-2. **Authorize.** `/agent/<pool>` consults only the built-in `cta_` adapter
+2. **Authorize.** Every adapter invocation passes the independent fixed
+   16-authorization bound in `src/auth-admission.ts`, including header-named
+   listens, SDK-owned auth, agent-token storage, and operator/connection routes
+   outside the MCP pool. Only a plain counter is shared per loaded core;
+   there is no queue or shared promise. Saturation returns retryable 503
+   `authentication_busy` with `Retry-After: 1` and a checked payload-free log.
+   Each request releases exactly once in `finally` or its own abort handler
+   (workerd can discard the awaiting continuation on disconnect). No other
+   request touches its signal or I/O. No current adapter exposes a cheap,
+   fully authenticated cache hit, so the entire adapter invocation counts.
+   [Authentication capacity](./auth.md#authentication-capacity-and-ingress-limiting)
+   lists exemptions and ingress requirements. `/agent/<pool>` consults only the built-in `cta_` adapter
    (`authorizeAgent`), never with the runtime context that carries
    `ctx.access`. Human endpoints refuse a `cta_` token before recognition or
    storage, and never ask the `cta_` adapter. A provider's

@@ -194,8 +194,10 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
       opts.config.auth,
       "OAuth callback",
       context.runtimeContext,
+      opts.config.logger,
     );
     if (!browserIdentity.ok) {
+      if (browserIdentity.response.status === 503) return browserIdentity.response;
       if (browserIdentity.response.status === 401 && authorizationCredential(context.request).kind !== "absent")
         return browserIdentity.response;
       // A Clerk browser handshake refreshes its session and returns to this
