@@ -899,9 +899,9 @@ describe("writing files", () => {
     };
     const connector = connection();
     await expect(call(connector, "create_file", { name: "a.txt", content: "same bytes" })).rejects.toMatchObject({
-      code: "connector_call_failed",
+      code: "auth_required",
       retryable: false,
-      message: expect.stringContaining("the write was not sent again, so whether it was applied is unknown"),
+      writeOutcome: "unknown",
     });
     expect(calls.map((_, index) => line(index))).toEqual(["POST upload/files"]);
     expect(tokenCalls).toBe(1);

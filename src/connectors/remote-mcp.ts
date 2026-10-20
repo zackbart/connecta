@@ -1468,6 +1468,15 @@ function resendRefused(dispatch: CallDispatch): ConnectorCallError {
   });
 }
 
+/** Lost tracking cannot prove whether an earlier message already sent a write. */
+function missingDispatch(): ConnectorCallError {
+  return new ConnectorCallError(
+    "connector_call_failed",
+    "The downstream call lost its dispatch record and cannot be proven read-only. It was not sent; whether an earlier write took effect is unknown. Check the target before repeating it.",
+    { retryable: false, writeOutcome: "unknown" },
+  );
+}
+
 interface ConnectionState {
   /**
    * The request scope's lifetime, closed once, by closeScope, and never
@@ -1493,6 +1502,8 @@ interface ConnectionState {
    * `cacheToolMetadata` reach-through.
    */
   toolDefinitions: Map<string, Tool>;
+  /** Active logical calls prove read safety if a message loses its dispatch. */
+  dispatches: Map<CallDispatch, string>;
   /**
    * The connect in flight, published before any of it runs so every call
    * that arrives meanwhile joins it rather than starting a second. Completed
@@ -2234,6 +2245,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         client: null,
         transport: null,
         toolDefinitions: new Map(),
+        dispatches: new Map(),
         connecting: null,
         authRequired: false,
         provider: null,
@@ -2318,7 +2330,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
-    // This transport's writes on the wire, by JSON-RPC id, while each is sent.
+    // Missing records never acquire a fresh write attempt. Only active calls
+    // for this exact tool, all classified read, can prove a recordless message
+    // safe. Catalog hints alone cannot prove the invocation's served verdict.
+    const untrackedRead = (params: unknown): boolean => {
+      if (!skillObject(params) || typeof params.name !== "string") return false;
+      let read = false;
+      for (const [dispatch, name] of entryFor(ctx).dispatches) {
+        if (name !== params.name) continue;
+        if (dispatch.write) return false;
+        read = true;
+      }
+      return read;
+    };
+    // This transport's calls on the wire, by JSON-RPC id, while each is sent.
     const flights = new Map<string | number, CallDispatch>();
     const trackedFetch: FetchLike = async (input, init) => {
       let rpc: unknown;
@@ -2339,13 +2364,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
           ? flights.get(toolCall.id)
           : undefined;
-      if (flight?.sent) throw resendRefused(flight);
-      if (flight) flight.sent = true;
+      if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
+      if (flight?.write) {
+        if (flight.sent) throw resendRefused(flight);
+        flight.sent = true;
+      }
       trackSentRequest(ctx, input, init);
       const response = writeContinuation
         ? await fetch(input, { ...init, redirect: "manual" })
         : await fetch(input, init);
-      if (flight) {
+      if (flight?.write) {
         flight.responded = true;
         if (response.status === 401) flight.unauthorized = true;
         else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
@@ -2412,7 +2440,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         ),
       });
       boundOAuthFlows(ctx, transport, url, [signal, ctx.signal]);
-      return sendingEachWriteOnce(transport, flights);
+      return sendingEachWriteOnce(transport, flights, untrackedRead);
     }
     const headers =
       opts.auth?.type === "headers"
@@ -2426,18 +2454,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         fetch: guardedFetch,
       }),
       flights,
+      untrackedRead,
     );
   };
 
   /**
    * Admit a write's call to the wire once, whatever JSON-RPC id a later
    * message for it carries, and show `trackedFetch` which call each message
-   * belongs to while it is sent. A `tools/call` that `callTool` did not
-   * dispatch is a write (INV-1).
+   * belongs to while it is sent. A missing record fails closed unless active
+   * calls prove the tool is read (INV-1, INV-9).
    */
   const sendingEachWriteOnce = (
     transport: StreamableHTTPClientTransport,
     flights: Map<string | number, CallDispatch>,
+    untrackedRead: (params: unknown) => boolean,
   ): StreamableHTTPClientTransport => {
     const send = transport.send.bind(transport);
     transport.send = async (message, options) => {
@@ -2445,9 +2475,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         !Array.isArray(message) && "method" in message && message.method === "tools/call" && "id" in message
           ? message
           : undefined;
-      const dispatch = request ? (dispatchOf(request.params) ?? newDispatch(true)) : undefined;
-      if (!request || !dispatch?.write) return await send(message, options);
-      if (dispatch.sent) throw resendRefused(dispatch);
+      if (!request) return await send(message, options);
+      const dispatch = dispatchOf(request.params);
+      if (!dispatch) {
+        if (!untrackedRead(request.params)) throw missingDispatch();
+        return await send(message, options);
+      }
+      if (dispatch.write && dispatch.sent) throw resendRefused(dispatch);
       flights.set(request.id, dispatch);
       try {
         return await send(message, options);
@@ -3205,6 +3239,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             ? "write"
             : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
       const dispatch = newDispatch(write);
+      state.dispatches.set(dispatch, name);
       try {
         const toolDefinition = definition
           ? {
@@ -3296,6 +3331,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               )
             : unknownOutcome({ title: `connector "${id}"` }, failure, dispatch.responded);
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
+      } finally {
+        state.dispatches.delete(dispatch);
       }
     },
 

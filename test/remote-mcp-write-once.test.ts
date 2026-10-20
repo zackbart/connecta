@@ -1,4 +1,4 @@
-import { Client } from "@modelcontextprotocol/client";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { attachCallClassification } from "../src/call-classification.js";
@@ -385,6 +385,101 @@ describe("remote MCP writes and SDK recoveries under a new JSON-RPC id", () => {
     });
     expect(flow.sent("list_items")).toHaveLength(2);
     expect(flow.applied).toEqual(["list_items", "list_items"]);
+  });
+
+  it.each([false, true])(
+    "INV-1 INV-9: losing the dispatch Symbol refuses writes and permits reads (after a send: %s)",
+    async (resend) => {
+      vi.spyOn(Client.prototype, "callTool").mockImplementation(async function (this: Client, params, options) {
+        if (resend) await this.request({ method: "tools/call", params }, options);
+        const cloned = structuredClone(params);
+        expect(Object.getOwnPropertySymbols(params)).toHaveLength(1);
+        expect(Object.getOwnPropertySymbols(cloned)).toHaveLength(0);
+        return (await this.request({ method: "tools/call", params: cloned }, options)) as never;
+      });
+      const flow = setup();
+      const write = await flow.outcome("create_item", { id: 1 });
+      expect(write.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(write.error!.message).toContain("lost its dispatch record");
+      expect(flow.sent("create_item")).toHaveLength(resend ? 1 : 0);
+      expect(flow.applied).toEqual(resend ? ["create_item 1"] : []);
+
+      expect((await flow.outcome("list_items")).error).toBeUndefined();
+      expect(flow.sent("list_items")).toHaveLength(resend ? 2 : 1);
+    },
+  );
+
+  it("INV-9: tracked fetch refuses a write whose transport lost its JSON-RPC dispatch mapping", async () => {
+    const send = StreamableHTTPClientTransport.prototype.send;
+    vi.spyOn(StreamableHTTPClientTransport.prototype, "send").mockImplementation(function (
+      this: StreamableHTTPClientTransport,
+      message,
+      options,
+    ) {
+      const changed =
+        !Array.isArray(message) && "method" in message && message.method === "tools/call" && "id" in message
+          ? { ...message, id: `${message.id}-lost` }
+          : message;
+      return send.call(this, changed, options);
+    });
+    const flow = setup();
+    const write = await flow.outcome("create_item", { id: 1 });
+    expect(write.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect(write.error!.message).toContain("lost its dispatch record");
+    expect(flow.sent("create_item")).toHaveLength(0);
+    expect(flow.applied).toEqual([]);
+  });
+
+  it("INV-1 INV-9: a recordless call cannot use catalog read hints to overrule its served write classification", async () => {
+    vi.spyOn(Client.prototype, "callTool").mockImplementation(async function (this: Client, params, options) {
+      return (await this.request({ method: "tools/call", params: structuredClone(params) }, options)) as never;
+    });
+    const flow = setup();
+    const ctx = flow.context();
+    await flow.connector.listTools(ctx);
+    attachCallClassification(ctx, "write");
+    await expect(flow.connector.callTool("list_items", {}, ctx)).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(flow.sent("list_items")).toHaveLength(0);
+    // A direct unlisted call is not proven read either.
+    await expect(flow.connector.callTool("unlisted_tool", {}, flow.context())).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(flow.sent("unlisted_tool")).toHaveLength(0);
+  });
+
+  it("INV-1 INV-9: a concurrent read of the same tool cannot authorize a recordless write", async () => {
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = 0;
+    vi.spyOn(Client.prototype, "callTool").mockImplementation(async function (this: Client, params, options) {
+      if (++entered === 2) release();
+      await ready;
+      return (await this.request({ method: "tools/call", params: structuredClone(params) }, options)) as never;
+    });
+    const flow = setup();
+    const requestScope = {};
+    const write = { ...flow.context(), requestScope };
+    const read = { ...flow.context(), requestScope };
+    attachCallClassification(write, "write");
+    attachCallClassification(read, "read");
+    const results = await Promise.allSettled([
+      flow.connector.callTool("list_items", {}, write),
+      flow.connector.callTool("list_items", {}, read),
+    ]);
+    for (const result of results)
+      expect(result).toMatchObject({
+        status: "rejected",
+        reason: { code: "connector_call_failed", retryable: false, writeOutcome: "unknown" },
+      });
+    expect(flow.sent("list_items")).toHaveLength(0);
   });
 
   it("INV-9: whatever JSON-RPC id the SDK gives a second message for one write, it never leaves", async () => {

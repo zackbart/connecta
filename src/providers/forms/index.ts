@@ -1017,7 +1017,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             throw new ConnectorCallError(
               error.code,
               `${error.message} create_form makes a new form on every call: look for "${args["documentTitle"] ?? args["title"]}" in the user's Drive, or ask them, before creating it again.`,
-              { retryable: false, cause: error },
+              { retryable: false, ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}), cause: error },
             );
           }
           throw error;

@@ -1665,11 +1665,17 @@ compiling and configuring the real thing.
   copies it; `JSON.stringify` drops it), the transport's `send` refuses a
   second message for that call whatever its id, and the tracked fetch refuses
   a second request within one message (the SDK's resend after a 401 or a
-  step-up, a redirect hop) and fails a write answered with a redirect. A write
+  step-up, a redirect hop) and fails a write answered with a redirect. Both
+  layers refuse a missing record unless the active calls for that tool are
+  all reads; catalog hints cannot overrule a served write verdict. Tracking
+  loss gives a non-retryable unknown outcome, never a fresh write attempt. A write
   always gives the SDK a tool definition, so `callTool` never relists and
   resends it after a `HeaderMismatch` answer. `api()` OAuth
   (`src/auth/static-oauth.ts`), the Google Workspace client, Infisical, and the
-  hand-written providers' `sendingOnce` apply the same rules. Tests:
+  hand-written providers' `sendingOnce` apply the same rules. Google Workspace,
+  Infisical and the REST family consult the served classification before a
+  method fallback for replay or retryability decisions; the REST family also
+  honors a supplied vendor idempotency key. Tests:
   `test/remote-mcp-write-once.test.ts` (real SDK transport),
   `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each
   provider's `INV-9` tests.

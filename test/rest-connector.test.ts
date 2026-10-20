@@ -1,3 +1,4 @@
+import { attachCallClassification } from "../src/call-classification.js";
 // The shared REST connector (src/providers/_shared/rest/) over a synthetic
 // vendor: validation against the pinned index before transport, the reviewed
 // read/write split, one envelope, bounded reads, and auth dispatch. Stripe's
@@ -439,6 +440,26 @@ describe("restTools()", () => {
     );
     expect(sent).toHaveLength(1);
   });
+
+  it.each(["GET", "HEAD", "POST"])(
+    "INV-9: a served write-classified REST %s never advertises an ambiguous failure as retryable",
+    async (method) => {
+      respond = () => new Response(null, { status: 503 });
+      const call = ctx();
+      attachCallClassification(call, "write");
+      await expect(
+        connector({ failure: () => new ConnectorCallError("unavailable", "Unavailable") }).callTool(
+          "acme_api_read",
+          {
+            method,
+            path: method === "HEAD" ? "/v1/widgets/w_1" : method === "POST" ? "/v1/widgets/query" : "/v1/widgets",
+          },
+          call,
+        ),
+      ).rejects.toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(sent).toHaveLength(1);
+    },
+  );
 
   it("INV-9: dispatches a write once and maps its failure through the vendor", async () => {
     respond = () => Response.json({ message: "boom" }, { status: 500 });

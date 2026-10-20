@@ -1,3 +1,4 @@
+import { callClassification } from "../../call-classification.js";
 /** Infisical Universal Auth and a finite, reviewed REST secret-manager surface. */
 import { apiConnector as api, defined as compact, type ApiTool } from "../../connectors/api-connector.js";
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
@@ -131,8 +132,8 @@ export const infisical = defineProvider<InfisicalOptions>({
       };
     });
     const call = async (request: GuardedRequest, ctx: ConnectorContext): Promise<unknown> => {
-      // Every Infisical write is a POST, PATCH, or DELETE, and every GET a read.
-      const write = request.method !== "GET";
+      // The served verdict decides; direct requests fall back to the method.
+      const write = (callClassification(ctx) ?? (request.method === "GET" ? "read" : "write")) === "write";
       let responded = false;
       try {
         const attempt = (token: string) =>

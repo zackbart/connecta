@@ -1224,6 +1224,19 @@ classification decides; a direct call outside one uses the dispatched
 definition, a reviewed write verdict, or the tool's hints, and fails closed as
 a write.
 
+A remote MCP tool call that loses its internal dispatch record is refused
+before sending unless active calls for that tool prove it is a read. A
+write or an unproven call fails non-retryable with `writeOutcome: "unknown"`:
+tracking loss cannot establish whether an earlier message already sent it.
+
+Google Workspace and Infisical also use the invocation's served classification
+before considering the HTTP method. A write-classified GET is never replayed
+after a 401; a read-classified POST may replay once. Without a served verdict,
+these transports use GET as read and other methods as write. Google drops the
+rejected token for the next deliberate call and retains `auth_required` with
+`writeOutcome: "unknown"` and the operator handoff. Infisical renews the login
+for a later call and preserves any authorization verdict from that renewal.
+
 One preparation deadline covers initial epoch and grant reads, claim acquisition,
 dispatch preparation, and local joiners waiting for a grant commit. Cancellation
 before sending settles the local flight without awaiting cleanup storage. An

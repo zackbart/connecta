@@ -1,3 +1,4 @@
+import { attachCallClassification } from "../../call-classification.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorContext } from "../../types.js";
 import { CredentialVault } from "../../credentials.js";
@@ -269,6 +270,39 @@ describe("Infisical connector", () => {
     expect(list.url.pathname).toBe("/api/v1/projects");
     expect(list.url.searchParams.get("type")).toBe("secret-manager");
     expect(new Headers(list.init.headers).get("authorization")).toBe("Bearer tok");
+  });
+
+  it("INV-9: the served classification decides 401 replay before the Infisical request method", async () => {
+    let fetch = mockFetch(login(), json({}, 401), login(), json({ projects: [] }));
+    const write = context();
+    attachCallClassification(write, "write");
+    await expect(connector.callTool("list_projects", {}, write)).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === "GET")).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledTimes(3); // Initial login, one GET, recovery login.
+
+    fetch = mockFetch(login(), json({}, 401), login(), json({ secret: { secretKey: "API_KEY", version: 1 } }));
+    const read = context();
+    attachCallClassification(read, "read");
+    await expect(
+      connector.callTool(
+        "create_secret",
+        {
+          projectId: PROJECT_ID,
+          environment: "prod",
+          secretName: "API_KEY",
+          secretValue: "value",
+        },
+        read,
+      ),
+    ).resolves.toMatchObject({ secret: { key: "API_KEY" } });
+    const posts = fetch.mock.calls.filter(([input]) => !String(input).endsWith("/login"));
+    expect(posts).toHaveLength(2);
+    expect(posts[0]![1]?.method).toBe("POST");
+    expect(posts[1]![1]?.body).toEqual(posts[0]![1]?.body);
   });
 
   it("logs in again when a cached token is rejected", async () => {

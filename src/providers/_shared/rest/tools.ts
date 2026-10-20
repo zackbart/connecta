@@ -1,3 +1,4 @@
+import { callClassification } from "../../../call-classification.js";
 // Connecta's generic REST connector over one vendor's pinned operation index.
 //
 // `restTools(vendor)` returns four tools named `<vendor>_api_search`,
@@ -303,9 +304,12 @@ export async function callRest(
   // Safe to repeat: a read, or a write that carried the vendor's idempotency key.
   const header = vendor.idempotencyHeader?.toLowerCase();
   const repeatable =
-    call.method === "GET" ||
-    call.method === "HEAD" ||
-    (vendor.readPosts ?? []).some(([method, path]) => method === call.method && path === call.op.path) ||
+    (callClassification(ctx) ??
+      (call.method === "GET" ||
+      call.method === "HEAD" ||
+      (vendor.readPosts ?? []).some(([method, path]) => method === call.method && path === call.op.path)
+        ? "read"
+        : "write")) === "read" ||
     (header !== undefined && Object.keys(visibleHeaders).some((name) => name.toLowerCase() === header));
   const request: GuardedRequest = {
     method: call.method,

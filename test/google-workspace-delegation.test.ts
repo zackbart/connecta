@@ -1,3 +1,8 @@
+import { docs } from "../src/providers/docs/index.js";
+import { drive } from "../src/providers/drive/index.js";
+import { forms } from "../src/providers/forms/index.js";
+import { sheets } from "../src/providers/sheets/index.js";
+import { slides } from "../src/providers/slides/index.js";
 // Google Workspace domain-wide delegation, the layer every Workspace product
 // provider shares (src/providers/_shared/google/). Driven through gmail() because the
 // layer has no export of its own; the Gmail suite owns the tool surface.
@@ -1292,6 +1297,112 @@ describe("the in-memory token cache", () => {
   });
 });
 
+describe("Workspace served classification on unauthorized requests", () => {
+  it("INV-9: honors classification: { gmail: { list_labels: write } } for a GET answered 401", async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () => Response.json({ labels: [] }),
+    );
+    const connector = gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" });
+    const registry = makeRegistry([connector], { classification: { gmail: { list_labels: "write" } } });
+    const tools = createMetaTools(registry, "https://connecta.example");
+    const result = await tools.callDestructiveTool({ address: "gmail.list_labels", args: {} });
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: {
+        code: "auth_required",
+        retryable: false,
+        writeOutcome: "unknown",
+        reconciliationRequired: true,
+        nextAction: { tool: "authorize_connector", arguments: { connector: "gmail" } },
+      },
+    });
+    expect(apiCalls.map(({ method, authorization }) => ({ method, authorization }))).toEqual([
+      { method: "GET", authorization: "Bearer token-1" },
+    ]);
+    expect(tokenCalls).toHaveLength(1);
+    // A deliberate repeat is a new call and uses a fresh token.
+    expect((await tools.callDestructiveTool({ address: "gmail.list_labels", args: {} })).isError).toBeFalsy();
+    expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+  });
+
+  it.each([503, "reset"] as const)(
+    "INV-9: a write-classified Google GET's %s stays an unknown outcome",
+    async (answer) => {
+      apiReplies.push(() => {
+        if (answer === "reset") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+        return Response.json({ error: { code: 503 } }, { status: 503 });
+      });
+      const registry = makeRegistry(
+        [gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" })],
+        { classification: { gmail: { list_labels: "write" } } },
+      );
+      const result = await createMetaTools(registry, "https://connecta.example").callDestructiveTool({
+        address: "gmail.list_labels",
+        args: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "connector_call_failed", retryable: false },
+      });
+      expect(apiCalls).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    ["gmail", gmail, "create_draft", { body: "Draft text" }],
+    ["drive", drive, "create_folder", { name: "Example" }],
+    ["docs", docs, "create_document", { title: "Example" }],
+    ["forms", forms, "create_form", { title: "Example" }],
+    ["sheets", sheets, "create_spreadsheet", { title: "Example" }],
+    ["slides", slides, "create_presentation", { title: "Example" }],
+  ] as const)(
+    "INV-9: %s preserves the write's authorization verdict and unknown outcome through recovery advice",
+    async (_name, provider, tool, args) => {
+      apiReplies.push(() => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }));
+      const registry = makeRegistry([
+        provider("workspace", { purpose: "Files", serviceAccount: account(), subject: "alice@example.com" }),
+      ]);
+      const result = await createMetaTools(registry, "https://connecta.example").callDestructiveTool({
+        address: `workspace.${tool}`,
+        args,
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: {
+          code: "auth_required",
+          retryable: false,
+          writeOutcome: "unknown",
+          reconciliationRequired: true,
+          nextAction: { tool: "authorize_connector", arguments: { connector: "workspace" } },
+        },
+      });
+      expect(apiCalls).toHaveLength(1);
+      expect(tokenCalls).toHaveLength(1);
+    },
+  );
+
+  it("INV-9: a served read-classified POST replays once after 401 with the same body", async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () => Response.json({ id: "draft-1", message: { id: "message-1", threadId: "thread-1" } }),
+    );
+    const connector = gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" });
+    const registry = makeRegistry([connector], { classification: { gmail: { create_draft: "read" } } });
+    const result = await createMetaTools(registry, "https://connecta.example").callTool({
+      address: "gmail.create_draft",
+      args: { body: "Draft text" },
+    });
+    expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+    expect(apiCalls.map(({ method, authorization }) => ({ method, authorization }))).toEqual([
+      { method: "POST", authorization: "Bearer token-1" },
+      { method: "POST", authorization: "Bearer token-2" },
+    ]);
+    expect(apiCalls[1]!.body).toEqual(apiCalls[0]!.body);
+    expect(tokenCalls).toHaveLength(2);
+  });
+});
+
 // --- Failures -----------------------------------------------------------------------
 
 describe("token refusals map to what fixes them, and never carry a secret", () => {
@@ -1875,8 +1986,7 @@ describe("the shared client reads bytes and text for the products that need them
       );
       const drive = client();
       const failure = await failing(drive.json(write, context()));
-      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message).toContain("the write was not sent again, so whether it was applied is unknown");
+      expect(failure).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
       expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "unauthorized" });
       expect(apiCalls).toHaveLength(1);
       expect(tokenCalls).toHaveLength(1);
@@ -2357,8 +2467,9 @@ describe("the shared client reads bytes and text for the products that need them
       const writeCall = context();
       if (classification) attachCallClassification(writeCall, classification);
       await expect(client().json(request, writeCall)).rejects.toMatchObject({
-        code: "connector_call_failed",
+        code: "auth_required",
         retryable: false,
+        writeOutcome: "unknown",
       });
       expect(apiCalls).toHaveLength(1);
     }

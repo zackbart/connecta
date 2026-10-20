@@ -1172,6 +1172,7 @@ function afterUnknownCreate(error: unknown, lookFor: string): unknown {
   }
   return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, {
     retryable: error.retryable,
+    ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
     cause: error,
   });
 }

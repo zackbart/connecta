@@ -678,7 +678,10 @@ async function sendWrite(
     if (ctx.signal?.aborted) throw error;
     const outcome = writeOutcome(error);
     if (outcome === "not-sent" || outcome === "refused") throw error;
-    throw uncertain(outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error)));
+    const message = outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error));
+    throw error instanceof ConnectorCallError && error.writeOutcome === "unknown"
+      ? new ConnectorCallError(error.code, message, { retryable: false, writeOutcome: "unknown" })
+      : uncertain(message);
   }
   if (reply.text.trim() === "") return {};
   try {

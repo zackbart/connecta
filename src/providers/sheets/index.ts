@@ -439,7 +439,11 @@ async function uncertainWrite<T>(advice: string, write: () => Promise<T>): Promi
     if (!(error instanceof ConnectorCallError) || !outcome?.dispatched || outcome.phase === "refused") {
       throw error;
     }
-    throw new ConnectorCallError(error.code, `${error.message} ${advice}`, { retryable: false, cause: error });
+    throw new ConnectorCallError(error.code, `${error.message} ${advice}`, {
+      retryable: false,
+      ...(error.writeOutcome ? { writeOutcome: error.writeOutcome } : {}),
+      cause: error,
+    });
   }
 }
 
