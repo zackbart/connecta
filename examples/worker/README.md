@@ -21,13 +21,14 @@ migrations, and secrets.
 
 ## Files
 
-| File                                                   | What it is                                                                                                                       |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`                                         | the Worker entrypoint — starts the configuration, under 30 lines                                                                 |
-| `src/connecta.config.ts`                               | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)`                                                   |
-| `alchemy.run.ts`                                       | the deployment: Worker, vars, secrets, D1, Worker Loader, and both Access applications                                           |
-| `wrangler.jsonc`                                       | local `wrangler dev` only, with a simulated Access identity; never used to deploy                                                |
-| `scripts/copy-kv-to-d1.mjs`, `kv-to-d1.wrangler.jsonc` | one-shot copy of a 0.28 Workers KV deployment's state into D1, run once and deleted ([Upgrading from 0.28](#upgrading-from-028)) |
+| File                                                   | What it is                                                                                                                                                        |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`                                         | the Worker entrypoint — starts the configuration, under 30 lines                                                                                                  |
+| `src/connecta.config.ts`                               | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)`                                                                                    |
+| `alchemy.run.ts`                                       | the deployment: Worker, vars, secrets, D1, Worker Loader, and both Access applications                                                                            |
+| `wrangler.jsonc`                                       | local `wrangler dev` only, with a simulated Access identity; never used to deploy                                                                                 |
+| `gitignore`                                            | the copied deployment's `.gitignore`, shipped under this name because npm strips `.gitignore` ([Copied into its own repository](#copied-into-its-own-repository)) |
+| `scripts/copy-kv-to-d1.mjs`, `kv-to-d1.wrangler.jsonc` | one-shot copy of a 0.28 Workers KV deployment's state into D1, run once and deleted ([Upgrading from 0.28](#upgrading-from-028))                                  |
 
 Keep `enable_request_signal` in `alchemy.run.ts` and `wrangler.jsonc`. On Workers it lets a live
 response's client disconnect abort its request, so connecta cancels the stream
@@ -95,18 +96,24 @@ Worker-level Access application keeps covering it and `ctx.access` keeps
 arriving.
 
 `PUBLIC_URL` is `Cloudflare.Worker.URL`: the Worker's first custom domain if it
-has one, otherwise its `workers.dev` URL. Add a custom domain with the Worker's
-`domain` property, for example `domain: "connecta.example.com"`; the agent
-bypass follows `PUBLIC_URL` to that hostname on the next deploy. Agents then
-use the custom domain, and `/agent/*` on the `workers.dev` hostname stays
-behind Access.
+has one, otherwise its `workers.dev` URL. The verified deployment uses the
+`workers.dev` URL. A custom domain, set with the Worker's `domain` property,
+for example `domain: "connecta.example.com"`, has not been verified with
+connecta: the agent bypass is expected to follow `PUBLIC_URL` to that hostname
+on the next deploy, leaving `/agent/*` on the `workers.dev` hostname behind
+Access. Before agents use a custom domain, run every check in
+[Verify after deploying](#verify-after-deploying) against the custom hostname,
+and confirm that `/agent/ci` on the `workers.dev` hostname now gets Access's
+refusal.
 
 ### Secrets and state
 
 - **Declare every secret in `alchemy.run.ts`.** Each deploy replaces the
   Worker's whole binding set, so a secret set any other way, for example with
   `cf workers secrets put`, is deleted by the next deploy.
-- **Never commit `.alchemy/` or `.env`.** Add both to `.gitignore`. Alchemy's
+- **Never commit `.alchemy/` or `.env`.** A copied deployment gets both in
+  `.gitignore` from the example's `gitignore` file, renamed as in
+  [Copied into its own repository](#copied-into-its-own-repository). Alchemy's
   local state under `.alchemy/state/` records the Worker's bindings, including
   the plaintext value of every secret such as `CREDENTIAL_ENCRYPTION_KEY`.
   Protect it like the secrets themselves and back it up securely. Alchemy also
@@ -295,9 +302,26 @@ first with a D1 export.
 
 Inside the connecta repository, `pnpm install` at the root provides every
 dependency this example imports, and `npx alchemy` run from `examples/worker`
-resolves the root's Alchemy. A copy with its own `package.json` installs
-Connecta, the separately installed `@cloudflare/codemode` peer, and the
-deployment tooling:
+resolves the root's Alchemy. A separate deployment starts from the example in
+the published package. npm strips `.gitignore` files from packages, so the
+example ships its ignore rules as `gitignore`; rename it before the first
+`git add`, or `.alchemy/` local state with plaintext secret values, `.env`, and
+`.dev.vars` are committed:
+
+```sh
+npm pack @zackbart/connecta@<version>
+mkdir connecta-worker
+tar -xzf zackbart-connecta-<version>.tgz -C connecta-worker --strip-components=3 package/examples/worker
+rm zackbart-connecta-<version>.tgz
+cd connecta-worker
+mv gitignore .gitignore
+git init
+```
+
+The renamed `.gitignore` excludes `.alchemy/`, `.env` and `.env.*`, `.dev.vars`
+and `.dev.vars.*`, `.wrangler/`, and `node_modules/`; add any other local
+secret file to it. Then install Connecta, the separately installed
+`@cloudflare/codemode` peer, and the deployment tooling:
 
 ```sh
 npm install --save-exact @zackbart/connecta@<version>
@@ -307,9 +331,8 @@ npm install --save-dev wrangler @cloudflare/workers-types typescript @types/node
 npm ls effect   # one resolved copy
 ```
 
-`wrangler` serves only `wrangler dev` and `scripts/copy-kv-to-d1.mjs`. Add
-`.alchemy/`, `.env`, `.dev.vars`, `.wrangler/`, and `node_modules/` to the
-copy's `.gitignore`. A `tsconfig.json` like the following lets `tsc --noEmit`
+`wrangler` serves only `wrangler dev` and `scripts/copy-kv-to-d1.mjs`. A
+`tsconfig.json` like the following lets `tsc --noEmit`
 resolve `D1Database`, `WorkerLoader`, and `ExecutionContext`, and checks the
 stack:
 

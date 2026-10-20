@@ -59,7 +59,9 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
   value supplied through the environment or an uncommitted `.env`. Each deploy
   deletes secrets set any other way. Never commit credential values, `.env`,
   `.alchemy/` (local state holds secret values in plaintext), Access
-  service-token secrets, or `CREDENTIAL_ENCRYPTION_KEY`.
+  service-token secrets, or `CREDENTIAL_ENCRYPTION_KEY`. Keep the
+  `.gitignore` renamed from the example's `gitignore`; if it is missing,
+  restore it before any `git add`.
 - Keep `Alchemy.RemovalPolicy.retain()` on the D1 database and any R2 bucket,
   so `alchemy destroy` never deletes connecta's state.
 - All state lives in the one D1 database bound as `CONNECTA_DB`, through

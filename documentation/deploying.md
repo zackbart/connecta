@@ -62,7 +62,10 @@ of them. Install `alchemy`, `effect`, and `@effect/platform-node` at the exact
 versions the example names, with `effect` matching Connecta's own pin. When
 copying it into a separate repository, follow
 [the separate-project installation](../examples/worker/README.md#copied-into-its-own-repository)
-and pin Connecta's exact version. The optional `@cloudflare/codemode` peer
+and pin Connecta's exact version. npm strips `.gitignore` from the package,
+so the example ships its ignore rules as `gitignore`: rename it to
+`.gitignore` in the copy before the first `git add`, so `.alchemy/`, `.env`,
+`.dev.vars`, `.wrangler/`, and `node_modules/` stay uncommitted. The optional `@cloudflare/codemode` peer
 must be installed for the Worker executor. `wrangler.jsonc` serves only
 `wrangler dev`, because `alchemy dev` does not supply `ctx.access` to this
 Worker. A Worker already deployed with Wrangler moves once by

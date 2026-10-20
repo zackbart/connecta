@@ -1,7 +1,8 @@
 // Node-only: walks the template and example trees and runs the Node template's
 // configuration, which opens a SQLite file and a QuickJS pool.
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { devNull, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -128,6 +129,42 @@ describe("deployment shapes", () => {
       expect(readme).toContain(pin);
     }
     expect(readme).toContain("npx alchemy deploy --stage production");
+  });
+
+  it("keeps a copied Worker deployment's local state and secrets out of git", () => {
+    // npm strips .gitignore from packages, so the example ships `gitignore`
+    // and its README renames it in the copy. scripts/check-package.mjs repeats
+    // this against the packed tarball.
+    expect(readdirSync(WORKER)).not.toContain(".gitignore");
+    expect(readWorker("README.md")).toContain("mv gitignore .gitignore");
+    const copy = mkdtempSync(join(tmpdir(), "connecta-worker-copy-"));
+    try {
+      cpSync(WORKER, copy, { recursive: true });
+      renameSync(join(copy, "gitignore"), join(copy, ".gitignore"));
+      execFileSync("git", ["init", "--quiet"], { cwd: copy });
+      const secrets = [
+        ".alchemy/state/production/connecta.json",
+        ".env",
+        ".env.production",
+        ".dev.vars",
+        ".dev.vars.production",
+        ".wrangler/state/d1.sqlite",
+        "node_modules/alchemy/package.json",
+      ];
+      for (const path of secrets) {
+        mkdirSync(dirname(join(copy, path)), { recursive: true });
+        writeFileSync(join(copy, path), "secret\n");
+      }
+      const untracked = execFileSync(
+        "git",
+        ["-c", `core.excludesFile=${devNull}`, "ls-files", "--others", "--exclude-standard"],
+        { cwd: copy, encoding: "utf8" },
+      ).split("\n");
+      expect(secrets.filter((path) => untracked.includes(path))).toEqual([]);
+      expect(untracked).toEqual(expect.arrayContaining([".gitignore", "alchemy.run.ts", "src/index.ts"]));
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
   });
 
   it("ships one Node deployment that is also its own container", () => {

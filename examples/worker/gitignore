@@ -1,0 +1,10 @@
+# Rename this file to .gitignore in a copied deployment, before the first
+# `git add`: npm strips .gitignore files from published packages.
+# Alchemy local state records deployed secret values in plaintext.
+.alchemy/
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+.wrangler/
+node_modules/

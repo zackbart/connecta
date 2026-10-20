@@ -595,6 +595,13 @@ development stays on `wrangler dev` and its `access.dev` identity. D1 needs
 state. Not verified: `Cloudflare.state()` remote state, custom domains, and
 taking over a Worker first deployed with Wrangler.
 
+npm strips `.gitignore` from the package, so the copied Worker example's
+ignore rules ship as `examples/worker/gitignore`, renamed by the README's copy
+step. `test/deployment-shapes.node.test.ts` checks a copy of the source tree,
+and `scripts/check-package.mjs` extracts the packed example with the README's
+`tar` command; both confirm git leaves `.alchemy/`, `.env*`, `.dev.vars*`,
+`.wrangler/`, and `node_modules/` untracked.
+
 ## Storage, credentials, and connectors
 
 A deployment has one store. On Workers it is one D1 database
