@@ -6,6 +6,7 @@ import { memoryStorage } from "../../src/storage/memory.js";
 import type { Executor } from "../../src/types.js";
 import { createTestConnecta, silentLogger } from "../helpers.js";
 import { mcpRpc, readJsonRpc } from "./http.js";
+import { deferred } from "./misc.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const approvalId = "22222222-2222-4222-8222-222222222222";
@@ -231,9 +232,11 @@ export async function checkInfisicalRecovery(testCase: typeof infisicalRecoveryC
     const programRefusal = failure === "refusal" && executor !== undefined;
     const { deployment } = await setup(executor, [witness], programRefusal, 100);
     const dispatched: RequestInit[] = [];
+    let onDispatch = () => {};
     vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>(async (input, init) => {
       if (String(input).endsWith("/login")) return Response.json({ accessToken: "synthetic-access-token-12345", expiresIn: 3600 });
       dispatched.push(init!);
+      onDispatch();
       return await new Promise<Response>((_resolve, reject) => {
         const signal = init!.signal!;
         if (signal.aborted) reject(signal.reason);
@@ -256,12 +259,30 @@ export async function checkInfisicalRecovery(testCase: typeof infisicalRecoveryC
       expect(typed.uncertainCall?.args ?? typed.nextAction?.arguments.args).toEqual(testCase.publicArgs);
       expect(JSON.stringify(error)).not.toContain(recoveryMarker);
     };
+    // The 100 ms deadline also covers catalog resolution and the login exchange.
+    // Expire it only once the write is waiting downstream, so a slow host cannot
+    // end the call before dispatch. A refusal never dispatches or advances it.
+    const expireAfterDispatch = async (request: () => Promise<Response>) => {
+      const dispatch = deferred<void>();
+      onDispatch = () => dispatch.resolve();
+      const rpc = request().then(readJsonRpc);
+      if (failure === "timeout") {
+        let settled = false;
+        void rpc.then(() => (settled = true), () => (settled = true));
+        await dispatch.promise;
+        await vi.advanceTimersByTimeAsync(99);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      return await rpc;
+    };
+    vi.useFakeTimers();
     try {
       if (executor) {
         for (const caught of [true, false]) {
           const before = dispatched.length;
           const call = `await connecta.call("infisical.${testCase.tool}", ${JSON.stringify(testCase.args)})`;
-          const rpc = await readJsonRpc(await mcpRpc(deployment, "tools/call", {
+          const rpc = await expireAfterDispatch(() => mcpRpc(deployment, "tools/call", {
             name: "execute_code", arguments: { code: caught ? `async () => {
               try { ${call}; } catch (error) { await connecta.call("ordinary.witness", { error: error.details }); return "caught"; }
             }` : `async () => ${call}` },
@@ -285,7 +306,7 @@ export async function checkInfisicalRecovery(testCase: typeof infisicalRecoveryC
       } else {
         for (const resultMode of ["mcp", "value"] as const) {
           const before = dispatched.length;
-          const rpc = await readJsonRpc(await mcpRpc(deployment, "tools/call", {
+          const rpc = await expireAfterDispatch(() => mcpRpc(deployment, "tools/call", {
             name: failure === "refusal" ? "call_tool" : "call_destructive_tool",
             arguments: { address: `infisical.${testCase.tool}`, args: testCase.args, timeoutMs: 100, resultMode },
           }));
@@ -304,7 +325,10 @@ export async function checkInfisicalRecovery(testCase: typeof infisicalRecoveryC
         expect(JSON.parse(String(request.body))).toEqual(expected);
       }
       expect(JSON.stringify(testCase.args)).toContain(recoveryMarker);
-    } finally { await deployment.close(); }
+    } finally {
+      vi.useRealTimers();
+      await deployment.close();
+    }
   }
 }
 
