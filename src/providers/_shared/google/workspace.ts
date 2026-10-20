@@ -54,6 +54,7 @@
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
+import { callClassification } from "../../../call-classification.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../../errors.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
@@ -315,13 +316,23 @@ export function googleReasonsOf(error: unknown): readonly string[] {
  * - `refused`: Google answered with a 4xx, or a read or idempotent write
  *   with a 5xx. Nothing to repeat blindly: a 4xx applied nothing, and a
  *   repeated read or idempotent write is harmless.
+ * - `unauthorized`: Google answered a write with 401, and it was not sent
+ *   again (INV-9). A server may act on a request before it rejects the
+ *   token, so the outcome is unknown.
  */
 interface GoogleOutcome {
   /** Whether the request left connecta for Google's API. */
   readonly dispatched: boolean;
   /** The HTTP status Google answered with, when one arrived. */
   readonly status?: number;
-  readonly phase: "before-send" | "awaiting-response" | "reading-body" | "redirected" | "server-error" | "refused";
+  readonly phase:
+    | "before-send"
+    | "awaiting-response"
+    | "reading-body"
+    | "redirected"
+    | "server-error"
+    | "refused"
+    | "unauthorized";
 }
 
 /** What one attempt saw, as it happened. */
@@ -558,12 +569,14 @@ interface GoogleReadOptions extends GoogleRequestOptions {
 /**
  * A product's request path to its API, as the calling user. Every method
  * resolves the subject once per call context, sends the cached or a freshly
- * minted token, maps Google's failures by what the caller does next, and
- * answers a 401 with one fresh token and one replay — safe for a write too,
- * since a 401 is a refusal before the request did anything. Because of that
- * replay a `rawBody` must be sendable twice: a `ReadableStream` is refused
- * with a `TypeError` before any request; strings, bytes, Blobs, FormData, and
- * URLSearchParams are fine.
+ * minted token, and maps Google's failures by what the caller does next. A
+ * 401 drops the token it refused. A read (a GET, or any request a call the
+ * registry classified as a read sends) is then sent once more with a fresh
+ * one; a write never is (INV-9), since a server may act on a request before
+ * it rejects the token, so its outcome is unknown and the next call mints
+ * the fresh token. Because of the read's replay a `rawBody` must be sendable
+ * twice: a `ReadableStream` is refused with a `TypeError` before any request;
+ * strings, bytes, Blobs, FormData, and URLSearchParams are fine.
  */
 export interface GoogleWorkspaceClient {
   /** One JSON request; the parsed body, `undefined` for an empty one. */
@@ -810,9 +823,9 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     read: (response: ReadableResponse) => Promise<T>,
     requestOptions: GoogleRequestOptions = {},
   ): Promise<T> {
-    // A 401 is answered by sending the same request again, so its body must
-    // survive being sent twice. A stream is consumed by the first send; it
-    // is a provider's wiring mistake, refused before anything leaves.
+    // A read's 401 is answered by sending the same request again, so its body
+    // must survive being sent twice. A stream is consumed by the first send;
+    // it is a provider's wiring mistake, refused before anything leaves.
     if (typeof ReadableStream !== "undefined" && request.rawBody instanceof ReadableStream) {
       throw outcome(
         new TypeError(
@@ -862,11 +875,12 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
           return await read(response);
         });
       } catch (error) {
-        // Every 401 Google sent earns the refresh and the one replay, whether
-        // its body was read or failed the transport's checks first: what the
-        // status said about the token does not depend on the body.
-        // A caller that has left gets neither: the 401 it saw is reported as
-        // it was, and no new token is minted for a request nobody awaits.
+        // Every 401 Google sent drops the token it refused, and earns a read
+        // the one replay, whether its body was read or failed the transport's
+        // checks first: what the status said about the token does not depend
+        // on the body. A caller that has left gets neither: the 401 it saw is
+        // reported as it was, and no new token is minted for a request nobody
+        // awaits.
         const failed = error instanceof TokenRejected ? error.failure : error;
         const unauthorized = !ctx.signal?.aborted && (error instanceof TokenRejected || facts.status === 401);
         if (!unauthorized) throw settled(failed, facts, headed.method, ctx, requestOptions);
@@ -874,6 +888,19 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         await forgetDelegatedToken(delegated, token);
         if (attempt > 0 || ctx.signal?.aborted) {
           throw settled(failed, facts, headed.method, ctx, requestOptions);
+        }
+        // A write is never sent again (INV-9). The next call mints the fresh
+        // token, so a deliberate repeat finds it.
+        if (headed.method !== "GET" && callClassification(ctx) !== "read") {
+          throw outcome(
+            new ConnectorCallError(
+              "connector_call_failed",
+              `${provider} answered this write with HTTP 401. The rejected token is dropped for the next call, but ` +
+                "the write was not sent again, so whether it was applied is unknown. Re-read its target before repeating it.",
+              { retryable: false },
+            ),
+            { dispatched: true, status: 401, phase: "unauthorized" },
+          );
         }
       }
     }

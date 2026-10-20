@@ -35,6 +35,7 @@ import {
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
 import { sendingOnce } from "../_shared/write-outcome.js";
+import { unprojectedResults } from "../_shared/sensitive-fields.js";
 import { ConnectorCallError } from "../../errors.js";
 import { CONNECTA_VERSION } from "../../version.js";
 import type {
@@ -657,6 +658,15 @@ function planningCenterFailure(status: number, headers: Headers, payload: unknow
 
 type Call = (request: PlanningCenterRequest, ctx: ConnectorContext) => Promise<any>;
 
+/**
+ * Credentials Planning Center returns in ordinary bodies, withheld by name at
+ * any depth from every result: a webhook subscription's `authenticity_secret`
+ * (its delivery signing key, also in a rotate_secret or create reply) and
+ * the Services organization's `secret`. No tool argument or deployment
+ * option returns either; an operator reads them in Planning Center.
+ */
+const withheld = unprojectedResults("drop", ["authenticity_secret", "secret"]);
+
 function planningCenterCall(
   send: GuardedTransport,
   versions: Readonly<Record<PlanningCenterApp, string>>,
@@ -689,7 +699,7 @@ function planningCenterCall(
             { retryable: false },
           );
         }
-        return parsed.value;
+        return withheld(parsed.value);
       },
     );
   };
@@ -721,7 +731,8 @@ function idProperty(description: string): JsonSchema {
 
 const RAW_PROPERTY: JsonSchema = {
   type: "boolean",
-  description: "Return Planning Center's untouched JSON:API resources (and `included`) instead of the lean projection.",
+  description:
+    "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection.",
 };
 
 const OFFSET_PROPERTY: JsonSchema = {
@@ -1251,12 +1262,12 @@ function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<Planni
     {
       name: "pco_api_get",
       description:
-        "Call any Planning Center GET endpoint in any product and return its untouched JSON:API body. Prefer a named read; this one does not flatten or resolve includes.",
+        "Call any Planning Center GET endpoint in any product and return its JSON:API body, less withheld secrets. Prefer a named read; this one does not flatten or resolve includes.",
       annotations: READ,
       inputSchema: input({ path: HATCH_PATH_PROPERTY, query: QUERY_PROPERTY, version: VERSION_PROPERTY }, ["path"]),
       outputSchema: {
         type: "object",
-        properties: { result: { description: "Planning Center's untouched response body." } },
+        properties: { result: { description: "Planning Center's response body, less withheld secrets." } },
         required: ["result"],
       },
       handler: async (args: JsonRecord, ctx) => ({
@@ -1298,7 +1309,9 @@ function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<Planni
       ),
       outputSchema: {
         type: "object",
-        properties: { result: { description: "Planning Center's untouched response body, or null for 204." } },
+        properties: {
+          result: { description: "Planning Center's response body, less withheld secrets, or null for 204." },
+        },
         required: ["result"],
       },
       handler: async (args: JsonRecord, ctx) => ({
@@ -2753,7 +2766,7 @@ function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<Planni
     {
       name: "list_webhook_subscriptions",
       description:
-        "List the organization's webhook subscriptions: event name, URL, and active state. Never returns the signing secret; that needs pco_api_get.",
+        "List the organization's webhook subscriptions: event name, URL, and active state. No tool returns a subscription's signing secret.",
       annotations: READ,
       inputSchema: input({ perPage: perPageProperty(defaultPageSize), offset: OFFSET_PROPERTY }),
       outputSchema: listOutput(
@@ -2778,8 +2791,8 @@ function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<Planni
             ctx,
           ),
         );
-        // `authenticity_secret` verifies deliveries. A projection is the
-        // place it never appears, so this read has no `raw` mode.
+        // `authenticity_secret` verifies deliveries. The transport withholds
+        // it from every result, and this read has no `raw` mode either.
         return {
           subscriptions: resources(document["data"]).map((row) =>
             pick(row, ["name", "url", "active", "application_id", "created_at"]),

@@ -31,7 +31,8 @@ import { providerFixtures } from "./providers.generated.js";
 // The docs correctness pass corrects Overflow, Planning Center, Sheets, and Slides guide claims.
 // Agents no longer see a Workspace connector in an ownerless pool, so its guide stops saying they fail there.
 // Decision 0009 A.2: CCB and Tithe.ly guides say whether raw rows and hatches drop sensitive fields, and
-// the CCB, Tithe.ly, and Breeze hatch descriptions stop calling their results untouched.
+// the CCB, Tithe.ly, and Breeze hatch descriptions stop calling their results untouched. Planning Center's
+// guide and descriptions say its webhook signing and organization secrets never come back.
 // Providers added after the migration are covered by their own contract tests.
 describe.each(
   providerFixtures.filter(

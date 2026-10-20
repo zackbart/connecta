@@ -893,6 +893,14 @@ describe("api() oauth replay is for reads only", () => {
         return (await ctx.oauth!.fetch(`${API}/search`, { method: "POST", body: "{}" })).json();
       },
     },
+    {
+      name: "purge",
+      description: "Hints that contradict each other, which classify as a write",
+      annotations: { readOnlyHint: true, destructiveHint: true },
+      async handler(_args, ctx) {
+        return (await ctx.oauth!.fetch(`${API}/purge`, { method: "POST", body: "{}" })).json();
+      },
+    },
   ];
   const refreshes = (provider: Provider) =>
     provider.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token").length;
@@ -900,7 +908,8 @@ describe("api() oauth replay is for reads only", () => {
   it.each([
     ["post_note", "POST"],
     ["trigger", "GET"],
-  ])("INV-9: never resends %s, a write sent with %s, after a 401, and renews the grant", async (tool) => {
+    ["purge", "POST"],
+  ])("INV-1 INV-9: never resends %s, a write sent with %s, after a 401, and renews the grant", async (tool) => {
     const provider = fakeProvider();
     install(provider);
     const connector = ccb({ tools });
@@ -919,6 +928,55 @@ describe("api() oauth replay is for reads only", () => {
     expect(await connector.callTool(tool, {}, ctx())).toEqual({ owner: "alice" });
     expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1", "Bearer access-alice-2"]);
   });
+
+  it.each(["dead grant", "token endpoint outage", "token endpoint unreachable", "operator disconnect"] as const)(
+    "INV-9: a write's 401 stays an unknown outcome, never retryable, when recovery meets a %s",
+    async (recovery) => {
+      const provider = fakeProvider();
+      const connector = ccb({ tools });
+      const registry = makeRegistry([connector]);
+      const ctx = () => registry.contextFor("ccb", BASE);
+      install(provider);
+      await authorize(connector, ctx, provider);
+      provider.expireAccess();
+      if (recovery === "dead grant") provider.control.refresh = "dead";
+      if (recovery === "token endpoint outage") provider.control.refresh = "outage";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+          if (recovery === "token endpoint unreachable" && String(input) === TOKEN)
+            throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+          const response = await provider.fetchStub(input, init);
+          // The operator disconnects while the write's 401 is on its way back.
+          if (recovery === "operator disconnect" && String(input).startsWith(API))
+            await connector.disconnectAuth!(ctx());
+          return response;
+        }),
+      );
+
+      const mt = createMetaTools(registry, BASE);
+      const { error } = JSON.parse((await mt.callDestructiveTool({ address: "ccb.post_note" })).content[0]!.text) as {
+        error: { code: string; retryable: boolean; message: string };
+      };
+      if (recovery !== "operator disconnect") {
+        // An authorization verdict keeps its handoff, and a dispatched write's is never retryable.
+        expect(error).toMatchObject({
+          code: "downstream_oauth_required",
+          retryable: false,
+          reconciliationRequired: true,
+          nextAction: { tool: "authorize_connector" },
+        });
+      } else {
+        expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+        // The reset fenced the grant mid-refresh: no verdict, and nothing to retry.
+        expect(error.message).toBe(
+          `Connector "ccb"'s API answered this write with HTTP 401. Renewing the credential failed (unavailable), ` +
+            "and the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
+        );
+      }
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+    },
+  );
 
   it("INV-9: refreshes and replays a read sent with POST once", async () => {
     const provider = fakeProvider();

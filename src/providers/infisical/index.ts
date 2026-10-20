@@ -7,7 +7,7 @@ import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../pro
 import type { ConnectorContext, JsonSchema } from "../../types.js";
 import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
-import { unknownOutcome } from "../_shared/write-outcome.js";
+import { unknownOutcome, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { skill } from "./skill.generated.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
@@ -158,12 +158,19 @@ export const infisical = defineProvider<InfisicalOptions>({
         } catch (error) {
           throw write ? unknownOutcome(INFISICAL, error, responded) : error;
         }
-        if (result.rejected) {
-          const refreshed = await tokens.token(ctx, token);
-          // A 401 can arrive after a write reached downstream code. Prepare a
-          // fresh token for an explicit invocation, but never replay this write.
-          if (!write) result = await attempt(refreshed);
+        if (result.rejected && write) {
+          // A 401 can arrive after a write reached downstream code. Log in
+          // again so an explicit repeat finds a fresh token, but never replay
+          // this write, nor call it retryable if the login fails.
+          let renewal: unknown;
+          try {
+            await tokens.token(ctx, token);
+          } catch (error) {
+            renewal = error;
+          }
+          throw unsentAfterUnauthorized("Infisical", renewal);
         }
+        if (result.rejected) result = await attempt(await tokens.token(ctx, token));
         // A write's 5xx may follow the change it reports as failed.
         if (result.error) throw write ? unknownOutcome(INFISICAL, result.error, true) : result.error;
         return result.value;

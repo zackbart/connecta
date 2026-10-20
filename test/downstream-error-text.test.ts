@@ -10,6 +10,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { attachCallClassification } from "../src/call-classification.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CatalogService } from "../src/catalog-service.js";
@@ -222,6 +223,16 @@ const echoingRefusal = (status: number, error?: string) => (body: string) => {
   return new Response(text, { status, headers: { "content-type": "application/json" } });
 };
 
+/**
+ * A call's context as an invocation of a read builds it: these suites call
+ * `read` directly, and a remote MCP call outside an invocation with no
+ * definition to go on is a write (INV-1).
+ */
+function readContext(context: ConnectorContext): ConnectorContext {
+  attachCallClassification(context, "read");
+  return context;
+}
+
 function scope(logger?: Logger): ConnectorContext {
   return {
     ...connectorContext(memoryStorage()),
@@ -402,12 +413,12 @@ describe("an OAuth flow on a live client", () => {
     vi.stubGlobal("fetch", fetchStub);
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation });
     const { logger, lines } = capturingLogger();
-    const context: ConnectorContext = {
+    const context = readContext({
       ...connectorContext(storage),
       logger,
       requestScope: {},
       allowAuthorization: true,
-    };
+    });
     expect(await connector.status!(context)).toMatchObject({ state: "ok" });
     const error = await connector.callTool("read", {}, context).then(
       () => null,
@@ -522,12 +533,12 @@ describe("an OAuth flow on a live client", () => {
     );
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: mode });
     const { logger, lines } = capturingLogger();
-    const context: ConnectorContext = {
+    const context = readContext({
       ...connectorContext(memoryStorage()),
       logger,
       requestScope: {},
       allowAuthorization: true,
-    };
+    });
     expect(await connector.status!(context)).toMatchObject({ state: "ok" });
     const first = connector.callTool("read", {}, context).then(
       () => null,
@@ -1618,7 +1629,7 @@ describe("SDK failure facts", () => {
   ] as const)("INV-6: SDK error %s uses facts and drops payload", async (original, code, retryable) => {
     vi.stubGlobal("fetch", downstream({ live: true }));
     const connector = remoteMcp("svc-timeout-503", { url: MCP_URL, versionNegotiation: "legacy" });
-    const context = scope();
+    const context = readContext(scope());
     try {
       await connector.status!(context);
       vi.spyOn(Client.prototype, "callTool").mockRejectedValueOnce(original);

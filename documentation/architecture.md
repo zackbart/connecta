@@ -1601,6 +1601,20 @@ compiling and configuring the real thing.
   registry's context (`test/derived-context.test.ts`). A deployment handler that
   spreads its context still loses this state; decision 0009 (B.1) replaces the
   tables with `Context` services.
+- **A write leaves once (INV-9).** `src/write-outcome.ts` owns the two rules
+  every transport applies to a write: `unknownOutcome` turns a retryable
+  failure that may follow the downstream acting (a 5xx, a gateway's 502 to
+  504, a lost connection or reply) into a non-retryable `connector_call_failed`,
+  and `unsentAfterUnauthorized` reports a write answered 401, which is never
+  resent whatever credential renewal meets. `remoteMcp()` keeps per-transport
+  write flights by JSON-RPC id, stops the SDK's post-refresh resend in its
+  tracked fetch, and classifies by the invocation's verdict
+  (`src/call-classification.ts`), falling back to `classifyTool`. `api()` OAuth
+  (`src/auth/static-oauth.ts`), the Google Workspace client, Infisical, and the
+  hand-written providers' `sendingOnce` apply the same rules. Tests:
+  `test/remote-mcp-write-once.test.ts` (real SDK transport),
+  `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each
+  provider's `INV-9` tests.
 - **Plain `ctx.fetch` is not confined to an origin, by design.** In an `api()`
   handler it is the global `fetch` plus sent-secret registration. It carries no
   grant: only `ctx.oauth.fetch` attaches the OAuth token, and only to

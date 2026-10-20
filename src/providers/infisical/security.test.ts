@@ -96,7 +96,13 @@ describe("Infisical security boundaries", () => {
           ok: false,
           dispatched: true,
           attempts: 1,
-          error: { code: "auth_required", retryable: false, reconciliationRequired: true },
+          error: {
+            code: "connector_call_failed",
+            retryable: false,
+            message: expect.stringContaining(
+              "The credential is renewed for the next call, but the write was not sent again",
+            ),
+          },
         });
         expect(dispatched).toHaveLength(1);
         expect(dispatched[0]!.method).toBe(method);

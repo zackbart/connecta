@@ -38,7 +38,7 @@ import {
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
 import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
-import { unknownOutcome } from "../write-outcome.js";
+import { unknownOutcome } from "../../../write-outcome.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
 import type { ValueSafety } from "./value-safety.js";

@@ -8,6 +8,8 @@ import { assertStaticToolNames } from "../tool-name.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
 import { callClassification } from "../call-classification.js";
+import { classifyTool } from "../tool-safety.js";
+import { unknownOutcome } from "../write-outcome.js";
 import { deriveContext } from "../derived-context.js";
 import type {
   Connector,
@@ -388,10 +390,9 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       // Derived, never mutated: the registry's context stays as it was, and
       // the call state beside it (caller, admission permit, recovery facts,
       // sent secrets) resolves through the handler's copy. The grant sends a
-      // write once: the registry's classification of this call decides,
-      // else the tool's own annotation.
-      const write =
-        (callClassification(ctx) ?? (tool.annotations.readOnlyHint === true ? "read" : "write")) === "write";
+      // write once: the registry's classification of this call decides, else
+      // the rule the registry would apply to the tool (INV-1).
+      const write = (callClassification(ctx) ?? classifyTool(tool)) === "write";
       const handlerCtx = deriveContext<ApiHandlerContext>(ctx, {
         fetch: sentSecretsFetch(ctx),
         ...(oauth ? { oauth: oauth.access(ctx, { write }) } : {}),
@@ -427,7 +428,10 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
             { step: "handler" },
           );
         }
-        throw unavailableCallError(error, undefined, undefined, ctx.signal);
+        // A handler is opaque: by the time its fetch failed it may already
+        // have sent the write, so no network code proves a write unsent.
+        const unreachable = unavailableCallError(error, undefined, undefined, ctx.signal);
+        throw write ? unknownOutcome({ title: opts.title ?? id }, unreachable, true) : unreachable;
       }
     },
   };

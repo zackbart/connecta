@@ -12,6 +12,7 @@ import { ConnectorCallError, msg } from "../errors.js";
 import { oauthPartitionFor, retainOAuthPartition, retainingOAuthPartition } from "../oauth-partition.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { describeFailure } from "../operator-record.js";
+import { unsentAfterUnauthorized } from "../write-outcome.js";
 import type { ConnectorContext, ConnectorStatus } from "../types.js";
 import {
   assertOAuthScope,
@@ -408,13 +409,27 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const disconnectedMessage = `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`;
 
   /**
-   * One request through the owner's grant. A 401 earns exactly one recovery:
-   * a token another request has already rotated in, or else one coordinated
-   * refresh. A read is then sent once more; a write never is (INV-9), since
-   * a server may act on a request before it rejects the token, and the call
-   * reports an unknown outcome with the grant renewed for the next call. A
-   * second 401 is `auth_required`, latched for the request scope so a
-   * program's later calls do not each spend a refresh on it.
+   * The token to send after `spent` drew a 401: one another request has
+   * already rotated in, or else one coordinated refresh.
+   */
+  const renewedToken = async (provider: StaticOAuthProvider, ctx: ConnectorContext, spent: string) => {
+    const current = await provider.tokens(issuerContext);
+    if (current && current.access_token !== spent) return current.access_token;
+    if ((await runAuth(provider, ctx)) !== "AUTHORIZED") throw authRequiredError();
+    const refreshed = await provider.tokens(issuerContext);
+    if (!refreshed) throw authRequiredError();
+    return refreshed.access_token;
+  };
+
+  /**
+   * One request through the owner's grant. A 401 earns exactly one recovery
+   * ({@link renewedToken}). A read is then sent once more; a write never is
+   * (INV-9), since a server may act on a request before it rejects the
+   * token. Whatever recovery meets is never reported as retryable: an
+   * authorization verdict keeps its code, and anything else (a disconnect or
+   * reset racing the refresh) leaves the outcome unknown. A second 401 is
+   * `auth_required`, latched for the request scope so a program's later
+   * calls do not each spend a refresh on it.
    */
   const authorizedFetch = async (
     ctx: ConnectorContext,
@@ -481,25 +496,17 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       const first = await send(tokens.access_token);
       if (first.status !== 401) return first;
       void first.body?.cancel().catch(() => {});
-
-      let accessToken: string;
-      const current = await provider.tokens(issuerContext);
-      if (current && current.access_token !== tokens.access_token) {
-        accessToken = current.access_token;
-      } else {
-        if ((await runAuth(provider, ctx)) !== "AUTHORIZED") throw authRequiredError();
-        const refreshed = await provider.tokens(issuerContext);
-        if (!refreshed) throw authRequiredError();
-        accessToken = refreshed.access_token;
-      }
       if (write) {
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          `Connector "${id}" sent a write that the API answered with HTTP 401. The grant is renewed, but the ` +
-            "write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
-          { retryable: false },
-        );
+        let renewal: unknown;
+        try {
+          await renewedToken(provider, ctx, tokens.access_token);
+        } catch (error) {
+          if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
+          renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
+        }
+        throw unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal);
       }
+      const accessToken = await renewedToken(provider, ctx, tokens.access_token);
       const second = await send(accessToken);
       if (second.status !== 401) return second;
       void second.body?.cancel().catch(() => {});

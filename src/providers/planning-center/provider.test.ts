@@ -948,8 +948,52 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
   });
 });
 
+describe("Planning Center credentials in results", () => {
+  it("INV-5: never returns a webhook signing secret or the Services organization secret, on any path", async () => {
+    const subscription = {
+      type: "WebhookSubscription",
+      id: "w1",
+      attributes: { name: "people.v2.events.person.created", url: "https://hooks.example", active: true },
+    };
+    const signed = { ...subscription, attributes: { ...subscription.attributes, authenticity_secret: "whsec_live" } };
+    const organization = { type: "Organization", id: "1", attributes: { name: "Church", secret: "org_secret_live" } };
+    const paths: Array<[string, Record<string, unknown>, unknown]> = [
+      ["pco_api_get", { path: "/webhooks/v2/webhook_subscriptions" }, { data: [signed] }],
+      ["pco_api_get", { path: "/webhooks/v2/webhook_subscriptions/w1" }, { data: signed }],
+      ["pco_api_get", { path: "/services/v2" }, { data: organization, included: [signed] }],
+      [
+        "pco_api_mutate",
+        { method: "POST", path: "/webhooks/v2/webhook_subscriptions/w1/rotate_secret" },
+        { data: signed },
+      ],
+      [
+        "pco_api_mutate",
+        {
+          method: "POST",
+          path: "/webhooks/v2/webhook_subscriptions",
+          body: { data: { type: "WebhookSubscription", attributes: { name: "x", url: "https://hooks.example" } } },
+        },
+        { data: signed },
+      ],
+      ["list_webhook_subscriptions", {}, { data: [signed] }],
+    ];
+    for (const [tool, args, body] of paths) {
+      queue({ body });
+      const result = await call(tool, args);
+      const text = JSON.stringify(result);
+      expect(text, tool).not.toMatch(/whsec_live|org_secret_live|authenticity_secret|"secret"/);
+      // Everything else in the body still comes back.
+      if (tool !== "list_webhook_subscriptions") expect(text).toContain("hooks.example");
+    }
+    const described = JSON.stringify(connection().describe?.());
+    expect(described).not.toContain("that needs pco_api_get");
+    expect(described).not.toContain("untouched");
+    expect(JSON.stringify(guide(connection()))).not.toContain("untouched");
+  });
+});
+
 describe("Planning Center hatches", () => {
-  it("sends the path's pinned version, query pairs, and returns the untouched body", async () => {
+  it("sends the path's pinned version, query pairs, and returns the body", async () => {
     const body = { data: [{ type: "Episode", id: "1", attributes: {} }], meta: { total_count: 1 } };
     queue({ body }, { body: {} });
     const result = await call("pco_api_get", {

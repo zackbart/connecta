@@ -603,8 +603,9 @@ function uncertain(message: string): ConnectorCallError {
  * - `not-sent` (`before-send`): nothing left connecta. Nothing happened.
  * - `refused`: Google answered with a 4xx. Nothing applied.
  * - `unknown`: sent, and no status came back (`awaiting-response`), Google
- *   answered a 5xx (`server-error`, whatever reason it carries), or Google
- *   redirected (`redirected`, never followed). It may or may not have applied.
+ *   answered a 5xx (`server-error`, whatever reason it carries), Google
+ *   redirected (`redirected`, never followed), or Google answered 401 and the
+ *   write was not sent again (`unauthorized`). It may or may not have applied.
  * - `probably-applied` (`reading-body`): Google answered 2xx and the reply
  *   could not be used — it broke off, overflowed the ceiling, or would not
  *   parse.
@@ -633,6 +634,7 @@ function writeOutcome(error: unknown): WriteOutcome {
     case "awaiting-response":
     case "server-error":
     case "redirected":
+    case "unauthorized":
     default:
       return "unknown";
   }

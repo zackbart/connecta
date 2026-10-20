@@ -1211,6 +1211,18 @@ a dispatched record. The refresh HTTP request and response body have a
 backoff. A waiter deadline returns retryable `unavailable`, keeps the grant,
 and starts no consent. It never permits resending a spent token.
 
+A `remoteMcp()` write the downstream answered with HTTP 401 is never sent
+again (INV-9). The SDK still refreshes the grant, and connecta stops its
+resend before it leaves, so a deliberate repeat uses the fresh token. The call
+fails with a non-retryable `connector_call_failed` whose outcome is unknown.
+If the refresh fails instead, an authorization verdict stays
+`downstream_oauth_required` (never retryable, `reconciliationRequired` for a
+dispatched write) and anything else, a waiter deadline included, is the same
+unknown outcome. A read is refreshed and sent once more. The invocation's
+classification decides; a direct call outside one uses the dispatched
+definition, a reviewed write verdict, or the tool's hints, and fails closed as
+a write.
+
 One preparation deadline covers initial epoch and grant reads, claim acquisition,
 dispatch preparation, and local joiners waiting for a grant commit. Cancellation
 before sending settles the local flight without awaiting cleanup storage. An
@@ -1927,14 +1939,21 @@ owner's access token as `Authorization: Bearer` with these rules:
   owner is cancelled after the answer. A read-classified call replays once;
   stream bodies are refused.
 - A write-classified call never replays (INV-9). The served classification
-  decides, deployment `classification` first and the tool's annotation
-  otherwise, never the HTTP method: a write sent with GET is not resent, and a
-  read sent with POST is. After the recovery, the call fails with a
-  non-retryable `connector_call_failed` whose outcome is unknown, and the
-  renewed grant serves the agent's deliberate repeat.
+  decides, deployment `classification` first and otherwise the rule the
+  registry applies to the tool's hints (a contradictory `readOnlyHint: true`
+  with `destructiveHint: true` is a write), never the HTTP method: a write sent
+  with GET is not resent, and a read sent with POST is. After the recovery,
+  the call fails with a non-retryable `connector_call_failed` whose outcome is
+  unknown, and the renewed grant serves the agent's deliberate repeat.
+- Whatever that recovery meets, a write's failure is never retryable. An
+  authorization verdict, such as a [dead refresh](#refresh-failures) or a
+  refresh lost after it was sent, stays `downstream_oauth_required`, which the
+  invocation marks `reconciliationRequired`. Anything else (a disconnect or
+  reset racing the refresh, a storage or contention failure) is the same
+  unknown-outcome `connector_call_failed`.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
   `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
-  return retryable `unavailable`. Latch second 401s for the request scope,
+  return retryable `unavailable` for a read. Latch second 401s for the request scope,
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.
 - The answer's `.text()` and `.json()`, clones' too, decode its bytes as UTF-8, so

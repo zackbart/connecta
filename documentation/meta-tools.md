@@ -682,7 +682,8 @@ opaque state and input responses is a continuation, not an automatic replay.
 The sealed arguments digest prevents using that continuation for fresh write
 arguments. A timeout or other failure during a continuation leaves its nonce
 spent, so it cannot authorize a second attempt. Write continuations stop at an
-HTTP 401 or redirect before the SDK can refresh authorization or resend the call.
+HTTP 401 or redirect before the SDK can refresh authorization or resend the call;
+an ordinary write lets the refresh run and stops only the resend.
 HTTP 403 scope escalation also remains disabled. Read continuations retain normal
 OAuth refresh behavior.
 
@@ -962,6 +963,18 @@ arguments if reconciliation requires another call. A timeout before dispatch rem
 Program write accounting keeps this detail even if the guest catches the
 failure or returns early. Multiple uncertain writes use `uncertainCalls`,
 bounded to ten calls with `uncertainCallsTruncated` when more exist.
+
+A dispatched write is never reported as retryable once the downstream may
+have acted on it (INV-9). A 5xx (a gateway's 502 to 504 included), a connection
+lost after sending, or a reply that broke off is a non-retryable
+`connector_call_failed` whose outcome is unknown, from `remoteMcp()`, `api()`
+handlers, and the maintained providers alike; reads keep their retryable
+verdict, and a connection refused before anything was sent stays retryable. A
+write the downstream answered with HTTP 401 is not resent: the credential is
+renewed (an OAuth refresh, Google Workspace's next token, Infisical's login)
+for a deliberate repeat, and the call reports the same unknown outcome. If
+renewal fails, an authorization verdict keeps its code with `retryable: false`
+and `reconciliationRequired: true`, and anything else is the unknown outcome.
 
 Retryability comes from typed errors, HTTP status, registered OAuth error codes,
 SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:

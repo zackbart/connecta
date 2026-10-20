@@ -915,6 +915,43 @@ describe("maintained Infisical contract", () => {
     });
   });
 
+  it("INV-9: a write answered 401 is never resent, and a failing recovery login leaves its outcome unknown", async () => {
+    const write = () => connector.callTool("create_secret", { ...args, secretValue: "submitted-value" }, context());
+    const unknown = (renewal: string) => ({
+      code: "connector_call_failed",
+      retryable: false,
+      message: `Infisical answered this write with HTTP 401. ${renewal} was not sent again, so whether it took effect is unknown: check the target before repeating it.`,
+    });
+    // Login renews the token, and the write still is not sent again.
+    let fetch = mockFetch(login(), json({ message: "expired" }, 401), login());
+    await expect(write()).rejects.toMatchObject(unknown("The credential is renewed for the next call, but the write"));
+    expect(fetch.mock.calls.filter(([input]) => !String(input).endsWith("/login"))).toHaveLength(1);
+    // The recovery login answers 503: no retryable `unavailable` for a write that was sent.
+    fetch = mockFetch(login(), json({ message: "expired" }, 401), json({ message: "down" }, 503));
+    await expect(write()).rejects.toMatchObject(unknown("Renewing the credential failed (unavailable), and the write"));
+    expect(fetch).toHaveBeenCalledTimes(3);
+    // Nor a network failure on the way to the login endpoint.
+    fetch = mockFetch(login(), json({ message: "expired" }, 401));
+    fetch.mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }));
+    await expect(write()).rejects.toMatchObject(unknown("Renewing the credential failed (unavailable), and the write"));
+    // The identity is refused at login: that verdict and its operator recovery stand, never retryable.
+    fetch = mockFetch(login(), json({ message: "expired" }, 401), json({ message: "revoked" }, 401));
+    await expect(write()).rejects.toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      message: expect.stringContaining("Infisical refused the machine identity login"),
+    });
+    // A read is still logged in again and replayed once, and a failing login stays retryable for it.
+    fetch = mockFetch(login(), json({ message: "expired" }, 401), login(), json({ projects: [] }));
+    await expect(connector.callTool("list_projects", {}, context())).resolves.toBeDefined();
+    expect(fetch).toHaveBeenCalledTimes(4);
+    mockFetch(login(), json({ message: "expired" }, 401), json({ message: "down" }, 503));
+    await expect(connector.callTool("list_projects", {}, context())).rejects.toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
+  });
+
   it("rejects dot-segment keys and relative paths before sending", async () => {
     const fetch = mockFetch();
     await expect(connector.callTool("get_secret", { ...args, secretName: ".." }, context())).rejects.toMatchObject({

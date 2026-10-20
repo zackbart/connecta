@@ -18,7 +18,7 @@ import {
   type RestReadPost,
   type RestVendor,
 } from "../_shared/rest/tools.js";
-import { unknownOutcome } from "../_shared/write-outcome.js";
+import { unknownOutcome } from "../../write-outcome.js";
 import { openapi } from "./openapi.generated.js";
 import {
   valueSafety,

@@ -12,6 +12,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { attachCaller } from "../src/connector-caller.js";
+import { attachCallClassification } from "../src/call-classification.js";
 import {
   googleOutcomeOf,
   googleReasonsOf,
@@ -1861,10 +1862,27 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(policy)).toEqual({ dispatched: true, status: 403, phase: "refused" });
       expect(googleReasonsOf(policy)).toEqual(["domainPolicy"]);
 
-      // Two 401s: the replay's refusal is the one reported.
-      const unauthorized = await failing(drive.json(write, context()));
+      // Two 401s on a read: the replay's refusal is the one reported.
+      const unauthorized = await failing(drive.json(read, context()));
       expect(unauthorized.code).toBe("auth_required");
       expect(googleOutcomeOf(unauthorized)).toEqual({ dispatched: true, status: 401, phase: "refused" });
+    });
+
+    it("INV-9 unauthorized: a write Google answered 401 is not sent again, and its outcome is unknown", async () => {
+      apiReplies.push(
+        () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+        () => Response.json({ id: "f1" }),
+      );
+      const drive = client();
+      const failure = await failing(drive.json(write, context()));
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("the write was not sent again, so whether it was applied is unknown");
+      expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "unauthorized" });
+      expect(apiCalls).toHaveLength(1);
+      expect(tokenCalls).toHaveLength(1);
+      // The refused token is dropped: a deliberate repeat mints a fresh one.
+      await expect(drive.json(write, context())).resolves.toEqual({ id: "f1" });
+      expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
     });
 
     it("refused: an error status stays a refusal when its body is past the ceiling", async () => {
@@ -2091,12 +2109,12 @@ describe("the shared client reads bytes and text for the products that need them
       });
     });
 
-    it("refreshes and replays once on a 401 whose body is past the ceiling", async () => {
+    it("refreshes and replays a read once on a 401 whose body is past the ceiling", async () => {
       apiReplies.push(
         () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } }),
         () => Response.json({ id: "f1" }),
       );
-      await expect(client(1024).json(write, context())).resolves.toEqual({ id: "f1" });
+      await expect(client(1024).json(read, context())).resolves.toEqual({ id: "f1" });
       expect(tokenCalls).toHaveLength(2);
       expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
     });
@@ -2105,7 +2123,7 @@ describe("the shared client reads bytes and text for the products that need them
       const oversized401 = () =>
         new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } });
       apiReplies.push(oversized401, oversized401);
-      const failure = await failing(client(1024).json(write, context()));
+      const failure = await failing(client(1024).json(read, context()));
       expect(failure.code).toBe("auth_required");
       expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "refused" });
       expect(apiCalls).toHaveLength(2);
@@ -2314,26 +2332,36 @@ describe("the shared client reads bytes and text for the products that need them
     });
   });
 
-  it("replays a byte body intact after a 401", async () => {
-    apiReplies.push(
-      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
-      () => Response.json({ id: "f9" }),
-    );
-    const upload = new Uint8Array([1, 2, 3, 4]);
-    await client().json(
-      {
-        method: "POST",
-        path: "/files",
-        headers: { "Content-Type": "application/octet-stream" },
-        rawBody: upload,
-      },
-      context(),
-    );
+  it("INV-9: replays a read's byte body intact after a 401, and never a write's", async () => {
+    const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
+    apiReplies.push(rejected, () => Response.json({ id: "f9" }), rejected);
+    const request = {
+      method: "POST" as const,
+      path: "/files",
+      headers: { "Content-Type": "application/octet-stream" },
+      rawBody: new Uint8Array([1, 2, 3, 4]),
+    };
+    // A call the registry classified as a read may send its POST again.
+    const readCall = context();
+    attachCallClassification(readCall, "read");
+    await client().json(request, readCall);
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
     expect(apiCalls.map((call) => call.body)).toEqual([
       [1, 2, 3, 4],
       [1, 2, 3, 4],
     ]);
+    // A write's is sent once, whatever classification is missing or says.
+    for (const classification of [undefined, "write"] as const) {
+      apiCalls.length = 0;
+      apiReplies.push(rejected);
+      const writeCall = context();
+      if (classification) attachCallClassification(writeCall, classification);
+      await expect(client().json(request, writeCall)).rejects.toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+      });
+      expect(apiCalls).toHaveLength(1);
+    }
   });
 
   it("refuses a stream body, which a replay could not resend, before anything leaves", async () => {

@@ -873,8 +873,8 @@ function media(args: JsonRecord): { bytes: Uint8Array; type: string } | undefine
 
 /**
  * One `multipart/related` body: the metadata as JSON, then the media. Built
- * whole as bytes, never a stream, so the shared client's single 401 replay
- * can send it again unchanged.
+ * whole as bytes, never a stream: the shared client refuses a body it could
+ * not send twice, though it never resends an upload, which is a write.
  */
 function multipart(
   metadata: JsonRecord,

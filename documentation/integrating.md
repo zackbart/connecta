@@ -261,6 +261,12 @@ CCB's advanced search can still filter on them, so a value can be inferred
 from which rows match; where that matters, leave `read:advanced_searches` out
 of `scopes`.
 
+Planning Center withholds the credentials its bodies can carry, in every
+mode and on every path: a webhook subscription's signing secret
+(`authenticity_secret`, also in a create or `rotate_secret` reply) and an
+organization's `secret`. No tool argument or option returns them; an operator
+reads them in Planning Center.
+
 ## Another remote MCP server
 
 Declare its endpoint and intended auth mode. This fragment uses a server-stored
@@ -346,6 +352,15 @@ writes use `call_destructive_tool` or a program, within the caller's grants; a
 `readOnly` endpoint refuses them and omits them from search. Client approval is independent of
 tool definition. Use declared output
 schemas when known; runtime observations cannot replace them.
+
+A write leaves once. When a write-classified tool's handler fails with a raw
+network error, `api()` reports a non-retryable `connector_call_failed` whose
+outcome is unknown, because the handler may have sent its request before the
+failure; a read's stays a retryable `unavailable`. `ctx.oauth.fetch` never
+resends a write the API answered with HTTP 401 (see
+[Downstream OAuth on api()](./auth.md#downstream-oauth-on-api)). A handler
+that throws its own `ConnectorCallError` after sending a write must not mark
+it `retryable`.
 
 ## Separate ownership from visibility
 
