@@ -1254,30 +1254,55 @@ Every maintained provider with an `api()` surface has goldens under
 `test/goldens/<provider>/`: the oracle a provider migration must match byte
 for byte. `catalog.json` holds the connector metadata, the rendered guide,
 and each tool's name, description, schemas, and annotations. `calls.json`
-holds at least one fixture call per tool: the exact requests sent (method,
-URL, sorted headers, body) and the agent-visible outcome.
-`failures.json` drives one read and one write through 400, 401, 403, 404,
-409, 422, 429 (with `retry-after`) and 500 responses and a refused
-connection. Calls run through `Registry` and `InvocationService` with a real
+holds at least one fixture call per tool, then an echo call: the exact
+requests sent (method, URL, sorted headers, body) and the agent-visible
+outcome. `failures.json` drives one read and one write through 400, 401,
+403, 404, 409, 422, 429 (with `retry-after`) and 500 responses, a 401 whose
+message echoes every sent secret, a refused connection, and a transport
+timeout (a `TimeoutError` after the request left). `setup.json`, for a
+provider whose spec completes an OAuth consent, holds the consent's
+requests. Calls run through `Registry` and `InvocationService` with a real
 credential vault, so the outcome is what `call_tool` returns before MCP
 rendering.
 
 `test/goldens/<provider>/spec.ts` says only how to build the provider and
-which calls to make. `test/goldens/harness.ts` owns the fake network, the
-fixed clock (`Date` only), counted `crypto.randomUUID` and fixed
-`Math.random`, credential redaction (`<secret:field>`, with HTTP Basic shown
-decoded), auxiliary routes for token exchanges (recorded by method and URL
-only), an optional `setup` hook for OAuth consent whose requests go
-unrecorded, and the JSON layout. Object keys keep the order the provider produced.
-A migration changes the provider, never the spec or harness.
+which calls to make, including an `echo` call whose vendor reply carries the
+text the harness passes. `test/goldens/harness.ts` owns everything else:
+
+- The fake network records each request as `new Request(input, init)`
+  builds it, so `init.headers` replaces a Request's headers as Fetch does,
+  and a body gets its implied `content-type`. Form bodies are recorded as
+  fields when they re-encode to the exact bytes sent; FormData as its parts,
+  with the runtime's boundary as `<boundary>`.
+- Auxiliary routes answer token exchanges and other requests that are not
+  the tool's own, and are recorded by name with headers and body. A JWT in a
+  header or field is recorded as its decoded header and claims, with
+  `<signature>` for the per-run signature.
+- `setup` runs before each scenario; its requests must be identical in
+  every scenario and are recorded once.
+- Determinism: a fixed clock (`Date` only), counted `crypto.randomUUID`, and
+  fixed `crypto.getRandomValues` and `Math.random`, all restarted per
+  scenario. `create(scenario)` receives a slug unique within the capture, for
+  specs that must defeat a process-wide cache.
+- Secrets: every credential field and secret becomes `<secret:field>`, with
+  HTTP Basic shown decoded. Before that placeholdering, the harness fails
+  the capture if any secret reaches a caller-visible result in any form
+  (INV-5). The echo call and the `401 echo` case send every secret not
+  listed in `unsent`, so they characterize sent-secret redaction.
+
+Object keys keep the order the provider produced. A migration changes the
+provider, never the spec or harness.
 
 `test/goldens.test.ts` compares on both Vitest projects and fails if a
-provider folder is neither covered nor listed as remote-MCP-only, or a tool
-has no call. It never writes. `pnpm run goldens:update [provider...]`
-rewrites the named goldens (all when none are named) on Node; it is not part
-of `check`. A PR that changes agent-facing output on purpose regenerates the
-affected goldens and says why in its description; any other golden diff is a
-regression.
+provider folder is neither covered nor listed as remote-MCP-only, a tool
+has no call, or a golden file is missing or extra. It never writes.
+`test/goldens-harness.test.ts` proves the harness catches the mutations it
+exists for: Authorization moved onto a Request that `init.headers`
+replaces, an emptied Infisical login body, and disabled sent-secret
+redaction. `pnpm run goldens:update [provider...]` rewrites the named
+goldens (all when none are named) on Node; it is not part of `check`. A PR
+that changes agent-facing output on purpose regenerates the affected goldens
+and says why in its description; any other golden diff is a regression.
 
 ## Optional deployment modules
 

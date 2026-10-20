@@ -7,7 +7,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "GET",
@@ -47,7 +57,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "GET",
@@ -90,7 +110,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "GET",
@@ -131,7 +161,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "GET",
@@ -172,7 +212,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "GET",
@@ -219,7 +269,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "GET",
@@ -291,7 +351,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "GET",
@@ -340,7 +410,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "POST",
@@ -397,7 +477,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "PATCH",
@@ -451,7 +541,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "PATCH",
@@ -495,7 +595,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "DELETE",
@@ -548,7 +658,17 @@
       {
         "auxiliary": "universal-auth-login",
         "method": "POST",
-        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login"
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
       },
       {
         "method": "POST",
@@ -581,6 +701,62 @@
           "updatedAt": "2026-01-02T03:04:05Z"
         },
         "metadataOmitted": true
+      }
+    }
+  },
+  {
+    "label": "get_secret echoes sent secrets",
+    "tool": "get_secret",
+    "args": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "secretName": "API_KEY",
+      "secretPath": "/apps"
+    },
+    "requests": [
+      {
+        "auxiliary": "universal-auth-login",
+        "method": "POST",
+        "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "clientId": "<secret:clientId>",
+            "clientSecret": "<secret:clientSecret>"
+          }
+        }
+      },
+      {
+        "method": "GET",
+        "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "secret": {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "key": "API_KEY",
+          "value": "crm-api-value-123",
+          "comment": "[redacted] [redacted] [redacted]",
+          "environment": "prod",
+          "path": "/apps",
+          "type": "shared",
+          "version": 3,
+          "tags": [
+            "web"
+          ],
+          "createdAt": "2026-01-01T00:00:00Z",
+          "updatedAt": "2026-01-02T00:00:00.000Z"
+        }
       }
     }
   }

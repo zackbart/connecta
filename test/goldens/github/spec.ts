@@ -8,9 +8,8 @@ import { restConnector } from "../../../src/providers/github/rest.js";
 import { parseScopes, ScopePolicy, type GitHubScope } from "../../../src/providers/github/scope.js";
 import { defineGoldenSpec, type SeenRequest, type StubResponse } from "../harness.js";
 
-// Signing is deterministic per key, and a JWT only reaches auxiliary routes,
-// which are recorded by method and URL alone, so a fresh key per run leaves
-// every golden byte unchanged.
+// An App JWT is recorded decoded, with its signature as a placeholder, so a
+// fresh key per run leaves every golden byte unchanged.
 const keys = (await crypto.subtle.generateKey(
   { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
   true,
@@ -55,6 +54,9 @@ function tokenFor(installation: string, body: MintBody): string {
   return `ghs_golden_${installation}_${permissions}${body.repository_ids ? `_repos-${body.repository_ids.join("-")}` : ""}`;
 }
 
+/** The token a search scoped to other/one sends: the one its echo fixture echoes. */
+const SEARCH_TOKEN = tokenFor("22", { permissions: { metadata: "read" }, repository_ids: [201] });
+
 const json = (request: SeenRequest): unknown => (request.body as { json?: unknown } | undefined)?.json;
 const MINT = /^\/app\/installations\/(\d+)\/access_tokens$/;
 /** AppAuth's resolver token: metadata-only and unbound to repositories. */
@@ -82,7 +84,7 @@ export default defineGoldenSpec({
     const policy = new ScopePolicy(parseScopes(SCOPES));
     return restConnector("github", new AppAuth(APP, policy), policy);
   },
-  secrets: { privateKey: PRIVATE_KEY },
+  secrets: { privateKey: PRIVATE_KEY, installationToken: SEARCH_TOKEN },
   auxiliary: [
     {
       name: "installations",
@@ -187,14 +189,23 @@ export default defineGoldenSpec({
             },
     },
   ],
+  unsent: ["privateKey"],
+  echo: {
+    tool: "search_scoped",
+    args: { terms: "widget", kind: "repositories", scopes: [{ repo: "other/one" }] },
+    replies: (text) => (request) =>
+      request.url.pathname === "/repos/other/one"
+        ? { body: REPOSITORIES["22"]![0] }
+        : search([{ id: 201, full_name: "other/one", description: text }]),
+  },
   failures: {
     read: { tool: "search_scoped", args: { terms: "widget", kind: "repositories", scopes: [{ repo: "other/one" }] } },
     write: { tool: "create_release", args: { owner: "other", repo: "one", tag_name: "v1.2.0" } },
   },
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
     body: {
-      message: `Golden ${status} failure`,
+      message,
       documentation_url: "https://docs.github.com/rest",
       status: String(status),
     },

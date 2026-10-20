@@ -188,6 +188,38 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://tithe.ly/api/v1/charges/ch_1",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Tithe.ly: Golden 401 failure: rejected [redacted] [redacted] Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection.",
+            "retryable": false,
+            "connector": "giving",
+            "operation": "giving.get_charge",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "giving"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry giving.get_charge after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -209,6 +241,34 @@
             "details": {
               "host": "https://tithe.ly",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://tithe.ly/api/v1/charges/ch_1",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"giving.get_charge\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://tithe.ly",
+              "code": "timeout",
+              "operation": "giving.get_charge",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -238,7 +298,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -261,7 +328,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -296,7 +370,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -322,7 +403,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -345,7 +433,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -368,7 +463,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -391,7 +493,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -415,7 +524,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -425,6 +541,48 @@
             "code": "unavailable",
             "message": "Tithe.ly: Golden 500 failure Tithe.ly is failing upstream.",
             "retryable": true
+          }
+        }
+      },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://tithe.ly/api/v1/charges",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Tithe.ly: Golden 401 failure: rejected [redacted] [redacted] Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection.",
+            "retryable": false,
+            "connector": "giving",
+            "operation": "giving.tithely_api_mutate",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "giving"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
           }
         }
       },
@@ -438,7 +596,14 @@
               "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
               "content-type": "application/x-www-form-urlencoded"
             },
-            "body": "account_id=user_jane"
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -452,6 +617,59 @@
               "host": "https://tithe.ly",
               "code": "ECONNREFUSED"
             }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://tithe.ly/api/v1/charges",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "body": {
+              "form": [
+                [
+                  "account_id",
+                  "user_jane"
+                ]
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"giving.tithely_api_mutate\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://tithe.ly",
+              "code": "timeout",
+              "operation": "giving.tithely_api_mutate",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "giving",
+            "operation": "giving.tithely_api_mutate",
+            "uncertainCall": {
+              "address": "giving.tithely_api_mutate",
+              "args": {
+                "method": "POST",
+                "path": "/charges",
+                "form": [
+                  {
+                    "name": "account_id",
+                    "value": "user_jane"
+                  }
+                ]
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

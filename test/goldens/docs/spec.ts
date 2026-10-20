@@ -62,17 +62,15 @@ const DOCUMENT = {
   ],
 };
 
-// Delegated tokens are cached per service account for the process, so each
-// scenario gets its own account and mints its own token, whatever ran before.
-let accounts = 0;
-
 export default defineGoldenSpec({
   provider: "docs",
-  create: () =>
+  // Delegated tokens are cached per service account for the process, so each
+  // scenario names its own account and mints its own token.
+  create: (scenario) =>
     docs("docs", {
       purpose: "Staff meeting notes",
       serviceAccount: {
-        clientEmail: `docs-golden-${++accounts}@project.iam.gserviceaccount.com`,
+        clientEmail: `docs-${scenario}@project.iam.gserviceaccount.com`,
         privateKey: PRIVATE_KEY,
       },
       subject: "alice@example.com",
@@ -85,9 +83,9 @@ export default defineGoldenSpec({
       reply: { body: { access_token: ACCESS_TOKEN, expires_in: 3599, token_type: "Bearer" } },
     },
   ],
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
-    body: { error: { code: status, message: `Golden ${status} failure`, status: "GOLDEN_FAILURE" } },
+    body: { error: { code: status, message, status: "GOLDEN_FAILURE" } },
   }),
   calls: [
     { tool: "get_document", args: { documentId: "doc-1" }, replies: [{ body: DOCUMENT }] },
@@ -162,6 +160,12 @@ export default defineGoldenSpec({
       ],
     },
   ],
+  unsent: ["privateKey"],
+  echo: {
+    tool: "get_document",
+    args: { documentId: "doc-1" },
+    replies: (text) => [{ body: { ...DOCUMENT, title: text } }],
+  },
   failures: {
     read: { tool: "get_document", args: { documentId: "doc-1" } },
     write: {

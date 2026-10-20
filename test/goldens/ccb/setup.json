@@ -1,0 +1,32 @@
+[
+  {
+    "auxiliary": "token",
+    "method": "POST",
+    "url": "https://api.ccbchurch.com/oauth/token",
+    "headers": {
+      "accept": "application/vnd.ccbchurch.v2+json",
+      "authorization": "Basic base64(golden-ccb-client:<secret:clientSecret>)",
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    "body": {
+      "form": [
+        [
+          "grant_type",
+          "authorization_code"
+        ],
+        [
+          "code",
+          "golden-code"
+        ],
+        [
+          "code_verifier",
+          "GHIJKLMNOPQRSTUVWXYZ0123456789-._~abcdefghi"
+        ],
+        [
+          "redirect_uri",
+          "https://connecta.example/oauth/callback/church"
+        ]
+      ]
+    }
+  }
+]

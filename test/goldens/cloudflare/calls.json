@@ -354,7 +354,8 @@
         "method": "PUT",
         "url": "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/workers/scripts/hello",
         "headers": {
-          "authorization": "Bearer <secret:credential>"
+          "authorization": "Bearer <secret:credential>",
+          "content-type": "multipart/form-data; boundary=<boundary>"
         },
         "body": {
           "formData": [
@@ -424,6 +425,33 @@
           "key": "logs/2026/a.txt",
           "size": 5,
           "etag": "5d41402abc4b2a76b9719d911017c592"
+        }
+      }
+    }
+  },
+  {
+    "label": "cloudflare_api_read echoes sent secrets",
+    "tool": "cloudflare_api_read",
+    "args": {
+      "path": "/zones/023e105f4ecef8ad9ca31a8372d0c353"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
+        "headers": {
+          "authorization": "Bearer <secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "id": "023e105f4ecef8ad9ca31a8372d0c353",
+          "name": "[redacted]"
         }
       }
     }

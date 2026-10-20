@@ -24,14 +24,14 @@ export default defineGoldenSpec({
   provider: "stripe",
   create: () => stripe("billing", { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" }),
   credential: "sk_test_golden_secret_key_123456",
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
     headers: { "request-id": "req_golden" },
     body: {
       error: {
         type: status >= 500 ? "api_error" : "invalid_request_error",
         code: `golden_${status}`,
-        message: `Golden ${status} failure.`,
+        message: `${message}.`,
       },
     },
   }),
@@ -125,6 +125,11 @@ export default defineGoldenSpec({
       ],
     },
   ],
+  echo: {
+    tool: "stripe_api_read",
+    args: { path: "/v1/customers/cus_1" },
+    replies: (text) => [{ body: { id: "cus_1", object: "customer", description: text } }],
+  },
   failures: {
     read: { tool: "stripe_api_read", args: { path: "/v1/customers/cus_1" } },
     write: {

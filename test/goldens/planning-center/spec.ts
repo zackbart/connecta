@@ -102,14 +102,14 @@ export default defineGoldenSpec({
       purpose: "Grace Church staff operations",
     }),
   credential: { applicationId: "golden-application-id-123456", secret: "golden-pat-secret-654321" },
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
     body: {
       errors: [
         {
           status: String(status),
           title: `Golden ${status}`,
-          detail: `Golden ${status} failure`,
+          detail: message,
           source: { pointer: "/data/attributes/first_name" },
         },
       ],
@@ -977,6 +977,11 @@ export default defineGoldenSpec({
       ]),
     },
   ],
+  echo: {
+    tool: "pco_api_get",
+    args: { path: "/publishing/v2/episodes/71" },
+    replies: (text) => [{ body: { data: resource("Episode", "71", { title: text }) } }],
+  },
   failures: {
     read: { tool: "get_person", args: { personId: "7" } },
     write: { tool: "create_person", args: { firstName: "Bob", lastName: "Jones" } },

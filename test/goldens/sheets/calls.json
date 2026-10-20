@@ -9,7 +9,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-get-spreadsheet@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "GET",
@@ -82,7 +114,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-get-values@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "GET",
@@ -143,7 +207,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-get-values-paged-by-maxcells@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "GET",
@@ -211,7 +307,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-update-values@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "POST",
@@ -290,7 +418,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-batch-update-values@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "POST",
@@ -378,7 +538,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-append-values@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "POST",
@@ -430,7 +622,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-clear-values@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "POST",
@@ -476,7 +700,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-create-spreadsheet@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "POST",
@@ -541,7 +797,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-add-sheet@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "POST",
@@ -613,7 +901,39 @@
       {
         "auxiliary": "token",
         "method": "POST",
-        "url": "https://oauth2.googleapis.com/token"
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-batch-update-spreadsheet@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
       },
       {
         "method": "POST",
@@ -663,6 +983,105 @@
                 "index": 2
               }
             }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "get_spreadsheet echoes sent secrets",
+    "tool": "get_spreadsheet",
+    "args": {
+      "spreadsheetId": "sheet-budget-1"
+    },
+    "requests": [
+      {
+        "auxiliary": "token",
+        "method": "POST",
+        "url": "https://oauth2.googleapis.com/token",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "form": [
+            [
+              "grant_type",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            [
+              "assertion",
+              {
+                "jwt": {
+                  "header": {
+                    "alg": "RS256",
+                    "typ": "JWT"
+                  },
+                  "claims": {
+                    "iss": "sheets-get-spreadsheet-echoes-sent-secrets@project.iam.gserviceaccount.com",
+                    "sub": "alice@example.com",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "aud": "https://oauth2.googleapis.com/token",
+                    "iat": 1767323045,
+                    "exp": 1767326645
+                  },
+                  "signature": "<signature>"
+                }
+              }
+            ]
+          ]
+        }
+      },
+      {
+        "method": "GET",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "title": "[redacted]",
+        "url": "https://docs.google.com/spreadsheets/d/sheet-budget-1/edit",
+        "locale": "en_US",
+        "timeZone": "America/Chicago",
+        "sheets": [
+          {
+            "sheetId": 0,
+            "title": "Summary",
+            "index": 0,
+            "type": "GRID",
+            "rowCount": 1000,
+            "columnCount": 26,
+            "frozenRowCount": 1
+          },
+          {
+            "sheetId": 7,
+            "title": "Q3 Budget",
+            "index": 1,
+            "type": "GRID",
+            "hidden": true,
+            "rowCount": 500,
+            "columnCount": 8
+          }
+        ],
+        "namedRanges": [
+          {
+            "namedRangeId": "n1",
+            "name": "Totals",
+            "sheetId": 0,
+            "range": "'Summary'!A1:C5"
+          },
+          {
+            "namedRangeId": "n2",
+            "name": "Spend",
+            "sheetId": 7,
+            "range": "'Q3 Budget'!B2:D"
           }
         ]
       }

@@ -39,7 +39,24 @@
           {
             "auxiliary": "token",
             "method": "POST",
-            "url": "https://api.ccbchurch.com/oauth/token"
+            "url": "https://api.ccbchurch.com/oauth/token",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Basic base64(golden-ccb-client:<secret:clientSecret>)",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "body": {
+              "form": [
+                [
+                  "grant_type",
+                  "refresh_token"
+                ],
+                [
+                  "refresh_token",
+                  "<secret:refreshToken>"
+                ]
+              ]
+            }
           },
           {
             "method": "GET",
@@ -201,6 +218,68 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.ccbchurch.com/groups/5",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          },
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://api.ccbchurch.com/oauth/token",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Basic base64(golden-ccb-client:<secret:clientSecret>)",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "body": {
+              "form": [
+                [
+                  "grant_type",
+                  "refresh_token"
+                ],
+                [
+                  "refresh_token",
+                  "<secret:refreshToken>"
+                ]
+              ]
+            }
+          },
+          {
+            "method": "GET",
+            "url": "https://api.ccbchurch.com/groups/5",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "downstream_oauth_required",
+            "message": "Connector \"church\" requires authorization — call authorize_connector({ connector: \"church\" }) and open the returned URL.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.get_group",
+            "recovery": "oauth",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry church.get_group after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -222,6 +301,34 @@
             "details": {
               "host": "https://api.ccbchurch.com",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.ccbchurch.com/groups/5",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Bearer <secret:accessToken>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"church.get_group\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://api.ccbchurch.com",
+              "code": "timeout",
+              "operation": "church.get_group",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -284,7 +391,24 @@
           {
             "auxiliary": "token",
             "method": "POST",
-            "url": "https://api.ccbchurch.com/oauth/token"
+            "url": "https://api.ccbchurch.com/oauth/token",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Basic base64(golden-ccb-client:<secret:clientSecret>)",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "body": {
+              "form": [
+                [
+                  "grant_type",
+                  "refresh_token"
+                ],
+                [
+                  "refresh_token",
+                  "<secret:refreshToken>"
+                ]
+              ]
+            }
           },
           {
             "method": "POST",
@@ -489,6 +613,81 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.ccbchurch.com/individuals/42/notes",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "note": "Visited"
+              }
+            }
+          },
+          {
+            "auxiliary": "token",
+            "method": "POST",
+            "url": "https://api.ccbchurch.com/oauth/token",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Basic base64(golden-ccb-client:<secret:clientSecret>)",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "body": {
+              "form": [
+                [
+                  "grant_type",
+                  "refresh_token"
+                ],
+                [
+                  "refresh_token",
+                  "<secret:refreshToken>"
+                ]
+              ]
+            }
+          },
+          {
+            "method": "POST",
+            "url": "https://api.ccbchurch.com/individuals/42/notes",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "note": "Visited"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "downstream_oauth_required",
+            "message": "Connector \"church\" requires authorization — call authorize_connector({ connector: \"church\" }) and open the returned URL.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.ccb_api_mutate",
+            "recovery": "oauth",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -517,6 +716,53 @@
               "host": "https://api.ccbchurch.com",
               "code": "ECONNREFUSED"
             }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.ccbchurch.com/individuals/42/notes",
+            "headers": {
+              "accept": "application/vnd.ccbchurch.v2+json",
+              "authorization": "Bearer <secret:accessToken>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "note": "Visited"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"church.ccb_api_mutate\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://api.ccbchurch.com",
+              "code": "timeout",
+              "operation": "church.ccb_api_mutate",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "church",
+            "operation": "church.ccb_api_mutate",
+            "uncertainCall": {
+              "address": "church.ccb_api_mutate",
+              "args": {
+                "method": "POST",
+                "path": "/individuals/42/notes",
+                "body": {
+                  "note": "Visited"
+                }
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

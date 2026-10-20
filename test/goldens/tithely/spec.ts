@@ -70,7 +70,7 @@ export default defineGoldenSpec({
   provider: "tithely",
   create: () => tithely("giving", { purpose: "Weekly giving reports for Grace Church", environment: "live" }),
   credential: { publicKey: "pub_golden_public_key", privateKey: "pri_golden_private_key" },
-  failureReply: (status) => ({ status, body: { status: "fail", reason: `Golden ${status} failure` } }),
+  failureReply: (status, message) => ({ status, body: { status: "fail", reason: message } }),
   calls: [
     {
       tool: "tithely_api_get",
@@ -135,6 +135,15 @@ export default defineGoldenSpec({
     },
     { tool: "list_payment_methods", args: { accountId: "user_jane" }, replies: list([PAYMENT_METHOD]) },
   ],
+  echo: {
+    tool: "tithely_api_get",
+    args: { path: "/payment-methods/pm_9", query: [{ name: "account_id", value: "user_jane" }] },
+    replies: (text) => [
+      {
+        body: { status: "success", pm_id: "pm_9", type: "Payment Method", object: { ...PAYMENT_METHOD, brand: text } },
+      },
+    ],
+  },
   failures: {
     read: { tool: "get_charge", args: { chargeId: "ch_1" } },
     write: {

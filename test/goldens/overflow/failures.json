@@ -196,6 +196,39 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57",
+            "headers": {
+              "accept": "application/json",
+              "x-api-key": "<secret:apiKey>",
+              "x-client-id": "<secret:clientId>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Overflow rejected the request (HTTP 401): Golden 401 failure: rejected [redacted] [redacted] The client id and API key may be wrong, revoked, or issued for the other environment (staging and production credentials are not interchangeable); an operator must check them and ask the account administrator to grant resource access if they are valid.",
+            "retryable": false,
+            "connector": "giving",
+            "operation": "giving.get_contribution",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "giving"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry giving.get_contribution after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -218,6 +251,35 @@
             "details": {
               "host": "https://server.overflow.co",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://server.overflow.co/api/v3/contributions/6710f34fd5061afeec3eab57",
+            "headers": {
+              "accept": "application/json",
+              "x-api-key": "<secret:apiKey>",
+              "x-client-id": "<secret:clientId>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"giving.get_contribution\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://server.overflow.co",
+              "code": "timeout",
+              "operation": "giving.get_contribution",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -474,6 +536,46 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "PATCH",
+            "url": "https://server.overflow.co/api/v3/donors/6710f34fd5061afeec3eab50",
+            "headers": {
+              "accept": "application/json",
+              "content-type": "application/json",
+              "x-api-key": "<secret:apiKey>",
+              "x-client-id": "<secret:clientId>"
+            },
+            "body": {
+              "json": {
+                "phone": "+15555550101"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Overflow rejected the request (HTTP 401): Golden 401 failure: rejected [redacted] [redacted] The client id and API key may be wrong, revoked, or issued for the other environment (staging and production credentials are not interchangeable); an operator must check them and ask the account administrator to grant resource access if they are valid.",
+            "retryable": false,
+            "connector": "giving",
+            "operation": "giving.overflow_api_mutate",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "giving"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -503,6 +605,54 @@
               "host": "https://server.overflow.co",
               "code": "ECONNREFUSED"
             }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "PATCH",
+            "url": "https://server.overflow.co/api/v3/donors/6710f34fd5061afeec3eab50",
+            "headers": {
+              "accept": "application/json",
+              "content-type": "application/json",
+              "x-api-key": "<secret:apiKey>",
+              "x-client-id": "<secret:clientId>"
+            },
+            "body": {
+              "json": {
+                "phone": "+15555550101"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"giving.overflow_api_mutate\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://server.overflow.co",
+              "code": "timeout",
+              "operation": "giving.overflow_api_mutate",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "giving",
+            "operation": "giving.overflow_api_mutate",
+            "uncertainCall": {
+              "address": "giving.overflow_api_mutate",
+              "args": {
+                "method": "PATCH",
+                "path": "/donors/6710f34fd5061afeec3eab50",
+                "body": {
+                  "phone": "+15555550101"
+                }
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

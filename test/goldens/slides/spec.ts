@@ -178,17 +178,15 @@ const saved = (extra: Record<string, unknown>) => [
   { body: { presentationId: "deck1", commentUpdateState: "ALL_SAVED", ...extra } },
 ];
 
-// Delegated tokens are cached per service account for the process, so each
-// scenario gets its own account and mints its own token, whatever ran before.
-let accounts = 0;
-
 export default defineGoldenSpec({
   provider: "slides",
-  create: () =>
+  // Delegated tokens are cached per service account for the process, so each
+  // scenario names its own account and mints its own token.
+  create: (scenario) =>
     slides("decks", {
       purpose: "Sermon slides",
       serviceAccount: {
-        clientEmail: `slides-golden-${++accounts}@project.iam.gserviceaccount.com`,
+        clientEmail: `slides-${scenario}@project.iam.gserviceaccount.com`,
         privateKey: PRIVATE_KEY,
       },
       subject: "alice@example.com",
@@ -201,9 +199,9 @@ export default defineGoldenSpec({
       reply: { body: { access_token: ACCESS_TOKEN, expires_in: 3599, token_type: "Bearer" } },
     },
   ],
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
-    body: { error: { code: status, message: `Golden ${status} failure`, status: "GOLDEN_FAILURE" } },
+    body: { error: { code: status, message, status: "GOLDEN_FAILURE" } },
   }),
   calls: [
     { tool: "get_presentation", args: { presentationId: "deck1" }, replies: [{ body: PRESENTATION }] },
@@ -345,6 +343,12 @@ export default defineGoldenSpec({
       ],
     },
   ],
+  unsent: ["privateKey"],
+  echo: {
+    tool: "get_presentation",
+    args: { presentationId: "deck1" },
+    replies: (text) => [{ body: { ...PRESENTATION, title: text } }],
+  },
   failures: {
     read: { tool: "get_presentation", args: { presentationId: "deck1" } },
     write: { tool: "create_slide", args: { presentationId: "deck1", layout: "TITLE_AND_BODY", insertionIndex: 1 } },

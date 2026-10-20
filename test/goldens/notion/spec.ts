@@ -76,9 +76,9 @@ export default defineGoldenSpec({
   provider: "notion",
   create: () => notion("workspace", { auth: { type: "token" }, purpose: "Team knowledge base" }),
   credential: "golden-notion-token-123456",
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
-    body: { object: "error", status, code: `golden_${status}`, message: `Golden ${status} failure` },
+    body: { object: "error", status, code: `golden_${status}`, message },
   }),
   calls: [
     { tool: "notion_api_search", args: { query: "query data source", limit: 3 } },
@@ -193,6 +193,11 @@ export default defineGoldenSpec({
       ],
     },
   ],
+  echo: {
+    tool: "notion_api_read",
+    args: { path: "/v1/users/user-1" },
+    replies: (text) => [{ body: { object: "user", id: "user-1", name: text, type: "person" } }],
+  },
   failures: {
     read: { tool: "integration_get_page", args: { page_id: "page-1" } },
     write: {

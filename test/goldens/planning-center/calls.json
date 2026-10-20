@@ -2383,5 +2383,39 @@
         }
       }
     }
+  },
+  {
+    "label": "pco_api_get echoes sent secrets",
+    "tool": "pco_api_get",
+    "args": {
+      "path": "/publishing/v2/episodes/71"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://api.planningcenteronline.com/publishing/v2/episodes/71",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+          "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+          "x-pco-api-version": "2024-03-25"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": {
+            "type": "Episode",
+            "id": "71",
+            "attributes": {
+              "title": "[redacted] [redacted]"
+            }
+          }
+        }
+      }
+    }
   }
 ]

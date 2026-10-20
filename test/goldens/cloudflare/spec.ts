@@ -23,12 +23,12 @@ export default defineGoldenSpec({
   provider: "cloudflare",
   create: () => cloudflare("cf", { purpose: "Production DNS and Workers", auth: { type: "apiToken" } }),
   credential: "golden-cloudflare-token-123456",
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
     headers: { "cf-ray": "8abc-golden" },
     body: {
       success: false,
-      errors: [{ code: 10000 + status, message: `Golden ${status} failure.` }],
+      errors: [{ code: 10000 + status, message: `${message}.` }],
       messages: [],
       result: null,
     },
@@ -125,6 +125,11 @@ export default defineGoldenSpec({
       replies: [envelope({ key: "logs/2026/a.txt", size: 5, etag: "5d41402abc4b2a76b9719d911017c592" })],
     },
   ],
+  echo: {
+    tool: "cloudflare_api_read",
+    args: { path: `/zones/${ZONE}` },
+    replies: (text) => [envelope({ id: ZONE, name: text })],
+  },
   failures: {
     read: { tool: "cloudflare_api_read", args: { path: `/zones/${ZONE}` } },
     write: {

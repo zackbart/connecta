@@ -491,5 +491,41 @@
         }
       }
     }
+  },
+  {
+    "label": "vercel_api_read echoes sent secrets",
+    "tool": "vercel_api_read",
+    "args": {
+      "path": "/v7/deployments",
+      "query": {
+        "projectId": "web"
+      }
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Bearer <secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "deployments": [
+            {
+              "uid": "dpl_1",
+              "state": "ERROR",
+              "errorMessage": "[redacted]"
+            }
+          ]
+        }
+      }
+    }
   }
 ]

@@ -189,6 +189,38 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.notion.com/v1/pages/page-1",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "notion-version": "2026-03-11"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Notion golden_401: Golden 401 failure: rejected [redacted] The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI.",
+            "retryable": false,
+            "connector": "workspace",
+            "operation": "workspace.integration_get_page",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "workspace"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry workspace.integration_get_page after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -210,6 +242,34 @@
             "details": {
               "host": "https://api.notion.com",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.notion.com/v1/pages/page-1",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "notion-version": "2026-03-11"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"workspace.integration_get_page\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://api.notion.com",
+              "code": "timeout",
+              "operation": "workspace.integration_get_page",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -584,6 +644,61 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.notion.com/v1/pages",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json",
+              "notion-version": "2026-03-11"
+            },
+            "body": {
+              "json": {
+                "parent": {
+                  "type": "page_id",
+                  "page_id": "page-1"
+                },
+                "properties": {
+                  "title": {
+                    "title": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "content": "Meeting notes"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "markdown": "Agenda"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Notion golden_401: Notion answered HTTP 401; its message is withheld because this operation handles credentials. The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI.",
+            "retryable": false,
+            "connector": "workspace",
+            "operation": "workspace.integration_create_page",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "workspace"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -628,6 +743,67 @@
               "host": "https://api.notion.com",
               "code": "ECONNREFUSED"
             }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.notion.com/v1/pages",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json",
+              "notion-version": "2026-03-11"
+            },
+            "body": {
+              "json": {
+                "parent": {
+                  "type": "page_id",
+                  "page_id": "page-1"
+                },
+                "properties": {
+                  "title": {
+                    "title": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "content": "Meeting notes"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "markdown": "Agenda"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"workspace.integration_create_page\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://api.notion.com",
+              "code": "timeout",
+              "operation": "workspace.integration_create_page",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "workspace",
+            "operation": "workspace.integration_create_page",
+            "uncertainCall": {
+              "address": "workspace.integration_create_page",
+              "args": {
+                "parent_page_id": "page-1",
+                "title": "Meeting notes",
+                "markdown": "Agenda"
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

@@ -1126,5 +1126,43 @@
         ]
       }
     }
+  },
+  {
+    "label": "overflow_api_get echoes sent secrets",
+    "tool": "overflow_api_get",
+    "args": {
+      "path": "/refunds/9910f34fd5061afeec3eab01"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://server.overflow.co/api/v3/refunds/9910f34fd5061afeec3eab01",
+        "headers": {
+          "accept": "application/json",
+          "x-api-key": "<secret:apiKey>",
+          "x-client-id": "<secret:clientId>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": {
+            "id": "9910f34fd5061afeec3eab01",
+            "contributionId": "6710f34fd5061afeec3eab57",
+            "status": "SUCCEEDED",
+            "reason": "[redacted] [redacted]",
+            "amountInCents": 5000,
+            "netValueInCents": 4825,
+            "feeValueInCents": 175,
+            "depositId": null,
+            "createdAt": "2025-01-05T00:00:00.000Z",
+            "updatedAt": "2025-01-05T00:00:00.000Z"
+          }
+        }
+      }
+    }
   }
 ]

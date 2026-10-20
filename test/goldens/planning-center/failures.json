@@ -204,6 +204,40 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+              "x-pco-api-version": "2026-06-04"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Planning Center: Golden 401: Golden 401 failure: rejected [redacted] [redacted] (/data/attributes/first_name) The personal access token was rejected: revoked, mistyped, or an Application ID and Secret from different tokens. An operator must replace it.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.get_person",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry church.get_person after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -227,6 +261,36 @@
             "details": {
               "host": "https://api.planningcenteronline.com",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+              "x-pco-api-version": "2026-06-04"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"church.get_person\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://api.planningcenteronline.com",
+              "code": "timeout",
+              "operation": "church.get_person",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -536,6 +600,53 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.planningcenteronline.com/people/v2/people",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+              "content-type": "application/json",
+              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+              "x-pco-api-version": "2026-06-04"
+            },
+            "body": {
+              "json": {
+                "data": {
+                  "type": "Person",
+                  "attributes": {
+                    "first_name": "Bob",
+                    "last_name": "Jones"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Planning Center: Golden 401: Golden 401 failure: rejected [redacted] [redacted] (/data/attributes/first_name) The personal access token was rejected: revoked, mistyped, or an Application ID and Secret from different tokens. An operator must replace it.",
+            "retryable": false,
+            "connector": "church",
+            "operation": "church.create_person",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "church"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -572,6 +683,58 @@
               "host": "https://api.planningcenteronline.com",
               "code": "ECONNREFUSED"
             }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.planningcenteronline.com/people/v2/people",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+              "content-type": "application/json",
+              "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+              "x-pco-api-version": "2026-06-04"
+            },
+            "body": {
+              "json": {
+                "data": {
+                  "type": "Person",
+                  "attributes": {
+                    "first_name": "Bob",
+                    "last_name": "Jones"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"church.create_person\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://api.planningcenteronline.com",
+              "code": "timeout",
+              "operation": "church.create_person",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "church",
+            "operation": "church.create_person",
+            "uncertainCall": {
+              "address": "church.create_person",
+              "args": {
+                "firstName": "Bob",
+                "lastName": "Jones"
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

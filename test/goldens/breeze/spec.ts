@@ -46,7 +46,7 @@ export default defineGoldenSpec({
   create: () => breeze("church", { subdomain: "gracechurch", purpose: "Pastoral care and giving reports" }),
   credential: "golden-breeze-api-key-123456",
   // Breeze's failures are short plain text (or an HTML page), labelled text/html.
-  failureReply: (status) => ({ status, text: `Golden ${status} failure`, headers: HTML }),
+  failureReply: (status, message) => ({ status, text: message, headers: HTML }),
   calls: [
     {
       tool: "breeze_api_get",
@@ -260,6 +260,11 @@ export default defineGoldenSpec({
     { tool: "unassign_tag", args: { personId: "157857", tagId: "16681" }, replies: reply(true) },
     { tool: "record_check_in", args: { personId: "157857", instanceId: "40984" }, replies: reply(true) },
   ],
+  echo: {
+    tool: "breeze_api_get",
+    args: { path: "/people/157857" },
+    replies: (text) => reply({ id: "157857", first_name: text }),
+  },
   failures: {
     read: { tool: "get_person", args: { personId: "157857" } },
     write: { tool: "add_person", args: { firstName: "Jiminy", lastName: "Cricket" } },

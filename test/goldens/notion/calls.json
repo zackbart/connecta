@@ -1761,5 +1761,35 @@
         ]
       }
     }
+  },
+  {
+    "label": "notion_api_read echoes sent secrets",
+    "tool": "notion_api_read",
+    "args": {
+      "path": "/v1/users/user-1"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://api.notion.com/v1/users/user-1",
+        "headers": {
+          "authorization": "Bearer <secret:credential>",
+          "notion-version": "2026-03-11"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "object": "user",
+          "id": "user-1",
+          "name": "[redacted]",
+          "type": "person"
+        }
+      }
+    }
   }
 ]

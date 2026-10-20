@@ -1297,5 +1297,28 @@
         "result": null
       }
     }
+  },
+  {
+    "label": "get_me echoes sent secrets",
+    "tool": "get_me",
+    "args": {},
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://api.ccbchurch.com/me",
+        "headers": {
+          "accept": "application/vnd.ccbchurch.v2+json",
+          "authorization": "Bearer <secret:accessToken>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": 7,
+        "name": "[redacted]"
+      }
+    }
   }
 ]

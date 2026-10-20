@@ -873,5 +873,32 @@
         "checkedIn": true
       }
     }
+  },
+  {
+    "label": "breeze_api_get echoes sent secrets",
+    "tool": "breeze_api_get",
+    "args": {
+      "path": "/people/157857"
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://gracechurch.breezechms.com/api/people/157857",
+        "headers": {
+          "accept": "application/json",
+          "api-key": "<secret:credential>"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "id": "157857",
+          "first_name": "[redacted]"
+        }
+      }
+    }
   }
 ]

@@ -213,9 +213,9 @@ export default defineGoldenSpec({
   create: () => overflow("giving", { environment: "production", purpose: "Grace Church giving and deposits" }),
   credential: { clientId: "golden-client-id-123456", apiKey: "golden-api-key-abcdef" },
   // NestJS framing: `{ statusCode, message, error }`.
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
-    body: { statusCode: status, message: `Golden ${status} failure`, error: `Golden ${status}` },
+    body: { statusCode: status, message, error: `Golden ${status}` },
   }),
   calls: [
     {
@@ -383,6 +383,11 @@ export default defineGoldenSpec({
       replies: [{ body: { data: [ATTEMPT], pageInfo: { hasNextPage: false, nextCursor: null } } }],
     },
   ],
+  echo: {
+    tool: "overflow_api_get",
+    args: { path: `/refunds/${REFUND.id}` },
+    replies: (text) => [{ body: { data: { ...REFUND, reason: text } } }],
+  },
   failures: {
     read: { tool: "get_contribution", args: { contributionId: CONTRIBUTION_ID } },
     write: {

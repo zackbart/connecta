@@ -76,7 +76,7 @@ export default defineGoldenSpec({
       defaultProjectId: 42,
     }),
   credential: "golden-sa-user:golden-sa-secret-123456",
-  failureReply: (status) => ({ status, body: { status: "error", error: `Golden ${status} failure` } }),
+  failureReply: (status, message) => ({ status, body: { status: "error", error: message } }),
   calls: [
     { tool: "mixpanel_api_search", args: { query: "retention", limit: 3 } },
     { tool: "mixpanel_api_details", args: { method: "GET", path: "/api/query/insights" } },
@@ -126,6 +126,11 @@ export default defineGoldenSpec({
       replies: [{ body: { code: 200, num_records_imported: 1, status: "OK" } }],
     },
   ],
+  echo: {
+    tool: "mixpanel_api_read",
+    args: { path: "/api/query/insights", project_id: 99, query: { bookmark_id: 7 } },
+    replies: (text) => [{ body: { ...INSIGHTS, title: text } }],
+  },
   failures: {
     read: { tool: "get_insights_report", args: { bookmark_id: 11 } },
     write: { tool: "import_events", args: { events: [EVENT] } },

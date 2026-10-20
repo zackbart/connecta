@@ -1,10 +1,11 @@
 // Characterization goldens: each maintained `api()` provider's catalog, the
-// requests and results of its fixture calls, and its failure mapping, compared
-// byte for byte with test/goldens/<provider>/*.json. `pnpm run goldens:update`
+// requests and results of its fixture calls, its failure mapping, and its
+// sent-secret redaction, compared byte for byte with
+// test/goldens/<provider>/*.json. `pnpm run goldens:update`
 // rewrites them; this suite only compares. See the contributor section of
 // documentation/architecture.md.
 import { describe, expect, it } from "vitest";
-import { GOLDEN_FILES, captureGoldens, uncoveredTools, type GoldenSpec } from "./goldens/harness.js";
+import { captureGoldens, goldenFiles, uncoveredTools, type GoldenSpec } from "./goldens/harness.js";
 
 // Vite's transform; the repository does not load vite/client types.
 declare global {
@@ -34,22 +35,24 @@ describe("characterization goldens", () => {
     expect([...covered, ...REMOTE_MCP_ONLY].sort()).toEqual([...providerFolders].sort());
     for (const [path, spec] of Object.entries(specs)) expect(path).toBe(`./goldens/${spec.provider}/spec.ts`);
     // No golden outlives its spec, and no folder holds a file the harness does not write.
-    const expected = covered.flatMap((provider) => GOLDEN_FILES.map((file) => `./goldens/${provider}/${file}.json`));
+    const expected = Object.values(specs).flatMap((spec) =>
+      goldenFiles(spec).map((file) => `./goldens/${spec.provider}/${file}.json`),
+    );
     expect(Object.keys(stored).sort()).toEqual(expected.sort());
   });
 
   for (const spec of byProvider) {
-    it(`${spec.provider}: catalog, fixture calls, and failure mapping match the goldens`, async () => {
+    it(`INV-5: ${spec.provider} catalog, fixture calls, failure mapping, and secret echoes match the goldens`, async () => {
       expect(await uncoveredTools(spec)).toEqual([]);
       const actual = await captureGoldens(spec);
       if (updating) {
         const { mkdir, writeFile } = await import("node:fs/promises");
         const directory = new URL(`./goldens/${spec.provider}/`, import.meta.url);
         await mkdir(directory, { recursive: true });
-        for (const file of GOLDEN_FILES) await writeFile(new URL(`${file}.json`, directory), actual[file]);
+        for (const file of goldenFiles(spec)) await writeFile(new URL(`${file}.json`, directory), actual[file]!);
         return;
       }
-      for (const file of GOLDEN_FILES) {
+      for (const file of goldenFiles(spec)) {
         const golden = stored[`./goldens/${spec.provider}/${file}.json`];
         expect(golden, `test/goldens/${spec.provider}/${file}.json is missing; run pnpm run goldens:update`).toBeTypeOf(
           "string",

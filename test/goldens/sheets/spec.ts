@@ -49,17 +49,15 @@ const SPREADSHEET = {
 const rows = (from: number, count: number) =>
   Array.from({ length: count }, (_, index) => [`r${from + index}`, from + index]);
 
-// Delegated tokens are cached per service account for the process, so each
-// scenario gets its own account and mints its own token, whatever ran before.
-let accounts = 0;
-
 export default defineGoldenSpec({
   provider: "sheets",
-  create: () =>
+  // Delegated tokens are cached per service account for the process, so each
+  // scenario names its own account and mints its own token.
+  create: (scenario) =>
     sheets("sheets", {
       purpose: "Finance and attendance spreadsheets",
       serviceAccount: {
-        clientEmail: `sheets-golden-${++accounts}@project.iam.gserviceaccount.com`,
+        clientEmail: `sheets-${scenario}@project.iam.gserviceaccount.com`,
         privateKey: PRIVATE_KEY,
       },
       subject: "alice@example.com",
@@ -72,9 +70,9 @@ export default defineGoldenSpec({
       reply: { body: { access_token: ACCESS_TOKEN, expires_in: 3599, token_type: "Bearer" } },
     },
   ],
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
-    body: { error: { code: status, message: `Golden ${status} failure`, status: "GOLDEN_FAILURE" } },
+    body: { error: { code: status, message, status: "GOLDEN_FAILURE" } },
   }),
   calls: [
     { tool: "get_spreadsheet", args: { spreadsheetId: ID }, replies: [{ body: SPREADSHEET }] },
@@ -249,6 +247,12 @@ export default defineGoldenSpec({
       ],
     },
   ],
+  unsent: ["privateKey"],
+  echo: {
+    tool: "get_spreadsheet",
+    args: { spreadsheetId: ID },
+    replies: (text) => [{ body: { ...SPREADSHEET, properties: { ...SPREADSHEET.properties, title: text } } }],
+  },
   failures: {
     read: { tool: "get_spreadsheet", args: { spreadsheetId: ID } },
     write: {

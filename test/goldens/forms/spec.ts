@@ -93,17 +93,15 @@ const byPath =
   (request: SeenRequest): StubResponse =>
     request.url.pathname === "/v1/forms/form-1" ? { body: FORM } : other;
 
-// Delegated tokens are cached per service account for the process, so each
-// scenario gets its own account and mints its own token, whatever ran before.
-let accounts = 0;
-
 export default defineGoldenSpec({
   provider: "forms",
-  create: () =>
+  // Delegated tokens are cached per service account for the process, so each
+  // scenario names its own account and mints its own token.
+  create: (scenario) =>
     forms("forms", {
       purpose: "Event registration",
       serviceAccount: {
-        clientEmail: `forms-golden-${++accounts}@project.iam.gserviceaccount.com`,
+        clientEmail: `forms-${scenario}@project.iam.gserviceaccount.com`,
         privateKey: PRIVATE_KEY,
       },
       subject: "alice@example.com",
@@ -116,9 +114,9 @@ export default defineGoldenSpec({
       reply: { body: { access_token: ACCESS_TOKEN, expires_in: 3599, token_type: "Bearer" } },
     },
   ],
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
-    body: { error: { code: status, message: `Golden ${status} failure`, status: "GOLDEN_FAILURE" } },
+    body: { error: { code: status, message, status: "GOLDEN_FAILURE" } },
   }),
   calls: [
     { tool: "get_form", args: { formId: "form-1" }, replies: [{ body: FORM }] },
@@ -207,6 +205,12 @@ export default defineGoldenSpec({
       ],
     },
   ],
+  unsent: ["privateKey"],
+  echo: {
+    tool: "get_form",
+    args: { formId: "form-1" },
+    replies: (text) => [{ body: { ...FORM, info: { ...FORM.info, title: text } } }],
+  },
   failures: {
     read: { tool: "get_form", args: { formId: "form-1" } },
     write: {

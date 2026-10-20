@@ -78,7 +78,30 @@
           "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)",
           "content-type": "application/x-www-form-urlencoded"
         },
-        "body": "account_id=user_jane&pm_id=pm_9&organization_id=org_1&amount=2555&giving_type=Tithe"
+        "body": {
+          "form": [
+            [
+              "account_id",
+              "user_jane"
+            ],
+            [
+              "pm_id",
+              "pm_9"
+            ],
+            [
+              "organization_id",
+              "org_1"
+            ],
+            [
+              "amount",
+              "2555"
+            ],
+            [
+              "giving_type",
+              "Tithe"
+            ]
+          ]
+        }
       }
     ],
     "result": {
@@ -614,6 +637,47 @@
             "last4": "4242"
           }
         ]
+      }
+    }
+  },
+  {
+    "label": "tithely_api_get echoes sent secrets",
+    "tool": "tithely_api_get",
+    "args": {
+      "path": "/payment-methods/pm_9",
+      "query": [
+        {
+          "name": "account_id",
+          "value": "user_jane"
+        }
+      ]
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://tithe.ly/api/v1/payment-methods/pm_9?account_id=user_jane",
+        "headers": {
+          "accept": "application/json",
+          "authorization": "Basic base64(<secret:publicKey>:<secret:privateKey>)"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "status": "success",
+          "pm_id": "pm_9",
+          "type": "Payment Method",
+          "object": {
+            "pm_id": "pm_9",
+            "last_4_digits": "4242",
+            "brand": "[redacted] [redacted]",
+            "pm_type": "card",
+            "account_id": "user_jane"
+          }
+        }
       }
     }
   }

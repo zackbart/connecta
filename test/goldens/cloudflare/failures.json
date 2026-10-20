@@ -180,6 +180,37 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
+            "headers": {
+              "authorization": "Bearer <secret:credential>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Cloudflare rejected the configured credential (HTTP 401). 10401: Golden 401 failure: rejected [redacted]. Ray 8abc-golden. An operator must check or replace it in this connection; call verify_credential to confirm.",
+            "retryable": false,
+            "connector": "cf",
+            "operation": "cf.cloudflare_api_read",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "cf"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry cf.cloudflare_api_read after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -200,6 +231,33 @@
             "details": {
               "host": "https://api.cloudflare.com",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
+            "headers": {
+              "authorization": "Bearer <secret:credential>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"cf.cloudflare_api_read\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://api.cloudflare.com",
+              "code": "timeout",
+              "operation": "cf.cloudflare_api_read",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -440,6 +498,44 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "PATCH",
+            "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "ttl": 300
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Cloudflare rejected the configured credential (HTTP 401). 10401: Golden 401 failure: rejected [redacted]. Ray 8abc-golden. An operator must check or replace it in this connection; call verify_credential to confirm.",
+            "retryable": false,
+            "connector": "cf",
+            "operation": "cf.cloudflare_api_write",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "cf"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -467,6 +563,52 @@
               "host": "https://api.cloudflare.com",
               "code": "ECONNREFUSED"
             }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "PATCH",
+            "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "ttl": 300
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"cf.cloudflare_api_write\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://api.cloudflare.com",
+              "code": "timeout",
+              "operation": "cf.cloudflare_api_write",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "cf",
+            "operation": "cf.cloudflare_api_write",
+            "uncertainCall": {
+              "address": "cf.cloudflare_api_write",
+              "args": {
+                "method": "PATCH",
+                "path": "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+                "body": {
+                  "ttl": 300
+                }
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

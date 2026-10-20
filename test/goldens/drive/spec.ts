@@ -2,8 +2,8 @@ import { drive } from "../../../src/providers/drive/index.js";
 import { defineGoldenSpec, type SeenRequest, type StubResponse } from "../harness.js";
 
 // A throwaway RSA key for the service account's JWT assertion. The assertion
-// only travels in the token exchange, an auxiliary route recorded by method
-// and URL, so a fresh key per process never reaches a golden.
+// is recorded decoded, with its signature as a placeholder, so a fresh key per
+// process never reaches a golden.
 const keys = (await crypto.subtle.generateKey(
   { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
   true,
@@ -14,11 +14,6 @@ const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const ACCESS_TOKEN = "golden-google-access-token-drive";
-
-// Delegated tokens are cached per service account for the process. A fresh
-// account per scenario makes every scenario mint its own token, so no golden
-// depends on which scenario ran first.
-let accounts = 0;
 
 const FILE = {
   id: "f1",
@@ -55,12 +50,13 @@ const REASONS: Record<number, [status: string, reason: string]> = {
 
 export default defineGoldenSpec({
   provider: "drive",
-  create: () => {
-    accounts += 1;
+  // Delegated tokens are cached per service account for the process, so each
+  // scenario names its own account and mints its own token.
+  create: (scenario) => {
     return drive("files", {
       purpose: "Staff documents for alice",
       serviceAccount: {
-        clientEmail: `drive-golden-${accounts}@project.iam.gserviceaccount.com`,
+        clientEmail: `drive-${scenario}@project.iam.gserviceaccount.com`,
         privateKey: PRIVATE_KEY,
       },
       subject: "alice@example.com",
@@ -74,9 +70,8 @@ export default defineGoldenSpec({
       reply: { body: { access_token: ACCESS_TOKEN, expires_in: 3599, token_type: "Bearer" } },
     },
   ],
-  failureReply: (status) => {
+  failureReply: (status, message) => {
     const [canonical, reason] = REASONS[status] ?? ["UNKNOWN", "unknown"];
-    const message = `Golden ${status} failure`;
     return {
       status,
       body: { error: { code: status, message, errors: [{ message, domain: "global", reason }], status: canonical } },
@@ -267,6 +262,8 @@ export default defineGoldenSpec({
       replies: [{ status: 204 }],
     },
   ],
+  unsent: ["privateKey"],
+  echo: { tool: "get_file", args: { fileId: "f1" }, replies: (text) => [{ body: { ...FILE, description: text } }] },
   failures: {
     read: { tool: "get_file", args: { fileId: "f1" } },
     write: { tool: "create_folder", args: { name: "Elders", parentId: "folder-1" } },

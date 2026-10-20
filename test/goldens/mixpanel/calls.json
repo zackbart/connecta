@@ -267,7 +267,22 @@
           "authorization": "Basic base64(<secret:credential>)",
           "content-type": "application/x-www-form-urlencoded"
         },
-        "body": "distinct_ids=%5B%22alice%22%5D&output_properties=%5B%22%24email%22%5D&where=properties%5B%22%24first_name%22%5D%3D%3D%22Alice%22"
+        "body": {
+          "form": [
+            [
+              "distinct_ids",
+              "[\"alice\"]"
+            ],
+            [
+              "output_properties",
+              "[\"$email\"]"
+            ],
+            [
+              "where",
+              "properties[\"$first_name\"]==\"Alice\""
+            ]
+          ]
+        }
       }
     ],
     "result": {
@@ -314,7 +329,18 @@
           "authorization": "Basic base64(<secret:credential>)",
           "content-type": "application/x-www-form-urlencoded"
         },
-        "body": "page=1&session_id=1234567890-EXAMPL"
+        "body": {
+          "form": [
+            [
+              "page",
+              "1"
+            ],
+            [
+              "session_id",
+              "1234567890-EXAMPL"
+            ]
+          ]
+        }
       }
     ],
     "result": {
@@ -510,6 +536,49 @@
           "code": 200,
           "num_records_imported": 1,
           "status": "OK"
+        }
+      }
+    }
+  },
+  {
+    "label": "mixpanel_api_read echoes sent secrets",
+    "tool": "mixpanel_api_read",
+    "args": {
+      "path": "/api/query/insights",
+      "project_id": 99,
+      "query": {
+        "bookmark_id": 7
+      }
+    },
+    "requests": [
+      {
+        "method": "GET",
+        "url": "https://mixpanel.com/api/query/insights?bookmark_id=7&project_id=99",
+        "headers": {
+          "authorization": "Basic base64(<secret:credential>)"
+        }
+      }
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "computed_at": "2025-12-31T16:35:41.252314+00:00",
+          "date_range": {
+            "from_date": "2025-12-01T00:00:00-07:00",
+            "to_date": "2025-12-31T23:59:59.999000-07:00"
+          },
+          "headers": [
+            "$event"
+          ],
+          "series": {
+            "Logged in": {
+              "2025-12-01T00:00:00-07:00": 9852
+            }
+          },
+          "title": "[redacted]"
         }
       }
     }

@@ -188,6 +188,38 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.stripe.com/v1/customers/cus_1",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "stripe-version": "2026-09-30.endive"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Stripe invalid_request_error golden_401: Golden 401 failure: rejected [redacted]. Request req_golden. The configured Stripe key was rejected; an operator must replace it in this connection.",
+            "retryable": false,
+            "connector": "billing",
+            "operation": "billing.stripe_api_read",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "billing"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry billing.stripe_api_read after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -209,6 +241,34 @@
             "details": {
               "host": "https://api.stripe.com",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.stripe.com/v1/customers/cus_1",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "stripe-version": "2026-09-30.endive"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"billing.stripe_api_read\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://api.stripe.com",
+              "code": "timeout",
+              "operation": "billing.stripe_api_read",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -237,7 +297,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -261,7 +332,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -297,7 +379,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -324,7 +417,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -348,7 +452,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -372,7 +487,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -396,7 +522,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -421,7 +558,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -449,6 +597,53 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.stripe.com/v1/customers",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/x-www-form-urlencoded",
+              "idempotency-key": "00000000-0000-4000-8000-000000000001",
+              "stripe-version": "2026-09-30.endive"
+            },
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Stripe invalid_request_error golden_401: Golden 401 failure: rejected [redacted]. Request req_golden. The configured Stripe key was rejected; an operator must replace it in this connection. Idempotency-Key: 00000000-0000-4000-8000-000000000001. Reusing it with the exact original arguments retries this write without repeating it only while the vendor retains the key; after that, look the object up before retrying.",
+            "retryable": false,
+            "connector": "billing",
+            "operation": "billing.stripe_api_write",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "billing"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -460,7 +655,18 @@
               "idempotency-key": "00000000-0000-4000-8000-000000000001",
               "stripe-version": "2026-09-30.endive"
             },
-            "body": "email=bob%40example.com&name=Bob"
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
           }
         ],
         "result": {
@@ -474,6 +680,65 @@
               "host": "https://api.stripe.com",
               "code": "ECONNREFUSED"
             },
+            "uncertainCall": {
+              "address": "billing.stripe_api_write",
+              "args": {
+                "method": "POST",
+                "path": "/v1/customers",
+                "body": {
+                  "email": "bob@example.com",
+                  "name": "Bob"
+                }
+              },
+              "recovery": {
+                "idempotencyKey": "00000000-0000-4000-8000-000000000001"
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first. A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.stripe.com/v1/customers",
+            "headers": {
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/x-www-form-urlencoded",
+              "idempotency-key": "00000000-0000-4000-8000-000000000001",
+              "stripe-version": "2026-09-30.endive"
+            },
+            "body": {
+              "form": [
+                [
+                  "email",
+                  "bob@example.com"
+                ],
+                [
+                  "name",
+                  "Bob"
+                ]
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"billing.stripe_api_write\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://api.stripe.com",
+              "code": "timeout",
+              "operation": "billing.stripe_api_write",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "billing",
+            "operation": "billing.stripe_api_write",
             "uncertainCall": {
               "address": "billing.stripe_api_write",
               "args": {

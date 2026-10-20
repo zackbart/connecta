@@ -107,7 +107,7 @@ export default defineGoldenSpec({
       },
     },
   ],
-  failureReply: (status) => ({ status, body: { message: `Golden ${status} failure` } }),
+  failureReply: (status, message) => ({ status, body: { message } }),
   calls: [
     {
       tool: "get_me",
@@ -487,6 +487,8 @@ export default defineGoldenSpec({
       replies: [{ status: 204 }],
     },
   ],
+  unsent: ["clientSecret", "refreshToken"],
+  echo: { tool: "get_me", replies: (text) => json({ id: 7, name: text }) },
   failures: {
     read: { tool: "get_group", args: { groupId: 5 } },
     write: {

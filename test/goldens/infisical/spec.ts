@@ -48,9 +48,9 @@ export default defineGoldenSpec({
       reply: { body: { accessToken: ACCESS_TOKEN, expiresIn: 3600, accessTokenMaxTTL: 0, tokenType: "Bearer" } },
     },
   ],
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
-    body: { reqId: "req-golden", statusCode: status, message: `Golden ${status} failure`, error: `Golden${status}` },
+    body: { reqId: "req-golden", statusCode: status, message, error: `Golden${status}` },
   }),
   calls: [
     {
@@ -208,6 +208,11 @@ export default defineGoldenSpec({
       ],
     },
   ],
+  echo: {
+    tool: "get_secret",
+    args: { projectId: PROJECT_ID, environment: "prod", secretName: "API_KEY", secretPath: "/apps" },
+    replies: (text) => [{ body: { secret: { ...SECRET, secretComment: text } } }],
+  },
   failures: {
     read: {
       tool: "get_secret",

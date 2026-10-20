@@ -191,6 +191,38 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:credential>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Vercel unauthorized: Golden 401 failure: rejected [redacted]. The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope.",
+            "retryable": false,
+            "connector": "hosting",
+            "operation": "hosting.vercel_api_read",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "hosting"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry hosting.vercel_api_read after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -212,6 +244,34 @@
             "details": {
               "host": "https://api.vercel.com",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:credential>"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"hosting.vercel_api_read\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://api.vercel.com",
+              "code": "timeout",
+              "operation": "hosting.vercel_api_read",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -460,6 +520,45 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "PATCH",
+            "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "framework": "nextjs"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Vercel answered HTTP 401 (unauthorized); its message is withheld because this operation handles secret values. The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope.",
+            "retryable": false,
+            "connector": "hosting",
+            "operation": "hosting.vercel_api_write",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "hosting"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -488,6 +587,53 @@
               "host": "https://api.vercel.com",
               "code": "ECONNREFUSED"
             }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "PATCH",
+            "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
+            "headers": {
+              "accept": "application/json",
+              "authorization": "Bearer <secret:credential>",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": {
+                "framework": "nextjs"
+              }
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"hosting.vercel_api_write\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://api.vercel.com",
+              "code": "timeout",
+              "operation": "hosting.vercel_api_write",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "hosting",
+            "operation": "hosting.vercel_api_write",
+            "uncertainCall": {
+              "address": "hosting.vercel_api_write",
+              "args": {
+                "method": "PATCH",
+                "path": "/v9/projects/web",
+                "body": {
+                  "framework": "nextjs"
+                }
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

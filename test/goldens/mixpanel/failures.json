@@ -180,6 +180,37 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
+            "retryable": false,
+            "connector": "analytics",
+            "operation": "analytics.get_insights_report",
+            "recovery": "unavailable",
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "analytics"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "Retry analytics.get_insights_report after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -200,6 +231,33 @@
             "details": {
               "host": "https://mixpanel.com",
               "code": "ECONNREFUSED"
+            }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "GET",
+            "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)"
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "unavailable",
+            "message": "Operation \"analytics.get_insights_report\" timed out during downstream after 0ms (effective deadline undefinedms).",
+            "retryable": true,
+            "details": {
+              "host": "https://mixpanel.com",
+              "code": "timeout",
+              "operation": "analytics.get_insights_report",
+              "stage": "downstream",
+              "elapsedMs": 0
             }
           }
         }
@@ -510,6 +568,52 @@
           }
         }
       },
+      "401 echo": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "auth_required",
+            "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
+            "retryable": false,
+            "connector": "analytics",
+            "operation": "analytics.import_events",
+            "recovery": "unavailable",
+            "reconciliationRequired": true,
+            "nextAction": {
+              "tool": "authorize_connector",
+              "arguments": {
+                "connector": "analytics"
+              },
+              "operatorHandoff": "Give the URL and instructions it returns to the operator."
+            },
+            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+          }
+        }
+      },
       "network": {
         "requests": [
           {
@@ -545,6 +649,66 @@
               "host": "https://api.mixpanel.com",
               "code": "ECONNREFUSED"
             }
+          }
+        }
+      },
+      "timeout": {
+        "requests": [
+          {
+            "method": "POST",
+            "url": "https://api.mixpanel.com/import?project_id=42&strict=1",
+            "headers": {
+              "authorization": "Basic base64(<secret:credential>)",
+              "content-type": "application/json"
+            },
+            "body": {
+              "json": [
+                {
+                  "event": "Signup",
+                  "properties": {
+                    "time": 1767225600,
+                    "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                    "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                    "Referred by": "Friend"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "ok": false,
+          "dispatched": true,
+          "error": {
+            "code": "write_outcome_unknown",
+            "message": "Operation \"analytics.import_events\" timed out during downstream after 0ms (effective deadline undefinedms). Its outcome is unknown. Check the target before repeating this call.",
+            "retryable": false,
+            "details": {
+              "host": "https://api.mixpanel.com",
+              "code": "timeout",
+              "operation": "analytics.import_events",
+              "stage": "downstream",
+              "elapsedMs": 0
+            },
+            "connector": "analytics",
+            "operation": "analytics.import_events",
+            "uncertainCall": {
+              "address": "analytics.import_events",
+              "args": {
+                "events": [
+                  {
+                    "event": "Signup",
+                    "properties": {
+                      "time": 1767225600,
+                      "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                      "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                      "Referred by": "Friend"
+                    }
+                  }
+                ]
+              }
+            },
+            "retry": "Do not retry automatically. Check whether the write took effect first."
           }
         }
       }

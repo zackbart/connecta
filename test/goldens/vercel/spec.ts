@@ -22,9 +22,9 @@ export default defineGoldenSpec({
   create: () =>
     vercel("hosting", { purpose: "Production web applications", auth: { type: "token" }, teamId: "team_default" }),
   credential: "golden-vercel-token-123456",
-  failureReply: (status) => ({
+  failureReply: (status, message) => ({
     status,
-    body: { error: { code: VERCEL_CODES[status] ?? `golden_${status}`, message: `Golden ${status} failure.` } },
+    body: { error: { code: VERCEL_CODES[status] ?? `golden_${status}`, message: `${message}.` } },
   }),
   calls: [
     { tool: "vercel_api_search", args: { query: "project env", method: "PATCH", limit: 2 } },
@@ -172,6 +172,11 @@ export default defineGoldenSpec({
       replies: [{ status: 202, body: { urls: [] } }],
     },
   ],
+  echo: {
+    tool: "vercel_api_read",
+    args: { path: "/v7/deployments", query: { projectId: "web" } },
+    replies: (text) => [{ body: { deployments: [{ uid: "dpl_1", state: "ERROR", errorMessage: text }] } }],
+  },
   failures: {
     read: { tool: "vercel_api_read", args: { path: "/v7/deployments", query: { projectId: "web" } } },
     write: {
