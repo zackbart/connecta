@@ -1,6 +1,6 @@
 ---
 name: add-provider
-description: Add or change a maintained connecta provider in its own folder, with classification, skills, fixtures, reviewed bundle budgets, and vendor-contract drift evidence.
+description: Add or change a maintained connecta provider in its own folder, with classification, skills, fixtures, reviewed bundle baselines, and vendor-contract drift evidence.
 ---
 
 # Add a maintained provider
@@ -47,9 +47,12 @@ existing constructor's option policy during the folder migration. Use
 `defineProvider()` for new providers. Declare the closed option shape
 with `optionsOf<Options>()`; no per-provider classification override option.
 Supply `name`, `title`, `kind`, `skill`, `options`, `create`, and reviewed
-`bundle` facts (`baselineGzip`, `maxGzip`, optional `note`). The optional `readme`
-field is the display name in the generated provider inventory. Caps are review
-facts, never recomputed from observed sizes. Keep them out of `drift.json`.
+`bundle` facts (`baselineGzip`, optional `note`). The optional `readme`
+field is the display name in the generated provider inventory. Provider
+entries are reported against that baseline, never capped: every deployment
+already imports the root and its Effect core, so the hard caps sit on the
+deployed shapes. Baselines are review facts, never recomputed from observed
+sizes. Keep them out of `drift.json`.
 
 - Require a non-empty purpose. Refuse structural mistakes at construction
   (INV-11). The shared construction path names the provider and connector id
@@ -95,7 +98,7 @@ generation `options`), run `pnpm run providers:spec --provider <name>
 --record` to accept a pin, and add `{ "type": "openapi-index", "source":
 "openapi.source.json" }` to `drift.json`. Shrink details (depth, descriptions,
 long enums; for very large documents `operationIds: false`, `pathParams:
-"typed"`, and an `opBudget`) before raising a bundle cap; `providers:spec`
+"typed"`, and an `opBudget`) before accepting a larger bundle; `providers:spec`
 prints the largest operation. Give the SKILL.md separate fragments
 per implementation plus a shared one, and name the published fragment with
 frontmatter `"content"`.

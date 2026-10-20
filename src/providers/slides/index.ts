@@ -3149,9 +3149,8 @@ export const slides = asProviderFactory<SlidesOptions>({
   readme: "Google Slides",
   bundle: {
     "baselineGzip": 35074,
-    "maxGzip": 89685,
     "note":
-      "./providers/slides starts at 29,685 B gzip (#683): a hand-written api() surface on the shared Workspace delegation layer, like ./providers/gmail, and larger than it for what keeps every read deliverable and recoverable — reading-order projection, element- and character-level continuation, raw JSON chunking, and revision-bound cursors. The cap uses the existing baseline + 60,000 B policy. Comments (#696) — a thread read that pages text across results with a raw mode, six comment writes, partial-save reporting, and ids-first raw replies — move the measured size to 35,074 B; the cap stays at 89,685 B, set from the 29,685 B first measurement.",
+      "./providers/slides starts at 29,685 B gzip (#683): a hand-written api() surface on the shared Workspace delegation layer, like ./providers/gmail, and larger than it for what keeps every read deliverable and recoverable — reading-order projection, element- and character-level continuation, raw JSON chunking, and revision-bound cursors. Reported against this baseline, not capped (#899). Comments (#696) — a thread read that pages text across results with a raw mode, six comment writes, partial-save reporting, and ids-first raw replies — move the measured size to 35,074 B; its former cap stayed at 89,685 B, set from the 29,685 B first measurement.",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
