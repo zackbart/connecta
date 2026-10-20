@@ -18,29 +18,31 @@
  * Setup (this example has no package.json of its own — it self-references the
  * installed `@zackbart/connecta` package):
  *   1. `pnpm install` in the connecta repository root (../../ from here) so the
- *      package import and wrangler resolve. A copy in its own repository
- *      installs `@zackbart/connecta @cloudflare/codemode` instead. Codemode is
- *      an optional peer.
- *   2. `wrangler d1 create connecta` and put its id in wrangler.jsonc under
- *      `d1_databases`. connecta creates its tables on first use.
- *   3. Set secrets:
- *        wrangler secret put DOWNSTREAM_TOKEN
- *        wrangler secret put CREDENTIAL_ENCRYPTION_KEY
- *      and PUBLIC_URL as a plain var in wrangler.jsonc.
- *   4. Attach Cloudflare Access to this Worker. Enable Managed OAuth and
+ *      package import and alchemy resolve. A copy in its own repository
+ *      installs `@zackbart/connecta @cloudflare/codemode` plus the exact
+ *      alchemy and effect pins instead (README.md § "Copied into its own
+ *      repository"). Codemode is an optional peer.
+ *   2. alchemy.run.ts declares the deployment: this Worker, its one D1
+ *      database (connecta creates its tables on first use), the Worker Loader,
+ *      the vars, and the DOWNSTREAM_TOKEN and CREDENTIAL_ENCRYPTION_KEY
+ *      secrets, read from the environment or .env at deploy time. Declare
+ *      every secret there: each deploy removes bindings set any other way.
+ *   3. It attaches Cloudflare Access to this Worker with Managed OAuth and
  *      Dynamic Client Registration. Its Allowed redirect URIs must include
  *      Claude's https://claude.ai/api/mcp/auth_callback plus ChatGPT's
  *      https://chatgpt.com/connector_platform_oauth_redirect and
  *      https://chatgpt.com/connector/oauth/* forms (see ../AGENTS.md).
- *      Then add one self-hosted Access application per hostname for
- *      `<host>/agent/*` with a single Bypass policy (Everyone), so agents send
- *      only their cta_ token (README.md § "Let agents through Access").
- *   5. Use the Workers Paid plan required by the `worker_loaders` binding.
- *   6. List the maintainers' Access user ids (the identity's user_uuid, else
- *      its email) in the CONNECTA_MAINTAINERS var, comma-separated.
- *   7. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
- *      lives. Point a maintainer's MCP client at `<PUBLIC_URL>/mcp`, and an
- *      agent's at `<PUBLIC_URL>/agent/ci`.
+ *      A second self-hosted application bypasses Access for
+ *      `<host>/agent/*` only, so agents send only their cta_ token
+ *      (README.md § "Let agents through Access").
+ *   4. Use the Workers Paid plan required by the Worker Loader binding.
+ *   5. List the maintainers' Access user ids (the identity's user_uuid, else
+ *      its email) in the CONNECTA_MAINTAINERS var, comma-separated, and set
+ *      the stack's Access sign-in rule.
+ *   6. `npx alchemy deploy --stage production` from this folder
+ *      (examples/worker). Never commit .env or .alchemy/. Point a
+ *      maintainer's MCP client at `<PUBLIC_URL>/mcp`, and an agent's at
+ *      `<PUBLIC_URL>/agent/ci`. wrangler.jsonc serves only `wrangler dev`.
  */
 import { api, defineConfig, remoteMcp } from "@zackbart/connecta";
 import { activityHistory } from "@zackbart/connecta/activity";
@@ -67,7 +69,7 @@ export interface Env {
   /** "on" switches on activity history, in CONNECTA_DB. */
   CONNECTA_ACTIVITY?: string;
   /**
-   * Worker Loader binding (wrangler.jsonc `worker_loaders`) powering
+   * Worker Loader binding (alchemy.run.ts `LOADER`) powering
    * execute_code. Dynamic Workers require the Workers Paid plan.
    */
   LOADER: WorkerLoader;

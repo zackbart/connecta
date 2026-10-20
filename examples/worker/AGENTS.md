@@ -17,9 +17,11 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
   refused inside connecta. Do not add JWT parsing or another identity gate.
   Signed-in maintainers alone manage shared credentials and agent tokens; pool
   members connect only their own accounts on personal connectors in their pools.
-- Attach Access to the Worker itself, not only its hostname. Enable Managed
-  OAuth on that Access application. CIMD is the spec's preferred client
-  registration; enable DCR as the fallback Access currently requires.
+- Attach Access to the Worker itself, not only its hostname: keep the
+  Worker's `access` property pointing at the Worker-level application in
+  `alchemy.run.ts`. Enable Managed OAuth on that Access application. CIMD is
+  the spec's preferred client registration; enable DCR as the fallback Access
+  currently requires.
 - Managed OAuth's **Allowed redirect URIs** must contain all three entries
   below. This is application configuration under
   `oauth_configuration.dynamic_client_registration.allowed_uris`, not an
@@ -48,8 +50,20 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
   refuses every write call; `false` lets them run with MCP host approval. Named
   pools inherit it unless they set their own `readOnly`. Do not configure the
   removed `trust`.
-- Keep credentials in Worker secrets. Never commit credential values, Access
-  service-token secrets, or `CREDENTIAL_ENCRYPTION_KEY`.
+- Deploy only with `npx alchemy deploy --stage production` from the folder
+  holding `alchemy.run.ts`, passing the same `--stage` to every `plan`,
+  `deploy`, and `destroy`. `wrangler.jsonc` is for `wrangler dev` only; never
+  deploy with Wrangler. Change Workers, D1, Access applications, vars, and
+  secrets in `alchemy.run.ts`, not in the dashboard or with other CLIs.
+- Declare every secret in `alchemy.run.ts` `env` with `Config.Redacted`, its
+  value supplied through the environment or an uncommitted `.env`. Each deploy
+  deletes secrets set any other way. Never commit credential values, `.env`,
+  `.alchemy/` (local state holds secret values in plaintext), Access
+  service-token secrets, or `CREDENTIAL_ENCRYPTION_KEY`. Keep the
+  `.gitignore` renamed from the example's `gitignore`; if it is missing,
+  restore it before any `git add`.
+- Keep `Alchemy.RemovalPolicy.retain()` on the D1 database and any R2 bucket,
+  so `alchemy destroy` never deletes connecta's state.
 - All state lives in the one D1 database bound as `CONNECTA_DB`, through
   `d1Storage` (and `d1ActivityStore`) from `@zackbart/connecta/d1`. Do not add
   a KV namespace, a second database, or a copied storage adapter; connecta
@@ -64,10 +78,10 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
 - Prefer `api()` when the agent must see an exact reviewed capability set;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
 - Agents (unattended clients) use `<PUBLIC_URL>/agent/<pool>` with a stored
-  `cta_` bearer as their only credential. That needs one self-hosted Access
-  application per hostname for `<host>/agent/*` with a single Bypass policy,
-  beside the Worker-level application (README.md § "Let agents through
-  Access"). Never bypass any other path. `/mcp` and `/mcp/<pool>` refuse `cta_`.
+  `cta_` bearer as their only credential. That needs the self-hosted Access
+  application `ConnectaAgents` in `alchemy.run.ts`, one `<host>/agent/*`
+  destination per agent hostname with a single Bypass policy, beside the
+  Worker-level application (README.md § "Let agents through Access"). Never bypass any other path. `/mcp` and `/mcp/<pool>` refuse `cta_`.
   `connecta doctor` also reads `/health` behind Access: set
   `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN`
   together, and pass `--pool ci`, a pool that lists the agent.

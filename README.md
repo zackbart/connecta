@@ -111,7 +111,7 @@ one, your agent's host decides what to approve.
 ## Where it runs
 
 Node or Docker (Clerk sign-in, SQLite) or Cloudflare Workers (Cloudflare
-Access, D1). Both serve the same agent tools. An optional operator UI shows
+Access, D1, deployed with Alchemy). Both serve the same agent tools. An optional operator UI shows
 a connection map, endpoints, connectors, and activity; integrations and access
 still change only in deployment code.
 
