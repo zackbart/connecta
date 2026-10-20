@@ -7,3 +7,5 @@ export const fixture = {
   create(id = "fixture", overrides: Partial<Parameters<typeof overflow>[1]> = {}) { return overflow(id, { ...options, ...overrides } as Parameters<typeof overflow>[1]); },
   conventions: {"verbs":["list","get","overflow"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };
+
+export const createAuthored = () => fixture.create();

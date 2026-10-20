@@ -1120,3 +1120,5 @@ export const hostedTools: ToolDef[] = [
     }
   }
 ];
+
+export const createAuthored = () => fixture.create();

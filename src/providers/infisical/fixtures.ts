@@ -6,3 +6,5 @@ export const fixture = {
   create(id = "fixture", overrides: Partial<Parameters<typeof infisical>[1]> = {}) { return infisical(id, { ...options, ...overrides }); },
   conventions: { verbs: ["list", "get", "create", "update", "delete"], nestedDescriptionExceptions: [], auth: "credential" },
 };
+
+export const createAuthored = () => fixture.create();

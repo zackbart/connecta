@@ -14,3 +14,5 @@ export const fixture = {
   },
   conventions: {"verbs":["verify","list","graphql","cloudflare"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };
+
+export const createAuthored = () => fixture.create();

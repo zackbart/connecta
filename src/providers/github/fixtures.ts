@@ -1,4 +1,7 @@
 import { github } from "./index.js";
+import { AppAuth } from "./auth.js";
+import { restConnector } from "./rest.js";
+import { ScopePolicy } from "./scope.js";
 const options: Parameters<typeof github>[1] = {
   purpose: "Audit fixture",
   app: { appId: "12345" },
@@ -12,3 +15,8 @@ export const fixture = {
   // both hosted and REST conventions without network access.
   conventions: undefined,
 };
+
+export function createAuthored() {
+  const policy = new ScopePolicy(options.scopes);
+  return restConnector("fixture", new AppAuth(options.app, policy), policy);
+}

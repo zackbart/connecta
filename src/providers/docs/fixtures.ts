@@ -8,3 +8,5 @@ export const fixture = {
   create(id = "fixture", overrides: Partial<Parameters<typeof docs>[1]> = {}) { return docs(id, { ...options, ...overrides } as Parameters<typeof docs>[1]); },
   conventions: {"verbs":["get","create","append","insert","replace","batch"],"nestedDescriptionExceptions":[],"auth":"delegated"},
 };
+
+export const createAuthored = () => fixture.create();
