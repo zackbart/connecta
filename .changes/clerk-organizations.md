@@ -1,0 +1,5 @@
+---
+type: added
+---
+
+`clerkAuth({ organizationId })` lets one Clerk instance serve many deployments, one Organization each. Only that Organization's members are admitted, on MCP OAuth tokens (JWT and opaque) and operator sessions. Membership is always confirmed with Clerk's Backend API and cached for at most 60 seconds per Organization and user, so a removed member is refused within a minute even while their access token is still valid. A failed or timed-out lookup refuses admission. A verified token or session naming another Organization is refused before the lookup. Organization roles grant nothing; maintainers and pool members stay in code. Organization mode requires resource-bound tokens, so a nonempty `allowedOAuthClientIds` throws at construction, as does a malformed `organizationId`. The default advertised scopes add `user:org:read`. Operator pages request session tokens for the deployment's Organization, and the connect sign-in page activates it. The Node template reads `CLERK_ORGANIZATION_ID`.

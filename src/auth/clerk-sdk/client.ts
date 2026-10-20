@@ -26,7 +26,9 @@ type ClerkAuth =
       isAuthenticated: true;
       tokenType: "session_token";
       userId: string;
-      sessionClaims: { azp?: string };
+      sessionClaims: { azp?: string; iss?: string; sub?: string };
+      /** The session's active organization, read from `o.id` (v2) or `org_id` (v1). */
+      orgId: string | undefined;
     }
   | {
       isAuthenticated: true;

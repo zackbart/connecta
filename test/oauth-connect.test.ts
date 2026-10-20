@@ -28,6 +28,7 @@ function setup(
     bobMember?: boolean;
     hostedSignIn?: boolean;
     ui?: boolean;
+    organizationId?: string;
   } = {},
 ) {
   const storage = memoryStorage();
@@ -61,6 +62,7 @@ function setup(
               token: user,
               userId: user,
               ...(options.hostedSignIn === false ? {} : { signInUrl: "https://accounts.example/sign-in" }),
+              ...(options.organizationId === undefined ? {} : { organizationId: options.organizationId }),
             }),
             activityActorNamespace: "https://clerk.example.test",
           }));
@@ -488,6 +490,39 @@ it.each([false, true])("serves local Clerk sign-in when no hosted page is config
   expect(body).toContain("/connect/service?h=");
   expect(body).not.toContain(AS);
   expect(flow.startAuth).not.toHaveBeenCalled();
+});
+
+// Organization mode refuses a session whose active organization is another
+// deployment's. The local page activates this one before retrying the link,
+// where the Account Portal would only send the browser straight back.
+it.each([true, false])(
+  "activates the deployment's organization before retrying a refused signed-in link (hosted %s)",
+  async (hostedSignIn) => {
+    const organizationId = `org_${"A".repeat(27)}`;
+    const flow = setup("clerk", "personal", { hostedSignIn, organizationId });
+    const link = await flow.authorize();
+    const response = await flow.browser(link.authorizationUrl, "carol");
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).toContain(`window.Clerk.organization?.id !== "${organizationId}"`);
+    expect(body).toContain(`window.Clerk.setActive({ organization: "${organizationId}" })`);
+    expect(body).toContain("Sign in with an account in this deployment's organization.");
+    expect(body).toContain("window.Clerk.mountSignIn");
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    if (!hostedSignIn) return;
+    // Signed out, organization mode still uses the hosted sign-in page.
+    const signedOut = await flow.browser(link.authorizationUrl);
+    expect(signedOut.status).toBe(302);
+    expect(new URL(signedOut.headers.get("Location")!).origin).toBe("https://accounts.example");
+  },
+);
+
+it("activates no organization when the deployment names none", async () => {
+  const flow = setup("clerk", "personal", { hostedSignIn: false });
+  const link = await flow.authorize();
+  const body = await (await flow.browser(link.authorizationUrl, "carol")).text();
+  expect(body).toContain("window.Clerk.mountSignIn");
+  expect(body).not.toContain("setActive");
 });
 
 it("refuses browser OAuth when no inbound provider is configured", async () => {

@@ -68,9 +68,14 @@ function fence(): () => boolean {
 
 function sessionToken(): Promise<string | null | undefined> {
   if (auth.kind === "cloudflare-access") return Promise.resolve(undefined);
-  return auth.kind === "clerk"
-    ? Promise.resolve(window.Clerk?.session?.getToken() ?? null)
-    : Promise.resolve(storedToken());
+  if (auth.kind !== "clerk") return Promise.resolve(storedToken());
+  const session = window.Clerk?.session;
+  // A deployment that admits one organization refuses a token naming another.
+  // Clerk mints this one for that organization without changing the
+  // session's active organization, which may belong to another deployment.
+  return Promise.resolve(
+    (auth.organizationId ? session?.getToken({ organizationId: auth.organizationId }) : session?.getToken()) ?? null,
+  );
 }
 
 /** Storage that throws (private browsing) reads as no stored token. */

@@ -166,6 +166,9 @@ personal connectors in their pools.
 [Auth](./auth.md#principals-visibility-and-operators) owns maintainers and members;
 [Clerk setup](./auth.md#clerk-oauth-tokens-and-operator-sessions) owns resource-bound
 tokens and `aud_claim_enabled`. A person's operator session is not an MCP token.
+Several deployments can share one Clerk instance with one Organization each;
+[Clerk Organizations](./auth.md#one-clerk-instance-one-organization-per-deployment)
+owns that setup and its isolation tradeoff.
 
 Every deployment must set `readOnly` in its configuration; startup fails without
 it, and the template and Worker example set `readOnly: false`. Each named pool

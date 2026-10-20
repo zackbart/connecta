@@ -1,12 +1,13 @@
 import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
 // Clerk as the OAuth 2.1 authorization server; connecta is the resource server.
-// Single tenant, no tenant-tag requirement, optional allowedDomains/gate() with
-// ~60s identity caching.
+// Single tenant, no tenant-tag requirement, optional organizationId,
+// allowedDomains, and gate() with ~60s identity caching.
 
 import type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
 import { createByteReadingClerkClient } from "./clerk-transport.js";
 import { decodeJwt } from "@clerk/backend/jwt";
 import { byteReadResponse } from "../byte-read-response.js";
+import { isClerkOrganizationId } from "../clerk-organization-id.js";
 import { failureRecord, logFailure, type AuthDenialReason } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
@@ -34,6 +35,18 @@ export interface ClerkAuthOptions {
    */
   allowedOAuthClientIds?: readonly string[];
   /**
+   * The one Clerk Organization this deployment admits, as its `org_…` ID,
+   * so one Clerk instance can serve many deployments. Every admitted Clerk user must be a member: connecta asks
+   * Clerk's Backend API and caches the answer for at most 60 seconds per
+   * organization and user. A verified token or session that names a different
+   * organization is refused before that lookup; one naming this organization
+   * still needs the lookup. A failed or timed-out lookup refuses admission.
+   * Requires resource-bound tokens, so it cannot be combined with a nonempty
+   * `allowedOAuthClientIds`. Organization roles grant nothing; `maintainers`
+   * and pool `members` still decide what an admitted user reaches.
+   */
+  organizationId?: string;
+  /**
    * Email domains this deployment admits, e.g. `["acme.com"]`. An
    * authenticated user whose verified primary email is not on one of them is
    * rejected exactly like a `gate` rejection. Matching is exact on the whole
@@ -47,7 +60,10 @@ export interface ClerkAuthOptions {
   allowedDomains?: readonly string[];
   /** Optional allow-list hook using Connecta's bundled user lookup client. */
   gate?: (userId: string, clerk: ClerkGateClient) => boolean | Promise<boolean>;
-  /** Advertised scopes in protected-resource metadata. */
+  /**
+   * Advertised scopes in protected-resource metadata. Defaults to
+   * `openid profile email`, plus `user:org:read` with `organizationId`.
+   */
   scopes?: string[];
   /** Optional hosted Account Portal sign-in URL for operator pages. Absolute https only. */
   signInUrl?: string;
@@ -103,6 +119,7 @@ function fapiUrl(publishableKey: string): string {
 
 const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
+const ORGANIZATION_LOOKUP_TIMEOUT_MS = 10_000;
 const ACTIVITY_LABEL_TTL_MS = 5 * 60 * 1000;
 const ACTIVITY_LABEL_MISS_TTL_MS = 30 * 1000;
 const ACTIVITY_LABEL_LOOKUP_TIMEOUT_MS = 1_250;
@@ -233,6 +250,71 @@ function normalizeOAuthClientIds(value: readonly string[] | undefined): Readonly
   return new Set(value);
 }
 
+/**
+ * Checked at construction because the ID becomes a Backend API path segment,
+ * and a typo would otherwise refuse every person at request time.
+ */
+function normalizeOrganizationId(value: string | undefined, allowedOAuthClientIds: ReadonlySet<string>) {
+  if (value === undefined) return undefined;
+  if (!isClerkOrganizationId(value)) {
+    throw new Error(
+      "clerkAuth: `organizationId` is not a Clerk organization ID. Copy it from " +
+        "the Clerk dashboard: `org_` followed by 27 letters and digits.",
+    );
+  }
+  // On a shared instance every deployment's OAuth clients and tokens come
+  // from one issuer, so the resource-bound audience is what keeps a token for
+  // one deployment out of another. An unbound-token fallback removes it.
+  if (allowedOAuthClientIds.size > 0) {
+    throw new Error(
+      "clerkAuth: `organizationId` requires resource-bound OAuth tokens. Remove " +
+        "`allowedOAuthClientIds` and enable Clerk's resource audiences.",
+    );
+  }
+  return value;
+}
+
+/**
+ * Is this user a member of the organization, according to Clerk now? The
+ * request's own signal and a ten-second deadline bound the call, and nothing
+ * is shared with another request (INV-7). Any response that is not a clear
+ * answer throws, so the caller refuses.
+ */
+async function organizationMember(
+  secretKey: string,
+  organizationId: string,
+  userId: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const url = new URL(`https://api.clerk.com/v1/organizations/${encodeURIComponent(organizationId)}/memberships`);
+  url.searchParams.set("user_id", userId);
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${secretKey}`, "Clerk-API-Version": "2026-05-12" },
+    redirect: "error",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(ORGANIZATION_LOOKUP_TIMEOUT_MS)]),
+  });
+  if (!response.ok) throw new Error("Organization membership lookup failed");
+  const list: unknown = await byteReadResponse(response).json();
+  if (!isRecord(list) || !Array.isArray(list.data)) {
+    throw new Error("Organization membership response invalid");
+  }
+  // The filter narrows the list; membership is still read exactly from each
+  // row, so an ignored or widened filter cannot admit someone else's row.
+  return list.data.some(
+    (membership) =>
+      isRecord(membership) &&
+      membership.object === "organization_membership" &&
+      isRecord(membership.organization) &&
+      membership.organization.id === organizationId &&
+      isRecord(membership.public_user_data) &&
+      membership.public_user_data.user_id === userId,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Only verified claims reach this comparison; resource URLs match exactly. */
 function oauthBindingRejection(
   claims: Record<string, unknown>,
@@ -320,10 +402,16 @@ function emailDomain(email: string): string | null {
   return isDomain(domain) ? domain.toLowerCase() : null;
 }
 
+/** A verified organization claim that is present and is not this one. */
+function namesOtherOrganization(claim: unknown, organizationId: string): boolean {
+  return claim !== undefined && claim !== null && claim !== organizationId;
+}
+
 /**
  * Clerk inbound auth.
  *
- * `allowedDomains` and `gate` decide who is admitted; both must pass.
+ * `organizationId`, `allowedDomains`, and `gate` decide who is admitted; each
+ * configured check must pass.
  */
 /** `"/<pool>"` for a pool endpoint path, null for `/mcp` and anything else. */
 function mcpPoolSuffix(pathname: string): string | null {
@@ -342,7 +430,10 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   });
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const allowedOAuthClientIds = normalizeOAuthClientIds(opts.allowedOAuthClientIds);
-  const requestedScopes = opts.scopes ?? ["openid", "profile", "email"];
+  const organizationId = normalizeOrganizationId(opts.organizationId, allowedOAuthClientIds);
+  // `user:org:read` lets the consent screen pick the organization a token
+  // names. Admission never relies on that claim, so an explicit list stands.
+  const requestedScopes = opts.scopes ?? ["openid", "profile", "email", ...(organizationId ? ["user:org:read"] : [])];
   if (
     !Array.isArray(requestedScopes) ||
     requestedScopes.some((scope) => typeof scope !== "string" || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))
@@ -351,6 +442,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   }
   const scopes = [...requestedScopes];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
+  const membershipCache = new Map<string, { member: boolean; exp: number }>();
   const activityLabelCache = new Map<string, { label?: string; exp: number }>();
   const pendingActivityLabels = new Map<string, Promise<string | undefined>>();
   const inFlightActivityLabelIds = new Set<string>();
@@ -475,6 +567,33 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   };
 
   /**
+   * The organization half of admission, checked before the domain allowlist
+   * and `gate`. A claim never answers it: an OAuth JWT verifies offline and
+   * can outlive a removed membership by a day, so membership always comes from
+   * the Backend API, cached at most 60 seconds per organization and user.
+   * A failed lookup is not an answer, so it refuses without being cached.
+   */
+  const checkOrganization = async (userId: string, signal: AbortSignal): Promise<boolean> => {
+    if (!organizationId) return true;
+    const key = `${organizationId}/${userId}`;
+    const hit = readIdentityCache(membershipCache, key);
+    if (hit) return hit.member;
+    let member: boolean;
+    try {
+      member = await organizationMember(opts.secretKey, organizationId, userId, signal);
+    } catch {
+      logDenial("organization_lookup_failed");
+      return false;
+    }
+    if (!member) logDenial("organization_membership_denied");
+    writeIdentityCache(membershipCache, key, {
+      member,
+      exp: Date.now() + (member ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
+    });
+    return member;
+  };
+
+  /**
    * Is this authenticated user admitted? The domain allowlist and `gate` both
    * have to say yes, and the allowlist runs first so an outsider never reaches
    * operator gate code. One cached verdict covers both, so composing them costs
@@ -519,6 +638,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       frontendApiUrl,
       ...(opts.signInUrl ? { signInUrl: opts.signInUrl } : {}),
       ...(opts.signUpUrl ? { signUpUrl: opts.signUpUrl } : {}),
+      ...(organizationId ? { organizationId } : {}),
     },
 
     async handleMetadata(request, baseUrl) {
@@ -619,6 +739,21 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
             logDenial(rejection);
             return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
+          if (organizationId) {
+            // Issuer, subject, and audience first, then the organization. An
+            // opaque token's claims come from this instance's Backend API,
+            // which has already matched the subject and carries no issuer.
+            if (!token.startsWith("oat_") && (claims.iss !== frontendApiUrl || claims.sub !== auth.userId)) {
+              logDenial("token_identity_mismatch");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+            // A token for another organization was chosen at consent. 401
+            // sends the host back through consent to choose again.
+            if (namesOtherOrganization(claims.org_id, organizationId)) {
+              logDenial("organization_mismatch");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+          }
         } else {
           if (auth.tokenType !== "session_token") {
             logDenial("token_type_mismatch");
@@ -631,6 +766,20 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
             logDenial("session_origin_mismatch");
             return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
+          if (organizationId) {
+            const { iss, sub } = auth.sessionClaims;
+            if (iss !== frontendApiUrl || sub !== auth.userId) {
+              logDenial("token_identity_mismatch");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+            // The SDK reads the active organization from `o.id` (v2) or
+            // `org_id` (v1). The operator shell asks Clerk for a token naming
+            // this organization, and the connect page activates it.
+            if (namesOtherOrganization(auth.orgId, organizationId)) {
+              logDenial("organization_mismatch");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+          }
         }
         userId = auth.userId ?? undefined;
       } catch {
@@ -641,7 +790,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         logDenial("user_missing");
         return { ok: false, response: unauthorized(baseUrl, true, request) };
       }
-      if (!(await checkGate(userId))) {
+      if (!(await checkOrganization(userId, request.signal)) || !(await checkGate(userId))) {
         return { ok: false, response: forbidden() };
       }
       return { ok: true, userId, ...(sessionCookies?.length ? { sessionCookies } : {}) };

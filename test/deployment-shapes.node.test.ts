@@ -193,6 +193,21 @@ describe("deployment shapes", () => {
           logger: "silent",
         }),
       ).toThrow("ConnectaConfig.maintainers is required with inbound auth");
+      // One Organization per deployment on a shared Clerk instance.
+      const organizationId = `org_${"A".repeat(27)}`;
+      expect(() => nodeConfig({ ...base(), CLERK_ORGANIZATION_ID: organizationId })).toThrow(
+        "CLERK_ORGANIZATION_ID needs CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY",
+      );
+      const organizationConfig = nodeConfig({
+        ...base(),
+        CLERK_PUBLISHABLE_KEY: PUBLISHABLE_KEY,
+        CLERK_SECRET_KEY: "sk_test_template",
+        CLERK_ORGANIZATION_ID: organizationId,
+        CONNECTA_MAINTAINERS: "user_one",
+      });
+      const providers = [organizationConfig.auth ?? []].flat();
+      expect(providers.find((provider) => provider.kind === "clerk")?.uiAuth).toMatchObject({ organizationId });
+      await createConnecta({ ...organizationConfig, logger: "silent" }).close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -200,6 +215,7 @@ describe("deployment shapes", () => {
     for (const variable of [
       "CLERK_PUBLISHABLE_KEY",
       "CLERK_SECRET_KEY",
+      "CLERK_ORGANIZATION_ID",
       "CONNECTA_MAINTAINERS",
       "CONNECTA_CREDENTIAL_KEY",
       "CONNECTA_DATABASE",

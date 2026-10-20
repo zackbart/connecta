@@ -6,16 +6,16 @@
 and package maintenance. This guide owns identity, membership, and downstream
 credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 
-| Task                                                                | Sections                                                                                                                                                                      |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connect a machine or migrate an old client                          | [Agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens), [agent endpoints](#agent-endpoints), [static bearer migration](#migrating-static-bearer-clients)             |
-| Configure caller visibility, read-only endpoints, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                      |
-| Lay out an agent's pools                                            | [Organizing an agent's pools](#organizing-an-agents-pools)                                                                                                                    |
-| Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [management](#human-authentication-management)    |
-| Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                         |
-| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)  |
-| Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens) |
-| Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                          |
+| Task                                                                | Sections                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Connect a machine or migrate an old client                          | [Agent tokens](#agent-tokens-and-upgrading-from-earlier-tokens), [agent endpoints](#agent-endpoints), [static bearer migration](#migrating-static-bearer-clients)                                                                                      |
+| Configure caller visibility, read-only endpoints, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                                                                                               |
+| Lay out an agent's pools                                            | [Organizing an agent's pools](#organizing-an-agents-pools)                                                                                                                                                                                             |
+| Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [Clerk Organizations](#one-clerk-instance-one-organization-per-deployment), [management](#human-authentication-management) |
+| Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                                                                                                  |
+| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                           |
+| Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens)                                                                          |
+| Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                                                                                                   |
 
 [Credential recognition and admission](#credential-recognition-and-admission)
 defines refusal precedence.
@@ -30,7 +30,8 @@ Finish [Clerk setup](#clerk-oauth-tokens-and-operator-sessions) or
 provider yet. A machine-only deployment cannot admit people or manage shared
 auth through the operator UI.
 
-1. Admit the person in the identity provider's sign-in policy. Obtain their
+1. Admit the person in the identity provider's sign-in policy. With Clerk's
+   `organizationId`, add them to the deployment's Clerk Organization. Obtain their
    stable principal id there: Clerk's user id, or Access's `user_uuid` (email
    only when no `user_uuid` is supplied). A display name or an email for a
    Clerk user is not their principal id.
@@ -1644,6 +1645,96 @@ for this fallback. Hosts may cache registrations, but the list is impractical
 for standard onboarding. A CIMD client identifies the host, not the deployment
 resource. Prefer resource audiences with `allowedOAuthClientIds` omitted or `[]`.
 
+### One Clerk instance, one Organization per deployment
+
+`organizationId` lets one Clerk instance serve several deployments. Give each
+deployment its own Clerk Organization and pass that Organization's id. In the
+Node template, set `CLERK_ORGANIZATION_ID` instead of editing source.
+
+```ts
+clerkAuth({ publishableKey, secretKey,
+  publicUrl: "https://crm.example.com",
+  organizationId: "org_..." });
+```
+
+Admission in organization mode:
+
+- Every admitted Clerk user is a member of that Organization. Connecta asks
+  Clerk's Backend API,
+  `GET /v1/organizations/{organization_id}/memberships?user_id={user_id}`,
+  for MCP OAuth tokens (JWT and opaque) and for operator sessions. It caches
+  each answer per Organization and user: a member for 60 seconds, a non-member
+  for 30. A token or session claim never replaces the lookup, so removing a
+  member takes effect within 60 seconds even while their day-long access token
+  remains valid.
+- A lookup that fails, times out after ten seconds, or is cancelled by the
+  caller refuses the request with `403`. Connecta does not cache it, so the
+  next request asks Clerk again.
+- Connecta checks the token's audience, issuer, and subject before it reads an
+  organization claim. The issuer must be the Frontend API origin encoded in
+  `publishableKey`. An opaque token's verification response comes from the
+  instance's Backend API and is matched by subject instead.
+- A verified OAuth token whose `org_id` names another Organization gets `401`
+  with `error="invalid_token"`, before any lookup. The person chose another
+  Organization at consent; reconnecting the host lets them choose this one.
+- A session whose active Organization is another one gets `401` too. Clerk
+  session tokens carry it in `o.id`, or `org_id` in version 1 tokens. Operator
+  pages request session tokens for the deployment's Organization with ClerkJS
+  `getToken({ organizationId })`, which leaves the active Organization
+  unchanged. The `/connect` sign-in page makes the deployment's Organization
+  active before it retries the link, even when `signInUrl` is set.
+- Organization roles and permissions grant nothing. `maintainers` and pool
+  `members` still list Clerk user ids in code. A member of the Organization in
+  neither list gets `404` at `/mcp` and at every `/mcp/<pool>`.
+- `allowedDomains` and `gate` still apply after membership. Every configured
+  check must pass, and an outsider never reaches `gate`.
+- Resource-bound tokens are required. A nonempty `allowedOAuthClientIds`
+  throws at construction; omit it or pass `[]`. Every deployment on a shared
+  instance gets tokens from one issuer, so the resource audience is what keeps
+  one deployment's token out of another.
+- The default advertised scopes become `openid profile email user:org:read`.
+  With `user:org:read`, Clerk's consent screen shows an Organization selector
+  and puts the chosen Organization in the token's `org_id`. An explicit
+  `scopes` list is advertised as written. Without `user:org:read`, tokens carry
+  no `org_id`; admission is unchanged because membership is always looked up.
+
+Set up a shared instance:
+
+1. Enable Organizations on the Clerk instance. Create one Organization per
+   deployment. Add each person who signs in to that deployment as a member;
+   any role works.
+2. Enable the `user:org:read` scope in the instance's OAuth application
+   settings in the Clerk Dashboard. Keep the consent screen enabled. Without
+   consent, Clerk fills `org_id` from the person's active or last active
+   Organization, and connecta refuses it when that is another deployment's.
+3. Enable resource audiences as described in
+   [Enable resource audiences in Clerk](#enable-resource-audiences-in-clerk).
+   Each deployment has its own public URL, so its tokens name only it.
+4. Set `organizationId` to the deployment's Organization id. List
+   `maintainers` and pool `members` by Clerk user id as usual.
+5. Restart or redeploy. Verify that a member is admitted at `/mcp` and on the
+   operator pages, a signed-in non-member gets `403`, and a token issued for
+   another Organization gets `401`.
+
+If a host's authorization fails with `invalid_scope`, Clerk is not offering
+`user:org:read` to that client. Pass `scopes: ["openid", "profile", "email"]`;
+admission does not depend on the scope.
+
+Isolation tradeoff: the secret key is instance-wide. It reaches every
+Organization, user, and OAuth application on the instance, so whoever reads it
+from one deployment's environment can read and change every other
+deployment's membership. Organization mode separates admission, not
+administration. When a deployment needs its own keys, users, or instance
+settings, give it its own Clerk instance and omit `organizationId`; that shape
+remains fully supported.
+
+Organization denials log the fixed codes `organization_mismatch`,
+`organization_membership_denied`, `organization_lookup_failed`, and
+`token_identity_mismatch`. They carry no user ids, Organization ids, or
+Backend API response text.
+
+### Session and diagnostic boundaries
+
 Clerk session tokens authenticate operator routes and browser OAuth callbacks
 only, with the deployment-origin `azp` check. MCP rejections retain the `401`
 Bearer challenge and endpoint `resource_metadata` URL required by
@@ -1679,7 +1770,9 @@ that is not `pk_test_`/`pk_live_` and a base64-encoded domain throws when
 `clerkAuth` is called, as `allowedDomains` does, naming the option without
 quoting the value — usually the _secret_ key pasted into the publishable slot.
 A per-request deployment, as on Workers, sees that error on its first request
-instead of a base64 stack on every route.
+instead of a base64 stack on every route. `organizationId` must be `org_`
+followed by 27 letters or digits, and it cannot be combined with a nonempty
+`allowedOAuthClientIds`; either mistake throws at construction.
 
 ## Human authentication management
 
@@ -1973,6 +2066,7 @@ boundaries, and `src/storage/keys.ts` owns credential key families.
 Inbound adapters live in [src/auth](https://github.com/zackbart/connecta/tree/main/src/auth);
 [auth routes](https://github.com/zackbart/connecta/blob/main/src/routes/oauth.ts)
 own connection handoffs and callbacks. Check [inbound auth tests](https://github.com/zackbart/connecta/blob/main/test/inbound-auth.test.ts),
+[Clerk organization tests](https://github.com/zackbart/connecta/blob/main/test/clerk-organization.test.ts),
 [Access tests](https://github.com/zackbart/connecta/blob/main/test/cloudflare-access-auth.test.ts),
 and [identity-scope tests](https://github.com/zackbart/connecta/blob/main/test/identity-scope.test.ts)
 for credential precedence and disclosure boundaries.
