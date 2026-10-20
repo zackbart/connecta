@@ -1,0 +1,1123 @@
+{
+  "id": "giving",
+  "kind": "api",
+  "title": "Tithe.ly Giving",
+  "description": "Tithe.ly giving — live donors and real money — Weekly giving reports for Grace Church",
+  "credential": {
+    "label": "Tithe.ly API keys",
+    "description": "The public and private key pair for this connection's environment. API access is by request: email support@tithe.ly to have keys issued. Test keys work only against tithelydev.com and live keys only against tithe.ly.",
+    "fields": [
+      {
+        "name": "publicKey",
+        "label": "Public key",
+        "description": "Starts with pub_. Sent as the HTTP Basic user name.",
+        "placeholder": "pub_…",
+        "inputType": "text"
+      },
+      {
+        "name": "privateKey",
+        "label": "Private key",
+        "description": "Starts with pri_. Sent as the HTTP Basic password; never expose it in a browser.",
+        "placeholder": "pri_…",
+        "inputType": "password"
+      }
+    ]
+  },
+  "guide": {
+    "summary": "Live giving: donor-data reduction, cents and ISO dates, cursor paging, and the form-encoded write hatch.",
+    "content": "# Tithe.ly giving usage\n\nLive Tithe.ly (tithe.ly): real donors and real money.\n\nAccount purpose: Weekly giving reports for Grace Church\n\n## Giving data is sensitive\n\n- Donor names, emails, addresses, and gift amounts are pastoral data. Reduce\n  inside `execute_code`: page, filter, and total there, and return the\n  aggregate (sums by fund, month, or donor count), not donor rows, unless the\n  task needs named people.\n- Organization projections omit the payout bank's last four and the legal\n  contact's date of birth. `raw: true` and `tithely_api_get` return them;\n  do not reach for either to answer a giving question.\n\n## Ids and vocabulary\n\n- Ids carry their kind: `org_` organization, `user_` donor account,\n  `ch_` charge, `rc_` recurring gift, `pm_` payment method. Read them\n  from `list_organizations` and `list_accounts`; never guess one.\n- A fund is a Tithe.ly giving type: `giving_type` becomes `fund`.\n- Projections rename snake_case to camelCase, return amounts as integer\n  `…Cents`, and Unix-second dates as ISO 8601 UTC `…At`.\n  `depositedAt` may be `\"pending\"`. There is no deposits resource: net\n  amount and fees live on each charge.\n\n## Paging\n\nList tools return `page.hasMore` and `page.nextCursor`; pass the cursor\nback unchanged with the same `order`. `list_charges` and\n`list_recurring_charges` need `organizationId` or `accountId`.\n`list_payment_methods` is not paged.\n\n## Failures\n\nTithe.ly answers most refusals with HTTP 200, `status: \"fail\"`, and a\nreason but no code. They arrive as `connector_call_failed`; read the reason\nrather than retrying blind.\n\n## Writes go through the mutate hatch\n\nEvery Tithe.ly write moves money or changes a donor's payment state, so none\nhas a named tool. `tithely_api_mutate` sends form fields as name/value pairs\nand always needs approval. Amounts are integer cents; card and bank tokens\ncome only from Tithely.js in a browser, never from an agent.\n\n- `POST /charges`: account_id, pm_id, organization_id, amount,\n  giving_type, optional memo. `POST /charge-once` charges a Tithely.js token\n  without an account.\n- `POST /refunds/{charge_id}` refunds a charge.\n- `POST /recurring`: account_id, pm_id, organization_id, amount,\n  giving_type, term (weekly, monthly, bimonthly, fortnightly), start_date\n  (Unix seconds). `DELETE /recurring/{recurring_id}` stops future charges and\n  refunds nothing.\n- `POST /payment-methods` (account_id, token), `POST\n  /payment-methods/{pm_id}` (account_id plus fields to change), `DELETE\n  /payment-methods/{pm_id}` with query account_id.\n- `POST /accounts` and `POST /accounts/{account_id}` create and update\n  donor accounts.\n\n## Limits\n\nTithe.ly publishes no rate limit, so this connection declares no call budget.\nAn operator who knows one sets `callAdmission` on the connection. Only v1 is\nreachable; Tithe.ly's undocumented v2 is not.\n"
+  },
+  "tools": [
+    {
+      "name": "tithely_api_get",
+      "description": "Call any Tithe.ly v1 GET endpoint and return its untouched response. Prefer named reads: raw organization records include bank last-4 and legal-contact DOB.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Path below /api/v1 beginning with '/', such as /charges-list or /refunds/ch_123. No query string."
+          },
+          "query": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Query parameters as name/value pairs, e.g. account_id.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Tithe.ly's snake_case parameter name."
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ],
+                  "description": "Parameter value; stringified once by the transport."
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "description": "Tithe.ly's untouched response body, or null when empty."
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "tithely_api_mutate",
+      "description": "Send a form-encoded Tithe.ly v1 POST or DELETE: charges, refunds, recurring gifts, payment methods, accounts. Moves money or donor payment state; always approval-gated.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "POST",
+              "DELETE"
+            ],
+            "description": "POST creates, updates, charges, or refunds; DELETE cancels a recurring gift or removes a payment method."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Path below /api/v1 beginning with '/', such as /charges-list or /refunds/ch_123. No query string."
+          },
+          "query": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Query parameters as name/value pairs, e.g. account_id.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Tithe.ly's snake_case parameter name."
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ],
+                  "description": "Parameter value; stringified once by the transport."
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "form": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Form fields as name/value pairs, sent form-encoded as Tithe.ly's documented examples send them. Amounts are integer cents.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Tithe.ly's snake_case parameter name."
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ],
+                  "description": "Field value; stringified once by the transport."
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "method",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "description": "Tithe.ly's untouched response body, or null when empty."
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "list_organizations",
+      "description": "List the organizations these keys manage, with their funds (giving types) and status. Omits payout bank and legal-contact details.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 99,
+            "description": "Rows per page, 1 to 99 (Tithe.ly allows 100; connecta asks for one extra to compute hasMore). Defaults to 25."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "desc",
+              "asc"
+            ],
+            "description": "Newest first (desc, Tithe.ly's default) or oldest first. Keep it constant while paging."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "organizations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "organizationId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "ownerAccountId": {
+                  "type": "string"
+                },
+                "website": {
+                  "type": "string"
+                },
+                "phoneNumber": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": "object",
+                  "properties": {
+                    "streetAddress": {
+                      "type": "string"
+                    },
+                    "city": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "postal": {
+                      "type": "string"
+                    },
+                    "country": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "payoutCurrency": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "funds": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "funds"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "organizations",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_organization",
+      "description": "Get one organization with its funds (giving types) and whether each is active, hidden, or archived. Omits payout bank and legal-contact details.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "organizationId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Organization id (org_…) from list_organizations."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [
+          "organizationId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "organizationId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerAccountId": {
+            "type": "string"
+          },
+          "website": {
+            "type": "string"
+          },
+          "phoneNumber": {
+            "type": "string"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "streetAddress": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "postal": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              }
+            }
+          },
+          "payoutCurrency": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "funds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          }
+        },
+        "required": [
+          "funds"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_accounts",
+      "description": "List donor accounts by name, email, and id. Contact details stay on get_account; giving history is list_charges by accountId.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "api"
+            ],
+            "description": "all (default) lists every account Tithe.ly lets these keys see; api lists only accounts created through this API."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 99,
+            "description": "Rows per page, 1 to 99 (Tithe.ly allows 100; connecta asks for one extra to compute hasMore). Defaults to 25."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "desc",
+              "asc"
+            ],
+            "description": "Newest first (desc, Tithe.ly's default) or oldest first. Keep it constant while paging."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "accountId": {
+                  "type": "string"
+                },
+                "firstName": {
+                  "type": "string"
+                },
+                "lastName": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "accounts",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_account",
+      "description": "Get one donor account with email, phone, and postal address. Does not include giving; use list_charges with accountId.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Donor account id (user_…) from list_accounts."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [
+          "accountId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "phoneNumber": {
+            "type": "string"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "streetAddress": {
+                "type": "string"
+              },
+              "city": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "postal": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_charges",
+      "description": "List gifts (charges) to one organization or from one donor, optionally within a created-date range, with gross, net, and fees in cents.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "organizationId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Organization (org_…) the gifts went to. This or accountId is required."
+          },
+          "accountId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Donor account (user_…) that gave. This or organizationId is required."
+          },
+          "createdAfter": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "minimum": 0,
+            "minLength": 1,
+            "description": "Only charges created after this time: Unix seconds or an ISO 8601 date/date-time (UTC when no offset)."
+          },
+          "createdBefore": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "minimum": 0,
+            "minLength": 1,
+            "description": "Only charges created before this time, in the same forms as createdAfter."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 99,
+            "description": "Rows per page, 1 to 99 (Tithe.ly allows 100; connecta asks for one extra to compute hasMore). Defaults to 25."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "desc",
+              "asc"
+            ],
+            "description": "Newest first (desc, Tithe.ly's default) or oldest first. Keep it constant while paging."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "charges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "chargeId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "amountCents": {
+                  "type": "integer"
+                },
+                "netAmountCents": {
+                  "type": "integer"
+                },
+                "feesCents": {
+                  "type": "integer"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "fund": {
+                  "type": "string"
+                },
+                "chargedAt": {
+                  "type": "string"
+                },
+                "depositedAt": {
+                  "type": "string"
+                },
+                "recurring": {
+                  "type": "boolean"
+                },
+                "feesCovered": {
+                  "type": "boolean"
+                },
+                "memo": {
+                  "type": "string"
+                },
+                "organizationId": {
+                  "type": "string"
+                },
+                "organizationName": {
+                  "type": "string"
+                },
+                "accountId": {
+                  "type": "string"
+                },
+                "donor": {
+                  "type": "object",
+                  "properties": {
+                    "firstName": {
+                      "type": "string"
+                    },
+                    "lastName": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "paymentMethodId": {
+                  "type": "string"
+                },
+                "paymentMethod": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "brand": {
+                      "type": "string"
+                    },
+                    "last4": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "charges",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_charge",
+      "description": "Get one charge with amounts in cents, fund, deposit date, donor name and email, and payment-method brand and last four.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chargeId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Charge id (ch_…) from list_charges."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [
+          "chargeId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "chargeId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "amountCents": {
+            "type": "integer"
+          },
+          "netAmountCents": {
+            "type": "integer"
+          },
+          "feesCents": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "fund": {
+            "type": "string"
+          },
+          "chargedAt": {
+            "type": "string"
+          },
+          "depositedAt": {
+            "type": "string"
+          },
+          "recurring": {
+            "type": "boolean"
+          },
+          "feesCovered": {
+            "type": "boolean"
+          },
+          "memo": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": "string"
+          },
+          "organizationName": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "donor": {
+            "type": "object",
+            "properties": {
+              "firstName": {
+                "type": "string"
+              },
+              "lastName": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            }
+          },
+          "paymentMethodId": {
+            "type": "string"
+          },
+          "paymentMethod": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "brand": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_recurring_charges",
+      "description": "List recurring gifts for one organization or one donor: amount, fund, term, and start date. Does not list the charges they produced.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "organizationId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Organization (org_…) receiving the gifts. This or accountId is required."
+          },
+          "accountId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Donor account (user_…) giving. This or organizationId is required."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 99,
+            "description": "Rows per page, 1 to 99 (Tithe.ly allows 100; connecta asks for one extra to compute hasMore). Defaults to 25."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque nextCursor from the previous page. Pass it back unchanged."
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "desc",
+              "asc"
+            ],
+            "description": "Newest first (desc, Tithe.ly's default) or oldest first. Keep it constant while paging."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "recurringCharges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "recurringId": {
+                  "type": "string"
+                },
+                "amountCents": {
+                  "type": "integer"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "fund": {
+                  "type": "string"
+                },
+                "term": {
+                  "type": "string"
+                },
+                "startAt": {
+                  "type": "string"
+                },
+                "organizationId": {
+                  "type": "string"
+                },
+                "organizationName": {
+                  "type": "string"
+                },
+                "accountId": {
+                  "type": "string"
+                },
+                "donor": {
+                  "type": "object",
+                  "properties": {
+                    "firstName": {
+                      "type": "string"
+                    },
+                    "lastName": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "paymentMethodId": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "recurringCharges",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_recurring_charge",
+      "description": "Get one recurring gift by id: amount in cents, fund, term, start date, organization, and donor name and email.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "recurringId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Recurring gift id (rc_…) from list_recurring_charges."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [
+          "recurringId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "recurringId": {
+            "type": "string"
+          },
+          "amountCents": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "fund": {
+            "type": "string"
+          },
+          "term": {
+            "type": "string"
+          },
+          "startAt": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": "string"
+          },
+          "organizationName": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "donor": {
+            "type": "object",
+            "properties": {
+              "firstName": {
+                "type": "string"
+              },
+              "lastName": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            }
+          },
+          "paymentMethodId": {
+            "type": "string"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_payment_methods",
+      "description": "List one donor's stored payment methods as type, brand, and last four. Every method in one response; never card numbers or tokens.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Donor account id (user_…) from list_accounts."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Tithe.ly's untouched records instead of the lean projection."
+          }
+        },
+        "required": [
+          "accountId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "paymentMethods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "paymentMethodId": {
+                  "type": "string"
+                },
+                "accountId": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "brand": {
+                  "type": "string"
+                },
+                "last4": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "paymentMethods"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    }
+  ]
+}

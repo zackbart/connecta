@@ -217,8 +217,8 @@ describe("CI aggregate check", () => {
       env: {
         ...process.env,
         STATIC_RESULT: "success",
-        NODE_RESULT: "skipped",
-        WORKERS_RESULT: "skipped",
+        NODE_RESULT: "success",
+        WORKERS_RESULT: "success",
         BUILD_RESULT: "skipped",
         PLANNING_ONLY: "true",
         CHANGES_RESULT: "success",
@@ -231,9 +231,9 @@ describe("CI aggregate check", () => {
       encoding: "utf8",
     }).status;
 
-  it("accepts a planning-only pull request that skips node, workers, build and browser", () => {
+  it("accepts a planning-only pull request whose golden jobs pass and build/browser skip", () => {
     expect(gate({})).toBe(0);
-    expect(gate({ NODE_RESULT: "success", BUILD_RESULT: "success" })).toBe(0);
+    expect(gate({ BUILD_RESULT: "success" })).toBe(0);
   });
 
   it.each([
@@ -241,6 +241,8 @@ describe("CI aggregate check", () => {
     { STATIC_RESULT: "failure" },
     { CHANGES_RESULT: "failure" },
     { NODE_RESULT: "failure" },
+    { NODE_RESULT: "skipped" },
+    { WORKERS_RESULT: "skipped" },
     { WORKERS_RESULT: "cancelled" },
     { BUILD_RESULT: "" },
     { PLANNING_ONLY: "false" },

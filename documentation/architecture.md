@@ -1308,6 +1308,204 @@ Phase 2's deployment-level classifier overrides, keyed by connector id and
 tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
 regardless of wrapping.
 
+#### Characterization goldens
+
+Every maintained provider with an `api()` surface has goldens under
+`test/goldens/<provider>/`: the oracle a provider migration must match byte
+for byte. `catalog.json` holds the connector metadata, the rendered guide,
+and each tool's name, description, schemas, and annotations. `calls.json`
+holds at least one fixture call per tool, then an echo call: the exact
+requests sent (method, URL, sorted headers, body), grouped into causal
+steps, and the agent-visible outcome. `failures.json` drives one read and
+one write through 400, 401, 403, 404, 409, 422, 429 (with `retry-after`)
+and 500 responses, a 401 whose message echoes every sent secret, a refused
+connection, and a transport timeout (a `TimeoutError` after the request
+left). `setup.json`, for a provider whose spec completes an OAuth consent,
+holds the consent's steps. Calls run through `Registry` and
+`InvocationService` with a real credential vault, so the outcome is what
+`call_tool` returns before MCP rendering.
+
+`test/goldens/<provider>/spec.ts` says only how to build the provider and
+which calls to make, including an `echo` call whose vendor reply carries the
+text the harness passes. `test/goldens/harness.ts` owns everything else:
+
+- The fake network records each request as `new Request(input, init)`
+  builds it, so `init.headers` replaces a Request's headers as Fetch does,
+  and a body gets its implied `content-type`. Form bodies are recorded as
+  fields when they re-encode to the exact bytes sent; FormData as its parts,
+  with the runtime's boundary as `<boundary>`. A JSON body is recorded as
+  `json` alone only when it is exactly that value's compact serialization;
+  any other spacing, key order, or escape also keeps the exact `text`.
+- A step loop drives each scenario under fake timers. It drains microtasks,
+  fires timers due now synchronously, and waits for request construction and
+  counted real work to finish. Newly waiting requests form one step, sorted
+  by method, URL, headers, and exact body. The loop releases **one answer at
+  a time**, running to quiescence after each. Previously recorded requests
+  keep release priority over new requests. Every capture runs twice: canonical
+  cohort release order and reverse cohort release order, each with its own
+  fresh module graph, clock, network and cache namespace. Queue replies are
+  assigned in canonical request order in both runs; only answer delivery
+  changes. Steps remain readable admission cohorts, not simultaneous answers.
+  Both orders must match the oracle. Identical observations collapse to one
+  row; differing reverse observations appear in `variants`, each with
+  `order: "reverse"`, complete `steps`, optional `waitedMs`, and `result`.
+  Setup uses the same rule, with `{ steps, variants }` only when orders differ.
+  This bounded two-order model deliberately does not enumerate all interleavings.
+- Every request records integer `after`: the number of answers delivered
+  when the provider called fetch, before harness jitter or body inspection.
+  It identifies a prefix of that run's release sequence; it includes auxiliary
+  requests and resets for setup and invocation. The canonical run releases
+  each cohort forwards, the reverse run backwards, with older cohorts first.
+  For concurrent A and B, C awaiting only B and C awaiting both have canonical
+  `after: 2`, but reverse `after: 1` and `after: 2` respectively. The differing
+  variant preserves that dependency. One integer per request keeps frontiers
+  linear, including a 300-page sequential call. A write sent before login and
+  a write duplicated concurrently or sequentially also differ.
+- Distinct queued replies for indistinguishable concurrent requests are a
+  fixture authoring error: the harness rejects them with a diagnostic. Use
+  identical replies or a request discriminator the provider controls. The
+  arrival order of identical requests cannot assign distinct responses.
+- `test/goldens/setup.ts` installs source dispatchers before a golden test
+  file imports any provider, connector or Effect module. `vi.resetModules()`
+  and dynamic imports refresh those graphs for each capture and release order.
+  The dispatchers retain their identity across captures: saved and prebound
+  functions, and functions captured by Effect, still consult the current
+  capture. Their defining prototypes are wrapped too. Native implementations
+  remain private to the source controller; outside captures the dispatchers
+  delegate unchanged, preserving Vitest's real clocks and runner timeouts.
+- The supported asynchronous model is explicit: fake fetch answers; fake
+  timeout, interval and immediate timers, including `AbortSignal.timeout`; Web Crypto's promise-returning
+  subtle methods; Request/Response/Blob body reads (`arrayBuffer`, `blob`,
+  `bytes`, `formData`, `json`, `text`, where present); default stream-reader
+  `read`/`cancel` and stream `cancel`/`pipeTo`; and promises/`queueMicrotask` chains rooted in those sources or
+  synchronous work. Effect's scheduler and sleeps use the same microtasks
+  and fake timers. A synchronous TextDecoderStream pipeline is supported.
+  Timer delays must coerce to finite nonnegative integer milliseconds within
+  the signed 32-bit timer range; other delays poison the capture. This keeps
+  Date and nanosecond clocks integral. New host asynchronous sources must be
+  registered and counted before use.
+  Native CompressionStream/DecompressionStream, `scheduler.wait`, and
+  native socket/worker/event-source constructors are rejected explicitly,
+  including when their errors are swallowed by a provider. CompressionStream
+  async iteration bypasses the reader-method spy and cannot establish
+  quiescence. No golden may silently bless that path.
+- A no-stimulus audit follows declared quiescence: request, counted-work,
+  timer, or call-settlement progress before an answer or clock tick fails
+  with an unsupported-source diagnostic. Waiting without a request, counted
+  work, or fake timer also fails. The audit is a secondary assertion: source
+  control starts at module load, and supported host promises and microtasks
+  are counted from entry through completion. Quiescence requires zero active
+  counted work, zero queued controlled microtasks, and no due timers; future
+  virtual timers are explicit harness stimuli. Unregistered native producers
+  are unavailable or throw, including saved constructors and swallowed errors.
+  `process.nextTick`, `process.uptime`, `Atomics.waitAsync`, native messaging
+  constructors, and performance timeline methods are unsupported. The
+  test-only `golden-source-boundary` transform rejects Node host-module imports
+  in provider graphs and rejects lazy module loading during scenario work,
+  before either can capture native references or schedule uncounted I/O. Only
+  the harness's fresh-graph loading phase admits test fixture imports.
+  Invalid captures cancel and drain their concurrent fake requests.
+- The network answers in zero virtual time. Before advancing to the next
+  timer, the loop requires eight quiet real event-loop turns and an audit.
+  A row records nonzero `waitedMs`, the virtual time spent on provider
+  timers. Elapsed-time readings count only those timers. A timer of 0 ms
+  set outside a timer callback is due at once and stays in the current
+  cohort. Unjoined timers at completion fail. Since `AbortSignal.timeout`
+  cannot be cancelled, remaining signal deadlines fire during teardown, outside
+  `waitedMs`; any resulting request or result mutation fails. Every successful
+  drive and scenario boundary has zero outstanding controlled work and timers.
+- Auxiliary routes answer token exchanges and other requests that are not
+  the tool's own, and are recorded by name with headers and body. A JWT in a
+  header or field is recorded as its decoded header and claims, with
+  `<signature>` for the per-run signature.
+- `setup` runs before each scenario; its requests must be identical in
+  every scenario and are recorded once.
+- Determinism: a fresh fake clock per scenario (timers, `Date`, and
+  `performance`, and Node `process.hrtime`/`hrtime.bigint`, starting at
+  2026-01-02T03:04:05Z), counted
+  `crypto.randomUUID`, and fixed `crypto.getRandomValues` and `Math.random`,
+  all restarted per scenario. `create(scenario)` receives a slug unique in
+  the process: the scenario name plus a per-capture suffix the goldens never
+  show. Load-time hrtime dispatchers also control Effect wall and monotonic
+  nanoseconds on the virtual clock. Default-date Intl formatting also reads
+  the virtual wall clock.
+  A process-wide cache (Google's delegated tokens) never carries
+  over from an earlier scenario or capture.
+- Secrets: every credential field and secret becomes `<secret:field>`, with
+  HTTP Basic shown decoded. Before that placeholdering, the harness fails
+  the capture if any secret reaches a caller-visible result (INV-5). The
+  guard decodes the result itself: JSON escapes, percent escapes in either
+  hex case, and base64 or base64url at any alignment, up to three layers
+  deep. It also finds any start of a secret that reaches 12 characters past
+  its public framing, so a truncated echo is a leak. Framing is a PEM armor
+  line and the DER structure that opens every key of its type (tags,
+  lengths, version, algorithm identifier), which guides and example keys
+  print. A later fragment, a shorter one in any encoding, or a secret with
+  its case changed is not detected. A base64 run is decoded only from 11
+  characters (8 bytes), shorter than the base64 of any start the guard
+  looks for.
+- The echo call carries every secret not listed in `unsent` in each
+  encoding redaction covers: raw, percent-encoded with upper- and lowercase
+  hex, base64, unpadded base64url, and `\uXXXX` escapes with upper- and
+  lowercase hex, plus the base64 of each `basic` pair. Every sent secret
+  contains `/`, `+`, and `=`, so its percent and base64url forms differ from
+  its raw and base64 forms. The `401 echo` case echoes the raw secrets only.
+  Some providers cap a vendor message before redaction sees it (Google at
+  500 characters), and a cut through a secret would leak its start.
+
+Object keys keep the order the provider produced. A migration changes the
+provider, never the spec or harness.
+
+`test/goldens.test.ts` compares on both Vitest projects and fails if a
+provider folder is neither covered nor listed as remote-MCP-only, a tool
+has no call, or a golden file is missing or extra. It never writes.
+`test/goldens-harness.test.ts` proves the harness catches the mutations it
+exists for: Authorization moved onto a Request that `init.headers`
+replaces, an emptied, respaced, or reordered Infisical login body, a write
+sent before the login is answered, a write sent twice at once or in turn,
+and sent-secret redaction disabled or missing its percent, base64, or
+base64url forms. It checks the leak guard against each encoding directly
+and against PEM framing. A Planning Center request delayed by its
+provider's own 0, 1, 5, or 50 ms timer must give one capture under seven
+schedules. It also captures every spec twice in one process with seeded
+scheduling jitter (requests delayed by microtasks, timers due now, and real
+work before request inspection; both answer orders tested independently) with
+committed seeds 1 and 2 (`CONNECTA_GOLDENS_SEEDS=3,7` adds seeds) and compares every file for every spec
+with the stored goldens. Partial-dependency mutations run under ten seeds,
+and saved immediate/timeout/abort-timeout, Effect scheduler, prebound crypto,
+prebound performance/Date/hrtime, module freshness, runner timing, unsupported
+sources, ambiguous replies, and cross-capture nanoseconds run on both projects.
+CI uses two characterization tiers. Every PR runs byte comparisons of every
+provider on both runtimes: Node captures fresh forward and reverse module graphs;
+Workers captures a fresh canonical graph and compares only the stored canonical
+observations. Projection removes variants only at harness observation positions,
+never from vendor results or schemas. Both tiers retain load-time source controls
+and runtime-independent mutation/source checks; always runs one seed per check.
+The reverse-only C-awaits-B-versus-both mutation runs on Node in always and on
+both runtimes in full. Planning-only PRs run these suites too.
+
+The full tier repeats all provider captures and the complete jitter matrix on
+both runtimes, including Workers reverse order. It runs on every main push and
+on PRs changing provider, connector, HTTP, storage, golden/harness, fixture,
+Vitest, dependency or selector inputs. The selector derives transitive core
+imports using TypeScript parsing and module resolution. Unknown paths or
+dependencies and classifier errors select full; every step-1 provider migration
+selects full. The `changes` job exports `goldens` to both runtime jobs through
+`CONNECTA_GOLDENS_TIER`. Only `always` reduces the tier; local unset/invalid
+values run full, retaining the complete `pnpm run check` gate.
+
+JWT fixture specs import fixed, public throwaway RSA PEM keys, with an
+import/sign/verify self-test. This avoids expensive key generation on every
+fresh module evaluation without changing characterized JWT claims or bytes.
+The harness never caches evaluated module graphs. Global controls prohibit
+`it.concurrent`; parallelism must use isolated files/workers. Transformed code
+may be cached.
+
+`pnpm run goldens:update [provider...]` rewrites the named goldens (all
+when none are named) on Node; it is not part of `check`. A PR
+that changes agent-facing output on purpose regenerates the affected goldens
+and says why in its description; any other golden diff is a regression.
+
 ## Optional deployment modules
 
 `createConnecta` takes closed typed `ui`, `vault`, and `activity`

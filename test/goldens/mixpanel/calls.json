@@ -1,0 +1,619 @@
+[
+  {
+    "label": "mixpanel_api_search",
+    "tool": "mixpanel_api_search",
+    "args": {
+      "query": "retention",
+      "limit": 3
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "operations": [
+          {
+            "method": "GET",
+            "path": "/api/query/retention",
+            "operationId": "retention-query",
+            "summary": "Query Retention Report",
+            "tag": "Retention",
+            "tool": "mixpanel_api_read"
+          }
+        ],
+        "revision": "reviewed-2026-10-14"
+      }
+    }
+  },
+  {
+    "label": "mixpanel_api_details",
+    "tool": "mixpanel_api_details",
+    "args": {
+      "method": "GET",
+      "path": "/api/query/insights"
+    },
+    "steps": [],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "method": "GET",
+        "path": "/api/query/insights",
+        "operationId": "insights-query",
+        "summary": "Query Saved Report",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "bookmark_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "tool": "mixpanel_api_read",
+        "revision": "reviewed-2026-10-14"
+      }
+    }
+  },
+  {
+    "label": "mixpanel_api_read",
+    "tool": "mixpanel_api_read",
+    "args": {
+      "path": "/api/query/insights",
+      "project_id": 99,
+      "query": {
+        "bookmark_id": 7
+      },
+      "select": [
+        "series"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://mixpanel.com/api/query/insights?bookmark_id=7&project_id=99",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "series": {
+            "Logged in": {
+              "2025-12-01T00:00:00-07:00": 9852
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "list_projects",
+    "tool": "list_projects",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://mixpanel.com/api/app/me",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "status": "ok",
+          "results": {
+            "id": 1001,
+            "username": "golden-service-account",
+            "projects": {
+              "42": {
+                "id": 42,
+                "name": "Grace Church app",
+                "domain": "mixpanel.com",
+                "role": {
+                  "name": "Analyst"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "export_events",
+    "tool": "export_events",
+    "args": {
+      "from_date": "2025-12-01",
+      "to_date": "2025-12-31",
+      "event": [
+        "Signed Up",
+        "Viewed Page"
+      ],
+      "time_in_ms": true
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://data.mixpanel.com/api/2.0/export?from_date=2025-12-01&to_date=2025-12-31&event=%5B%22Signed+Up%22%2C%22Viewed+Page%22%5D&time_in_ms=true&limit=1000&project_id=42",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "events": [
+          {
+            "event": "Signed Up",
+            "properties": {
+              "time": 1767225500,
+              "distinct_id": "alice",
+              "$insert_id": "hpuDqcvpltpCjBsebtxwadtEBDnFAdycabFb",
+              "mp_processing_time_ms": 1767225511874
+            }
+          },
+          {
+            "event": "Viewed Page",
+            "properties": {
+              "time": 1767225600,
+              "distinct_id": "bob",
+              "$insert_id": "aGVsbG8td29ybGQtaW5zZXJ0LWlkLTAwMDE",
+              "mp_processing_time_ms": 1767225611874
+            }
+          }
+        ],
+        "bytes_read": 333,
+        "truncated": false,
+        "notice": "Complete response for the requested range and filters."
+      }
+    }
+  },
+  {
+    "label": "get_profile_activity",
+    "tool": "get_profile_activity",
+    "args": {
+      "from_date": "2025-12-01",
+      "to_date": "2025-12-31",
+      "distinct_id": "alice",
+      "project_id": 99
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://mixpanel.com/api/query/stream/query?from_date=2025-12-01&to_date=2025-12-31&project_id=99&distinct_ids=%5B%22alice%22%5D",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "events": [
+            {
+              "event": "Signed Up",
+              "properties": {
+                "time": 1767225500,
+                "$distinct_id": "alice",
+                "$browser": "Chrome"
+              }
+            },
+            {
+              "event": "Viewed Page",
+              "properties": {
+                "time": 1767225600,
+                "distinct_id": "alice",
+                "$browser": "Chrome"
+              }
+            }
+          ],
+          "notice": "Maintenance endpoint; Mixpanel documents no completeness guarantee or pagination cursor."
+        }
+      }
+    }
+  },
+  {
+    "label": "query_profiles",
+    "tool": "query_profiles",
+    "args": {
+      "project_id": 99,
+      "workspace_id": 3,
+      "distinct_ids": [
+        "alice"
+      ],
+      "output_properties": [
+        "$email"
+      ],
+      "where": "properties[\"$first_name\"]==\"Alice\""
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://mixpanel.com/api/query/engage?project_id=99&workspace_id=3",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "distinct_ids",
+                "[\"alice\"]"
+              ],
+              [
+                "output_properties",
+                "[\"$email\"]"
+              ],
+              [
+                "where",
+                "properties[\"$first_name\"]==\"Alice\""
+              ]
+            ]
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "results": [
+            {
+              "$distinct_id": "alice",
+              "$properties": {
+                "$email": "alice@example.com",
+                "$first_name": "Alice"
+              }
+            }
+          ],
+          "total": 2,
+          "page": 0,
+          "session_id": "1234567890-EXAMPL",
+          "page_size": 1
+        },
+        "page": {
+          "hasMore": true,
+          "next": "1",
+          "param": "page",
+          "in": "body"
+        }
+      }
+    }
+  },
+  {
+    "label": "query_profiles next page",
+    "tool": "query_profiles",
+    "args": {
+      "page": 1,
+      "session_id": "1234567890-EXAMPL"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://mixpanel.com/api/query/engage?project_id=42",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "page",
+                "1"
+              ],
+              [
+                "session_id",
+                "1234567890-EXAMPL"
+              ]
+            ]
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "results": [],
+          "total": 2,
+          "page": 1,
+          "session_id": "1234567890-EXAMPL",
+          "page_size": 1
+        },
+        "page": {
+          "hasMore": false
+        }
+      }
+    }
+  },
+  {
+    "label": "get_insights_report",
+    "tool": "get_insights_report",
+    "args": {
+      "bookmark_id": 11
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "computed_at": "2025-12-31T16:35:41.252314+00:00",
+          "date_range": {
+            "from_date": "2025-12-01T00:00:00-07:00",
+            "to_date": "2025-12-31T23:59:59.999000-07:00"
+          },
+          "headers": [
+            "$event"
+          ],
+          "series": {
+            "Logged in": {
+              "2025-12-01T00:00:00-07:00": 9852
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "get_funnel_report",
+    "tool": "get_funnel_report",
+    "args": {
+      "funnel_id": 12,
+      "from_date": "2025-12-01",
+      "to_date": "2025-12-31"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://mixpanel.com/api/query/funnels?funnel_id=12&from_date=2025-12-01&to_date=2025-12-31&project_id=42",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "meta": {
+            "dates": [
+              "2025-12-02"
+            ]
+          },
+          "data": {
+            "2025-12-02": {
+              "steps": [
+                {
+                  "count": 100,
+                  "event": "Viewed page",
+                  "overall_conv_ratio": 1,
+                  "step_conv_ratio": 1
+                },
+                {
+                  "count": 40,
+                  "event": "Signed Up",
+                  "overall_conv_ratio": 0.4,
+                  "step_conv_ratio": 0.4
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "query_retention",
+    "tool": "query_retention",
+    "args": {
+      "from_date": "2025-12-01",
+      "to_date": "2025-12-31",
+      "born_event": "Signup",
+      "event": "Purchase",
+      "retention_type": "birth",
+      "unit": "week"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://mixpanel.com/api/query/retention?from_date=2025-12-01&to_date=2025-12-31&born_event=Signup&event=Purchase&retention_type=birth&unit=week&project_id=42",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "2025-12-01": {
+            "counts": [
+              2,
+              1,
+              2
+            ],
+            "first": 2
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "import_events",
+    "tool": "import_events",
+    "args": {
+      "project_id": 99,
+      "events": [
+        {
+          "event": "Signup",
+          "properties": {
+            "time": 1767225600,
+            "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+            "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+            "Referred by": "Friend"
+          }
+        }
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.mixpanel.com/import?project_id=99&strict=1",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": [
+              {
+                "event": "Signup",
+                "properties": {
+                  "time": 1767225600,
+                  "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+                  "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+                  "Referred by": "Friend"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "code": 200,
+          "num_records_imported": 1,
+          "status": "OK"
+        }
+      }
+    }
+  },
+  {
+    "label": "mixpanel_api_read echoes sent secrets",
+    "tool": "mixpanel_api_read",
+    "args": {
+      "path": "/api/query/insights",
+      "project_id": 99,
+      "query": {
+        "bookmark_id": 7
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://mixpanel.com/api/query/insights?bookmark_id=7&project_id=99",
+          "headers": {
+            "authorization": "Basic base64(<secret:credential>)"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "status": 200,
+        "data": {
+          "computed_at": "2025-12-31T16:35:41.252314+00:00",
+          "date_range": {
+            "from_date": "2025-12-01T00:00:00-07:00",
+            "to_date": "2025-12-31T23:59:59.999000-07:00"
+          },
+          "headers": [
+            "$event"
+          ],
+          "series": {
+            "Logged in": {
+              "2025-12-01T00:00:00-07:00": 9852
+            }
+          },
+          "title": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
+        }
+      }
+    }
+  }
+]

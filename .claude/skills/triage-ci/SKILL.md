@@ -14,11 +14,13 @@ inspect the newest head's run. Pushes to main always run everything.
 
 - `changes` decides `planning` ([scripts/ci-planning-paths.sh](../../../scripts/ci-planning-paths.sh)),
   `browser` ([scripts/ci-browser-paths.sh](../../../scripts/ci-browser-paths.sh))
-  and `security` ([scripts/ci-security-paths.sh](../../../scripts/ci-security-paths.sh)) for PRs.
-  `node`, `workers` and `build` wait for it.
+  `security` ([scripts/ci-security-paths.sh](../../../scripts/ci-security-paths.sh))
+  and `goldens` ([scripts/ci-goldens-tier.mjs](../../../scripts/ci-goldens-tier.mjs)).
+  All four decisions apply to PRs. `node`, `workers` and `build` wait for it.
 - Planning-only PRs: every changed path is under `decisions/` or `.changes/`.
-  `node`, `workers`, `build` and `browser` show as skipped; `static` still
-  checks formatting, doc links and fragments. Shipped docs (`documentation/`,
+  `node` and `workers` run only the always-tier golden and harness suites;
+  `build` and `browser` show as skipped. `static` still checks formatting,
+  doc links and fragments. Shipped docs (`documentation/`,
   `README.md`, `templates/`, `examples/`) are never planning-only.
 - `static`: formatting, generated providers, docs, changes, UI/Clerk freshness,
   lint, Knip, and typecheck.
@@ -41,8 +43,8 @@ inspect the newest head's run. Pushes to main always run everything.
   or `.npmrc` changes in the PR diff.
   This includes templates installed by package and Docker smoke, published
   examples, and future workspaces. Every push to `main` also audits.
-- `check` passes when static and changes succeed, Node, Workers and build
-  succeed or were skipped because the PR is planning-only, and browser/security
+- `check` passes when static, changes, Node and Workers succeed, build
+  succeeds or was skipped because the PR is planning-only, and browser/security
   each succeed or were skipped because they were not required. A cancelled or
   unexpectedly skipped job fails it.
 
@@ -57,6 +59,29 @@ selects: changed provider folders and importers of a changed `_shared/` area;
 a drift tooling change selects all. The weekly schedule and manual dispatch
 scan every provider. Its summary separates new or changed findings from standing
 `manual-required` reviews. Drift parser and contract tests run in the `node` job.
+
+Provider goldens always compare every provider's canonical catalog/request/result
+bytes on both runtimes, with fresh evaluated module graphs and load-time source
+controls. Node also checks reverse answer order on every PR. Runtime-independent
+mutation and source checks run with one seed in the `always` tier. Full adds the
+Workers reverse order and every repeated-capture/jitter matrix on both runtimes.
+The selector derives transitive provider/core dependencies from TypeScript
+imports and selects full for provider, connector, HTTP, storage, fixture,
+harness, Vitest, dependency and selector changes. Unknown paths/dependencies or
+classification failures also run full. Every step-1 migration therefore runs
+full, as does every push to main. Check the `changes` log's `goldens` output
+before diagnosing an intentionally skipped repeated-capture test.
+
+Locally, unset/invalid `CONNECTA_GOLDENS_TIER` means full; only `always` reduces
+it. Compare both tiers without rewriting fixtures:
+`CONNECTA_GOLDENS_TIER=always pnpm exec vitest run --project workers test/goldens.test.ts test/goldens-harness.test.ts`
+(and repeat with `--project node`, then `CONNECTA_GOLDENS_TIER=full`).
+Use `--maxWorkers=2` on a loaded machine. Mutation tests remain active in
+always; the reverse-only dependency mutation is Node-always and both-runtime
+full. Fixed public PEM fixtures have an import/sign/verify self-test. Never
+cache evaluated module graphs or use `it.concurrent` around global controls;
+independent files/workers may run in parallel, and transformed-code caches are
+safe.
 
 Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
