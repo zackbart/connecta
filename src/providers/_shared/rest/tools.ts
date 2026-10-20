@@ -38,6 +38,7 @@ import {
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
 import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
+import { redactBeforeCut } from "../../../sent-secrets.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
 import type { ValueSafety } from "./value-safety.js";
@@ -101,7 +102,8 @@ export interface RestVendor {
    * origin), or a refusal that says where to go instead.
    */
   transport(server: string | undefined): GuardedTransport | string;
-  /** Map a failed response to what the caller does next (H11); `call` lets a vendor withhold text for secret families. */
+  /** Map a failed response to what the caller does next (H11); `call` lets a vendor withhold text for secret families.
+   * `body` arrives with sent secrets already redacted, so a mapper may cut its prose short. */
   failure(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError;
   /** Reviewed POSTs that only read; `_api_read` admits exactly these. */
   readonly readPosts?: readonly RestReadPost[];
@@ -127,9 +129,15 @@ export interface RestVendor {
   /**
    * Map a successful body into the envelope's `data`, such as unwrapping a
    * vendor envelope; throw to fail a success-status body that reports an
-   * error. `page` still reads the body as it arrived.
+   * error. `page` still reads the body as it arrived. A failure that cuts
+   * the body's prose short redacts it with `ctx` first (`redactBeforeCut`).
    */
-  result?(body: unknown, call: RestCall, response: { status: number; headers: Headers }): unknown;
+  result?(
+    body: unknown,
+    call: RestCall,
+    response: { status: number; headers: Headers },
+    ctx: ConnectorContext,
+  ): unknown;
   /** Request headers the generic tools accept, by name, with what each does; the vendor validates values. */
   readonly headers?: Readonly<Record<string, string>>;
   /** Whether the generic tools accept a string body, for operations framed as text. */
@@ -358,14 +366,21 @@ export async function callRest(
   try {
     return await send(request, ctx, async (response) => {
       responded = true;
-      if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call);
+      // Mappers cut the vendor's prose short, so it is redacted whole first.
+      if (!response.ok)
+        throw vendor.failure(
+          response.status,
+          response.headers,
+          redactBeforeCut(ctx, await failureBody(response)),
+          call,
+        );
       // HEAD answers with headers alone; they are its data.
       const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
       // Order: unwrap the vendor's envelope, then redact (every success, HEAD
       // header data and named tools included), then cursors (and, in the
       // tools, `select`). Cursors read the envelope when the vendor unwraps
       // one, and the redacted body otherwise.
-      const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response) : body;
+      const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response, ctx) : body;
       const data = vendor.valueSafety.redact(unwrapped, call.method, call.op.path);
       const page = vendor.page?.(vendor.result ? body : data, call);
       return { status: response.status, data, ...(page ? { page } : {}) };

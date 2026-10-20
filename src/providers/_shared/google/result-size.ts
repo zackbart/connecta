@@ -13,6 +13,9 @@
  * against this and its envelope never needs measuring.
  */
 
+import { redactBeforeCut } from "../../../sent-secrets.js";
+import type { ConnectorContext } from "../../../types.js";
+
 /** The size one Workspace result is built to stay under, in UTF-8 JSON bytes. */
 export const RESULT_BUDGET_BYTES = 192 * 1024;
 
@@ -28,9 +31,30 @@ export function jsonBytes(value: unknown): number {
  * `text` cut so that its JSON string encoding — quotes and escapes included —
  * takes at most `maxBytes` UTF-8 bytes, with `marker(dropped)` appended when
  * anything was cut. The cut never splits a surrogate pair, and the marker is
- * counted inside the bound, so the result always fits.
+ * counted inside the bound, so the result always fits. Text that must be cut
+ * has every secret the call's request sent replaced first: a cut through an
+ * echo would leave a fragment no later redaction can find.
  */
-export function clampText(text: string, maxBytes: number, marker: (droppedCharacters: number) => string): string {
+export function clampText(
+  ctx: ConnectorContext,
+  original: string,
+  maxBytes: number,
+  marker: (droppedCharacters: number) => string,
+): string {
+  if (jsonBytes(original) <= maxBytes) return original;
+  return clampRedactedText(redactBeforeCut(ctx, original, "leaf"), maxBytes, marker);
+}
+
+/**
+ * {@link clampText} for text whose sent secrets the caller already replaced,
+ * whole, before cutting any of it: a reader that pages one text from offsets
+ * must count every page in the same redacted text.
+ */
+export function clampRedactedText(
+  text: string,
+  maxBytes: number,
+  marker: (droppedCharacters: number) => string,
+): string {
   if (jsonBytes(text) <= maxBytes) return text;
   const fits = (length: number) => {
     const cut = safePrefix(text, length);

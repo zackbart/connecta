@@ -37,6 +37,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -176,24 +177,24 @@ function charsetOf(part: JsonRecord): string {
 }
 
 /** Bytes as text, with an explicit notice when the declared charset is unsupported. */
-function decodeIn(part: JsonRecord, data: string): { text: string; note?: string } {
+function decodeIn(ctx: ConnectorContext, part: JsonRecord, data: string): { text: string; note?: string } {
   let bytes: Uint8Array;
   try {
     bytes = base64UrlBytes(data);
   } catch {
     return { text: "" };
   }
-  return decodeBytes(part, bytes);
+  return decodeBytes(ctx, part, bytes);
 }
 
-function decodeBytes(part: JsonRecord, bytes: Uint8Array): { text: string; note?: string } {
+function decodeBytes(ctx: ConnectorContext, part: JsonRecord, bytes: Uint8Array): { text: string; note?: string } {
   const charset = charsetOf(part);
   try {
     return { text: new TextDecoder(charset).decode(bytes) };
   } catch {
     return {
       text: new TextDecoder().decode(bytes),
-      note: `Gmail declared unsupported charset "${clipped(charset, FIELD_BYTES)}"; decoded as UTF-8.`,
+      note: `Gmail declared unsupported charset "${clipped(ctx, charset, FIELD_BYTES)}"; decoded as UTF-8.`,
     };
   }
 }
@@ -307,7 +308,7 @@ async function readBody(
     );
     data = text(fetched["data"]);
   }
-  const decoded = data ? decodeIn(chosen, data) : { text: "" };
+  const decoded = data ? decodeIn(ctx, chosen, data) : { text: "" };
   // Uncut: the caller caps it, by characters and by the result's bytes.
   return {
     text: format === "html" ? htmlToText(decoded.text) : decoded.text,
@@ -362,13 +363,13 @@ function labelsOf(labelIds: readonly string[]): { labelIds: string[]; labelIdsOm
 /** Attachment rows listed per message; the rest are counted, not listed. */
 const MAX_LISTED_ATTACHMENTS = 20;
 
-function attachmentsOf(payload: JsonRecord): { listed: JsonRecord[]; omitted: number } {
+function attachmentsOf(ctx: ConnectorContext, payload: JsonRecord): { listed: JsonRecord[]; omitted: number } {
   const all = walk(payload).attachments;
   return {
     listed: all.slice(0, MAX_LISTED_ATTACHMENTS).map((part) =>
       compact({
-        filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
-        mimeType: clipped(text(part["mimeType"]), FIELD_BYTES),
+        filename: clipped(ctx, text(part["filename"]) ?? "", FIELD_BYTES),
+        mimeType: clipped(ctx, text(part["mimeType"]), FIELD_BYTES),
         size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
         ...ids({
           attachmentId: [asRecord(part["body"])["attachmentId"], ATTACHMENT_ID_BYTES],
@@ -496,8 +497,8 @@ async function readAttachment(
   const base = compact({
     messageId,
     ...ids({ partId: [part["partId"]] }),
-    filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
-    mimeType: clipped(text(part["mimeType"]) ?? "application/octet-stream", FIELD_BYTES),
+    filename: clipped(ctx, text(part["filename"]) ?? "", FIELD_BYTES),
+    mimeType: clipped(ctx, text(part["mimeType"]) ?? "application/octet-stream", FIELD_BYTES),
     size,
   });
   const unavailable = (note: string) => ({ ...base, format: "unavailable", contentTruncated: false, note });
@@ -527,7 +528,7 @@ async function readAttachment(
     if (!chosen) return unavailable("This forwarded message has no readable text body; open it in Gmail.");
     const bytes = await attachmentBytes(client, ctx, messageId, chosen);
     if (!bytes) return unavailable("Gmail returned no readable forwarded message body data; open it in Gmail.");
-    const rendered = decodeBytes(chosen, bytes);
+    const rendered = decodeBytes(ctx, chosen, bytes);
     if (!rendered.text.trim())
       return unavailable("This forwarded message has no readable text body; open it in Gmail.");
     const headers = ["From", "To", "Date", "Subject"].flatMap((name) => {
@@ -549,13 +550,15 @@ async function readAttachment(
       }
       return { ...envelope, content: btoa(binary) };
     }
-    const rendered = decodeBytes(part, bytes);
+    const rendered = decodeBytes(ctx, part, bytes);
     decoded = rendered.text;
     if (mime === "message/rfc822" && !decoded.trim()) {
       return unavailable("This forwarded message has no readable text body; open it in Gmail.");
     }
     envelope = { ...envelope, ...compact({ note: rendered.note }) };
   }
+  // Every secret the request sent is replaced before either cut below.
+  if (decoded.length > maxChars || jsonBytes(decoded) > maxBytes) decoded = redactBeforeCut(ctx, decoded, "leaf");
   const characters = Array.from(decoded);
   const marker = (dropped: number) =>
     `\n[… ${dropped} more characters truncated; raise maxChars or maxBytes for a direct call_tool, or open it in Gmail]`;
@@ -570,7 +573,7 @@ async function readAttachment(
   // cut by both limits still has one marker, counted in the result's budget.
   const prefix = characters.slice(0, maxChars).join("");
   const contentBudget = maxBytes - jsonBytes(envelope) + jsonBytes("");
-  const kept = clampText(prefix, contentBudget - jsonBytes(marker(characters.length)) + 2, () => "");
+  const kept = clampText(ctx, prefix, contentBudget - jsonBytes(marker(characters.length)) + 2, () => "");
   const content = kept + marker(characters.length - Array.from(kept).length);
   return { ...envelope, content, contentTruncated: true };
 }
@@ -584,12 +587,15 @@ const FIELD_BYTES = 512;
 const HEADER_BYTES = 4 * 1024;
 
 /** A string cut to `maxBytes` of JSON, ending in "…" when it was cut. */
-function clipped<T extends string | undefined>(value: T, maxBytes: number): T {
-  return (value === undefined ? value : clampText(value, maxBytes, () => "…")) as T;
+function clipped<T extends string | undefined>(ctx: ConnectorContext, value: T, maxBytes: number): T {
+  return (value === undefined ? value : clampText(ctx, value, maxBytes, () => "…")) as T;
 }
 
-/** Cut a body at `max` characters and say so in the text itself. */
-function capped(body: string, max: number): { body: string; bodyTruncated: boolean } {
+/** Cut a body at `max` characters and say so in the text itself, after replacing every
+ * secret the request sent: a cut through an echo leaves a fragment nothing redacts. */
+function capped(ctx: ConnectorContext, whole: string, max: number): { body: string; bodyTruncated: boolean } {
+  if (whole.length <= max) return { body: whole, bodyTruncated: false };
+  const body = redactBeforeCut(ctx, whole, "leaf");
   if (body.length <= max) return { body, bodyTruncated: false };
   const rest = body.length - max;
   return {
@@ -626,8 +632,8 @@ async function projectMessage(
   const message = asRecord(value);
   const payload = asRecord(message["payload"]);
   const read = await readBody(client, ctx, idOf(message["id"]), payload, maxBodyChars);
-  const attachments = attachmentsOf(payload);
-  const headerOf = (name: string) => clipped(header(payload, name), HEADER_BYTES);
+  const attachments = attachmentsOf(ctx, payload);
+  const headerOf = (name: string) => clipped(ctx, header(payload, name), HEADER_BYTES);
   const { omittedIds, ...messageIds } = ids({ id: [message["id"]], threadId: [message["threadId"]] });
   const projected = compact({
     ...messageIds,
@@ -641,7 +647,7 @@ async function projectMessage(
     subject: headerOf("Subject"),
     messageIdHeader: headerOf("Message-ID"),
     inReplyTo: headerOf("In-Reply-To"),
-    snippet: text(message["snippet"]) ? clipped(decodeEntities(message["snippet"]), HEADER_BYTES) : undefined,
+    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(message["snippet"]), HEADER_BYTES) : undefined,
     body: "",
     bodyTruncated: false,
     bodyFormat: read.bodyFormat,
@@ -655,7 +661,7 @@ async function projectMessage(
   // result, and cut again by exactly what it is over, until it fits. Every
   // field is counted as sent — `false` is a byte longer than `true` — so a
   // body at the exact boundary is not a byte over.
-  const byCharacters = capped(read.text, maxBodyChars);
+  const byCharacters = capped(ctx, read.text, maxBodyChars);
   const build = (body: string) =>
     finish({ ...projected, body, bodyTruncated: byCharacters.bodyTruncated || body !== byCharacters.body });
   let body = byCharacters.body;
@@ -664,7 +670,7 @@ async function projectMessage(
     const over = jsonBytes(result) - budget;
     if (over <= 0) return result;
     const target = Math.max(2, jsonBytes(body) - over);
-    const shorter = clampText(byCharacters.body, target, resultLimitMarker);
+    const shorter = clampText(ctx, byCharacters.body, target, resultLimitMarker);
     if (shorter === body) break;
     body = shorter;
     result = build(body);
@@ -795,7 +801,7 @@ function deliverable(tool: string, result: unknown, budget = RESULT_BUDGET_BYTES
   return result;
 }
 
-function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecord {
+function projectThreadSummary(ctx: ConnectorContext, value: unknown, listedSnippet: unknown): JsonRecord {
   const thread = asRecord(value);
   const messages = asArray(thread["messages"]).map(asRecord);
   const first = asRecord(messages[0]?.["payload"]);
@@ -810,27 +816,27 @@ function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecor
   const snippet = text(listedSnippet) ?? text(messages[messages.length - 1]?.["snippet"]);
   return compact({
     ...ids({ id: [thread["id"]] }),
-    subject: clipped(header(first, "Subject"), FIELD_BYTES),
-    from: clipped(header(first, "From"), FIELD_BYTES),
-    lastFrom: messages.length > 1 ? clipped(header(last, "From"), FIELD_BYTES) : undefined,
+    subject: clipped(ctx, header(first, "Subject"), FIELD_BYTES),
+    from: clipped(ctx, header(first, "From"), FIELD_BYTES),
+    lastFrom: messages.length > 1 ? clipped(ctx, header(last, "From"), FIELD_BYTES) : undefined,
     messageCount: messages.length,
     lastMessageAt: isoFromMillis(latest),
     unread: labels.has("UNREAD"),
     ...labelsOf([...labels]),
-    snippet: snippet ? clipped(decodeEntities(snippet), FIELD_BYTES) : undefined,
+    snippet: snippet ? clipped(ctx, decodeEntities(snippet), FIELD_BYTES) : undefined,
   });
 }
 
-function projectDraftSummary(value: unknown): JsonRecord {
+function projectDraftSummary(ctx: ConnectorContext, value: unknown): JsonRecord {
   const draft = asRecord(value);
   const message = asRecord(draft["message"]);
   const payload = asRecord(message["payload"]);
   return compact({
     ...ids({ draftId: [draft["id"]], messageId: [message["id"]], threadId: [message["threadId"]] }),
-    subject: clipped(header(payload, "Subject"), FIELD_BYTES),
-    to: clipped(header(payload, "To"), FIELD_BYTES),
+    subject: clipped(ctx, header(payload, "Subject"), FIELD_BYTES),
+    to: clipped(ctx, header(payload, "To"), FIELD_BYTES),
     updatedAt: isoFromMillis(message["internalDate"]),
-    snippet: text(message["snippet"]) ? clipped(decodeEntities(message["snippet"]), FIELD_BYTES) : undefined,
+    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(message["snippet"]), FIELD_BYTES) : undefined,
   });
 }
 
@@ -1460,6 +1466,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const threads = await mapLimited(rows, SUMMARY_CONCURRENCY, (row) =>
           unlessGone(async () =>
             projectThreadSummary(
+              ctx,
               await client.json(
                 {
                   method: "GET",
@@ -1709,7 +1716,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           }
           const row = compact({
             id,
-            name: clipped(text(label["name"]), FIELD_BYTES),
+            name: clipped(ctx, text(label["name"]), FIELD_BYTES),
             type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
           });
           const size = jsonBytes(row) + (labels.length > 0 ? 1 : 0);
@@ -1776,6 +1783,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const drafts = await mapLimited(asArray(listing["drafts"]).map(asRecord), SUMMARY_CONCURRENCY, (row) =>
           unlessGone(async () =>
             projectDraftSummary(
+              ctx,
               await client.json(
                 {
                   method: "GET",

@@ -44,6 +44,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
+import { redactBeforeCut, redactBoundedRead } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -196,11 +197,13 @@ function idsOf(value: unknown): string[] {
 class Cuts {
   private readonly cut = new Set<string>();
 
+  constructor(private readonly ctx: ConnectorContext) {}
+
   /** A string Drive does not bound, cut to `bytes` of JSON with "…". */
   label(field: string, value: unknown, bytes = LABEL_BYTES): string | undefined {
     const whole = typeof value === "string" ? value : undefined;
     if (whole === undefined || (whole === "" && field !== "name")) return undefined;
-    const kept = clampText(whole, bytes, () => "…");
+    const kept = clampText(this.ctx, whole, bytes, () => "…");
     if (kept !== whole) this.cut.add(field);
     return kept;
   }
@@ -243,6 +246,7 @@ class Cuts {
  * left out are named in `truncatedFields`, which `extra` may add to.
  */
 function projectFile(
+  ctx: ConnectorContext,
   value: unknown,
   fallbackId?: string,
   nameBytes = ROW_NAME_BYTES,
@@ -250,7 +254,7 @@ function projectFile(
 ): JsonRecord {
   const file = asRecord(value);
   const shortcut = asRecord(file["shortcutDetails"]);
-  const cuts = new Cuts();
+  const cuts = new Cuts(ctx);
   const projected = compact({
     id: cuts.id("id", file["id"]) ?? fallbackId,
     name: cuts.label("name", file["name"], nameBytes),
@@ -282,8 +286,8 @@ const CAPABILITIES = [
   "canAddChildren",
 ] as const;
 
-function projectFileDetail(value: unknown, fallbackId: string): JsonRecord {
-  return projectFile(value, fallbackId, DETAIL_NAME_BYTES, (file, cuts) => {
+function projectFileDetail(ctx: ConnectorContext, value: unknown, fallbackId: string): JsonRecord {
+  return projectFile(ctx, value, fallbackId, DETAIL_NAME_BYTES, (file, cuts) => {
     const modifier = asRecord(file["lastModifyingUser"]);
     const granted = asRecord(file["capabilities"]);
     const capabilities = compact(Object.fromEntries(CAPABILITIES.map((name) => [name, bool(granted[name])])));
@@ -300,10 +304,10 @@ function projectFileDetail(value: unknown, fallbackId: string): JsonRecord {
   });
 }
 
-function projectPermission(value: unknown, fallbackId?: string): JsonRecord {
+function projectPermission(ctx: ConnectorContext, value: unknown, fallbackId?: string): JsonRecord {
   const permission = asRecord(value);
   const details = asArray(permission["permissionDetails"]).map(asRecord);
-  const cuts = new Cuts();
+  const cuts = new Cuts(ctx);
   const inheritedFrom = details
     .map((detail) => cuts.id("inheritedFrom", detail["inheritedFrom"]))
     .find((id) => id !== undefined);
@@ -563,11 +567,16 @@ function codePointCut(value: string, max: number): { end: number; total: number 
  * read only in part, which is cut whatever its length: there is more past it.
  */
 function capped(
-  body: string,
+  ctx: ConnectorContext,
+  whole: string,
   max: number,
   partial: { size: number | undefined } | undefined,
   fits: (content: string) => boolean,
 ): { content: string; contentTruncated: boolean } {
+  if (codePointCut(whole, max).total <= max && !partial && fits(whole))
+    return { content: whole, contentTruncated: false };
+  // Every secret the request sent is replaced before the cut, which could otherwise split one.
+  const body = redactBeforeCut(ctx, whole, "leaf");
   const { total } = codePointCut(body, max);
   if (total <= max && !partial && fits(body)) return { content: body, contentTruncated: false };
   const of = partial
@@ -717,7 +726,7 @@ async function readContent(
   );
   const mimeType = String(file["mimeType"] ?? "application/octet-stream");
   const size = sizeOf(file["size"]);
-  const cuts = new Cuts();
+  const cuts = new Cuts(ctx);
   const base = compact({
     id: cuts.id("id", file["id"]) ?? fileId,
     name: cuts.label("name", file["name"], ROW_NAME_BYTES),
@@ -748,16 +757,17 @@ async function readContent(
       contentTruncated: false,
       note: exported.note,
     });
-    return { ...result, ...capped(body, maxChars, undefined, within(result)) };
+    return { ...result, ...capped(ctx, body, maxChars, undefined, within(result)) };
   }
 
   if (isText(mimeType)) {
     const read = await download(client, ctx, filePath, textBudget(maxChars));
     let body = decodeIn(read.bytes, read.contentType);
-    // A cut can land inside a character; drop the half, never show it.
-    if (read.more) body = body.replace(/(?:\uFFFD|[\uD800-\uDBFF])$/, "");
+    // A cut can land inside a character; drop the half, never show it. A sent
+    // secret the read stopped inside never arrives whole, so its start goes too.
+    if (read.more) body = redactBoundedRead(ctx, body.replace(/(?:\uFFFD|[\uD800-\uDBFF])$/, ""));
     const result = { ...base, format: "text", content: "", contentTruncated: false };
-    return { ...result, ...capped(body, maxChars, read.more ? { size } : undefined, within(result)) };
+    return { ...result, ...capped(ctx, body, maxChars, read.more ? { size } : undefined, within(result)) };
   }
 
   // Base64 is four characters per three bytes and never escaped, so the file
@@ -1113,7 +1123,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       );
       return {
         ids: asArray(listing["files"]).map((file) => String(asRecord(file)["id"] ?? "")),
-        rows: asArray(listing["files"]).map((file) => projectFile(file)),
+        rows: asArray(listing["files"]).map((file) => projectFile(ctx, file)),
         next: text(listing["nextPageToken"]),
         // Drive's own truncation: it stopped before searching every corpus.
         extra: listing["incompleteSearch"] === true ? { incompleteSearch: true } : undefined,
@@ -1128,6 +1138,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     options: { idempotent?: true } = {},
   ) =>
     projectFile(
+      ctx,
       await client.json(
         {
           method: "PATCH",
@@ -1251,6 +1262,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: FILE_DETAIL_SCHEMA,
       handler: async (args, ctx) =>
         projectFileDetail(
+          ctx,
           await client.json(
             {
               method: "GET",
@@ -1343,7 +1355,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             );
             return {
               ids: asArray(listing["permissions"]).map((permission) => String(asRecord(permission)["id"] ?? "")),
-              rows: asArray(listing["permissions"]).map((permission) => projectPermission(permission)),
+              rows: asArray(listing["permissions"]).map((permission) => projectPermission(ctx, permission)),
               next: text(listing["nextPageToken"]),
             };
           },
@@ -1407,7 +1419,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             ids: asArray(listing["drives"]).map((value) => String(asRecord(value)["id"] ?? "")),
             rows: asArray(listing["drives"]).map((value) => {
               const sharedDrive = asRecord(value);
-              const cuts = new Cuts();
+              const cuts = new Cuts(ctx);
               return compact({
                 id: cuts.id("id", sharedDrive["id"]),
                 name: cuts.label("name", sharedDrive["name"]),
@@ -1430,6 +1442,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: FILE_SCHEMA,
       handler: async (args, ctx) =>
         projectFile(
+          ctx,
           await adding(
             () =>
               client.json(
@@ -1496,6 +1509,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             );
           }
           return projectFile(
+            ctx,
             await adding(
               () =>
                 client.json(
@@ -1508,6 +1522,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         }
         const framed = multipart(metadata, content);
         return projectFile(
+          ctx,
           await adding(
             () =>
               upload.json(
@@ -1552,6 +1567,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           throw new ConnectorCallError("invalid_args", "Pass content or contentBase64: the file's new content.");
         }
         return projectFile(
+          ctx,
           await upload.json(
             {
               method: "PATCH",
@@ -1644,6 +1660,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: FILE_SCHEMA,
       handler: async (args, ctx) =>
         projectFile(
+          ctx,
           await adding(
             () =>
               client.json(
@@ -1746,6 +1763,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         if (args["emailMessage"] !== undefined && notify !== true)
           refuse("emailMessage needs sendNotificationEmail true.");
         return projectPermission(
+          ctx,
           await adding(
             () =>
               client.json(
@@ -1787,6 +1805,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: PERMISSION_SCHEMA,
       handler: async (args, ctx) =>
         projectPermission(
+          ctx,
           await client.json(
             {
               method: "PATCH",

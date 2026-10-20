@@ -1289,6 +1289,12 @@ maintained-provider transports track the final request too. Credential-slot
 reads cover values sent in headers, queries, or bodies. Echoed sensitive
 header lines are also withheld.
 
+Text Connecta or a maintained provider shortens before returning it, such as
+a long error message, a capped field, or one page of a long text, is redacted
+whole first, so a cut never leaves part of a sent value behind. Text read only
+up to a bound also loses a tail that begins a sent value the read stopped
+inside.
+
 Submitted values under JSON Schema `writeOnly: true` join this memory-only
 request set, including nested objects, arrays, and local references. Strings
 and numbers register with the same raw, URL, form, base64, and base64url forms

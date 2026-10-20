@@ -39,6 +39,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -202,9 +203,9 @@ function keptId(value: unknown, kind: keyof typeof ID_RULES, name: string, dropp
 /** Titles are prose: cut to this many JSON bytes with a marker, never dropped. */
 const TITLE_BYTES = 4 * 1024;
 
-function boundedTitle(value: unknown): string | undefined {
+function boundedTitle(ctx: ConnectorContext, value: unknown): string | undefined {
   const title = text(value);
-  return title === undefined ? undefined : clampText(title, TITLE_BYTES, (more) => `… [${more} more characters]`);
+  return title === undefined ? undefined : clampText(ctx, title, TITLE_BYTES, (more) => `… [${more} more characters]`);
 }
 
 function droppedField(dropped: string[]): string[] | undefined {
@@ -236,6 +237,8 @@ interface IndexRow {
 }
 
 interface RenderState {
+  /** The call, whose sent secrets a preview replaces before it cuts. */
+  ctx: ConnectorContext;
   sources: TabSources;
   /** Footnotes in the order the body first references them. */
   footnotes: { id: string; number: string }[];
@@ -381,8 +384,10 @@ function safeCut(value: string, max: number): number {
   return max > 0 && code >= 0xd800 && code <= 0xdbff ? max - 1 : max;
 }
 
-function preview(value: string): string {
-  const flat = value.replace(/\s+/g, " ").trim();
+function preview(ctx: ConnectorContext, value: string): string {
+  const whole = value.replace(/\s+/g, " ").trim();
+  if (whole.length <= PREVIEW_CHARS) return whole;
+  const flat = redactBeforeCut(ctx, whole, "leaf");
   return flat.length > PREVIEW_CHARS ? `${flat.slice(0, safeCut(flat, PREVIEW_CHARS))}…` : flat;
 }
 
@@ -413,7 +418,7 @@ function renderContent(content: unknown, state: RenderState, cell?: { row: numbe
           style: style && style !== "NORMAL_TEXT" ? style : undefined,
           row: cell?.row,
           column: cell?.column,
-          text: preview(body),
+          text: preview(state.ctx, body),
         }),
       );
     } else if (element["table"]) {
@@ -446,17 +451,18 @@ function renderContent(content: unknown, state: RenderState, cell?: { row: numbe
 
 /** One tab's body as text, with its footnotes after it. */
 function renderTab(
+  ctx: ConnectorContext,
   tab: JsonRecord,
   sources: TabSources,
   rows: IndexRow[] | undefined,
 ): { text: string; notRendered: (typeof NOT_RENDERED)[number][] } {
   const marks: Marks = { suggested: false, unknown: false };
-  const state: RenderState = { sources, footnotes: [], rows, marks };
+  const state: RenderState = { ctx, sources, footnotes: [], rows, marks };
   const lines = renderContent(asRecord(tab["body"])["content"], state);
   const notes = state.footnotes.map(({ id, number }) => {
     const footnote = asRecord(sources.footnotes[id]);
     // Footnote content is its own segment: rendered, never indexed.
-    const inner: RenderState = { sources, footnotes: [], rows: undefined, marks };
+    const inner: RenderState = { ctx, sources, footnotes: [], rows: undefined, marks };
     return `[^${number}]: ${renderContent(footnote["content"], inner).join(" ").trim()}`;
   });
   const present = (key: string) => Object.keys(asRecord(tab[key])).length > 0;
@@ -523,8 +529,11 @@ function endIndexOf(body: unknown): number | undefined {
   return integer(asRecord(content[content.length - 1])["endIndex"]);
 }
 
-/** Cut text at `max` characters, never inside a surrogate pair, and say so. */
-function capped(value: string, max: number): { text: string; textTruncated: boolean } {
+/** Cut text at `max` characters, never inside a surrogate pair, and say so. Every secret the
+ * request sent is replaced first: a cut through an echo leaves a fragment nothing redacts. */
+function capped(ctx: ConnectorContext, whole: string, max: number): { text: string; textTruncated: boolean } {
+  if (whole.length <= max) return { text: whole, textTruncated: false };
+  const value = redactBeforeCut(ctx, whole, "leaf");
   if (value.length <= max) return { text: value, textTruncated: false };
   const cut = safeCut(value, max);
   const rest = value.length - cut;
@@ -552,12 +561,17 @@ function findRawTab(tabs: unknown, tabId: string, depth = 0): JsonRecord | undef
  * the whole result as delivered — envelope included — that names its way out
  * rather than handing back a partial tree.
  */
-function rawDocument(document: JsonRecord, documentId: string, tabId: string | undefined): JsonRecord {
+function rawDocument(
+  ctx: ConnectorContext,
+  document: JsonRecord,
+  documentId: string,
+  tabId: string | undefined,
+): JsonRecord {
   const resource = tabId === undefined ? document : { ...document, tabs: [findRawTab(document["tabs"], tabId)] };
   const dropped: string[] = [];
   const result = compact({
     documentId,
-    title: boundedTitle(document["title"]),
+    title: boundedTitle(ctx, document["title"]),
     revisionId: keptId(document["revisionId"], "revisionId", "revisionId", dropped),
     url: documentUrl(documentId),
     dropped: droppedField(dropped),
@@ -1068,7 +1082,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             );
           }
         }
-        if (raw) return rawDocument(document, documentId, wanted);
+        if (raw) return rawDocument(ctx, document, documentId, wanted);
         const withIndexes = args["withIndexes"] === true;
         let budget = typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_MAX_CHARS;
         // Index rows form one sequence across tabs; a page is the rows from
@@ -1085,8 +1099,8 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             footnotes: asRecord(tab.documentTab["footnotes"]),
             inlineObjects: asRecord(tab.documentTab["inlineObjects"]),
           };
-          const { text: full, notRendered } = renderTab(tab.documentTab, sources, rows);
-          const cut = capped(full, budget);
+          const { text: full, notRendered } = renderTab(ctx, tab.documentTab, sources, rows);
+          const cut = capped(ctx, full, budget);
           budget = Math.max(0, budget - full.length);
           let elements: IndexRow[] | undefined;
           if (rows) {
@@ -1106,7 +1120,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
           }
           return compact({
             tabId: keptId(tab.tabId, "tabId", `tabs[${index}].tabId`, dropped),
-            title: boundedTitle(tab.title),
+            title: boundedTitle(ctx, tab.title),
             parentTabId: keptId(tab.parentTabId, "tabId", `tabs[${index}].parentTabId`, dropped),
             nestingLevel: tab.nestingLevel,
             endIndex: endIndexOf(tab.documentTab["body"]),
@@ -1117,7 +1131,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
         });
         return compact({
           documentId,
-          title: boundedTitle(document["title"]),
+          title: boundedTitle(ctx, document["title"]),
           revisionId: keptId(document["revisionId"], "revisionId", "revisionId", dropped),
           url: documentUrl(documentId),
           dropped: droppedField(dropped),

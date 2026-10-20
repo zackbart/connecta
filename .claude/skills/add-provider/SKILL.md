@@ -65,6 +65,14 @@ sizes. Keep them out of `drift.json`.
 - API tools explicitly annotate reads/writes, declare output schemas, confine
   transport with `guardedFetch`, and throw `ConnectorCallError` at use. Do not
   infer safety from names. Keep secret-bearing configuration out of `describe()`.
+- Redact before you cut (INV-5). Sent-secret redaction runs after a handler
+  returns, so vendor text a handler shortens (an error message, a long field,
+  a page of text) goes through `redactBeforeCut(ctx, …)` from
+  `src/sent-secrets.ts` first; a cut through an echo leaves a fragment nothing
+  later finds. Workspace products use `clampText(ctx, …)`, which does it. Text
+  read only up to a bound, or that the vendor stopped listing, takes
+  `redactBoundedRead(ctx, …)`. A failure mapper behind `restTools()` receives a
+  body already redacted; a `result` hook that throws one redacts it with `ctx`.
 - The guide leads with the routing fact, has an explicit summary no longer than
   120 bytes, and carries conventions a schema cannot express. Provider guides
   are currently adapted to `ConnectorUsageGuide`; future Skills work owns

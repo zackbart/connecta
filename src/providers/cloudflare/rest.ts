@@ -6,6 +6,7 @@ import type { ApiTool } from "../../connectors/api-connector.js";
 import { chargeConnectorCall } from "../../call-admission-context.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import type { Operation } from "../_shared/rest/operation-index.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
@@ -594,7 +595,7 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
       owner = await send({ method: "GET", path: `/zones/${encodeURIComponent(zone)}` }, ctx, async (response) => {
         const body = await response.jsonResult().catch(() => ({ value: undefined }));
         const value = "value" in body ? body.value : undefined;
-        if (!response.ok) throw failureFor(response.status, response.headers, value);
+        if (!response.ok) throw failureFor(response.status, response.headers, redactBeforeCut(ctx, value));
         return text(record(record(record(value)["result"])["account"])["id"]) ?? "";
       });
       if (owner) owners.set(zone, owner);
@@ -793,10 +794,20 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
 
   // Unwrap the v4 envelope; the shared value-safety pass then redacts the
   // result on every method and tool.
-  const result = (body: unknown, call: RestCall, response: { status: number; headers: Headers }): unknown => {
+  const result = (
+    body: unknown,
+    call: RestCall,
+    response: { status: number; headers: Headers },
+    ctx: ConnectorContext,
+  ): unknown => {
     if (!isEnvelope(body)) return body;
     if (body["success"] === false)
-      throw failureFor(response.status === 200 ? 400 : response.status, response.headers, body, call);
+      throw failureFor(
+        response.status === 200 ? 400 : response.status,
+        response.headers,
+        redactBeforeCut(ctx, body),
+        call,
+      );
     return filterListed(call.op, body["result"]);
   };
 
@@ -1071,7 +1082,9 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
         const document = record(response.data);
         const errors = Array.isArray(document["errors"]) ? document["errors"] : [];
         if ((document["data"] === undefined || document["data"] === null) && errors.length > 0) {
-          invalid(`Cloudflare GraphQL rejected the query: ${describeErrors(errors as EnvelopeError[])}`);
+          invalid(
+            `Cloudflare GraphQL rejected the query: ${describeErrors(redactBeforeCut(ctx, errors) as EnvelopeError[])}`,
+          );
         }
         return { data: document["data"] ?? null, ...(errors.length > 0 ? { errors } : {}) };
       },

@@ -33,7 +33,7 @@ import { skill } from "./skill.generated.js";
  */
 import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
-import type { Connector, JsonSchema } from "../../types.js";
+import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import {
   googleOutcomeOf,
   GOOGLE_WORKSPACE_OPTIONS,
@@ -45,6 +45,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -257,9 +258,12 @@ function rangeAfter(range: string, rows: number): string | undefined {
   return `${prefix}${startColumn}${start}:${endColumn}${endRow ?? ""}`;
 }
 
-/** A cell as read, cut at `max` characters with a marker saying how to read the rest. */
-function cappedCell(value: unknown, max: number, cut: { cells: number }): unknown {
-  if (typeof value !== "string" || value.length <= max) return value;
+/** A cell as read, cut at `max` characters with a marker saying how to read the rest. Every
+ * secret the request sent is replaced first: a cut through an echo leaves a fragment. */
+function cappedCell(ctx: ConnectorContext, whole: unknown, max: number, cut: { cells: number }): unknown {
+  if (typeof whole !== "string" || whole.length <= max) return whole;
+  const value = redactBeforeCut(ctx, whole, "leaf");
+  if (value.length <= max) return value;
   cut.cells += 1;
   return `${value.slice(0, max)}[… ${value.length - max} more characters truncated; read this cell alone with maxCellChars up to ${MAX_CELL_CHARS} for the rest]`;
 }
@@ -449,11 +453,11 @@ async function uncertainWrite<T>(advice: string, write: () => Promise<T>): Promi
 const SUMMARY_TEXT_BYTES = 256;
 
 /** The scalar fields of an object — ids, titles, counts — and nothing nested. */
-function scalarsOf(value: unknown): JsonRecord | undefined {
+function scalarsOf(ctx: ConnectorContext, value: unknown): JsonRecord | undefined {
   const scalars: JsonRecord = {};
   for (const [key, field] of Object.entries(asRecord(value))) {
     if (typeof field === "string") {
-      scalars[key] = clampText(field, SUMMARY_TEXT_BYTES, (dropped) => `[… ${dropped} more characters]`);
+      scalars[key] = clampText(ctx, field, SUMMARY_TEXT_BYTES, (dropped) => `[… ${dropped} more characters]`);
     } else if (typeof field === "number" || typeof field === "boolean") {
       scalars[key] = field;
     }
@@ -467,15 +471,15 @@ function scalarsOf(value: unknown): JsonRecord | undefined {
  * put those at the top of the kind's body or one object down (`properties`,
  * `chart`, `namedRange`); arrays and anything deeper are dropped.
  */
-function summarizeReply(reply: JsonRecord): JsonRecord {
+function summarizeReply(ctx: ConnectorContext, reply: JsonRecord): JsonRecord {
   const kind = Object.keys(reply)[0];
   if (kind === undefined) return {};
   const body = asRecord(reply[kind]);
   const nested: JsonRecord = {};
   for (const [key, field] of Object.entries(body)) {
-    if (field && typeof field === "object" && !Array.isArray(field)) nested[key] = scalarsOf(field);
+    if (field && typeof field === "object" && !Array.isArray(field)) nested[key] = scalarsOf(ctx, field);
   }
-  return compact({ kind, ...scalarsOf(body), ...compact(nested) });
+  return compact({ kind, ...scalarsOf(ctx, body), ...compact(nested) });
 }
 
 /**
@@ -485,11 +489,16 @@ function summarizeReply(reply: JsonRecord): JsonRecord {
  * after them still fit as summaries; the rest become summaries; and a reply
  * set too large even for that leaves the counts and where to re-read.
  */
-function deliverableReplies(spreadsheetId: string, replies: JsonRecord[], requestCount: number): JsonRecord {
+function deliverableReplies(
+  ctx: ConnectorContext,
+  spreadsheetId: string,
+  replies: JsonRecord[],
+  requestCount: number,
+): JsonRecord {
   const whole = { spreadsheetId, replies };
   if (jsonBytes(whole) <= RESULT_BUDGET_BYTES) return whole;
   const note = `All ${requestCount} requests applied. Replies too large to return here are cut to their kind, ids, and counts; read the spreadsheet with get_spreadsheet or get_values for the rest. Do not send the requests again.`;
-  const summaries = replies.map(summarizeReply);
+  const summaries = replies.map((reply) => summarizeReply(ctx, reply));
   // What every reply from index i on costs as a summary, comma included.
   const rest = Array.from({ length: replies.length + 1 }, () => 0);
   for (let index = replies.length - 1; index >= 0; index -= 1) {
@@ -893,7 +902,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               break;
             }
             const rowCut = { cells: 0 };
-            const capped = asArray(row).map((cell) => cappedCell(cell, cellChars, rowCut));
+            const capped = asArray(row).map((cell) => cappedCell(ctx, cell, cellChars, rowCut));
             // The row as serialized, plus the comma before it.
             const size = jsonBytes(capped) + 1;
             if (bytes + size > byteBudget) {
@@ -1330,6 +1339,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           ),
         );
         return deliverableReplies(
+          ctx,
           text(response["spreadsheetId"]) ?? args["spreadsheetId"],
           asArray(response["replies"]).map(asRecord),
           asArray(args["requests"]).length,

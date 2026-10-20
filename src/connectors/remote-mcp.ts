@@ -56,6 +56,7 @@ import { byteReadResponse } from "../byte-read-response.js";
 import {
   redactCatalog,
   redactSentSecrets,
+  requestSentSecrets,
   sentSecretsFor,
   shortSecretWarning,
   trackCredentialReads,
@@ -1750,7 +1751,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       undefined,
       undefined,
       undefined,
-      sentSecretsFor(ctx),
+      requestSentSecrets(ctx),
     );
     const verdict =
       isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
@@ -3138,7 +3139,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (state.client === client) state.authRequired = true;
           if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
         }
-        throw downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
+        throw downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
       }
     },
 
@@ -3202,7 +3203,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (state.client === client) state.authRequired = true;
           if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
         }
-        throw downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
+        throw downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
       }
     },
 
@@ -3413,7 +3414,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         : redactSentSecrets(ctx, result);
     } catch (error) {
       assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error);
-      throw redactSentSecrets(ctx, error);
+      // The request's whole set: an outer wrapper may still cut what passes here.
+      throw requestSentSecrets(ctx).redact(error);
     } finally {
       active.delete(ctx);
     }

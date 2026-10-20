@@ -829,9 +829,15 @@ auth headers, raw confidential OAuth client IDs and secrets, and outbound
 bearer tokens join the set, including tokens rotated during a call. Token and
 revocation requests register client credentials before dispatch, decoding OAuth
 Basic form components so a raw echo is covered too. Public client IDs remain
-visible. Before any diagnostic is truncated or returned, the
+visible. Before any diagnostic is returned, the
 agent boundary replaces these values and their auth prefixes, mixed JSON
-escapes, URL encodings, and base64/base64url forms with `[redacted]`. Final
+escapes, URL encodings, and base64/base64url forms with `[redacted]`. Text
+Connecta or a provider cuts short is redacted whole against the request's set,
+private arguments included, before the cut (`redactBeforeCut`, and
+`clampText` in the Workspace products): a cut through an echo leaves a fragment
+that no registered form matches. Text read only up to a bound, or that a vendor
+stopped listing, also loses a tail that begins a registered form
+(`redactBoundedRead`). Final
 transports register sensitive headers and query values after assembling the
 request; custom API handlers use `ctx.fetch`. Values shorter than eight
 characters do not enter the matcher, including Basic usernames, passwords

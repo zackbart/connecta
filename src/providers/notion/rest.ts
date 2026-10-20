@@ -21,6 +21,7 @@ import {
 import { carriesWithheldLink, valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { NOTION_FILE_HOSTS, NOTION_VALUE_SAFETY, sanitizeLinks } from "./value-safety.js";
+import { redactBoundedRead } from "../../sent-secrets.js";
 
 /** Notion's REST origin. Every request this connector sends goes to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -543,13 +544,19 @@ interface ProjectedProperties {
   truncated: TruncatedProperty[];
 }
 
-function projectProperties(source: unknown, select: string[] | undefined): ProjectedProperties {
+function projectProperties(ctx: ConnectorContext, source: unknown, select: string[] | undefined): ProjectedProperties {
   const properties: Record<string, unknown> = {};
   const truncated: TruncatedProperty[] = [];
   if (!source || typeof source !== "object") return { properties, truncated };
   for (const [name, value] of Object.entries(source as Record<string, unknown>)) {
     if (select && !select.includes(name)) continue;
-    properties[name] = projectPropertyValue(value);
+    const projected = projectPropertyValue(value);
+    // Notion stopped listing this property's items, so its joined text can
+    // stop inside a secret the request sent.
+    properties[name] =
+      (value as any)?.has_more === true && typeof projected === "string"
+        ? redactBoundedRead(ctx, projected)
+        : projected;
     if ((value as any)?.has_more === true) {
       truncated.push({ name, id: typeof (value as any)?.id === "string" ? (value as any).id : null });
     }
@@ -587,8 +594,8 @@ function iconRef(icon: any): string | null {
   return icon.external?.url ?? icon.file?.url ?? null;
 }
 
-function projectPage(page: any, select?: string[]): Record<string, unknown> {
-  const { properties, truncated } = projectProperties(page?.properties, select);
+function projectPage(ctx: ConnectorContext, page: any, select?: string[]): Record<string, unknown> {
+  const { properties, truncated } = projectProperties(ctx, page?.properties, select);
   return {
     id: page?.id ?? null,
     object: "page",
@@ -960,7 +967,7 @@ function namedTools(defaultPageSize: number): ApiTool[] {
           query: propertyQuery(args.properties, MAX_PAGE_PROPERTY_FILTERS),
         });
         if (args.raw) return payload;
-        return projectPage(payload, args.properties);
+        return projectPage(ctx, payload, args.properties);
       },
     },
     {
@@ -1159,7 +1166,7 @@ function namedTools(defaultPageSize: number): ApiTool[] {
           body,
         });
         if (args.raw) return payload;
-        const rows = mappedListEnvelope(payload, (row: any) => projectPage(row, args.properties));
+        const rows = mappedListEnvelope(payload, (row: any) => projectPage(ctx, row, args.properties));
         return incomplete(payload) ? { ...rows, incomplete: true } : rows;
       },
     },
@@ -1237,7 +1244,7 @@ function namedTools(defaultPageSize: number): ApiTool[] {
         if (args.markdown !== undefined) body["markdown"] = args.markdown;
         if (args.children !== undefined) body["children"] = args.children;
         if (args.icon !== undefined) body["icon"] = { type: "emoji", emoji: args.icon };
-        return projectPage(await notion(ctx, "POST", "/v1/pages", { body }));
+        return projectPage(ctx, await notion(ctx, "POST", "/v1/pages", { body }));
       },
     },
     {

@@ -61,6 +61,7 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
@@ -243,7 +244,7 @@ function shortText(value: unknown): string | undefined {
  * or an `errorCode`. The giving endpoints' success shape is
  * `{ success: true, errors: null }`, so a null or empty `errors` is not one.
  */
-function reportedFailure(payload: unknown): ConnectorCallError | undefined {
+function reportedFailure(payload: unknown, ctx: ConnectorContext): ConnectorCallError | undefined {
   const root = asRecord(payload);
   const errors = root["errors"];
   const hasErrors =
@@ -256,11 +257,13 @@ function reportedFailure(payload: unknown): ConnectorCallError | undefined {
   if (root["success"] !== false && root["errorCode"] === undefined && !hasErrors) {
     return undefined;
   }
+  // Redacted whole before shortText cuts it.
+  const reported = asRecord(redactBeforeCut(ctx, root));
   const message =
-    shortText(root["errorMessage"]) ??
-    shortText(root["message"]) ??
-    shortText(errors) ??
-    shortText(root["errorCode"]) ??
+    shortText(reported["errorMessage"]) ??
+    shortText(reported["message"]) ??
+    shortText(reported["errors"]) ??
+    shortText(reported["errorCode"]) ??
     "no detail";
   // Breeze uses the same envelope for a rejected argument and a missing
   // record, so the code stays the honest generic one and the message says so.
@@ -294,7 +297,7 @@ async function callBreeze(
         retryable: false,
       });
     }
-    const failure = reportedFailure(payload);
+    const failure = reportedFailure(payload, ctx);
     if (failure) throw failure;
     return payload;
   });
@@ -494,7 +497,8 @@ function projectContribution(value: unknown): JsonRecord {
   const paidOn = payment["paid_on"];
   return compact({
     id: idString(payment["id"]),
-    paidOn: typeof paidOn === "string" ? paidOn.slice(0, 10) : undefined,
+    // The day of a timestamp; anything else stays whole, so redaction sees all of it.
+    paidOn: typeof paidOn === "string" ? (/^\d{4}-\d{2}-\d{2}/.exec(paidOn)?.[0] ?? paidOn) : undefined,
     amount: idString(payment["amount"]),
     method: payment["method"],
     methodId: idString(payment["method_id"]),

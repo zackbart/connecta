@@ -504,6 +504,41 @@ class Matcher {
     return true;
   }
 
+  /** The source start of the earliest suffix of a view that a form begins with but the view
+   * ends inside: at least MIN_SECRET_LENGTH units of an indexed form, or a long form whose
+   * indexed prefix matched and whose length runs past the view. -1 when there is none. */
+  openAt(units: Units): number {
+    let state = 0;
+    let count = 0;
+    let percent = 0;
+    const mask = this.starts.length - 1;
+    // Long-form occurrences, as source start and the count by which the form would end.
+    const longs: number[] = [];
+    for (let code = units.next(); code >= 0; code = units.next()) {
+      if (code === 0x25) percent = 2;
+      else if (percent) {
+        percent--;
+        if (code >= 0x61 && code <= 0x66) code -= 0x20;
+      }
+      this.starts[count++ & mask] = units.start;
+      state = this.step(state, code);
+      const groups = this.depth[state] === FORM_PREFIX ? this.truncated.get(state) : undefined;
+      if (groups && longs.length < 2 * MAX_PENDING_RUNS) {
+        const length = Math.max(...groups.map((group) => group.length));
+        longs.push(this.starts[(count - FORM_PREFIX) & mask]!, count - FORM_PREFIX + length);
+      }
+    }
+    const depth = this.depth[state]!;
+    let open = depth >= MIN_SECRET_LENGTH ? this.starts[(count - depth) & mask]! : -1;
+    for (let index = 0; index < longs.length; index += 2) {
+      if (longs[index + 1]! > count || longs.length >= 2 * MAX_PENDING_RUNS) {
+        open = open < 0 ? longs[index]! : Math.min(open, longs[index]!);
+        break;
+      }
+    }
+    return open;
+  }
+
   /** Add an occurrence to a run when it continues the run's step and stride. The prefix has
    * period `step`, so the text between occurrences is the prefix's first `step` units. */
   private extend(run: Run, count: number, start: number): boolean {
@@ -689,10 +724,32 @@ export class SentSecrets {
 
   /** Copy only what changes, including non-enumerable Error fields; never retain a raw cause.
    * Payload rules apply where downstream or guest data enters; envelopes repeat literal
-   * replacement. */
-  redact<T>(value: T, mode: "payload" | "prose" | "envelope" = "payload"): T {
+   * replacement. A string alone is prose, or a structured leaf in `leaf` mode. */
+  redact<T>(value: T, mode: "payload" | "prose" | "leaf" | "envelope" = "payload"): T {
     if (this.idle()) return value;
-    return this.walk(value, this.scan(mode !== "envelope"), mode === "prose" || typeof value === "string", 0, 0) as T;
+    const prose = mode === "prose" || (mode !== "leaf" && typeof value === "string");
+    return this.walk(value, this.scan(mode !== "envelope"), prose, 0, 0) as T;
+  }
+
+  /** Text that stops where a bounded read stopped, its rest never read. Whole forms are
+   * replaced by `redact`; this replaces a tail that begins a form the text ends inside, in
+   * any view, since no whole-form match can find a form whose rest never arrived. A trailing
+   * escape the read cut short is set aside while the decoded views are matched. */
+  redactOpenTail(text: string): string {
+    if (this.idle()) return text;
+    const matcher = this.matcher();
+    // A form too large to register or index could begin anywhere in what was read.
+    if (this.unmatched < Infinity || matcher.unindexed < Infinity) return REDACTED;
+    let open = matcher.openAt(new Source(text));
+    const whole = text.replace(/\\+u?[0-9a-fA-F]{0,3}$/, "");
+    for (let layer = 1, more = whole.includes("\\"); more && layer <= MAX_DECODE_LEVELS; layer++) {
+      let units: Units = new Source(whole);
+      for (let depth = 0; depth < layer; depth++) units = new Unescaped(units);
+      const at = matcher.openAt(units);
+      if (at >= 0) open = open < 0 ? at : Math.min(open, at);
+      more = units instanceof Unescaped && units.decoded > 0 && units.slashes > 0;
+    }
+    return open < 0 ? text : `${text.slice(0, open)}${REDACTED}`;
   }
 
   /** Credentials alone: later calls keep the private arguments they submit, and cached
@@ -1016,6 +1073,29 @@ export function trackCredentialReads(ctx: ConnectorContext): void {
 
 export function redactSentSecrets<T>(ctx: ConnectorContext, value: T): T {
   return sentSecretsFor(ctx).redact(value);
+}
+
+/** Everything the context's request sent: every connector's credentials and the
+ * request's private arguments, which a context's own set does not hold. */
+export function requestSentSecrets(ctx: ConnectorContext): SentSecrets {
+  sentSecretsFor(ctx);
+  return sentSecretsForRequest(ctx.requestScope ?? ctx);
+}
+
+/** Downstream text, or a parsed body, about to be cut short. Redact it whole first: a cut
+ * through an echoed form leaves a fragment that no form matches, which no later redaction
+ * can find, and a cut text can fall under the length that withholds an unregistered private
+ * value. A string alone is prose, as error text is; content an agent reads as a field takes
+ * `leaf`, whose short private values redact only a whole equal string. */
+export function redactBeforeCut<T>(ctx: ConnectorContext, value: T, mode: "payload" | "leaf" = "payload"): T {
+  return requestSentSecrets(ctx).redact(value, mode);
+}
+
+/** Downstream text read only up to a bound, as a field an agent reads: whole forms are
+ * replaced, and so is a tail that begins one the read stopped inside. */
+export function redactBoundedRead(ctx: ConnectorContext, text: string): string {
+  const secrets = requestSentSecrets(ctx);
+  return secrets.redactOpenTail(secrets.redact(text, "leaf"));
 }
 
 /** Sanitize listing facts before any cache or consumer receives them. A name

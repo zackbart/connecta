@@ -11,6 +11,7 @@ import { identityStorageKey } from "../../identity.js";
 import { memoryStorage } from "../../storage/memory.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide, ToolDef } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
+import { echoForms, expectNoFragment, straddling } from "../../../test/helpers/secret-echoes.js";
 
 const BASE = "https://connecta.test";
 const PROD_API = "https://api.ccbchurch.com";
@@ -510,6 +511,15 @@ describe("ccb() typed failures (H11)", () => {
     expect(failed.message).toContain("Insufficient scope");
     expect(failed.message).toContain("Re-authorizing alone will not fix it");
   });
+
+  // The fake mints access-1 for the grant; every form of it, cut through its middle.
+  it.each(echoForms("access-1"))(
+    "INV-5: a 400 echoing the sent token %s across the 500-character cap leaks no fragment of it",
+    async (_name, form) => {
+      const failed = await failing(json({ message: straddling(form, 500) }, {}, 400));
+      expectNoFragment(failed.message, form, { secret: "access-1" });
+    },
+  );
 
   it("maps a 404 to not_found, because CCB reports permission gaps as 403", async () => {
     expect(await failing(new Response(null, { status: 404 }))).toMatchObject({ code: "not_found", retryable: false });
