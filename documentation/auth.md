@@ -1742,7 +1742,9 @@ Protect the shared Backend API quota:
   ten seconds. Concurrent 429s can extend, never shorten, the current backoff.
   The triggering request and new misses during backoff receive the same
   retryable `503` and a `Retry-After` for the remaining whole seconds, rounded
-  up. No membership verdict is cached for these refusals. Valid cached
+  up. Backoff is timed on the wall clock, so a clock step back while it runs
+  lengthens the window by the size of the step. No membership verdict is
+  cached for these refusals. Valid cached
   membership answers remain usable; opaque tokens still need verification.
   After backoff expires the next miss asks Clerk again, with no automatic
   retry of the original request. Monitor the payload-free

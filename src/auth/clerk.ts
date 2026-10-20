@@ -552,6 +552,9 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   let evictedMembershipSequence = 0;
   let activeOrganizationLookups = 0;
   const organizationLookupsByIdentity = new Map<string, number>();
+  // Wall-clock end of the current 429 backoff. Like the membership TTLs it
+  // assumes the clock does not step back: a rollback lengthens the remaining
+  // window by the size of the step.
   let organizationRetryUntil = 0;
 
   const organizationLookup = async <T>(userId: string, signal: AbortSignal, lookup: () => Promise<T>): Promise<T> => {
