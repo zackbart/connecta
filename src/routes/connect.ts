@@ -106,6 +106,7 @@ async function connect(context: RouteContext): Promise<Response> {
     "OAuth connection",
     runtimeContext,
     opts.config.logger,
+    context.invocation,
   );
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.

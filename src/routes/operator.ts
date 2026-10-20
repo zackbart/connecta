@@ -56,23 +56,34 @@ function admitted(result: Promise<Awaited<ReturnType<typeof authorize>>>): Effec
 
 /** Any configured caller. The gate's refusal, challenge headers and all, is the answer. */
 export function authorized(
-  { request, baseUrl, opts, runtimeContext }: RouteContext,
+  { request, baseUrl, opts, runtimeContext, invocation }: RouteContext,
   partitionIdentity = true,
 ): Effect.Effect<Authorized, Answer> {
   return Effect.suspend(() =>
     admitted(
-      authorize(request, baseUrl, opts.config.auth, runtimeContext, partitionIdentity, false, opts.config.logger),
+      authorize(
+        request,
+        baseUrl,
+        opts.config.auth,
+        runtimeContext,
+        partitionIdentity,
+        false,
+        opts.config.logger,
+        invocation,
+      ),
     ),
   );
 }
 
 /** A signed-in person, for a route that changes how a connector authenticates. */
 export function authorizedPerson(
-  { request, baseUrl, opts, runtimeContext }: RouteContext,
+  { request, baseUrl, opts, runtimeContext, invocation }: RouteContext,
   purpose: string,
 ): Effect.Effect<Authorized, Answer> {
   return Effect.suspend(() =>
-    admitted(authorizeUiIdentity(request, baseUrl, opts.config.auth, purpose, runtimeContext, opts.config.logger)),
+    admitted(
+      authorizeUiIdentity(request, baseUrl, opts.config.auth, purpose, runtimeContext, opts.config.logger, invocation),
+    ),
   );
 }
 

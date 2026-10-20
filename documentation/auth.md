@@ -243,14 +243,41 @@ deadline plus **one second of settlement grace**, unfinished work moves from the
 active pool to a separate **abandoned allowance of 16 operations**. The native
 Access lookup and agent-token verification have five-second deadlines; Clerk's
 deadline is ten seconds, and custom adapters share that ten-second threshold.
-The allowance equals the active limit, so one full wave of stalled operations
-can recover while normal authentication continues, and at most **32
-authorizations** are ever outstanding per loaded core. While the allowance is
-full, no authorization starts, even when active slots are free. Overdue work
-that finds the allowance full keeps its active slot until an abandoned
-operation actually settles and makes room. Each settlement decrements exactly
-one count. A binding that never settles therefore fills the allowance and fails
-closed instead of accumulating I/O.
+The allowance equals the active limit, so normal authentication continues
+while a partial wave of stalled operations is abandoned, and at most **32
+authorizations** are ever outstanding per loaded core. A full wave of 16
+stalled operations fills the allowance. While the allowance is full, no
+authorization starts, even when active slots are free. Overdue work that finds
+the allowance full keeps its active slot until an abandoned operation ends and
+makes room. Each charge ends exactly once. A binding that never settles
+therefore fills the allowance and fails closed instead of accumulating I/O.
+
+How a charge ends depends on the runtime:
+
+- **Node.** A charge ends only when its operation actually settles. An
+  operation that never settles keeps its count for the life of the process,
+  bounded only by the abandoned allowance and visible in `/health`.
+- **Workers.** A charge also ends when its invocation certainly has. Cloudflare
+  ends a stateless Worker invocation, cancelling every I/O operation it owns, at
+  most 30 seconds after its response is sent or its client disconnects, and a
+  cancelled operation's settlement never runs. Connecta notes when each
+  invocation's response finished or was cancelled, its handler failed, or its
+  client disconnected. **35 seconds** later (that 30-second `waitUntil` limit
+  plus five seconds of margin), the next admission or `/health` read retires
+  the invocation's unsettled charges, and the operator log records the checked
+  reason `authentication_invocation_ended`. Until then the charge counts: an
+  invocation whose caller is still connected and whose response is unfinished
+  may run indefinitely, so its charge never retires. A settlement arriving after
+  retirement changes nothing, so no count is released twice.
+
+Workers retirement requires the Worker's fetch handler to pass its own
+`request` and `ctx` to `app.fetch(request, env, ctx)` and return that response,
+as the installed Worker example does. Keep the example's
+`enable_request_signal` compatibility flag, so a client that disconnects before
+its response also ends the invocation. Connecta recognizes the invocation by
+workerd and the event's own `ExecutionContext`. A Durable Object, a replaced
+context, or a response the Worker consumes itself before answering keeps the
+Node behavior and counts until settlement.
 
 A request refused because the allowance is full receives the same 503
 `authentication_busy` response and headers. The operator log records the
@@ -263,8 +290,9 @@ reports `admission.authentication` with `active`, `limit`, `abandoned`,
 ```
 
 That state refuses all new authentication until an underlying operation
-settles. Investigate the identity binding or token storage; restarting the
-process or isolate clears its local accounting.
+settles or, on Workers, its invocation's 35-second bound passes. Investigate the
+identity binding or token storage; restarting the process or isolate clears its
+local accounting.
 
 Clerk creates a client per authorization: SDK verification (opaque
 access tokens, JWT/JWKS, browser handshakes and session refresh), domain checks,

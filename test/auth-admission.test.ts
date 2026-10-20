@@ -248,7 +248,16 @@ it.each(["access", "agent"] as const)(
         signal: caller.signal,
         ...(kind === "agent" ? { headers: { Authorization: `Bearer ${token}` } } : {}),
       });
-      const result = authenticate(provider, req, BASE, context, { ...silentLogger, warn }, (work) => waits.push(work));
+      const result = authenticate(
+        provider,
+        req,
+        BASE,
+        context,
+        { ...silentLogger, warn },
+        {
+          waitUntil: (work) => void waits.push(work),
+        },
+      );
       pending.push(result);
       return result;
     };
@@ -330,9 +339,9 @@ it("INV-7: a custom adapter ignoring cancellation moves to the allowance at ten 
   };
   const caller = new AbortController();
   const waits: Promise<unknown>[] = [];
-  const pending = authenticate(provider, request(caller.signal), BASE, undefined, silentLogger, (work) =>
-    waits.push(work),
-  );
+  const pending = authenticate(provider, request(caller.signal), BASE, undefined, silentLogger, {
+    waitUntil: (work) => void waits.push(work),
+  });
   try {
     caller.abort();
     await vi.advanceTimersByTimeAsync(10_999);

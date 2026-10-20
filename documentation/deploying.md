@@ -220,6 +220,10 @@ A separate allowance of 16 abandoned operations holds stalled work after its
 hard deadline plus one second of grace. While it is full, new authentication
 receives the same 503, the log records `authentication_abandoned_saturated`,
 and `/health` reports `admission.authentication.abandonedSaturated: true`.
+On Node, stalled work counts until it settles. On Workers, Connecta also retires
+an invocation's stalled work 35 seconds after its response or disconnect, once
+the platform has cancelled it; this needs the Worker example's pass-through
+`fetch` and `enable_request_signal` flag.
 These bounds limit outstanding work, not requests per second or a quota shared by several
 isolates or deployments. Budget ingress across the identity-provider account;
 see [authentication capacity](./auth.md#authentication-capacity-and-ingress-limiting)

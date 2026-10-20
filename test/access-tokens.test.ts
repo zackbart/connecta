@@ -783,8 +783,10 @@ it.each([1, 2, 3])(
       BASE,
       undefined,
       { info() {}, warn() {}, error() {}, debug() {} },
-      (work) => {
-        settlement = work;
+      {
+        waitUntil(work) {
+          settlement = work;
+        },
       },
     );
     try {

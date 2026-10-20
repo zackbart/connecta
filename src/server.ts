@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { authenticationSnapshot } from "./auth-admission.js";
+import { authenticationSnapshot, openInvocation, type AuthenticationInvocation } from "./auth-admission.js";
 import { notFoundResponse } from "./branding.js";
 import { aggregateCallAdmissionSnapshots } from "./call-admission.js";
 import { isAdmittingExecutor } from "./executor-admission.js";
@@ -58,7 +58,7 @@ export function createFetchHandler(
       admission: {
         policy: "global-fifo",
         requests: opts.requestAdmission.snapshot(),
-        authentication: authenticationSnapshot(),
+        authentication: authenticationSnapshot(opts.config.logger),
         code: codeAdmission ?? { managedByExecutor: true },
         downstreamCalls: {
           policy: "connector-partitioned-per-runtime",
@@ -128,6 +128,7 @@ export function createFetchHandler(
   const serve = (
     request: Request,
     runtimeContext: RuntimeExecutionContext | undefined,
+    invocation: AuthenticationInvocation | undefined,
   ): Effect.Effect<Response, unknown> =>
     Effect.suspend(() => {
       const url = new URL(request.url);
@@ -178,11 +179,15 @@ export function createFetchHandler(
         opts,
         defer,
         runtimeContext,
+        invocation,
       };
       return Effect.map(route(context), (response) => withSecurityHeaders(response, url, path));
     });
 
   return function fetch(request: Request, runtimeContext?: RuntimeExecutionContext): Promise<Response> {
-    return runEdge(serve(request, runtimeContext), { signal: request.signal });
+    // On a Worker, the response's end bounds how long this invocation's
+    // authentication charges can still be live.
+    const { invocation, observe } = openInvocation(request, runtimeContext);
+    return observe(runEdge(serve(request, runtimeContext, invocation), { signal: request.signal }));
   };
 }

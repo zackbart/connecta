@@ -3,6 +3,12 @@ import { accessTokens } from "../../../src/access-tokens.js";
 import { memoryStorage } from "../../../src/storage/memory.js";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 
+// Retirement compares Date.now() with an invocation's platform end. Tests
+// move this isolate's clock instead of waiting out the 30-second window.
+const realNow = Date.now.bind(Date);
+let clockOffset = 0;
+Date.now = () => realNow() + clockOffset;
+
 // Native separate requests share only Connecta's plain admission counter.
 // Every adapter fetch, controller, response, and body belongs to its caller.
 const app = createConnecta({
@@ -29,8 +35,13 @@ const app = createConnecta({
   },
 });
 export default {
-  async fetch(request: Request, _env: unknown, ctx: { waitUntil(pending: Promise<unknown>): void }) {
+  async fetch(request: Request, _env: unknown, ctx: ExecutionContext) {
     try {
+      const url = new URL(request.url);
+      if (url.pathname === "/__clock") {
+        clockOffset = url.searchParams.has("reset") ? 0 : clockOffset + Number(url.searchParams.get("advance"));
+        return new Response("{}");
+      }
       const kind = request.headers.get("X-Binding-Kind");
       if (kind) {
         // A binding-contract fixture: fetch deliberately receives no signal,
@@ -59,9 +70,21 @@ export default {
               }
             : {}),
         });
+        // Production cancels an invocation, and all its I/O, once waitUntil
+        // has run its course after the response; Miniflare never does. With
+        // this header the fixture enforces such a window: when it closes,
+        // every waitUntil promise is settled and workerd ends the
+        // invocation, dropping the callbacks of its unfinished operations.
+        const window = Number(request.headers.get("X-Wait-Until-Window") ?? NaN);
+        let closeWindow!: () => void;
+        const windowClosed = new Promise<void>((resolve) => {
+          closeWindow = resolve;
+        });
         try {
-          return await binding.fetch(request, undefined, {
-            waitUntil: ctx.waitUntil.bind(ctx),
+          const response = await binding.fetch(request, undefined, {
+            waitUntil: (pending: Promise<unknown>) =>
+              ctx.waitUntil(Number.isFinite(window) ? Promise.race([pending, windowClosed]) : pending),
+            passThroughOnException: ctx.passThroughOnException.bind(ctx),
             access: {
               aud: "app",
               getIdentity: async () => {
@@ -70,6 +93,8 @@ export default {
               },
             },
           });
+          if (Number.isFinite(window)) setTimeout(closeWindow, window);
+          return response;
         } finally {
           await binding.close();
         }

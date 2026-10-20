@@ -76,6 +76,7 @@ export async function routeAccessTokens(context: RouteContext, manager: AccessTo
     "access token management",
     context.runtimeContext,
     opts.config.logger,
+    context.invocation,
   );
   if (!admin.ok) return admin.response;
   // Interactive maintainers alone manage agent tokens (#837); anyone else

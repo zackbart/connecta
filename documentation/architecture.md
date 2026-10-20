@@ -142,8 +142,15 @@ An admitted non-preflight `/mcp` request then takes five steps in
    capacity. At its hard deadline plus one second of grace, unfinished work
    moves to a separate allowance of 16 abandoned operations, or stays active
    while that allowance is full. A full allowance refuses all new work, logged
-   as `authentication_abandoned_saturated`; only real settlement decrements it
-   and promotes an overdue active charge. Health exposes both counters. Access
+   as `authentication_abandoned_saturated`; only a charge's end decrements it
+   and promotes an overdue active charge. On Node that end is real settlement.
+   On Workers it is also retirement: `src/server.ts` opens each invocation with
+   `openInvocation`, which stamps a plain `aliveUntil` 35 seconds after
+   Connecta's response finishes or is cancelled, the handler fails, or the
+   client disconnects (Cloudflare's 30-second `waitUntil` limit plus margin).
+   Admission and health then lazily retire unsettled charges past it, logging
+   `authentication_invocation_ended`; a late settlement finds the charge
+   closed. Before that stamp no charge retires. Health exposes both counters. Access
    and agent verification race five-second deadlines while registering their
    uncancellable native work with the invocation's charge. The request's
    `ctx.waitUntil` keeps that same settlement continuation runnable on Worker
