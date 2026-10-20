@@ -1122,6 +1122,10 @@ describe("MCP and code-mode invocation parity", () => {
   });
 
   it("classifies timeouts and records matching activity fields", async () => {
+    // The deadline also covers catalog resolution. Expire it only once each
+    // adapter's downstream call has started, so a slow host cannot end it early.
+    let started!: () => void;
+    const downstream = () => new Promise<void>((resolve) => (started = resolve));
     const connector: Connector = connectorWith({
       id: "parity",
       kind: "api",
@@ -1131,11 +1135,27 @@ describe("MCP and code-mode invocation parity", () => {
           annotations: { readOnlyHint: true },
         },
       ],
-      call: async () => await new Promise<never>(() => {}),
+      call: async () => {
+        started();
+        return await new Promise<never>(() => {});
+      },
     });
-    const result = await failuresFor(connector, "parity.read", {
-      timeoutMs: 10,
-    });
+    vi.useFakeTimers();
+    let result: Awaited<ReturnType<typeof failuresFor>>;
+    try {
+      let direct = downstream();
+      const failures = failuresFor(connector, "parity.read", {
+        timeoutMs: 10,
+      });
+      for (let adapter = 0; adapter < 2; adapter++) {
+        await direct;
+        direct = downstream();
+        await vi.advanceTimersByTimeAsync(10);
+      }
+      result = await failures;
+    } finally {
+      vi.useRealTimers();
+    }
     expect(result.codeError).toMatchObject({
       code: "timeout",
       details: { details: { operation: "parity.read", stage: "downstream", deadlineMs: 10 } },
@@ -2198,6 +2218,11 @@ it("returns a cancelled run promptly when acquire ignores the signal", { timeout
 it.each([undefined, 30])(
   "INV-7: direct and guest calls share default and requested deadlines (%s)",
   async (requestedMs) => {
+    // Discovery and catalog hashing run inside the same deadline, so a real
+    // 30-40 ms timer can expire before the downstream call starts on a slow
+    // host. Advance the deadline only once the downstream call is waiting.
+    let started!: () => void;
+    let downstream = Promise.resolve();
     const connector = connectorWith({
       id: "deadline",
       kind: "api",
@@ -2210,7 +2235,10 @@ it.each([undefined, 30])(
           annotations: { readOnlyHint: true },
         },
       ],
-      call: async () => await new Promise<never>(() => {}),
+      call: async () => {
+        started();
+        return await new Promise<never>(() => {});
+      },
     });
     const executor: Executor = {
       async execute(_code, providers) {
@@ -2236,9 +2264,21 @@ it.each([undefined, 30])(
       const listed = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: "test-token-123" }));
       const advertised = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
       expect(advertised.description).toContain("0.04s/host call");
-      const invoke = async (name: string, args: object) =>
-        (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: "test-token-123" })))
-          .result;
+      const deadlineMs = requestedMs ?? 40;
+      const invoke = async (name: string, args: object) => {
+        downstream = new Promise<void>((resolve) => (started = resolve));
+        let settled = false;
+        const response = mcpRpc(app, "tools/call", { name, arguments: args }, { token: "test-token-123" }).then(
+          async (response) => (await readJsonRpc(response)).result,
+        );
+        void response.finally(() => (settled = true));
+        await downstream;
+        await vi.advanceTimersByTimeAsync(deadlineMs - 1);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        return await response;
+      };
+      vi.useFakeTimers();
       const direct = await invoke("call_tool", {
         address: "deadline.read",
         resultMode: "value",
@@ -2247,17 +2287,17 @@ it.each([undefined, 30])(
       const guest = await invoke("execute_code", {
         code: "async () => await connecta.call({ address: 'deadline.read' })",
       });
-      const deadlineMs = requestedMs ?? 40;
       for (const error of [direct.structuredContent.error, guest.structuredContent.result]) {
         expect(error).toMatchObject({
           code: "timeout",
           details: { operation: "deadline.read", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs },
         });
-        expect(error.details.elapsedMs).toBeGreaterThanOrEqual(deadlineMs - 1);
+        expect(error.details.elapsedMs).toBe(deadlineMs);
         expect(error.message).toContain(`effective deadline ${deadlineMs}ms`);
       }
       expect(guest.structuredContent.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
     } finally {
+      vi.useRealTimers();
       await app.close();
     }
   },
