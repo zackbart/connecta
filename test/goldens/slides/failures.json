@@ -9,7 +9,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -49,9 +49,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -75,7 +73,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -115,9 +113,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -128,10 +124,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -171,11 +164,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -210,7 +199,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -250,9 +239,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -279,7 +266,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -319,9 +306,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -345,7 +330,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -385,9 +370,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -411,7 +394,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -451,9 +434,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -477,7 +458,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -517,9 +498,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -544,7 +523,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -584,9 +563,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -610,7 +587,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -650,9 +627,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -663,10 +638,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -706,11 +678,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -745,7 +713,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -785,9 +753,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -815,7 +781,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -855,9 +821,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
               "headers": {
@@ -898,7 +862,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -938,9 +902,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -979,7 +941,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1019,9 +981,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1047,10 +1007,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1090,11 +1047,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1145,7 +1098,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1185,9 +1138,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1229,7 +1180,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1269,9 +1220,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1310,7 +1259,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1350,9 +1299,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1391,7 +1338,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1431,9 +1378,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1472,7 +1417,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1512,9 +1457,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1554,7 +1497,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1594,9 +1537,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1635,7 +1576,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1675,9 +1616,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1703,10 +1642,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1746,11 +1682,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1801,7 +1733,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1841,9 +1773,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {
@@ -1882,7 +1812,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1922,9 +1852,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
               "headers": {

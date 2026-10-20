@@ -88,7 +88,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://mixpanel.com/api/query/insights?bookmark_id=7&project_id=99",
           "headers": {
@@ -119,7 +119,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://mixpanel.com/api/app/me",
           "headers": {
@@ -168,7 +168,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://data.mixpanel.com/api/2.0/export?from_date=2025-12-01&to_date=2025-12-31&event=%5B%22Signed+Up%22%2C%22Viewed+Page%22%5D&time_in_ms=true&limit=1000&project_id=42",
           "headers": {
@@ -219,7 +219,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://mixpanel.com/api/query/stream/query?from_date=2025-12-01&to_date=2025-12-31&project_id=99&distinct_ids=%5B%22alice%22%5D",
           "headers": {
@@ -274,7 +274,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://mixpanel.com/api/query/engage?project_id=99&workspace_id=3",
           "headers": {
@@ -339,7 +339,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://mixpanel.com/api/query/engage?project_id=42",
           "headers": {
@@ -388,7 +388,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://mixpanel.com/api/query/insights?bookmark_id=11&project_id=42",
           "headers": {
@@ -431,7 +431,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://mixpanel.com/api/query/funnels?funnel_id=12&from_date=2025-12-01&to_date=2025-12-31&project_id=42",
           "headers": {
@@ -487,7 +487,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://mixpanel.com/api/query/retention?from_date=2025-12-01&to_date=2025-12-31&born_event=Signup&event=Purchase&retention_type=birth&unit=week&project_id=42",
           "headers": {
@@ -534,7 +534,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.mixpanel.com/import?project_id=99&strict=1",
           "headers": {
@@ -583,7 +583,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://mixpanel.com/api/query/insights?bookmark_id=7&project_id=99",
           "headers": {

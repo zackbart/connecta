@@ -9,7 +9,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -32,7 +32,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -66,7 +66,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -92,7 +92,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -115,7 +115,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -138,7 +138,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -161,7 +161,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -185,7 +185,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -208,7 +208,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -242,7 +242,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -269,7 +269,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353",
               "headers": {
@@ -311,7 +311,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -340,7 +340,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -381,7 +381,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -413,7 +413,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -442,7 +442,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -471,7 +471,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -500,7 +500,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -530,7 +530,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -559,7 +559,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -600,7 +600,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {
@@ -633,7 +633,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
               "headers": {

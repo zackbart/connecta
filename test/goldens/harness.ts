@@ -5,20 +5,68 @@
 // placeholders and leak checks, failure cases, and the JSON layout), so a
 // migration changes the provider, never the golden.
 import { vi } from "vitest";
-import { CatalogService } from "../../src/catalog-service.js";
-import { CredentialVault } from "../../src/credentials.js";
-import { InvocationService, type InvocationOutcome } from "../../src/invocation.js";
-import { Registry } from "../../src/registry.js";
-import { connectorGuide, connectorGuideSummary } from "../../src/skills.js";
-import { memoryStorage } from "../../src/storage/memory.js";
-import { classifyTool } from "../../src/tool-safety.js";
-import { CONNECTA_VERSION } from "../../src/version.js";
+import type { InvocationOutcome } from "../../src/invocation.js";
+import type { Registry as RegistryType } from "../../src/registry.js";
 import type { Connector, ConnectorContext, ToolDef } from "../../src/types.js";
-import { silentLogger } from "../helpers.js";
+import { goldenSources, type SourceState } from "./sources.js";
+export { GOLDEN_NOW } from "./sources.js";
+const SPEC_BASE = Symbol.for("connecta.golden.spec-base");
+
+// Refresh the provider AND core graph per capture. Source dispatchers were
+// installed before either graph could capture a host reference.
+async function fresh(spec: GoldenSpec, loadSpec?: () => Promise<GoldenSpec>): Promise<GoldenSpec> {
+  vi.resetModules();
+  const modules = await Promise.all([
+    import("../../src/catalog-service.js"),
+    import("../../src/credentials.js"),
+    import("../../src/invocation.js"),
+    import("../../src/registry.js"),
+    import("../../src/skills.js"),
+    import("../../src/storage/memory.js"),
+    import("../../src/tool-safety.js"),
+    import("../../src/version.js"),
+  ]);
+  [
+    { CatalogService },
+    { CredentialVault },
+    { InvocationService },
+    { Registry },
+    { connectorGuide, connectorGuideSummary },
+    { memoryStorage },
+    { classifyTool },
+    { CONNECTA_VERSION },
+  ] = modules;
+  if (loadSpec) return loadSpec();
+  const load = import.meta.glob<() => Promise<{ default: GoldenSpec }>>("./*/spec.ts")[`./${spec.provider}/spec.ts`];
+  if (!load) return spec; // Inline harness probes also use the load-time dispatchers.
+  const loaded = (await load()).default;
+  // Refresh fixture closures and generated secrets as well as create(). A
+  // shallow-spread mutation retains the baseline marker, so only deliberately
+  // changed fields override the fresh spec (e.g. the duplicate-write fixture).
+  const baseline = (spec as GoldenSpec & { [SPEC_BASE]?: Record<string, unknown> })[SPEC_BASE];
+  if (!baseline) throw new Error("Maintained specs must use defineGoldenSpec or a fresh fixture loader");
+  const result = { ...loaded } as unknown as Record<string, unknown>;
+  for (const name of new Set([...Object.keys(baseline), ...Object.keys(spec)])) {
+    const value = (spec as unknown as Record<string, unknown>)[name];
+    if (value !== baseline[name]) {
+      if (Object.hasOwn(spec, name)) result[name] = value;
+      else delete result[name];
+    }
+  }
+  return result as unknown as GoldenSpec;
+}
+let CatalogService: typeof import("../../src/catalog-service.js").CatalogService;
+let CredentialVault: typeof import("../../src/credentials.js").CredentialVault;
+let InvocationService: typeof import("../../src/invocation.js").InvocationService;
+let Registry: typeof import("../../src/registry.js").Registry;
+let connectorGuide: typeof import("../../src/skills.js").connectorGuide;
+let connectorGuideSummary: typeof import("../../src/skills.js").connectorGuideSummary;
+let memoryStorage: typeof import("../../src/storage/memory.js").memoryStorage;
+let classifyTool: typeof import("../../src/tool-safety.js").classifyTool;
+let CONNECTA_VERSION: string;
+const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export const GOLDEN_BASE_URL = "https://connecta.example";
-/** 2026-01-02T03:04:05.000Z: every clock read during a golden sees this instant. */
-export const GOLDEN_NOW = Date.UTC(2026, 0, 2, 3, 4, 5);
 const SEAL_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
 /** One reply from the fake network. `body` is sent as JSON; `text` verbatim. */
@@ -127,6 +175,7 @@ export interface GoldenSpec {
 }
 
 export function defineGoldenSpec(spec: GoldenSpec): GoldenSpec {
+  Object.defineProperty(spec, SPEC_BASE, { enumerable: true, value: { ...spec } });
   return spec;
 }
 
@@ -158,169 +207,35 @@ function defaultFailureReply(status: number, message: string): StubResponse {
 // ---------------------------------------------------------------------------
 // Determinism
 
-/**
- * Every timer a scenario can set, and its clock, are fake: each scenario
- * starts at `GOLDEN_NOW` with no timers, and time moves only when the step
- * loop advances it. A provider's delays, deadlines, and backoffs are virtual
- * and fire in a fixed order. Microtasks stay real.
- */
-const FAKED_TIMERS: NonNullable<Parameters<typeof vi.useFakeTimers>[0]>["toFake"] = [
-  "setTimeout",
-  "clearTimeout",
-  "setInterval",
-  "clearInterval",
-  "setImmediate",
-  "clearImmediate",
-  "Date",
-  "performance",
-];
-
-type Callback = () => void;
-type Scheduler = (callback: Callback, ms?: number) => unknown;
-// Captured before any capture fakes timers.
-const realImmediate = (globalThis as { setImmediate?: Scheduler }).setImmediate?.bind(globalThis);
-const realTimeout = (globalThis.setTimeout as Scheduler).bind(globalThis);
-
-/** One turn of the real event loop: every queued microtask runs, and real work can finish. */
 function realTurn(): Promise<void> {
-  return new Promise((resolve) => (realImmediate ? realImmediate(resolve) : realTimeout(resolve, 0)));
+  return goldenSources().turn();
 }
+type RealWork = SourceState;
 
-/**
- * Real asynchronous work in flight. Web Crypto finishes outside the
- * microtask queue on Node, and body reads do on workerd, so the step loop
- * counts both rather than guessing from elapsed time.
- */
-interface RealWork {
-  inFlight: number;
-  /** Bumped whenever real work starts or finishes. */
-  events: number;
-  violation?: Error;
-}
-
-const SUBTLE_METHODS = [
-  "decrypt",
-  "deriveBits",
-  "deriveKey",
-  "digest",
-  "encrypt",
-  "exportKey",
-  "generateKey",
-  "importKey",
-  "sign",
-  "unwrapKey",
-  "verify",
-  "wrapKey",
-] as const;
-const BODY_METHODS = ["arrayBuffer", "blob", "bytes", "formData", "json", "text"] as const;
-
-type Method = (this: unknown, ...args: unknown[]) => unknown;
-
-function trackRealWork(work: RealWork): Array<{ mockRestore(): void }> {
-  const owners: Array<[object, readonly string[]]> = [
-    [crypto.subtle, SUBTLE_METHODS],
-    [Request.prototype, BODY_METHODS],
-    [Response.prototype, BODY_METHODS],
-    [Blob.prototype, BODY_METHODS],
-    [ReadableStreamDefaultReader.prototype, ["read"]],
-  ];
-  return owners.flatMap(([owner, names]) =>
-    names.flatMap((name) => {
-      const original = (owner as Record<string, unknown>)[name];
-      if (typeof original !== "function") return [];
-      const method = original as Method;
-      return [
-        vi.spyOn(owner as Record<string, Method>, name).mockImplementation(function (this: unknown, ...args) {
-          const result = method.apply(this, args);
-          if (!(result instanceof Promise)) return result;
-          work.inFlight++;
-          work.events++;
-          return result.finally(() => {
-            work.inFlight--;
-            work.events++;
-          });
-        }),
-      ];
-    }),
-  );
-}
-
-/**
- * Fix the clock and the ids for one capture. `crypto.randomUUID` counts, and
- * `crypto.getRandomValues` and `Math.random` are fixed sequences; all of them
- * and the fake clock restart for every scenario, so adding or reordering a
- * call never moves another call's ids, states, verifiers, or timers.
- */
-function deterministic(): { real: RealWork; restart(): void; restore(): void } {
-  // Effect captures this function object when its module loads. Faking only
-  // process.hrtime would leave that object's bigint() reading the real clock.
-  const hrtime = (globalThis as { process?: { hrtime?: typeof process.hrtime } }).process?.hrtime;
-  const nanos =
-    hrtime && vi.spyOn(hrtime, "bigint").mockImplementation(() => BigInt(Date.now() - GOLDEN_NOW) * 1_000_000n);
-  const fakeClock = () =>
-    vi.useFakeTimers({ now: GOLDEN_NOW, toFake: [...FAKED_TIMERS!, ...(hrtime ? ["hrtime" as const] : [])] });
-  fakeClock();
-  let uuid = 0;
-  const randomUUID = vi
-    .spyOn(crypto, "randomUUID")
-    .mockImplementation(
-      () => `00000000-0000-4000-8000-${(++uuid).toString(16).padStart(12, "0")}` as ReturnType<Crypto["randomUUID"]>,
-    );
-  let byte = 0;
-  const randomValues = vi.spyOn(crypto, "getRandomValues").mockImplementation((array) => {
-    const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
-    for (let index = 0; index < bytes.length; index++) bytes[index] = byte++ & 0xff;
-    return array;
-  });
-  let seed = 0;
-  const random = vi.spyOn(Math, "random").mockImplementation(() => (seed = (seed * 9301 + 49297) % 233280) / 233280);
-  const real: RealWork = { inFlight: 0, events: 0 };
-  const tracked = trackRealWork(real);
-  const unsupported = (source: string): never => {
-    real.violation = new Error(
-      `Unsupported asynchronous source: ${source}; register and count it in the golden harness before capturing it`,
-    );
-    throw real.violation;
-  };
-  // These native producers bypass reader.read() and the fake clock. Even a
-  // fast completion must fail, rather than accidentally blessing one schedule.
-  const globals = globalThis as unknown as Record<string, Method>;
-  for (const name of [
-    "CompressionStream",
-    "DecompressionStream",
-    "WebSocket",
-    "Worker",
-    "XMLHttpRequest",
-    "EventSource",
-  ]) {
-    if (typeof globals[name] === "function") {
-      tracked.push(
-        vi.spyOn(globals, name).mockImplementation(function () {
-          return unsupported(name);
-        }),
-      );
-    }
-  }
-  const scheduler = (globalThis as { scheduler?: Record<string, Method> }).scheduler;
-  if (scheduler?.wait)
-    tracked.push(vi.spyOn(scheduler, "wait").mockImplementation(() => unsupported("scheduler.wait")));
+function deterministic(): { real: RealWork; restart(): void; restore(): Promise<void> } {
+  let state = goldenSources().start();
   return {
-    real,
-    restart() {
-      uuid = 0;
-      byte = 0;
-      seed = 0;
-      delete real.violation;
-      // A fresh clock: no timer from an earlier scenario survives into this one.
-      fakeClock();
+    get real() {
+      return state;
     },
-    restore() {
-      randomUUID.mockRestore();
-      randomValues.mockRestore();
-      random.mockRestore();
-      for (const spy of tracked) spy.mockRestore();
-      vi.useRealTimers();
-      nanos?.mockRestore();
+    restart() {
+      if (state.violation) throw state.violation;
+      if (state.inFlight || state.microtasks || state.timers.size)
+        throw new Error("Outstanding controlled work at scenario boundary");
+      state.stop();
+      state = goldenSources().start();
+      state.loading = false;
+    },
+    async restore() {
+      try {
+        for (let turns = 0; (state.inFlight || state.microtasks) && turns < MAX_SETTLE_CHANGES; turns++) {
+          state.tick(0);
+          await realTurn();
+        }
+      } finally {
+        state.stop();
+      }
+      if (state.inFlight || state.microtasks) throw new Error("Controlled work could not drain after rejected capture");
     },
   };
 }
@@ -409,8 +324,8 @@ function timeoutFailure(): Error {
 interface Recorded {
   request: SeenRequest;
   auxiliary?: string;
-  /** Zero-based indices in flattened steps whose answers were delivered at send time. */
-  after: number[];
+  /** Number of answers delivered at send time: a prefix of this run's release sequence. */
+  after: number;
 }
 
 /** One causal step: every request sent before any of them was answered, in canonical order. */
@@ -468,7 +383,7 @@ interface Waiting {
   key: string;
   /** The order requests reached the network, which only orders requests identical in `key`. */
   sent: number;
-  after: number[];
+  after: number;
   resolve(response: Response): void;
   reject(error: Error): void;
 }
@@ -492,7 +407,7 @@ interface Network {
 /**
  * Run to quiescence, record newly waiting requests in canonical order, then
  * release ONE answer and run to quiescence again. Earlier recorded requests
- * keep release priority over newly sent ones. `after` snapshots the delivered
+ * keep release priority over newly sent ones. `after` counts delivered
  * answers at fetch entry, before harness jitter, not after body inspection.
  * Thus A || B; await A; C differs from A || B; await B; C, even though both
  * have step sizes [2, 1]. A step is an admission cohort, not a release batch.
@@ -502,12 +417,12 @@ function installNetwork(capture: Capture): Network {
   const realFetch = globalThis.fetch;
   let issued = 0;
   let arrived = 0;
-  let delivered: number[] = [];
+  let delivered = 0;
   let waiting: Waiting[] = [];
   const pending = new Set<Waiting>();
   const fake = (async (input: unknown, init?: RequestInit) => {
     const sent = issued++;
-    const after = [...delivered];
+    const after = delivered;
     let request: SeenRequest;
     try {
       if (jitter) {
@@ -543,30 +458,30 @@ function installNetwork(capture: Capture): Network {
 
   async function drive<T>(work: () => Promise<T>, answer?: Answer): Promise<Driven<T>> {
     const steps: Step[] = [];
-    const releases: Array<{ index: number; release(): void }> = [];
-    delivered = [];
+    const releases: Array<{ release(): void }> = [];
+    delivered = 0;
     const began = Date.now();
     let index = 0;
-    let recorded = 0;
     const state: { outcome?: { ok: true; value: T } | { ok: false; error: unknown } } = {};
     void (async () => work())().then(
       (value) => (state.outcome = { ok: true, value }),
       (error: unknown) => (state.outcome = { ok: false, error }),
     );
-    const progress = () => [issued, arrived, real.events, vi.getTimerCount(), state.outcome ? 1 : 0].join();
+    const progress = () => [issued, arrived, real.events, real.timers.size, state.outcome ? 1 : 0].join();
     const assertSupported = () => {
       if (real.violation) throw real.violation;
     };
     const settle = async (turns: number) => {
       let last = "";
-      for (let quiet = 0, changes = 0; quiet < turns;) {
+      for (let quiet = 0, changes = 0, total = 0; quiet < turns; total++) {
+        if (total > MAX_SETTLE_CHANGES) throw new Error(`${spec.provider}: controlled work never settled`);
         // Synchronous: 0 ms timers created by microtasks stay due now.
-        vi.advanceTimersByTime(0);
+        real.tick(0);
         await realTurn();
         const now = progress();
         if (now !== last && ++changes > MAX_SETTLE_CHANGES)
           throw new Error(`${spec.provider}: a call never stopped working`);
-        quiet = now === last && issued === arrived && real.inFlight === 0 ? quiet + 1 : 0;
+        quiet = now === last && issued === arrived && real.inFlight === 0 && real.microtasks === 0 ? quiet + 1 : 0;
         last = now;
       }
       assertSupported();
@@ -591,12 +506,12 @@ function installNetwork(capture: Capture): Network {
         const { method, url } = batch[0]!.request;
         throw new Error(`${spec.provider}: ${method} ${url.href} was sent outside a call`);
       }
+      const batchReleases: typeof releases = [];
       const step: Step = [];
       steps.push(step);
       let previous: { key: string; reply: string } | undefined;
       for (const waiter of batch) {
         const { request, after } = waiter;
-        const requestIndex = recorded++;
         const route = spec.auxiliary?.find((candidate) => candidate.match(request));
         step.push({ request, after, ...(route ? { auxiliary: route.name } : {}) });
         const reply = route
@@ -621,8 +536,7 @@ function installNetwork(capture: Capture): Network {
           );
         }
         previous = { key: waiter.key, reply: replyKey! };
-        releases.push({
-          index: requestIndex,
+        batchReleases.push({
           release: () => {
             if (reply === "network") waiter.reject(networkFailure());
             else if (reply === "timeout") waiter.reject(timeoutFailure());
@@ -630,6 +544,7 @@ function installNetwork(capture: Capture): Network {
           },
         });
       }
+      releases.push(...(capture.reverse ? batchReleases.reverse() : batchReleases));
     };
     try {
       for (let advances = 0; ;) {
@@ -638,7 +553,7 @@ function installNetwork(capture: Capture): Network {
         if (waiting.length > 0) admit();
         const next = releases.shift();
         if (next) {
-          delivered.push(next.index);
+          delivered++;
           next.release();
           continue;
         }
@@ -646,24 +561,41 @@ function installNetwork(capture: Capture): Network {
         await settle(CLOCK_QUIET_TURNS);
         await auditQuiescence();
         if (waiting.length > 0 || state.outcome) continue;
-        if (vi.getTimerCount() === 0) {
+        if (real.timers.size === 0) {
           throw new Error(
             `${spec.provider}: unsupported asynchronous source: a call waits on something that is neither a request, counted Web Crypto/body read, nor a fake timer (likely native stream, scheduler.wait, or uncounted host I/O)`,
           );
         }
         if (++advances > MAX_CLOCK_ADVANCES) throw new Error(`${spec.provider}: a call kept waiting on timers`);
-        await vi.advanceTimersToNextTimerAsync();
+        real.tick(real.next()!);
       }
       const outcome = state.outcome!;
       if (!outcome.ok) throw outcome.error;
-      return { value: outcome.value, steps, waitedMs: Date.now() - began };
+      const waitedMs = Date.now() - began;
+      // AbortSignal.timeout has no cancellation API. Fire remaining signal
+      // deadlines during teardown, then prove that no work escaped the call.
+      // They cannot change its result or send another request. Other unjoined
+      // timers are an error, rather than silently disappearing at restart.
+      const finished = JSON.stringify(outcome.value);
+      const finishedIssued = issued;
+      for (let cleanup = 0; real.timers.size; cleanup++) {
+        if (cleanup > MAX_CLOCK_ADVANCES || [...real.timers.values()].some((timer) => !timer.deadline))
+          throw new Error(`${spec.provider}: outstanding controlled timer after call completion`);
+        real.tick(real.next()!);
+        await settle(STEP_QUIET_TURNS);
+        if (issued !== finishedIssued || JSON.stringify(outcome.value) !== finished)
+          throw new Error(`${spec.provider}: controlled work outlived call completion`);
+      }
+      if (real.inFlight || real.microtasks || pending.size)
+        throw new Error(`${spec.provider}: outstanding controlled work after call completion`);
+      return { value: outcome.value, steps, waitedMs };
     } catch (error) {
       // An invalid capture can still have concurrent fake requests in flight.
       // Drain/cancel them under this capture's fakes, never the next one's.
       for (let turn = 0; turn < CLOCK_QUIET_TURNS || issued !== arrived || real.inFlight > 0; turn++) {
         for (const waiter of pending) waiter.reject(new Error("Golden capture aborted"));
         waiting = [];
-        vi.advanceTimersByTime(0);
+        real.tick(0);
         await realTurn();
         if (turn > MAX_SETTLE_CHANGES) break;
       }
@@ -687,7 +619,7 @@ function fromReplies(replies: Replies | undefined): (request: SeenRequest, index
 // ---------------------------------------------------------------------------
 // Running a call the way an agent does
 
-async function registryFor(spec: GoldenSpec, connector: Connector): Promise<Registry> {
+async function registryFor(spec: GoldenSpec, connector: Connector): Promise<RegistryType> {
   const storage = memoryStorage();
   const credentialVault = new CredentialVault(storage, SEAL_KEY);
   if (spec.credential !== undefined) {
@@ -762,6 +694,7 @@ function stepsRecord(steps: readonly Step[]): unknown[][] {
 
 /** One capture's fixed inputs, and the setup requests every scenario must repeat. */
 interface Capture {
+  reverse?: boolean;
   spec: GoldenSpec;
   restart(): void;
   real: RealWork;
@@ -982,7 +915,7 @@ async function run(capture: Capture, where: string, call: GoldenCall, answer: An
   const { spec } = capture;
   capture.restart();
   const network = installNetwork(capture);
-  let registry: Registry | undefined;
+  let registry: RegistryType | undefined;
   try {
     const connector = spec.create(slug(where) + capture.nonce);
     const ready = (await network.drive(() => registryFor(spec, connector))).value;
@@ -1041,7 +974,7 @@ async function catalog(capture: Capture): Promise<unknown> {
   const { spec } = capture;
   capture.restart();
   const network = installNetwork(capture);
-  let registry: Registry | undefined;
+  let registry: RegistryType | undefined;
   try {
     const connector = spec.create(`catalog${capture.nonce}`);
     const ready = (await network.drive(() => registryFor(spec, connector))).value;
@@ -1167,6 +1100,8 @@ export function goldenFiles(spec: GoldenSpec): GoldenFile[] {
 
 /** Test-only inputs: `seam` stands in for a provider that calls fetch differently; `jitter` seeds scheduling noise. */
 export interface CaptureOptions {
+  /** Test-only fresh fixture graph, loaded before any provider work starts. */
+  load?: () => Promise<GoldenSpec>;
   seam?: FetchSeam;
   jitter?: number;
 }
@@ -1189,7 +1124,9 @@ function captureFor(spec: GoldenSpec, clock: { real: RealWork; restart(): void }
   return {
     spec,
     restart: clock.restart,
-    real: clock.real,
+    get real() {
+      return clock.real;
+    },
     secrets,
     echo: [...sent.flatMap(([, value]) => secretEncodings(value)), ...pairs].join(" "),
     errorEcho: sent.map(([, value]) => value).join(" "),
@@ -1201,13 +1138,16 @@ function captureFor(spec: GoldenSpec, clock: { real: RealWork; restart(): void }
 }
 
 /** Every golden file's exact bytes for one spec. */
-export async function captureGoldens(
+async function captureGoldensInOrder(
   spec: GoldenSpec,
-  options: CaptureOptions = {},
+  options: CaptureOptions,
+  reverse: boolean,
 ): Promise<Partial<Record<GoldenFile, string>>> {
   const clock = deterministic();
   try {
+    spec = await fresh(spec, options.load);
     const capture = captureFor(spec, clock, options);
+    capture.reverse = reverse;
     const files: Partial<Record<GoldenFile, string>> = {
       catalog: stable(await catalog(capture), capture),
       calls: stable(await calls(capture), capture),
@@ -1216,7 +1156,7 @@ export async function captureGoldens(
     if (spec.setup) files.setup = stable(JSON.parse(capture.setup ?? "[]"), capture);
     return files;
   } finally {
-    clock.restore();
+    await clock.restore();
   }
 }
 
@@ -1225,10 +1165,17 @@ export async function captureGoldens(
  * name), or for the echo call when `label` is `echo`. It rejects if a secret
  * reaches the result.
  */
-export async function captureCall(spec: GoldenSpec, label: string, options: CaptureOptions = {}): Promise<string> {
+async function captureCallInOrder(
+  spec: GoldenSpec,
+  label: string,
+  options: CaptureOptions,
+  reverse: boolean,
+): Promise<string> {
   const clock = deterministic();
   try {
+    spec = await fresh(spec, options.load);
     const capture = captureFor(spec, clock, options);
+    capture.reverse = reverse;
     const call =
       label === "echo"
         ? echoCall(capture)
@@ -1236,8 +1183,63 @@ export async function captureCall(spec: GoldenSpec, label: string, options: Capt
     if (!call) throw new Error(`${spec.provider}: no call labelled "${label}"`);
     return stable(await row(capture, call), capture);
   } finally {
-    clock.restore();
+    await clock.restore();
   }
+}
+
+// Both orders start with an independent module graph, clock, network and
+// cache namespace. A previous order must never initialize the next one's
+// provider state. A variant contains an entire observation, not a diff.
+function mergeObservations(canonical: unknown, reverse: unknown): unknown {
+  if (JSON.stringify(canonical) === JSON.stringify(reverse)) return canonical;
+  if (Array.isArray(canonical) && Array.isArray(reverse)) {
+    if (canonical.length !== reverse.length) throw new Error("Release orders changed fixture row count");
+    return canonical.map((entry, index) => mergeObservations(entry, reverse[index]));
+  }
+  if (canonical && reverse && typeof canonical === "object" && typeof reverse === "object") {
+    const a = canonical as Record<string, unknown>,
+      b = reverse as Record<string, unknown>;
+    if ("steps" in a) {
+      const { steps, waitedMs, result, ...metadata } = b;
+      const { steps: _steps, waitedMs: _wait, result: _result, ...originalMetadata } = a;
+      if (JSON.stringify(metadata) !== JSON.stringify(originalMetadata))
+        throw new Error("Release orders changed fixture metadata");
+      return { ...a, variants: [{ order: "reverse", steps, ...(waitedMs === undefined ? {} : { waitedMs }), result }] };
+    }
+    if (JSON.stringify(Object.keys(a)) !== JSON.stringify(Object.keys(b)))
+      throw new Error("Release orders changed fixture keys");
+    return Object.fromEntries(Object.entries(a).map(([key, value]) => [key, mergeObservations(value, b[key])]));
+  }
+  throw new Error("Release orders changed fixture metadata outside an observation");
+}
+const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+
+/** Every golden file includes all distinct canonical/reverse observations. */
+export async function captureGoldens(
+  spec: GoldenSpec,
+  options: CaptureOptions = {},
+): Promise<Partial<Record<GoldenFile, string>>> {
+  const canonical = await captureGoldensInOrder(spec, options, false);
+  const reverse = await captureGoldensInOrder(spec, options, true);
+  const files: Partial<Record<GoldenFile, string>> = {};
+  for (const file of goldenFiles(spec)) {
+    const a = JSON.parse(canonical[file]!),
+      b = JSON.parse(reverse[file]!);
+    if (file === "catalog" && canonical[file] !== reverse[file])
+      throw new Error("Catalog changed between release orders");
+    files[file] =
+      file === "setup" && canonical[file] !== reverse[file]
+        ? json({ steps: a, variants: [{ order: "reverse", steps: b }] })
+        : json(mergeObservations(a, b));
+  }
+  return files;
+}
+
+/** One row, with every distinct release-order observation. */
+export async function captureCall(spec: GoldenSpec, label: string, options: CaptureOptions = {}): Promise<string> {
+  const canonical = JSON.parse(await captureCallInOrder(spec, label, options, false));
+  const reverse = JSON.parse(await captureCallInOrder(spec, label, options, true));
+  return json(mergeObservations(canonical, reverse));
 }
 
 /** Tools in the catalog that no call exercises. */

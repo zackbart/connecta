@@ -9,7 +9,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -33,7 +33,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -68,7 +68,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -95,7 +95,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -119,7 +119,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -144,7 +144,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -168,7 +168,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -193,7 +193,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -217,7 +217,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -252,7 +252,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -280,7 +280,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.notion.com/v1/pages/page-1",
               "headers": {
@@ -321,7 +321,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -367,7 +367,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -425,7 +425,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -474,7 +474,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -520,7 +520,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -566,7 +566,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -612,7 +612,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -659,7 +659,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -705,7 +705,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -763,7 +763,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {
@@ -813,7 +813,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.notion.com/v1/pages",
               "headers": {

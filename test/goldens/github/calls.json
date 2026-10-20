@@ -36,7 +36,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -64,9 +64,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -102,10 +100,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -119,11 +114,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2
-          ],
+          "after": 3,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -163,12 +154,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3
-          ],
+          "after": 4,
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?page=1&per_page=100",
           "headers": {
@@ -214,7 +200,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -242,9 +228,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/11/access_tokens",
@@ -280,10 +264,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "method": "GET",
           "url": "https://api.github.com/search/repositories?q=org%3Aacme+widget&page=1&per_page=30",
           "headers": {
@@ -296,11 +277,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2
-          ],
+          "after": 3,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/11/access_tokens",
@@ -336,12 +313,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3
-          ],
+          "after": 4,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -355,13 +327,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3,
-            4
-          ],
+          "after": 5,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -389,14 +355,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5
-          ],
+          "after": 6,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -432,15 +391,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6
-          ],
+          "after": 7,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -454,16 +405,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7
-          ],
+          "after": 8,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -503,17 +445,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8
-          ],
+          "after": 9,
           "method": "GET",
           "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+repo%3Aother%2Freadonly+widget&page=1&per_page=30",
           "headers": {
@@ -577,7 +509,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -605,9 +537,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -643,10 +573,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -660,11 +587,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2
-          ],
+          "after": 3,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -704,12 +627,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3
-          ],
+          "after": 4,
           "method": "GET",
           "url": "https://api.github.com/search/issues?q=repo%3Aother%2Fone+crash+is%3Aissue&page=1&per_page=1",
           "headers": {
@@ -722,13 +640,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3,
-            4
-          ],
+          "after": 5,
           "method": "GET",
           "url": "https://api.github.com/repos/other/one",
           "headers": {
@@ -782,7 +694,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -810,9 +722,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -848,10 +758,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -865,11 +772,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2
-          ],
+          "after": 3,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -908,12 +811,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3
-          ],
+          "after": 4,
           "method": "POST",
           "url": "https://api.github.com/repos/other/one/releases",
           "headers": {
@@ -964,7 +862,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -992,9 +890,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/11/access_tokens",
@@ -1030,10 +926,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -1047,11 +940,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2
-          ],
+          "after": 3,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/11/access_tokens",
@@ -1090,12 +979,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3
-          ],
+          "after": 4,
           "method": "PATCH",
           "url": "https://api.github.com/repos/acme/one/releases/501",
           "headers": {
@@ -1143,7 +1027,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -1171,9 +1055,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -1209,10 +1091,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -1226,11 +1105,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2
-          ],
+          "after": 3,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -1269,12 +1144,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3
-          ],
+          "after": 4,
           "method": "DELETE",
           "url": "https://api.github.com/repos/other/one/releases/501",
           "headers": {
@@ -1306,7 +1176,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -1334,9 +1204,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -1372,10 +1240,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -1389,11 +1254,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2
-          ],
+          "after": 3,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -1433,12 +1294,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3
-          ],
+          "after": 4,
           "method": "GET",
           "url": "https://api.github.com/repos/other/one/pulls/7",
           "headers": {
@@ -1451,13 +1307,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3,
-            4
-          ],
+          "after": 5,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -1498,14 +1348,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5
-          ],
+          "after": 6,
           "method": "PUT",
           "url": "https://api.github.com/repos/other/one/pulls/7/merge",
           "headers": {
@@ -1549,7 +1392,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "installations",
           "method": "GET",
           "url": "https://api.github.com/app/installations?per_page=100&page=1",
@@ -1577,9 +1420,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -1615,10 +1456,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "auxiliary": "repository-resolution",
           "method": "GET",
           "url": "https://api.github.com/installation/repositories?per_page=100&page=1",
@@ -1632,11 +1470,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2
-          ],
+          "after": 3,
           "auxiliary": "installation-token",
           "method": "POST",
           "url": "https://api.github.com/app/installations/22/access_tokens",
@@ -1675,12 +1509,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1,
-            2,
-            3
-          ],
+          "after": 4,
           "method": "GET",
           "url": "https://api.github.com/search/repositories?q=repo%3Aother%2Fone+widget&page=1&per_page=30",
           "headers": {

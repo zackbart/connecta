@@ -9,7 +9,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -33,7 +33,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -68,7 +68,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -103,7 +103,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -127,7 +127,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -151,7 +151,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -175,7 +175,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -200,7 +200,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -224,7 +224,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -259,7 +259,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -287,7 +287,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/157857?details=1",
               "headers": {
@@ -327,7 +327,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -351,7 +351,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -387,7 +387,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -423,7 +423,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -447,7 +447,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -471,7 +471,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -495,7 +495,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -520,7 +520,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -544,7 +544,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -580,7 +580,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {
@@ -608,7 +608,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://gracechurch.breezechms.com/api/people/add?first=Jiminy&last=Cricket",
               "headers": {

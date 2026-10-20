@@ -10,7 +10,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -50,9 +50,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%28name+contains+%27budget%27%29+and+trashed+%3D+false&corpora=user&orderBy=modifiedTime+desc&pageSize=5",
           "headers": {
@@ -100,7 +98,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -140,9 +138,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/folder-1?supportsAllDrives=true&fields=id%2CmimeType%2CdriveId",
           "headers": {
@@ -153,10 +149,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%27folder-1%27+in+parents+and+trashed+%3D+false&corpora=drive&driveId=sd-1&orderBy=folder%2Cname&pageSize=25",
           "headers": {
@@ -206,7 +199,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -246,9 +239,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken%2CincompleteSearch%2Cfiles%28id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%29&q=%27root%27+in+parents+and+trashed+%3D+false&corpora=user&orderBy=folder%2Cname&pageSize=10",
           "headers": {
@@ -295,7 +286,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -335,9 +326,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%2Cdescription%2CcreatedTime%2ClastModifyingUser%28emailAddress%2CdisplayName%29%2Cshared%2Cstarred%2Ccapabilities%28canEdit%2CcanComment%2CcanShare%2CcanDownload%2CcanTrash%2CcanRename%2CcanAddChildren%29",
           "headers": {
@@ -386,7 +375,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -426,9 +415,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/d1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
           "headers": {
@@ -439,10 +426,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/d1/export?mimeType=text%2Fmarkdown",
           "headers": {
@@ -477,7 +461,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -517,9 +501,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/f3?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
           "headers": {
@@ -530,10 +512,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/f3?supportsAllDrives=true&alt=media",
           "headers": {
@@ -567,7 +546,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -607,9 +586,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/f4?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Csize%2CwebViewLink%2Ccapabilities%28canDownload%29%2CshortcutDetails%28targetId%29",
           "headers": {
@@ -620,10 +597,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/f4?supportsAllDrives=true&alt=media",
           "headers": {
@@ -658,7 +632,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -698,9 +672,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=nextPageToken%2Cpermissions%28id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29%29&pageSize=50",
           "headers": {
@@ -753,7 +725,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -793,9 +765,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/drives?q=name+contains+%27Fin%27&fields=nextPageToken%2Cdrives%28id%2Cname%2Chidden%29&pageSize=25",
           "headers": {
@@ -832,7 +802,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -872,9 +842,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
@@ -919,7 +887,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -959,9 +927,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://www.googleapis.com/upload/drive/v3/files?supportsAllDrives=true&uploadType=multipart&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
@@ -997,7 +963,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1037,9 +1003,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
@@ -1077,7 +1041,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1117,9 +1081,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "PATCH",
           "url": "https://www.googleapis.com/upload/drive/v3/files/f5?supportsAllDrives=true&uploadType=media&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
@@ -1153,7 +1115,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1193,9 +1155,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "PATCH",
           "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
@@ -1242,7 +1202,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1282,9 +1242,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=parents",
           "headers": {
@@ -1295,10 +1253,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "method": "PATCH",
           "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29&addParents=new-1&removeParents=old-1",
           "headers": {
@@ -1343,7 +1298,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1383,9 +1338,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://www.googleapis.com/drive/v3/files/f1/copy?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
@@ -1433,7 +1386,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1473,9 +1426,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "PATCH",
           "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
@@ -1520,7 +1471,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1560,9 +1511,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "PATCH",
           "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
           "headers": {
@@ -1610,7 +1559,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1650,9 +1599,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29&sendNotificationEmail=false",
           "headers": {
@@ -1694,7 +1641,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1734,9 +1681,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://www.googleapis.com/drive/v3/files/f1/permissions?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29",
           "headers": {
@@ -1778,7 +1723,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1818,9 +1763,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "PATCH",
           "url": "https://www.googleapis.com/drive/v3/files/f1/permissions/p1?supportsAllDrives=true&fields=id%2Ctype%2Crole%2CemailAddress%2Cdomain%2CdisplayName%2CallowFileDiscovery%2CexpirationTime%2Cdeleted%2CpermissionDetails%28inherited%2CinheritedFrom%29",
           "headers": {
@@ -1857,7 +1800,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1897,9 +1840,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "DELETE",
           "url": "https://www.googleapis.com/drive/v3/files/f1/permissions/anyoneWithLink?supportsAllDrives=true",
           "headers": {
@@ -1928,7 +1869,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -1968,9 +1909,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://www.googleapis.com/drive/v3/files/f1?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29%2Cdescription%2CcreatedTime%2ClastModifyingUser%28emailAddress%2CdisplayName%29%2Cshared%2Cstarred%2Ccapabilities%28canEdit%2CcanComment%2CcanShare%2CcanDownload%2CcanTrash%2CcanRename%2CcanAddChildren%29",
           "headers": {

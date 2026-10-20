@@ -9,7 +9,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -49,9 +49,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -75,7 +73,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -115,9 +113,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -128,10 +124,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -171,11 +164,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -210,7 +199,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -250,9 +239,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -279,7 +266,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -319,9 +306,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -345,7 +330,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -385,9 +370,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -411,7 +394,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -451,9 +434,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -477,7 +458,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -517,9 +498,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -544,7 +523,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -584,9 +563,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -610,7 +587,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -650,9 +627,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -663,10 +638,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -706,11 +678,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -745,7 +713,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -785,9 +753,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -815,7 +781,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -855,9 +821,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
               "headers": {
@@ -904,7 +868,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -944,9 +908,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -989,7 +951,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1029,9 +991,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1061,10 +1021,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1104,11 +1061,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1163,7 +1116,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1203,9 +1156,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1251,7 +1202,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1291,9 +1242,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1336,7 +1285,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1376,9 +1325,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1421,7 +1368,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1461,9 +1408,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1506,7 +1451,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1546,9 +1491,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1592,7 +1535,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1632,9 +1575,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1677,7 +1618,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1717,9 +1658,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1749,10 +1688,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1792,11 +1728,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1851,7 +1783,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1891,9 +1823,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {
@@ -1936,7 +1866,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://oauth2.googleapis.com/token",
@@ -1976,9 +1906,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
               "headers": {

@@ -921,7 +921,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.notion.com/v1/users?page_size=1",
           "headers": {
@@ -974,7 +974,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.notion.com/v1/search",
           "headers": {
@@ -1025,7 +1025,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "PATCH",
           "url": "https://api.notion.com/v1/pages/page-1",
           "headers": {
@@ -1182,7 +1182,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.notion.com/v1/search",
           "headers": {
@@ -1246,7 +1246,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.notion.com/v1/pages/page-1",
           "headers": {
@@ -1324,7 +1324,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.notion.com/v1/blocks/page-1/children?page_size=25",
           "headers": {
@@ -1379,7 +1379,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.notion.com/v1/blocks/page-1/children?page_size=25",
           "headers": {
@@ -1390,9 +1390,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://api.notion.com/v1/blocks/b2/children?page_size=100",
           "headers": {
@@ -1453,7 +1451,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.notion.com/v1/data_sources/ds-1",
           "headers": {
@@ -1521,7 +1519,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.notion.com/v1/data_sources/ds-1/query?filter_properties=Name&filter_properties=Status&filter_properties=title",
           "headers": {
@@ -1606,7 +1604,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.notion.com/v1/pages",
           "headers": {
@@ -1721,7 +1719,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "PATCH",
           "url": "https://api.notion.com/v1/blocks/page-1/children",
           "headers": {
@@ -1809,7 +1807,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.notion.com/v1/users/user-1",
           "headers": {

@@ -4,9 +4,8 @@
 // or waits on its own timer; spies weaken sent-secret redaction. See the
 // contributor section of documentation/architecture.md.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Clock, Effect } from "effect";
+import { Clock, Effect, Scheduler } from "effect";
 import { runEdge } from "../src/runtime/run.js";
-import { SentSecrets } from "../src/sent-secrets.js";
 import {
   captureCall,
   captureGoldens,
@@ -31,7 +30,8 @@ const storedInfisicalCalls = stored["./goldens/infisical/calls.json"]!;
 
 interface Row {
   label: string;
-  steps: Array<Array<{ url: string; after: number[] }>>;
+  steps: Array<Array<{ url: string; after: number }>>;
+  variants?: Array<Row & { order: "reverse" }>;
   waitedMs?: number;
   result: unknown;
 }
@@ -60,7 +60,31 @@ function probeSpec(work: () => Promise<unknown>, replies?: Replies): GoldenSpec 
   };
 }
 
-const hostSchedule = globalThis.setImmediate?.bind(globalThis) ?? globalThis.setTimeout.bind(globalThis);
+// Deliberately saved before capture and before fresh module loading.
+const savedImmediate = (globalThis as { setImmediate?: (callback: () => void) => NodeJS.Immediate }).setImmediate?.bind(
+  globalThis,
+);
+const savedTimeout = globalThis.setTimeout.bind(globalThis);
+const savedAbortTimeout = AbortSignal.timeout.bind(AbortSignal);
+const savedDigest = crypto.subtle.digest.bind(crypto.subtle);
+const savedNow = performance.now.bind(performance);
+const savedDateNow = Date.now.bind(Date);
+const descriptorDateNow = Object.getOwnPropertyDescriptor(Date, "now")!.value as () => number;
+const savedCompression = CompressionStream;
+const savedFetch = fetch.bind(globalThis);
+const savedWait = (globalThis as { scheduler?: { wait(ms: number): Promise<void> } }).scheduler?.wait.bind(
+  (globalThis as { scheduler?: object }).scheduler,
+);
+const savedMicrotask = queueMicrotask.bind(globalThis);
+const savedHrtime = globalThis.process?.hrtime;
+const savedScheduler = new Scheduler.MixedScheduler("async", (callback) => {
+  if (savedImmediate) {
+    const handle = savedImmediate(callback);
+    return () => clearImmediate(handle);
+  }
+  const handle = savedTimeout(callback);
+  return () => clearTimeout(handle);
+});
 
 const LOGIN = "/api/v1/auth/universal-auth/login";
 const CREATE_SECRET = "/api/v4/secrets/API_KEY";
@@ -144,24 +168,30 @@ function storedVariants(form: string): string[] {
 
 /** Sent-secret redaction that never registers `forms(value)` of a value, beyond the value itself. */
 function withoutForms(forms: (value: string) => string[]): void {
-  const proto = SentSecrets.prototype as unknown as Internals;
-  const { register, store } = proto;
-  let dropped = new Set<string>();
-  vi.spyOn(proto, "register").mockImplementation(function (this: Internals, value, kind) {
-    const outer = dropped;
-    dropped = new Set(
-      forms(value)
-        .filter((form) => form !== value)
-        .flatMap(storedVariants),
-    );
-    try {
-      register.call(this, value, kind);
-    } finally {
-      dropped = outer;
-    }
-  });
-  vi.spyOn(proto, "store").mockImplementation(function (this: Internals, form, kind) {
-    if (!dropped.has(form)) store.call(this, form, kind);
+  vi.doMock("../src/sent-secrets.js", async () => {
+    const module = await vi.importActual<typeof import("../src/sent-secrets.js")>("../src/sent-secrets.js");
+    const proto = module.SentSecrets.prototype as unknown as Internals;
+    if (vi.isMockFunction(proto.register)) vi.mocked(proto.register).mockRestore();
+    if (vi.isMockFunction(proto.store)) vi.mocked(proto.store).mockRestore();
+    const { register, store } = proto;
+    let dropped = new Set<string>();
+    vi.spyOn(proto, "register").mockImplementation(function (this: Internals, value, kind) {
+      const outer = dropped;
+      dropped = new Set(
+        forms(value)
+          .filter((form) => form !== value)
+          .flatMap(storedVariants),
+      );
+      try {
+        register.call(this, value, kind);
+      } finally {
+        dropped = outer;
+      }
+    });
+    vi.spyOn(proto, "store").mockImplementation(function (this: Internals, form, kind) {
+      if (!dropped.has(form)) store.call(this, form, kind);
+    });
+    return module;
   });
 }
 
@@ -179,9 +209,10 @@ async function echoesThatPass(): Promise<string[]> {
   return passed;
 }
 
-describe("characterization golden harness", () => {
+describe("characterization golden harness", { timeout: 120_000 }, () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.doUnmock("../src/sent-secrets.js");
   });
 
   // Each mutation is compared with an unmutated capture from the same
@@ -265,7 +296,7 @@ describe("characterization golden harness", () => {
         const capture = [...rows][0]!;
         const row = JSON.parse(capture) as Row;
         expect(stepSizes(row)).toEqual([2, 1]);
-        expect(row.steps.flat().map((request) => request.after)).toEqual([[], [], dependency === "a" ? [0] : [0, 1]]);
+        expect(row.steps.flat().map((request) => request.after)).toEqual([0, 0, dependency === "a" ? 1 : 2]);
         captures.set(dependency, capture);
       }
       expect(captures.get("a")).not.toBe(captures.get("b"));
@@ -329,19 +360,225 @@ describe("characterization golden harness", () => {
     ).rejects.toThrow(/Unsupported asynchronous source: scheduler.wait/);
   });
 
-  it("fails if an uncounted host callback sends a request or settles the call after declared quiescence", async () => {
-    // Escape the model deliberately via a saved real scheduler. Four turns
-    // finish after settling's quiet turns but during the no-stimulus audit.
-    for (const request of [true, false]) {
-      const spec = probeSpec(async () => {
-        for (let turn = 0; turn < 4; turn++) await new Promise<void>((resolve) => hostSchedule(resolve));
-        if (request) await fetch("https://probe.example/late");
+  const probes: Array<[string, () => Promise<unknown>]> = [
+    [
+      "saved setImmediate",
+      async () => {
+        const a = fetch("https://probe.example/a");
+        for (let turn = 0; turn < 12; turn++)
+          await new Promise<void>((resolve) => (savedImmediate ?? savedTimeout)(resolve));
+        await fetch("https://probe.example/b");
+        await a;
         return "done";
-      });
-      await expect(captureCall(spec, "probe")).rejects.toThrow(
-        /progress after declared quiescence.*likely unsupported asynchronous source/,
-      );
+      },
+    ],
+    [
+      "Effect saved immediate scheduler",
+      async () => {
+        const a = fetch("https://probe.example/a");
+        const dispatcher = savedScheduler.makeDispatcher();
+        for (let turn = 0; turn < 12; turn++) await new Promise<void>((resolve) => dispatcher.scheduleTask(resolve, 0));
+        await fetch("https://probe.example/b");
+        await a;
+        return "done";
+      },
+    ],
+    [
+      "prebound crypto.subtle.digest",
+      async () => [...new Uint8Array(await savedDigest("SHA-256", new Uint8Array([1, 2, 3])))],
+    ],
+    [
+      "saved setTimeout(0)",
+      async () => {
+        await new Promise((resolve) => savedTimeout(resolve, 0));
+        return "done";
+      },
+    ],
+    [
+      "saved AbortSignal.timeout(0)",
+      async () => {
+        const signal = savedAbortTimeout(0);
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        return signal.reason.name;
+      },
+    ],
+    [
+      "prebound clocks",
+      async () => {
+        const before = savedNow();
+        await new Promise((resolve) => savedTimeout(resolve, 5));
+        return {
+          before,
+          after: savedNow(),
+          date: savedDateNow(),
+          descriptorDate: descriptorDateNow(),
+          nanos: savedHrtime ? String(savedHrtime.bigint()) : "absent",
+        };
+      },
+    ],
+    [
+      "saved queueMicrotask",
+      async () => {
+        await new Promise<void>((resolve) => savedMicrotask(resolve));
+        return "done";
+      },
+    ],
+  ];
+  for (const [name, work] of probes) {
+    it(`controls ${name} captured before provider imports`, async () => {
+      const rows = new Set<string>();
+      for (const jitter of [1, 2, 3, 4, 5, 6]) rows.add(await captureCall(probeSpec(work), "probe", { jitter }));
+      expect(rows.size, name).toBe(1);
+      const row = JSON.parse([...rows][0]!) as Row;
+      expect(row.result, name).toMatchObject({ ok: true });
+      if (name === "saved setImmediate" || name === "Effect saved immediate scheduler") {
+        expect(stepSizes(row), name).toEqual([2]);
+        expect(
+          row.steps.flat().map((request) => request.after),
+          name,
+        ).toEqual([0, 0]);
+      }
+      if (name === "prebound clocks") {
+        expect(row.waitedMs).toBe(5);
+        expect(row.result).toMatchObject({
+          value: { before: 0, after: 5, date: GOLDEN_NOW + 5, descriptorDate: GOLDEN_NOW + 5 },
+        });
+      }
+    });
+  }
+
+  it("rejects saved unsupported sources even when the provider swallows their errors", async () => {
+    const probes = [
+      ["CompressionStream", () => new savedCompression("gzip")],
+      ["prebound fetch", () => savedFetch("https://probe.example/real-network")],
+      ["timer delay", () => savedTimeout(() => undefined, 0.5)],
+      ...(savedWait ? [["scheduler.wait", () => savedWait(0)] as const] : []),
+    ] as const;
+    for (const [name, work] of probes) {
+      await expect(
+        captureCall(
+          probeSpec(async () => {
+            try {
+              await work();
+            } catch {
+              /* Still poisons the capture. */
+            }
+            return "swallowed";
+          }),
+          "probe",
+        ),
+      ).rejects.toThrow(`Unsupported asynchronous source: ${name}`);
     }
+  });
+
+  it("refreshes module state and controls values read at module load for every order and capture", async () => {
+    const load = async () => probeSpec((await import("./goldens/load-probe.js")).sample);
+    const spec = await load();
+    const rows = [];
+    for (const jitter of [1, 2, 3]) rows.push(await captureCall(spec, "probe", { jitter, load }));
+    expect(new Set(rows).size).toBe(1);
+    const row = JSON.parse(rows[0]!) as Row;
+    expect(row.variants).toBeUndefined();
+    expect(row.result).toMatchObject({ ok: true, value: { loadedAt: GOLDEN_NOW, calls: 1, before: 0, after: 5 } });
+  });
+
+  it("fails on controlled work left after completion instead of dropping it at the next scenario", async () => {
+    await expect(
+      captureCall(
+        probeSpec(async () => {
+          setTimeout(() => {
+            void fetch("https://probe.example/late");
+          }, 10);
+          return "done";
+        }),
+        "probe",
+      ),
+    ).rejects.toThrow(/outstanding controlled timer after call completion/);
+    await expect(
+      captureCall(
+        probeSpec(async () => {
+          const signal = savedAbortTimeout(10);
+          signal.addEventListener("abort", () => {
+            void fetch("https://probe.example/late").catch(() => undefined);
+          });
+          return "done";
+        }),
+        "probe",
+      ),
+    ).rejects.toThrow(/controlled work outlived call completion/);
+  });
+
+  it("rejects provider module loading as an unsupported source at entry", async () => {
+    const load = async () => probeSpec((await import("./goldens/import-probe.js")).unsupportedImport);
+    await expect(captureCall(await load(), "probe", { load })).rejects.toThrow(
+      /Unsupported asynchronous source: dynamic import/,
+    );
+  });
+
+  it("rejects Node host-module aliases before a provider can save native references", async () => {
+    const load = async () => probeSpec((await import("./goldens/native-import-probe.js")).unsupportedAlias);
+    await expect(
+      captureCall(
+        probeSpec(async () => "unused"),
+        "probe",
+        { load },
+      ),
+    ).rejects.toThrow(/Unsupported asynchronous source: host module: node:timers/);
+  });
+
+  it("keeps Vitest runner clocks and timers native outside capture", async () => {
+    const before = Date.now();
+    expect(before).toBeGreaterThan(GOLDEN_NOW);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(Date.now() - before).toBeGreaterThanOrEqual(1);
+    await captureCall(
+      probeSpec(async () => savedDateNow()),
+      "probe",
+    );
+    expect(Date.now()).toBeGreaterThanOrEqual(before);
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+
+  it("distinguishes C awaiting B from C awaiting both by the reverse-order observation", async () => {
+    const capture = (both: boolean) =>
+      captureCall(
+        probeSpec(async () => {
+          const a = fetch("https://probe.example/a");
+          const b = fetch("https://probe.example/b");
+          await (both ? Promise.all([a, b]) : b);
+          await fetch("https://probe.example/c");
+          await a;
+          return "done";
+        }),
+        "probe",
+      );
+    const onlyB = JSON.parse(await capture(false)) as Row;
+    const both = JSON.parse(await capture(true)) as Row;
+    expect(onlyB.steps).toEqual(both.steps);
+    expect(onlyB.variants?.[0]?.order).toBe("reverse");
+    expect(onlyB.variants?.[0]?.steps.flat().map((request) => request.after)).toEqual([0, 0, 1]);
+    expect(both.variants).toBeUndefined();
+    expect(onlyB).not.toEqual(both);
+  });
+
+  it("keeps frontiers linear for 300 sequential pages", async () => {
+    const capture = async (pages: number) =>
+      JSON.parse(
+        await captureCall(
+          probeSpec(async () => {
+            for (let page = 0; page < pages; page++) await fetch(`https://probe.example/pages/${page}`);
+            return "done";
+          }),
+          "probe",
+        ),
+      ) as Row;
+    const small = await capture(150);
+    const large = await capture(300);
+    expect(large.steps.flat().map((request) => request.after)).toEqual(
+      Array.from({ length: 300 }, (_, index) => index),
+    );
+    expect(large.variants).toBeUndefined();
+    expect(JSON.stringify(large).length).toBeLessThan(JSON.stringify(small).length * 2.1);
   });
 
   it("supports queueMicrotask, counted Blob reads, and synchronous TextDecoderStream pipelines", async () => {
@@ -490,7 +727,11 @@ describe("characterization golden harness", () => {
   });
 
   it("INV-5: fails every provider's echo fixture, before placeholders, when sent-secret redaction is disabled", async () => {
-    vi.spyOn(SentSecrets.prototype, "redact").mockImplementation((value) => value);
+    vi.doMock("../src/sent-secrets.js", async () => {
+      const module = await vi.importActual<typeof import("../src/sent-secrets.js")>("../src/sent-secrets.js");
+      vi.spyOn(module.SentSecrets.prototype, "redact").mockImplementation((value) => value);
+      return module;
+    });
     await expect(captureGoldens(infisical)).rejects.toThrow(/the caller-visible result leaks <secret:/);
     expect(await echoesThatPass()).toEqual([]);
   });
@@ -524,7 +765,8 @@ describe("characterization golden harness", () => {
   // order: neither an earlier capture's caches nor scheduling may move a byte.
   for (const spec of specs) {
     it(`${spec.provider}: repeated captures with scheduling jitter match the stored goldens`, async () => {
-      for (const jitter of [1, 2]) {
+      const extra = (process.env.CONNECTA_GOLDENS_SEEDS ?? "").split(",").filter(Boolean).map(Number);
+      for (const jitter of [1, 2, ...extra]) {
         const files = await captureGoldens(spec, { jitter });
         for (const file of goldenFiles(spec)) {
           expect(files[file], `${spec.provider}/${file}.json with jitter ${jitter}`).toBe(

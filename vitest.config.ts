@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import goldenSourceBoundary from "./scripts/golden-source-boundary.mjs";
 import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { build, buildSync, type Plugin } from "esbuild";
@@ -74,6 +75,7 @@ export default defineConfig({
     reporters: ["default", new CoverageReporter()],
     projects: [
       {
+        plugins: [goldenSourceBoundary()],
         // The deployment shapes are consumer projects: they import the package
         // by name, and `dist/` does not exist yet when tests run. Point each
         // specifier at its source module so a suite may run the template's and
@@ -105,6 +107,7 @@ export default defineConfig({
         },
         test: {
           name: "node",
+          setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: ["./test/fixtures/oauth-http-server.ts"],
           include: TEST_INCLUDE,
           exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
@@ -112,6 +115,7 @@ export default defineConfig({
       },
       {
         plugins: [
+          goldenSourceBoundary(),
           executorBundles(),
           cloudflareTest(async ({ inject }) => ({
             miniflare: {
@@ -133,6 +137,7 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
+          setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: ["./test/fixtures/oauth-http-server.ts", "./test/fixtures/clerk-backend-server.ts"],
           include: TEST_INCLUDE,
           exclude: [...NODE_ONLY_EXCLUDE, "**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],

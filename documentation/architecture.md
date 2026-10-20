@@ -1341,28 +1341,49 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   counted real work to finish. Newly waiting requests form one step, sorted
   by method, URL, headers, and exact body. The loop releases **one answer at
   a time**, running to quiescence after each. Previously recorded requests
-  keep release priority over new requests. Steps remain readable admission
-  cohorts; they are not batches of simultaneous answers.
-- Every request records `after`: all earlier request indices whose answers
-  had been delivered when the provider called fetch, before harness jitter
-  or body inspection. Indices are zero-based in flattened `steps`, including
-  auxiliary requests, and reset for each setup or invocation. For concurrent
-  A and B, C sent after awaiting A records `[0]`; awaiting B instead records
-  `[0, 1]`, since A's canonical answer was delivered first. Both have step
-  sizes `[2, 1]`, but different frontiers. A write sent before login and a
-  write duplicated concurrently or sequentially also differ.
+  keep release priority over new requests. Every capture runs twice: canonical
+  cohort release order and reverse cohort release order, each with its own
+  fresh module graph, clock, network and cache namespace. Queue replies are
+  assigned in canonical request order in both runs; only answer delivery
+  changes. Steps remain readable admission cohorts, not simultaneous answers.
+  Both orders must match the oracle. Identical observations collapse to one
+  row; differing reverse observations appear in `variants`, each with
+  `order: "reverse"`, complete `steps`, optional `waitedMs`, and `result`.
+  Setup uses the same rule, with `{ steps, variants }` only when orders differ.
+  This bounded two-order model deliberately does not enumerate all interleavings.
+- Every request records integer `after`: the number of answers delivered
+  when the provider called fetch, before harness jitter or body inspection.
+  It identifies a prefix of that run's release sequence; it includes auxiliary
+  requests and resets for setup and invocation. The canonical run releases
+  each cohort forwards, the reverse run backwards, with older cohorts first.
+  For concurrent A and B, C awaiting only B and C awaiting both have canonical
+  `after: 2`, but reverse `after: 1` and `after: 2` respectively. The differing
+  variant preserves that dependency. One integer per request keeps frontiers
+  linear, including a 300-page sequential call. A write sent before login and
+  a write duplicated concurrently or sequentially also differ.
 - Distinct queued replies for indistinguishable concurrent requests are a
   fixture authoring error: the harness rejects them with a diagnostic. Use
   identical replies or a request discriminator the provider controls. The
   arrival order of identical requests cannot assign distinct responses.
+- `test/goldens/setup.ts` installs source dispatchers before a golden test
+  file imports any provider, connector or Effect module. `vi.resetModules()`
+  and dynamic imports refresh those graphs for each capture and release order.
+  The dispatchers retain their identity across captures: saved and prebound
+  functions, and functions captured by Effect, still consult the current
+  capture. Their defining prototypes are wrapped too. Native implementations
+  remain private to the source controller; outside captures the dispatchers
+  delegate unchanged, preserving Vitest's real clocks and runner timeouts.
 - The supported asynchronous model is explicit: fake fetch answers; fake
-  timeout, interval and immediate timers; Web Crypto's promise-returning
+  timeout, interval and immediate timers, including `AbortSignal.timeout`; Web Crypto's promise-returning
   subtle methods; Request/Response/Blob body reads (`arrayBuffer`, `blob`,
   `bytes`, `formData`, `json`, `text`, where present); default stream-reader
-  `read`; and promises/`queueMicrotask` chains rooted in those sources or
+  `read`/`cancel` and stream `cancel`/`pipeTo`; and promises/`queueMicrotask` chains rooted in those sources or
   synchronous work. Effect's scheduler and sleeps use the same microtasks
   and fake timers. A synchronous TextDecoderStream pipeline is supported.
-  New host asynchronous sources must be registered and counted before use.
+  Timer delays must coerce to finite nonnegative integer milliseconds within
+  the signed 32-bit timer range; other delays poison the capture. This keeps
+  Date and nanosecond clocks integral. New host asynchronous sources must be
+  registered and counted before use.
   Native CompressionStream/DecompressionStream, `scheduler.wait`, and
   native socket/worker/event-source constructors are rejected explicitly,
   including when their errors are swallowed by a provider. CompressionStream
@@ -1371,16 +1392,28 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
 - A no-stimulus audit follows declared quiescence: request, counted-work,
   timer, or call-settlement progress before an answer or clock tick fails
   with an unsupported-source diagnostic. Waiting without a request, counted
-  work, or fake timer also fails. This detects violations of the model;
-  it is not permission to use an unregistered host source that happens to
-  finish during a quiet window. Invalid captures cancel and drain their
-  concurrent fake requests before restoring the globals.
+  work, or fake timer also fails. The audit is a secondary assertion: source
+  control starts at module load, and supported host promises and microtasks
+  are counted from entry through completion. Quiescence requires zero active
+  counted work, zero queued controlled microtasks, and no due timers; future
+  virtual timers are explicit harness stimuli. Unregistered native producers
+  are unavailable or throw, including saved constructors and swallowed errors.
+  `process.nextTick`, `process.uptime`, `Atomics.waitAsync`, native messaging
+  constructors, and performance timeline methods are unsupported. The
+  test-only `golden-source-boundary` transform rejects Node host-module imports
+  in provider graphs and rejects lazy module loading during scenario work,
+  before either can capture native references or schedule uncounted I/O. Only
+  the harness's fresh-graph loading phase admits test fixture imports.
+  Invalid captures cancel and drain their concurrent fake requests.
 - The network answers in zero virtual time. Before advancing to the next
   timer, the loop requires eight quiet real event-loop turns and an audit.
   A row records nonzero `waitedMs`, the virtual time spent on provider
   timers. Elapsed-time readings count only those timers. A timer of 0 ms
   set outside a timer callback is due at once and stays in the current
-  cohort; a timer set after the call finishes never fires.
+  cohort. Unjoined timers at completion fail. Since `AbortSignal.timeout`
+  cannot be cancelled, remaining signal deadlines fire during teardown, outside
+  `waitedMs`; any resulting request or result mutation fails. Every successful
+  drive and scenario boundary has zero outstanding controlled work and timers.
 - Auxiliary routes answer token exchanges and other requests that are not
   the tool's own, and are recorded by name with headers and body. A JWT in a
   header or field is recorded as its decoded header and claims, with
@@ -1393,8 +1426,9 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   `crypto.randomUUID`, and fixed `crypto.getRandomValues` and `Math.random`,
   all restarted per scenario. `create(scenario)` receives a slug unique in
   the process: the scenario name plus a per-capture suffix the goldens never
-  show. The original hrtime function object captured by Effect is also
-  stubbed, so Effect wall and monotonic nanoseconds follow the virtual clock.
+  show. Load-time hrtime dispatchers also control Effect wall and monotonic
+  nanoseconds on the virtual clock. Default-date Intl formatting also reads
+  the virtual wall clock.
   A process-wide cache (Google's delegated tokens) never carries
   over from an earlier scenario or capture.
 - Secrets: every credential field and secret becomes `<secret:field>`, with
@@ -1435,11 +1469,12 @@ and against PEM framing. A Planning Center request delayed by its
 provider's own 0, 1, 5, or 50 ms timer must give one capture under seven
 schedules. It also captures every spec twice in one process with seeded
 scheduling jitter (requests delayed by microtasks, timers due now, and real
-work before request inspection; answers released individually in canonical
-order) with committed seeds 1 and 2 and compares every file for every spec
+work before request inspection; both answer orders tested independently) with
+committed seeds 1 and 2 (`CONNECTA_GOLDENS_SEEDS=3,7` adds seeds) and compares every file for every spec
 with the stored goldens. Partial-dependency mutations run under ten seeds,
-and unsupported-source, ambiguous-reply, and cross-capture nanosecond probes
-run on both projects.
+and saved immediate/timeout/abort-timeout, Effect scheduler, prebound crypto,
+prebound performance/Date/hrtime, module freshness, runner timing, unsupported
+sources, ambiguous replies, and cross-capture nanoseconds run on both projects.
 `pnpm run goldens:update [provider...]` rewrites the named goldens (all
 when none are named) on Node; it is not part of `check`. A PR
 that changes agent-facing output on purpose regenerates the affected goldens

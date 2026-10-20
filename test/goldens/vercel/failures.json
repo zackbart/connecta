@@ -12,7 +12,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -36,7 +36,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -71,7 +71,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -98,7 +98,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -122,7 +122,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -146,7 +146,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -170,7 +170,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -195,7 +195,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -219,7 +219,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -254,7 +254,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -282,7 +282,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.vercel.com/v7/deployments?projectId=web&teamId=team_default",
               "headers": {
@@ -325,7 +325,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -355,7 +355,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -397,7 +397,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -430,7 +430,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -460,7 +460,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -490,7 +490,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -520,7 +520,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -551,7 +551,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -581,7 +581,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -623,7 +623,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {
@@ -657,7 +657,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "PATCH",
               "url": "https://api.vercel.com/v9/projects/web?teamId=team_default",
               "headers": {

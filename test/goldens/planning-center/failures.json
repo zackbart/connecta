@@ -9,7 +9,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -35,7 +35,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -72,7 +72,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -101,7 +101,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -127,7 +127,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -153,7 +153,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -179,7 +179,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -206,7 +206,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -232,7 +232,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -269,7 +269,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -299,7 +299,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
               "headers": {
@@ -341,7 +341,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -379,7 +379,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -429,7 +429,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -470,7 +470,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -508,7 +508,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -546,7 +546,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -584,7 +584,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -623,7 +623,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -661,7 +661,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -711,7 +711,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {
@@ -753,7 +753,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.planningcenteronline.com/people/v2/people",
               "headers": {

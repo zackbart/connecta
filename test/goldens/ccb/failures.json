@@ -9,7 +9,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -33,7 +33,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -44,9 +44,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://api.ccbchurch.com/oauth/token",
@@ -71,10 +69,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -109,7 +104,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -136,7 +131,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -160,7 +155,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -184,7 +179,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -208,7 +203,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -233,7 +228,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -257,7 +252,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -268,9 +263,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://api.ccbchurch.com/oauth/token",
@@ -295,10 +288,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -333,7 +323,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -361,7 +351,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.ccbchurch.com/groups/5",
               "headers": {
@@ -404,7 +394,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -434,7 +424,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -451,9 +441,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://api.ccbchurch.com/oauth/token",
@@ -478,10 +466,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -523,7 +508,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -556,7 +541,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -586,7 +571,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -616,7 +601,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -646,7 +631,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -677,7 +662,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -707,7 +692,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -724,9 +709,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "auxiliary": "token",
               "method": "POST",
               "url": "https://api.ccbchurch.com/oauth/token",
@@ -751,10 +734,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -796,7 +776,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {
@@ -830,7 +810,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.ccbchurch.com/individuals/42/notes",
               "headers": {

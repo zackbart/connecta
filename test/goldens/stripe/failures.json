@@ -9,7 +9,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -33,7 +33,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -68,7 +68,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -95,7 +95,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -119,7 +119,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -143,7 +143,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -167,7 +167,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -192,7 +192,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -216,7 +216,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -251,7 +251,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -279,7 +279,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "GET",
               "url": "https://api.stripe.com/v1/customers/cus_1",
               "headers": {
@@ -323,7 +323,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -361,7 +361,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -411,7 +411,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -452,7 +452,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -490,7 +490,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -528,7 +528,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -566,7 +566,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -605,7 +605,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -658,7 +658,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -708,7 +708,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {
@@ -765,7 +765,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "method": "POST",
               "url": "https://api.stripe.com/v1/customers",
               "headers": {

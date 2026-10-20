@@ -8,7 +8,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -48,9 +48,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
           "headers": {
@@ -100,7 +98,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -140,9 +138,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
           "headers": {
@@ -206,7 +202,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -246,9 +242,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents",
           "headers": {
@@ -285,7 +279,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -325,9 +319,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents",
           "headers": {
@@ -344,10 +336,7 @@
       ],
       [
         {
-          "after": [
-            0,
-            1
-          ],
+          "after": 2,
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/new-1:batchUpdate",
           "headers": {
@@ -393,7 +382,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -433,9 +422,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
           "headers": {
@@ -483,7 +470,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -523,9 +510,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
           "headers": {
@@ -574,7 +559,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -614,9 +599,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
           "headers": {
@@ -687,7 +670,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -727,9 +710,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "POST",
           "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
           "headers": {
@@ -793,7 +774,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "auxiliary": "token",
           "method": "POST",
           "url": "https://oauth2.googleapis.com/token",
@@ -833,9 +814,7 @@
       ],
       [
         {
-          "after": [
-            0
-          ],
+          "after": 1,
           "method": "GET",
           "url": "https://docs.googleapis.com/v1/documents/doc-1?includeTabsContent=true",
           "headers": {

@@ -100,7 +100,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.stripe.com/v1/charges?customer=cus_1&expand%5B0%5D=data.customer&created%5Bgte%5D=10&limit=2",
           "headers": {
@@ -148,7 +148,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.stripe.com/v1/invoices/create_preview",
           "headers": {
@@ -219,7 +219,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.stripe.com/v1/customers/cus_1",
           "headers": {
@@ -292,7 +292,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "DELETE",
           "url": "https://api.stripe.com/v1/customers/cus_1",
           "headers": {
@@ -322,7 +322,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.stripe.com/v1/account",
           "headers": {
@@ -355,7 +355,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.stripe.com/v1/balance",
           "headers": {
@@ -400,7 +400,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.stripe.com/v1/customers/cus_1",
           "headers": {

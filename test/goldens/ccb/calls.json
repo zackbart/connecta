@@ -6,7 +6,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/me",
           "headers": {
@@ -44,7 +44,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/individuals?name=hop&include_inactive=true&page=2&per_page=50",
           "headers": {
@@ -94,7 +94,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/individuals/42",
           "headers": {
@@ -154,7 +154,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/individuals/42",
           "headers": {
@@ -184,7 +184,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/families?last_name=Hop&page=1&per_page=25",
           "headers": {
@@ -229,7 +229,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/families/9?include_inactive=true",
           "headers": {
@@ -290,7 +290,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/groups?name=Tuesday&campus_ids=1&page=1&per_page=25",
           "headers": {
@@ -335,7 +335,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/groups?page=1&per_page=25",
           "headers": {
@@ -372,7 +372,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/groups/5",
           "headers": {
@@ -425,7 +425,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/groups/5/members?status=leader&page=1&per_page=25",
           "headers": {
@@ -473,7 +473,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/individuals/42/groups?inactive=false&page=1&per_page=25",
           "headers": {
@@ -521,7 +521,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/events?name=Small+Group&range_type=PAST&page=1&per_page=25",
           "headers": {
@@ -567,7 +567,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/events/12?occurrence=20260927&attendance_info=true",
           "headers": {
@@ -622,7 +622,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/events/12/attendance/20260927",
           "headers": {
@@ -655,7 +655,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/events/12/attendance/20260927/attendees?page=1&per_page=25",
           "headers": {
@@ -694,7 +694,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/forms?status=ACTIVE&page=1&per_page=25",
           "headers": {
@@ -737,7 +737,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/forms/31/responses?page=1&per_page=25",
           "headers": {
@@ -784,7 +784,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/processes?statuses=ACTIVE&managed_by_me=true&page=1&per_page=25",
           "headers": {
@@ -831,7 +831,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/queues?process_ids=8&page=1&per_page=25",
           "headers": {
@@ -873,7 +873,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/queues_individuals?statuses=IN_PROCESS&assignment=ASSIGNED_TO_ME&page=1&per_page=25",
           "headers": {
@@ -918,7 +918,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/scheduling/categories?search_term=Worship",
           "headers": {
@@ -966,7 +966,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/scheduling/categories/3/schedules?after=2026-09-01&withMetrics=true&page=1&per_page=25",
           "headers": {
@@ -1021,7 +1021,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/individuals/42/assignments?start_date=2026-10-01&end_date=2026-10-31&page=1&per_page=25",
           "headers": {
@@ -1066,7 +1066,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/individuals/42/notes?context=GENERAL&include_creator=true&page=1&per_page=25",
           "headers": {
@@ -1114,7 +1114,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/families/9/metrics/giving?start=2026-01-01&end=2026-09-30",
           "headers": {
@@ -1154,7 +1154,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/individuals/42/metrics/giving?start=2026-01-01&end=2026-09-30",
           "headers": {
@@ -1186,7 +1186,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/individuals/42/pledges?page=1&per_page=25",
           "headers": {
@@ -1234,7 +1234,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/church/membership_types?per_page=50",
           "headers": {
@@ -1282,7 +1282,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.ccbchurch.com/search/individuals/results?page=1&per_page=100",
           "headers": {
@@ -1336,7 +1336,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "POST",
           "url": "https://api.ccbchurch.com/individuals/42/notes",
           "headers": {
@@ -1373,7 +1373,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "DELETE",
           "url": "https://api.ccbchurch.com/groups/5/members/42",
           "headers": {
@@ -1398,7 +1398,7 @@
     "steps": [
       [
         {
-          "after": [],
+          "after": 0,
           "method": "GET",
           "url": "https://api.ccbchurch.com/me",
           "headers": {

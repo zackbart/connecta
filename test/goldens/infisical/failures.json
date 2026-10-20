@@ -12,7 +12,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -30,9 +30,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -56,7 +54,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -74,9 +72,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -87,10 +83,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -108,11 +101,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -147,7 +136,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -165,9 +154,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -202,7 +189,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -220,9 +207,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -246,7 +231,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -264,9 +249,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -290,7 +273,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -308,9 +291,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -334,7 +315,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -352,9 +333,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -379,7 +358,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -397,9 +376,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -423,7 +400,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -441,9 +418,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -454,10 +429,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -475,11 +447,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1,
-                2
-              ],
+              "after": 3,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -514,7 +482,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -532,9 +500,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -562,7 +528,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -580,9 +546,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "GET",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY?projectId=11111111-1111-4111-8111-111111111111&environment=prod&secretPath=%2Fapps&expandSecretReferences=true",
               "headers": {
@@ -625,7 +589,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -643,9 +607,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -678,7 +640,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -696,9 +658,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -718,10 +678,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -764,7 +721,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -782,9 +739,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -829,7 +784,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -847,9 +802,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -882,7 +835,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -900,9 +853,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -935,7 +886,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -953,9 +904,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -988,7 +937,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -1006,9 +955,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -1042,7 +989,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -1060,9 +1007,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -1095,7 +1040,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -1113,9 +1058,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -1135,10 +1078,7 @@
           ],
           [
             {
-              "after": [
-                0,
-                1
-              ],
+              "after": 2,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -1181,7 +1121,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -1199,9 +1139,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
@@ -1238,7 +1176,7 @@
         "steps": [
           [
             {
-              "after": [],
+              "after": 0,
               "auxiliary": "universal-auth-login",
               "method": "POST",
               "url": "https://app.infisical.com/api/v1/auth/universal-auth/login",
@@ -1256,9 +1194,7 @@
           ],
           [
             {
-              "after": [
-                0
-              ],
+              "after": 1,
               "method": "POST",
               "url": "https://app.infisical.com/api/v4/secrets/API_KEY",
               "headers": {
