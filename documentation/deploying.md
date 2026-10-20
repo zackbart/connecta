@@ -71,7 +71,7 @@ must be installed for the Worker executor. `wrangler.jsonc` serves only
 Worker. A Worker already deployed with Wrangler moves once by
 [taking its resources over](../examples/worker/README.md#moving-a-wrangler-deployed-worker-to-alchemy).
 
-Four Alchemy rules protect a deployment:
+Five Alchemy rules protect a deployment:
 
 - Declare every secret in the stack. Each deploy replaces the Worker's whole
   binding set, so a secret set any other way is deleted by the next deploy.
@@ -83,6 +83,14 @@ Four Alchemy rules protect a deployment:
   forgets it instead of deleting the deployment's state.
 - Pass the same `--stage` to every Alchemy command; Alchemy keys its state by
   stage.
+- Treat Alchemy and Wrangler as privileged local tooling. They hold the
+  account API token, are not bundled into the Worker, and are outside
+  Connecta's production dependency audit; their own dependencies carry
+  published advisories. Run `npm audit` in the deployment, run them only on a
+  trusted machine, keep `alchemy dev` and `wrangler dev` on localhost, and give
+  the token only the permissions the
+  [Worker example](../examples/worker/README.md#deploy) lists, with a short
+  expiry.
 
 Attach Cloudflare Access to the Worker destination; the stack does this with
 the Worker's `access` property. Interactive MCP clients

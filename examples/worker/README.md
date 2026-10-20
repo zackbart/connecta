@@ -331,6 +331,16 @@ npm install --save-dev wrangler @cloudflare/workers-types typescript @types/node
 npm ls effect   # one resolved copy
 ```
 
+The deployment tooling runs on the operator's machine with the account API
+token; none of it is bundled into the Worker. Connecta's own dependency audit
+checks only what the published package installs for a deployment (`--prod`),
+so it says nothing about this tooling, and `alchemy@2.0.0-beta.83` pulls in
+local tooling (dev servers, bundlers, a local database) with published
+advisories, some rated high. Run `npm audit` in the deployment and review what
+it reports, run Alchemy and Wrangler only on a trusted machine, keep
+`alchemy dev` and `wrangler dev` bound to localhost, and give the API token
+only the four permissions in [Deploy](#deploy) and a short expiry.
+
 `wrangler` serves only `wrangler dev` and `scripts/copy-kv-to-d1.mjs`. A
 `tsconfig.json` like the following lets `tsc --noEmit`
 resolve `D1Database`, `WorkerLoader`, and `ExecutionContext`, and checks the
