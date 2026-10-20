@@ -2,8 +2,8 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
-import { copyFile, lstat, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { devNull, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getPlatformProxy } from "wrangler";
@@ -575,6 +575,47 @@ try {
     !(await lstat(join(work, "generated-deployment", "CLAUDE.md"))).isSymbolicLink()
   ) {
     throw new Error("Initializer did not link CLAUDE.md to AGENTS.md");
+  }
+
+  // The Worker example has no initializer. A deployment copies it out of the
+  // tarball with the README's commands, and its renamed `gitignore` must keep
+  // Alchemy's plaintext local state and every local secret file out of git.
+  if (packed.filename !== `zackbart-connecta-${packed.version}.tgz`) {
+    throw new Error(`The Worker README's copy step names a different tarball than ${packed.filename}`);
+  }
+  if (!paths.has("examples/worker/gitignore")) {
+    throw new Error("Packed Worker example is missing its gitignore");
+  }
+  const workerCopy = join(work, "connecta-worker");
+  await mkdir(workerCopy);
+  run("tar", ["-xzf", archive, "-C", workerCopy, "--strip-components=3", "package/examples/worker"], work);
+  await rename(join(workerCopy, "gitignore"), join(workerCopy, ".gitignore"));
+  run("git", ["init", "--quiet"], workerCopy);
+  const protectedPaths = [
+    ".alchemy/state/production/connecta.json",
+    ".env",
+    ".env.production",
+    ".dev.vars",
+    ".dev.vars.production",
+    ".wrangler/state/d1.sqlite",
+    "node_modules/alchemy/package.json",
+  ];
+  for (const path of protectedPaths) {
+    await mkdir(dirname(join(workerCopy, path)), { recursive: true });
+    await writeFile(join(workerCopy, path), "secret\n");
+  }
+  // Only the copy's own .gitignore counts, never this machine's global excludes.
+  const untracked = run(
+    "git",
+    ["-c", `core.excludesFile=${devNull}`, "ls-files", "--others", "--exclude-standard"],
+    workerCopy,
+  ).split("\n");
+  const committable = protectedPaths.filter((path) => untracked.includes(path));
+  if (committable.length) {
+    throw new Error(`Copied Worker example would commit ${committable.join(", ")}`);
+  }
+  for (const kept of [".gitignore", "alchemy.run.ts", "src/index.ts", "src/connecta.config.ts"]) {
+    if (!untracked.includes(kept)) throw new Error(`Copied Worker example ignores ${kept}`);
   }
 
   // Substitute the tarball under test for the registry pin, then exercise the

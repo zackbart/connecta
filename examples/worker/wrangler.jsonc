@@ -1,3 +1,6 @@
+// Local development only: `wrangler dev` runs this Worker with local D1 and a
+// simulated Access identity. Deploy with alchemy.run.ts, never with this file,
+// and keep its vars, flags, and bindings in step with that stack.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "connecta-example",
@@ -6,8 +9,9 @@
   "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
   "observability": { "enabled": true },
 
-  // Plain vars. Secrets (CREDENTIAL_ENCRYPTION_KEY, DOWNSTREAM_TOKEN) are set with
-  // `wrangler secret put <NAME>`, not here.
+  // Plain vars. Local secrets (CREDENTIAL_ENCRYPTION_KEY, DOWNSTREAM_TOKEN) go
+  // in an uncommitted .dev.vars file; deployed ones are declared in
+  // alchemy.run.ts.
   // CONNECTA_ACTIVITY switches on activity history in src/connecta.config.ts
   // when "on"; its data stays in CONNECTA_DB.
   "vars": {
@@ -28,8 +32,8 @@
     },
   },
 
-  // The one database. Create with `wrangler d1 create connecta` and paste
-  // the id. connecta creates its tables on first use; nothing to apply.
+  // The one database, local under `wrangler dev`; alchemy.run.ts creates the
+  // deployed one. connecta creates its tables on first use; nothing to apply.
   "d1_databases": [
     {
       "binding": "CONNECTA_DB",

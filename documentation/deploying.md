@@ -13,7 +13,8 @@ For work through an already connected endpoint, use [Operating an endpoint](./op
 | Docker             | [Container setup in the same Node template](../templates/node/README.md#run-it-in-docker) | Same source and config, persistent named volume                              |
 | Cloudflare Workers | [Worker example](../examples/worker/README.md#deploy)                                     | Workers Paid plan, Worker Loader binding, one D1 database, Cloudflare Access |
 
-These are the two deployment shapes. Docker packages the Node project.
+These are the two deployment shapes. Docker packages the Node project, and
+Alchemy deploys the Worker.
 Templates and their configuration files own the full runnable steps and
 environment-variable names; follow them rather than rebuilding their setup
 from the contract reference.
@@ -52,14 +53,47 @@ backups, Docker provisioning, secrets, and optional modules. Run the deployment'
 
 ## Start on Workers
 
-Follow the [Worker example](../examples/worker/README.md#deploy) to create D1,
-set secrets, configure `PUBLIC_URL` and `LOADER`, and deploy with Wrangler.
-When copying it into a separate repository, follow
+Deploy the Worker with [Alchemy](https://alchemy.run) from the example's
+`alchemy.run.ts`, following the [Worker example](../examples/worker/README.md#deploy).
+The stack declares the Worker, its vars and secrets, the one D1 database, the
+`LOADER` Worker Loader, the Worker-level Access application, and the agent
+bypass application, and `npx alchemy deploy --stage production` reconciles all
+of them. Install `alchemy`, `effect`, and `@effect/platform-node` at the exact
+versions the example names, with `effect` matching Connecta's own pin. When
+copying it into a separate repository, follow
 [the separate-project installation](../examples/worker/README.md#copied-into-its-own-repository)
-and pin Connecta's exact version. The optional `@cloudflare/codemode` peer
-must be installed for the Worker executor.
+and pin Connecta's exact version. npm strips `.gitignore` from the package,
+so the example ships its ignore rules as `gitignore`: rename it to
+`.gitignore` in the copy before the first `git add`, so `.alchemy/`, `.env`,
+`.dev.vars`, `.wrangler/`, and `node_modules/` stay uncommitted. The optional `@cloudflare/codemode` peer
+must be installed for the Worker executor. `wrangler.jsonc` serves only
+`wrangler dev`, because `alchemy dev` does not supply `ctx.access` to this
+Worker. A Worker already deployed with Wrangler moves once by
+[taking its resources over](../examples/worker/README.md#moving-a-wrangler-deployed-worker-to-alchemy).
 
-Attach Cloudflare Access to the Worker destination. Interactive MCP clients
+Five Alchemy rules protect a deployment:
+
+- Declare every secret in the stack. Each deploy replaces the Worker's whole
+  binding set, so a secret set any other way is deleted by the next deploy.
+- Never commit `.alchemy/` or `.env`. Alchemy's local state records secret
+  values, `CREDENTIAL_ENCRYPTION_KEY` included, in plaintext. Deploying from
+  CI or several machines needs `Cloudflare.state()`, which encrypts state at
+  rest; it has not been verified with Connecta.
+- Keep `RemovalPolicy.retain()` on the D1 database, so `alchemy destroy`
+  forgets it instead of deleting the deployment's state.
+- Pass the same `--stage` to every Alchemy command; Alchemy keys its state by
+  stage.
+- Treat Alchemy and Wrangler as privileged local tooling. They hold the
+  account API token, are not bundled into the Worker, and are outside
+  Connecta's production dependency audit; their own dependencies carry
+  published advisories. Run `npm audit` in the deployment, run them only on a
+  trusted machine, keep `alchemy dev` and `wrangler dev` on localhost, and give
+  the token only the permissions the
+  [Worker example](../examples/worker/README.md#deploy) lists, with a short
+  expiry.
+
+Attach Cloudflare Access to the Worker destination; the stack does this with
+the Worker's `access` property. Interactive MCP clients
 need Managed OAuth, Dynamic Client Registration, and the documented redirect
 allowlist. Machines are declared agents: they use `/agent/<pool>` with the
 agent's `cta_` bearer as their only credential, once the
@@ -76,7 +110,8 @@ alone and which ignores Access context entirely
 ([agent endpoints](./auth.md#agent-endpoints)). Behind Access, the edge must
 let those requests through without an Access login or service token. The P0
 probe ([observations](./architecture.md#production-access-bypass-for-agent-endpoints))
-verified this shape on 2026-10-15:
+verified this shape on 2026-10-15. The Worker example's `alchemy.run.ts`
+declares both applications:
 
 1. Keep the Worker-level application, whose destination is
    `{ "type": "worker", "worker_id": "<the Worker script tag>" }`, exactly as
@@ -235,6 +270,7 @@ does not merge changes into an existing deployment.
 - [Tokens issued before agents](./auth.md#agent-tokens-and-upgrading-from-earlier-tokens) stop admitting until each machine's token is bound once to a declared agent with `npm run adopt-token -- <token-id> <agent>` (Node) or `AccessTokenManager.adopt`, which keeps its secret. Human-bound tokens stay refused; issue those agents new tokens. Pool members name `"agent:<name>"` instead of matching token record ids.
 - [Node storage from 0.28](../templates/node/README.md#storage) uses `connecta migrate-state` to copy the JSON state into SQLite. Activity JSONL is not imported.
 - [Worker storage from 0.28](../examples/worker/README.md#upgrading-from-028) copies KV into D1 with a one-shot migration.
+- [Worker deployments on Wrangler](../examples/worker/README.md#moving-a-wrangler-deployed-worker-to-alchemy) move to Alchemy once, adopting the Worker, D1 database, and Access applications so the script tag and Access AUD stay unchanged.
 - [Notion, Vercel, and Cloudflare for 0.29](./provider-migration-0.29.md) change defaults and retained API tool names.
 - [Executor wiring](./code-mode.md#deploy-time-capability) requires branded shipped executors or a self-managed custom executor.
 

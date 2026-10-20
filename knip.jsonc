@@ -39,6 +39,7 @@
     "src/operator-ui/app/main.tsx",
     "src/operator-ui/browser.css",
     "examples/*/src/index.ts",
+    "examples/*/alchemy.run.ts",
     "scripts/*.mjs",
     "test/**/*.test.ts",
     // Golden specs load through import.meta.glob in test/goldens.test.ts.

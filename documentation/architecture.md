@@ -555,6 +555,53 @@ that refuses deletion does not block another Worker's deletion. It runs no real
 hardening and the joint convergence are verified offline only and have not run
 against Cloudflare.
 
+### Alchemy Worker deployment
+
+Two throwaway deployments on 2026-10-20 verified the Worker example's
+Alchemy path with alchemy 2.0.0-beta.83, effect 4.0.5, and Alchemy local
+state, then deleted every resource and confirmed by re-listing. Alchemy
+uploads the full Worker with `PUT /workers/scripts/<name>`, the endpoint an
+earlier full deploy had been suspected of losing `ctx.access` through.
+
+The first deployment ran a near copy of the stack with a temporary diagnostic
+route. With an Access service token in a non-identity policy, the Worker saw
+`ctx.access` carrying the Worker-level application's AUD and no identity, as
+expected for a service token. D1, the Worker Loader, R2, and secret bindings
+worked; `/agent/*` reached connecta through the bypass; `/ui/api/config`
+returned 403 `Cloudflare Access human identity required`; and
+`connecta doctor` passed with a `cta_` token issued inside the Worker. A code
+update through `alchemy deploy` kept the script tag, `ctx.access`, and D1 rows.
+Three consecutive probe rounds agreed.
+
+The second deployment ran the shipped `alchemy.run.ts` from the packed package
+in a separate project on Node 26, changing only resource names and the Access policy
+(a service token). The edge checks in the example's "Verify after deploying"
+held for three or more rounds after each deploy. `alchemy destroy` deleted the
+Worker and both Access applications and orphaned the retained D1 database; the
+next deploy adopted it by name with its rows. After deleting local state, a
+deploy reused the Worker with the same script tag, and `applicationId` took
+both Access applications over with unchanged AUDs and no duplicates. Removing
+`applicationId` afterwards planned an in-place update, and a further deploy
+planned no changes. The account API token needed only Workers Scripts Write,
+D1 Write, Access: Apps and Policies Write, and Access: Organizations, Identity
+Providers, and Groups Read.
+
+Four findings shape the operator rules. Alchemy local state under
+`.alchemy/state/` records secret binding values in plaintext. Alchemy sends no
+`keep_bindings`, so each deploy deletes secrets set outside the stack.
+`alchemy dev` does not provide `ctx.access` to a plain fetch Worker, so local
+development stays on `wrangler dev` and its `access.dev` identity. D1 needs
+`RemovalPolicy.retain()` so `alchemy destroy` cannot delete a deployment's
+state. Not verified: `Cloudflare.state()` remote state, custom domains, and
+taking over a Worker first deployed with Wrangler.
+
+npm strips `.gitignore` from the package, so the copied Worker example's
+ignore rules ship as `examples/worker/gitignore`, renamed by the README's copy
+step. `test/deployment-shapes.node.test.ts` checks a copy of the source tree,
+and `scripts/check-package.mjs` extracts the packed example with the README's
+`tar` command; both confirm git leaves `.alchemy/`, `.env*`, `.dev.vars*`,
+`.wrangler/`, and `node_modules/` untracked.
+
 ## Storage, credentials, and connectors
 
 A deployment has one store. On Workers it is one D1 database
@@ -1581,7 +1628,7 @@ Effect 4.x is a long-term-support line, but its area barrels `effect/http`,
 `@stability unstable` and can change within it; only core modules such as
 `effect/Schema` are stable. That is why Effect is pinned to one exact version
 and every Effect upgrade is its own deliberate pull request. A deployment
-that also depends on Effect, such as an Alchemy resource stack, must pin the
+that also depends on Effect, such as the Worker example's Alchemy stack, must pin the
 same version to resolve a single copy. Connecta's own lockfile and packed
 install are checked for one copy (`test/package-surface.node.test.ts` and
 `scripts/check-package.mjs`).
