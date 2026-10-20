@@ -1,16 +1,7 @@
 import { drive } from "../../../src/providers/drive/index.js";
 import { defineGoldenSpec, type SeenRequest, type StubResponse } from "../harness.js";
 
-// A throwaway RSA key for the service account's JWT assertion. The assertion
-// is recorded decoded, with its signature as a placeholder, so a fresh key per
-// process never reaches a golden.
-const keys = (await crypto.subtle.generateKey(
-  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-  true,
-  ["sign", "verify"],
-)) as CryptoKeyPair;
-const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer);
-const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
+import { PRIVATE_KEY } from "../rsa-fixture.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const ACCESS_TOKEN = "golden-google-access-token/drive+=";

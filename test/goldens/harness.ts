@@ -1100,6 +1100,8 @@ export function goldenFiles(spec: GoldenSpec): GoldenFile[] {
 
 /** Test-only inputs: `seam` stands in for a provider that calls fetch differently; `jitter` seeds scheduling noise. */
 export interface CaptureOptions {
+  /** Canonical-only comparison on the Workers always tier; defaults to both orders. */
+  orders?: "both" | "canonical";
   /** Test-only fresh fixture graph, loaded before any provider work starts. */
   load?: () => Promise<GoldenSpec>;
   seam?: FetchSeam;
@@ -1220,6 +1222,7 @@ export async function captureGoldens(
   options: CaptureOptions = {},
 ): Promise<Partial<Record<GoldenFile, string>>> {
   const canonical = await captureGoldensInOrder(spec, options, false);
+  if (options.orders === "canonical") return canonical;
   const reverse = await captureGoldensInOrder(spec, options, true);
   const files: Partial<Record<GoldenFile, string>> = {};
   for (const file of goldenFiles(spec)) {
@@ -1238,6 +1241,7 @@ export async function captureGoldens(
 /** One row, with every distinct release-order observation. */
 export async function captureCall(spec: GoldenSpec, label: string, options: CaptureOptions = {}): Promise<string> {
   const canonical = JSON.parse(await captureCallInOrder(spec, label, options, false));
+  if (options.orders === "canonical") return json(canonical);
   const reverse = JSON.parse(await captureCallInOrder(spec, label, options, true));
   return json(mergeObservations(canonical, reverse));
 }

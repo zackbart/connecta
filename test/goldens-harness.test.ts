@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Clock, Effect, Scheduler } from "effect";
 import { runEdge } from "../src/runtime/run.js";
 import {
-  captureCall,
-  captureGoldens,
+  captureCall as captureCallBoth,
+  captureGoldens as captureGoldensBoth,
   goldenFiles,
   GOLDEN_NOW,
   type Replies,
@@ -22,11 +22,21 @@ import {
 import infisical from "./goldens/infisical/spec.js";
 import planningCenter from "./goldens/planning-center/spec.js";
 
+import { bothOrders, canonicalGolden, captureOrders, fullTier, tierSeeds } from "./goldens/tier.js";
+import { PRIVATE_KEY, PUBLIC_KEY } from "./goldens/rsa-fixture.js";
+
+// Tests use the same tier/order policy as the provider byte comparison.
+const captureCall: typeof captureCallBoth = (spec, label, options) =>
+  captureCallBoth(spec, label, { orders: captureOrders, ...options });
+const captureGoldens: typeof captureGoldensBoth = (spec, options) =>
+  captureGoldensBoth(spec, { orders: captureOrders, ...options });
+const expectedGolden = (bytes: string) => (bothOrders ? bytes : canonicalGolden(bytes));
+
 const specs = Object.values(import.meta.glob<GoldenSpec>("./goldens/*/spec.ts", { import: "default", eager: true }))
   .slice()
   .sort((a, b) => a.provider.localeCompare(b.provider));
 const stored = import.meta.glob<string>("./goldens/*/*.json", { query: "?raw", import: "default", eager: true });
-const storedInfisicalCalls = stored["./goldens/infisical/calls.json"]!;
+const storedInfisicalCalls = expectedGolden(stored["./goldens/infisical/calls.json"]!);
 
 interface Row {
   label: string;
@@ -209,7 +219,8 @@ async function echoesThatPass(): Promise<string[]> {
   return passed;
 }
 
-describe("characterization golden harness", { timeout: 120_000 }, () => {
+const suiteName = `characterization golden harness (${fullTier ? "full" : "always"}, ${captureOrders})`;
+describe(suiteName, { timeout: 120_000 }, () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.doUnmock("../src/sent-secrets.js");
@@ -291,7 +302,8 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
           return "done";
         });
         const rows = new Set<string>();
-        for (const jitter of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) rows.add(await captureCall(spec, "probe", { jitter }));
+        for (const jitter of tierSeeds([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
+          rows.add(await captureCall(spec, "probe", { jitter }));
         expect(rows.size).toBe(1);
         const capture = [...rows][0]!;
         const row = JSON.parse(capture) as Row;
@@ -316,7 +328,7 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
       [{ status: 201 }, { status: 202 }],
       [{ headers: { "x-probe": "first" } }, { headers: { "x-probe": "second" } }],
     ]) {
-      for (const jitter of [1, 2, 3, 4, 5, 6]) {
+      for (const jitter of tierSeeds([1, 2, 3, 4, 5, 6])) {
         await expect(captureCall(probeSpec(work, replies), "probe", { jitter })).rejects.toThrow(
           /fixture authoring error: indistinguishable concurrent requests.*distinct queued replies/,
         );
@@ -339,7 +351,7 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
       }
       return send(input, init);
     };
-    for (const jitter of [1, 2, 3, 4, 5, 6]) {
+    for (const jitter of tierSeeds([1, 2, 3, 4, 5, 6])) {
       await expect(captureCall(planningCenter, "get_plan", { seam: compressedItems, jitter })).rejects.toThrow(
         /Unsupported asynchronous source: CompressionStream/,
       );
@@ -427,7 +439,8 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
   for (const [name, work] of probes) {
     it(`controls ${name} captured before provider imports`, async () => {
       const rows = new Set<string>();
-      for (const jitter of [1, 2, 3, 4, 5, 6]) rows.add(await captureCall(probeSpec(work), "probe", { jitter }));
+      for (const jitter of tierSeeds([1, 2, 3, 4, 5, 6]))
+        rows.add(await captureCall(probeSpec(work), "probe", { jitter }));
       expect(rows.size, name).toBe(1);
       const row = JSON.parse([...rows][0]!) as Row;
       expect(row.result, name).toMatchObject({ ok: true });
@@ -475,7 +488,7 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
     const load = async () => probeSpec((await import("./goldens/load-probe.js")).sample);
     const spec = await load();
     const rows = [];
-    for (const jitter of [1, 2, 3]) rows.push(await captureCall(spec, "probe", { jitter, load }));
+    for (const jitter of tierSeeds([1, 2, 3])) rows.push(await captureCall(spec, "probe", { jitter, load }));
     expect(new Set(rows).size).toBe(1);
     const row = JSON.parse(rows[0]!) as Row;
     expect(row.variants).toBeUndefined();
@@ -539,27 +552,30 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
     expect(vi.isFakeTimers()).toBe(false);
   });
 
-  it("distinguishes C awaiting B from C awaiting both by the reverse-order observation", async () => {
-    const capture = (both: boolean) =>
-      captureCall(
-        probeSpec(async () => {
-          const a = fetch("https://probe.example/a");
-          const b = fetch("https://probe.example/b");
-          await (both ? Promise.all([a, b]) : b);
-          await fetch("https://probe.example/c");
-          await a;
-          return "done";
-        }),
-        "probe",
-      );
-    const onlyB = JSON.parse(await capture(false)) as Row;
-    const both = JSON.parse(await capture(true)) as Row;
-    expect(onlyB.steps).toEqual(both.steps);
-    expect(onlyB.variants?.[0]?.order).toBe("reverse");
-    expect(onlyB.variants?.[0]?.steps.flat().map((request) => request.after)).toEqual([0, 0, 1]);
-    expect(both.variants).toBeUndefined();
-    expect(onlyB).not.toEqual(both);
-  });
+  it.skipIf(!bothOrders)(
+    "distinguishes C awaiting B from C awaiting both by the reverse-order observation",
+    async () => {
+      const capture = (both: boolean) =>
+        captureCall(
+          probeSpec(async () => {
+            const a = fetch("https://probe.example/a");
+            const b = fetch("https://probe.example/b");
+            await (both ? Promise.all([a, b]) : b);
+            await fetch("https://probe.example/c");
+            await a;
+            return "done";
+          }),
+          "probe",
+        );
+      const onlyB = JSON.parse(await capture(false)) as Row;
+      const both = JSON.parse(await capture(true)) as Row;
+      expect(onlyB.steps).toEqual(both.steps);
+      expect(onlyB.variants?.[0]?.order).toBe("reverse");
+      expect(onlyB.variants?.[0]?.steps.flat().map((request) => request.after)).toEqual([0, 0, 1]);
+      expect(both.variants).toBeUndefined();
+      expect(onlyB).not.toEqual(both);
+    },
+  );
 
   it("keeps frontiers linear for 300 sequential pages", async () => {
     const capture = async (pages: number) =>
@@ -613,7 +629,7 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
       };
     });
     const rows = [];
-    for (const jitter of [1, 2, 3]) rows.push(await captureCall(spec, "probe", { jitter }));
+    for (const jitter of tierSeeds([1, 2, 3])) rows.push(await captureCall(spec, "probe", { jitter }));
     expect(new Set(rows).size).toBe(1);
     expect((JSON.parse(rows[0]!) as Row).result).toMatchObject({
       ok: true,
@@ -633,7 +649,7 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
     expect(stepSizes(plan)).toEqual([3]);
     for (const ms of [0, 1, 5, 50]) {
       const rows = new Set<string>();
-      for (const jitter of [undefined, 1, 2, 3, 4, 5, 6]) {
+      for (const jitter of tierSeeds([undefined, 1, 2, 3, 4, 5, 6])) {
         rows.add(
           await captureCall(planningCenter, "get_plan", { seam: itemsAfter(ms), ...(jitter ? { jitter } : {}) }),
         );
@@ -691,14 +707,21 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
     }
   });
 
-  it("INV-5: the leak guard looks for a PEM key past its armor and DER framing, which guides print", async () => {
-    const keys = (await crypto.subtle.generateKey(
-      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-      true,
-      ["sign", "verify"],
-    )) as CryptoKeyPair;
-    const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer);
-    const body = btoa(String.fromCharCode(...der));
+  it("uses well-formed RSA fixture PEM keys that sign and verify", async () => {
+    const der = (pem: string) =>
+      Uint8Array.from(atob(pem.split("-----")[2]!.replace(/\s/g, "")), (char) => char.charCodeAt(0));
+    const algorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
+    const privateKey = await crypto.subtle.importKey("pkcs8", der(PRIVATE_KEY), algorithm, false, ["sign"]);
+    const publicKey = await crypto.subtle.importKey("spki", der(PUBLIC_KEY), algorithm, false, ["verify"]);
+    const message = new TextEncoder().encode("golden fixture");
+    const signature = await crypto.subtle.sign(algorithm, privateKey, message);
+    expect(await crypto.subtle.verify(algorithm, publicKey, signature, message)).toBe(true);
+    expect(await crypto.subtle.verify(algorithm, publicKey, signature, new Uint8Array([0]))).toBe(false);
+    expect(privateKey.algorithm).toMatchObject({ modulusLength: 2048 });
+  });
+
+  it("INV-5: the leak guard looks for a PEM key past its armor and DER framing, which guides print", () => {
+    const body = PRIVATE_KEY.split("-----")[2]!.replace(/\s/g, "");
     // A 2048-bit RSA key's first 37 bytes, 49 base64 characters, are tags,
     // lengths, version, and algorithm; its modulus follows.
     const FRAMING = 49;
@@ -764,16 +787,20 @@ describe("characterization golden harness", { timeout: 120_000 }, () => {
   // Web Crypto and event-loop turns) and releasing one answer at a time in canonical
   // order: neither an earlier capture's caches nor scheduling may move a byte.
   for (const spec of specs) {
-    it(`${spec.provider}: repeated captures with scheduling jitter match the stored goldens`, async () => {
-      const extra = (process.env.CONNECTA_GOLDENS_SEEDS ?? "").split(",").filter(Boolean).map(Number);
-      for (const jitter of [1, 2, ...extra]) {
-        const files = await captureGoldens(spec, { jitter });
-        for (const file of goldenFiles(spec)) {
-          expect(files[file], `${spec.provider}/${file}.json with jitter ${jitter}`).toBe(
-            stored[`./goldens/${spec.provider}/${file}.json`],
-          );
+    it.skipIf(!fullTier)(
+      `${spec.provider}: repeated captures with scheduling jitter match the stored goldens`,
+      async () => {
+        const extra = (process.env.CONNECTA_GOLDENS_SEEDS ?? "").split(",").filter(Boolean).map(Number);
+        for (const jitter of tierSeeds([1, 2, ...extra])) {
+          const files = await captureGoldens(spec, { jitter });
+          for (const file of goldenFiles(spec)) {
+            expect(files[file], `${spec.provider}/${file}.json with jitter ${jitter}`).toBe(
+              stored[`./goldens/${spec.provider}/${file}.json`],
+            );
+          }
         }
-      }
-    }, 120_000);
+      },
+      120_000,
+    );
   }
 });

@@ -8,15 +8,7 @@ import { restConnector } from "../../../src/providers/github/rest.js";
 import { parseScopes, ScopePolicy, type GitHubScope } from "../../../src/providers/github/scope.js";
 import { defineGoldenSpec, type SeenRequest, type StubResponse } from "../harness.js";
 
-// An App JWT is recorded decoded, with its signature as a placeholder, so a
-// fresh key per run leaves every golden byte unchanged.
-const keys = (await crypto.subtle.generateKey(
-  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-  true,
-  ["sign", "verify"],
-)) as CryptoKeyPair;
-const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer);
-const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
+import { PRIVATE_KEY } from "../rsa-fixture.js";
 
 const APP: GitHubApp = { appId: "12345", privateKey: PRIVATE_KEY };
 const SCOPES: GitHubScope[] = [

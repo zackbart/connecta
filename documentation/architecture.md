@@ -1475,6 +1475,32 @@ with the stored goldens. Partial-dependency mutations run under ten seeds,
 and saved immediate/timeout/abort-timeout, Effect scheduler, prebound crypto,
 prebound performance/Date/hrtime, module freshness, runner timing, unsupported
 sources, ambiguous replies, and cross-capture nanoseconds run on both projects.
+CI uses two characterization tiers. Every PR runs byte comparisons of every
+provider on both runtimes: Node captures fresh forward and reverse module graphs;
+Workers captures a fresh canonical graph and compares only the stored canonical
+observations. Projection removes variants only at harness observation positions,
+never from vendor results or schemas. Both tiers retain load-time source controls
+and runtime-independent mutation/source checks; always runs one seed per check.
+The reverse-only C-awaits-B-versus-both mutation runs on Node in always and on
+both runtimes in full. Planning-only PRs run these suites too.
+
+The full tier repeats all provider captures and the complete jitter matrix on
+both runtimes, including Workers reverse order. It runs on every main push and
+on PRs changing provider, connector, HTTP, storage, golden/harness, fixture,
+Vitest, dependency or selector inputs. The selector derives transitive core
+imports using TypeScript parsing and module resolution. Unknown paths or
+dependencies and classifier errors select full; every step-1 provider migration
+selects full. The `changes` job exports `goldens` to both runtime jobs through
+`CONNECTA_GOLDENS_TIER`. Only `always` reduces the tier; local unset/invalid
+values run full, retaining the complete `pnpm run check` gate.
+
+JWT fixture specs import fixed, public throwaway RSA PEM keys, with an
+import/sign/verify self-test. This avoids expensive key generation on every
+fresh module evaluation without changing characterized JWT claims or bytes.
+The harness never caches evaluated module graphs. Global controls prohibit
+`it.concurrent`; parallelism must use isolated files/workers. Transformed code
+may be cached.
+
 `pnpm run goldens:update [provider...]` rewrites the named goldens (all
 when none are named) on Node; it is not part of `check`. A PR
 that changes agent-facing output on purpose regenerates the affected goldens

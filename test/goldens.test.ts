@@ -5,6 +5,7 @@
 // rewrites them; this suite only compares. See the contributor section of
 // documentation/architecture.md.
 import { describe, expect, it } from "vitest";
+import { bothOrders, canonicalGolden, captureOrders, fullTier } from "./goldens/tier.js";
 import { captureGoldens, goldenFiles, uncoveredTools, type GoldenSpec } from "./goldens/harness.js";
 
 // Vite's transform; the repository does not load vite/client types.
@@ -29,7 +30,7 @@ const byProvider = Object.values(specs)
   .filter((spec) => !only || only.includes(spec.provider))
   .sort((a, b) => a.provider.localeCompare(b.provider));
 
-describe("characterization goldens", () => {
+describe(`characterization goldens (${fullTier ? "full" : "always"}, ${captureOrders})`, () => {
   it.skipIf(only)("cover every maintained api() provider", () => {
     const covered = Object.values(specs).map((spec) => spec.provider);
     expect([...covered, ...REMOTE_MCP_ONLY].sort()).toEqual([...providerFolders].sort());
@@ -44,7 +45,7 @@ describe("characterization goldens", () => {
   for (const spec of byProvider) {
     it(`INV-5: ${spec.provider} catalog, fixture calls, failure mapping, and secret echoes match the goldens`, async () => {
       expect(await uncoveredTools(spec)).toEqual([]);
-      const actual = await captureGoldens(spec);
+      const actual = await captureGoldens(spec, { orders: updating ? "both" : captureOrders });
       if (updating) {
         const { mkdir, writeFile } = await import("node:fs/promises");
         const directory = new URL(`./goldens/${spec.provider}/`, import.meta.url);
@@ -57,7 +58,9 @@ describe("characterization goldens", () => {
         expect(golden, `test/goldens/${spec.provider}/${file}.json is missing; run pnpm run goldens:update`).toBeTypeOf(
           "string",
         );
-        expect(actual[file], `test/goldens/${spec.provider}/${file}.json`).toBe(golden);
+        expect(actual[file], `test/goldens/${spec.provider}/${file}.json`).toBe(
+          bothOrders ? golden : canonicalGolden(golden!, file),
+        );
       }
     }, 60_000);
   }

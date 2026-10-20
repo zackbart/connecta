@@ -107,6 +107,11 @@ export default defineConfig({
         },
         test: {
           name: "node",
+          env: {
+            CONNECTA_GOLDENS_RUNTIME: "node",
+            CONNECTA_GOLDENS_TIER: process.env.CONNECTA_GOLDENS_TIER ?? "full",
+            CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
+          },
           setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: ["./test/fixtures/oauth-http-server.ts"],
           include: TEST_INCLUDE,
@@ -137,6 +142,12 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
+          // workerd does not inherit arbitrary host process.env entries.
+          env: {
+            CONNECTA_GOLDENS_RUNTIME: "workers",
+            CONNECTA_GOLDENS_TIER: process.env.CONNECTA_GOLDENS_TIER ?? "full",
+            CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
+          },
           setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: ["./test/fixtures/oauth-http-server.ts", "./test/fixtures/clerk-backend-server.ts"],
           include: TEST_INCLUDE,
