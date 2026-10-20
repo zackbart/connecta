@@ -1990,7 +1990,7 @@ export const gmail = asProviderFactory<GmailOptions>({
   bundle: {
     "baselineGzip": 27085,
     "note":
-      "./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. The cap uses the existing baseline + 60,000 B policy.",
+      "./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

@@ -182,7 +182,12 @@ export interface ProviderDefinition<O extends ProviderOptions> {
   /** Maintained display name in the generated README inventory. */
   readme?: string;
   /** Reviewed build facts: the bundle report's baseline, never a cap. */
-  bundle?: { baselineGzip: number; note?: string };
+  bundle?: {
+    baselineGzip: number;
+    /** @deprecated Ignored: provider entries are reported, not capped. */
+    maxGzip?: number;
+    note?: string;
+  };
   /** Closed factory options, declared with `optionsOf<O>()` for key parity. */
   options: Field<unknown, unknown>;
   /**

@@ -2924,7 +2924,7 @@ export const planningCenter = asProviderFactory<PlanningCenterOptions>({
   bundle: {
     "baselineGzip": 26970,
     "note":
-      "./providers/planning-center starts at 26,970 B gzip. It is api() over the guarded transport with no hosted-MCP surface, so neither the MCP client nor the Effect core is in its graph; the cap uses the existing baseline + 60,000 B policy.",
+      "./providers/planning-center starts at 26,970 B gzip. It is api() over the guarded transport with no hosted-MCP surface, so neither the MCP client nor the Effect core is in its graph; reported against this baseline, not capped (#899).",
   },
   skill,
   options: PLANNING_CENTER_OPTIONS,

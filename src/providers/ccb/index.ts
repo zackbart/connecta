@@ -2003,7 +2003,7 @@ export const ccb = asProviderFactory<CcbOptions>({
   bundle: {
     "baselineGzip": 120479,
     "note":
-      "./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. The cap uses the baseline + 60,000 B policy.",
+      "./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: CCB_OPTIONS,

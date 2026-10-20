@@ -1744,7 +1744,7 @@ export const overflow = asProviderFactory<OverflowOptions>({
   bundle: {
     "baselineGzip": 20410,
     "note":
-      "./providers/overflow starts at 20,410 B gzip: a hand-written api() surface over the guarded transport with no hosted-MCP interface, so it pulls in neither remoteMcp nor the Effect core the other providers carry. The cap uses the existing baseline + 60,000 B policy.",
+      "./providers/overflow starts at 20,410 B gzip: a hand-written api() surface over the guarded transport with no hosted-MCP interface, so it pulls in neither remoteMcp nor the Effect core the other providers carry. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: OVERFLOW_OPTIONS,

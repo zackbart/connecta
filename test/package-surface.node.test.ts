@@ -448,8 +448,8 @@ describe("Effect behind the published surface", () => {
     // An exact pin: within the 4.x long-term-support line the http, http-api,
     // schema, and sql area modules still carry `@stability unstable`, so every
     // Effect upgrade is its own deliberate pull request. A deployment that also
-    // uses Effect (Alchemy, for one) installs this same version and dedupes to
-    // a single copy.
+    // depends on Effect (Alchemy, for one) must pin this same version to
+    // resolve a single copy.
     const pin = packageJson.dependencies?.effect;
     expect(pin, "effect is not a runtime dependency").toBeTruthy();
     expect(pin).toMatch(/^4\.\d+\.\d+$/);

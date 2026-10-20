@@ -1500,10 +1500,10 @@ Effect 4.x is a long-term-support line, but its area barrels `effect/http`,
 `effect/http-api`, `effect/schema`, and `effect/sql` are still tagged
 `@stability unstable` and can change within it; only core modules such as
 `effect/Schema` are stable. That is why Effect is pinned to one exact version
-and every Effect upgrade is its own deliberate pull request. The exact pin
-also gives a deployment that uses Effect, such as an Alchemy resource stack, one
-version to install so it resolves a single copy; both deployment shapes are
-checked for that (`test/package-surface.node.test.ts` and
+and every Effect upgrade is its own deliberate pull request. A deployment
+that also depends on Effect, such as an Alchemy resource stack, must pin the
+same version to resolve a single copy. Connecta's own lockfile and packed
+install are checked for one copy (`test/package-surface.node.test.ts` and
 `scripts/check-package.mjs`).
 
 The stable `4.0.0` release was re-evaluated on 2026-10-01 with

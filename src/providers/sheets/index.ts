@@ -1396,7 +1396,7 @@ export const sheets = asProviderFactory<SheetsOptions>({
   bundle: {
     "baselineGzip": 26026,
     "note":
-      "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+      "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

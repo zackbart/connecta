@@ -1637,7 +1637,7 @@ export const breeze = asProviderFactory<BreezeOptions>({
   bundle: {
     "baselineGzip": 20637,
     "note":
-      "./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+      "./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: BREEZE_OPTIONS,

@@ -1917,7 +1917,7 @@ export const drive = asProviderFactory<DriveOptions>({
   bundle: {
     "baselineGzip": 28955,
     "note":
-      "./providers/drive starts at 28,955 B gzip (#680): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with two confined transports (API and upload host) and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+      "./providers/drive starts at 28,955 B gzip (#680): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with two confined transports (API and upload host) and no MCP SDK. Reported against this baseline, not capped (#899).",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,

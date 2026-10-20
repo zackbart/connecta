@@ -42,7 +42,7 @@ export const github = defineProvider<GitHubOptions>({
   classify: CLASSIFICATION,
   bundle: {
     baselineGzip: 164063,
-    note: "./providers/github initial measured baseline includes the hosted MCP SDK plus portable GitHub App signing, exact routing and REST complements; cap retains the existing 60,000-byte provider headroom policy.",
+    note: "./providers/github initial measured baseline includes the hosted MCP SDK plus portable GitHub App signing, exact routing and REST complements; reported against this baseline, not capped (#899).",
   },
   options: optionsOf<GitHubOptions>()({
     ...PROVIDER_COMMON,
