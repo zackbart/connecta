@@ -173,6 +173,11 @@ Enable `aud_claim_enabled: true` in Clerk's instance OAuth application settings
 (`PATCH /v1/instance/oauth_application_settings` in Clerk's Backend API), then
 read the setting back. Both JWT and opaque OAuth tokens are supported.
 Leave `allowedOAuthClientIds` omitted or `[]` to require bound tokens.
+To share one Clerk instance across deployments, give each deployment its own
+Clerk Organization and set `CLERK_ORGANIZATION_ID` to its `org_` id: only that
+Organization's members sign in, and maintainers and pool members still come
+from `src/connecta.config.ts`. [Clerk Organizations](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#one-clerk-instance-one-organization-per-deployment)
+lists the Clerk setup and the isolation tradeoff.
 
 Connecta's protected-resource metadata advertises the exact public `/mcp` or
 `/mcp/<pool>` URL as `resource` and Clerk as the authorization server. MCP
