@@ -207,8 +207,12 @@ keep their literal-array comparison until a reviewed migration.
 Never fetch credentials, call operational tools, file issues, or silently accept
 a new baseline. Recording endpoint evidence is an explicit action.
 
-The Provider drift workflow runs on provider-path PRs and weekly. Its summary
-and artifacts are advisory; it is not a dependency of the aggregate `check` gate.
+The Provider drift workflow runs on provider-path PRs and weekly. A PR scans the
+providers whose folders it changes, plus those importing a changed
+`src/providers/_shared/` area; drift tooling changes, the weekly schedule and
+manual dispatch scan every provider. Its summary lists new or changed findings
+apart from standing manual reviews. Summary and artifacts are advisory; it is
+not a dependency of the aggregate `check` gate.
 
 Add a unique `.changes/<slug>.md` fragment. Run `pnpm run check:fast` while
 iterating, then `VITEST_MAX_WORKERS=2 pnpm run release:check` for provider
