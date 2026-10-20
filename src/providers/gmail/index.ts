@@ -128,19 +128,23 @@ const ENTITIES: Readonly<Record<string, string>> = {
   nbsp: " ",
 };
 
-function decodeEntities(value: string): string {
-  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
+function decodeEntities(ctx: ConnectorContext, value: string): string {
+  const safe = redactBeforeCut(ctx, value, "leaf");
+  const decoded = safe.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
     if (name[0] === "#") {
       const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
       return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
     }
     return ENTITIES[name.toLowerCase()] ?? entity;
   });
+  return redactBeforeCut(ctx, decoded, "leaf");
 }
 
 /** Readable text from an HTML part that has no plain-text sibling. */
-function htmlToText(html: string): string {
+function htmlToText(ctx: ConnectorContext, html: string): string {
+  html = redactBeforeCut(ctx, html, "leaf");
   return decodeEntities(
+    ctx,
     html
       .replace(/<(script|style|head)\b[\s\S]*?<\/\1\s*>/gi, "")
       .replace(/<br\s*\/?>/gi, "\n")
@@ -163,14 +167,17 @@ function base64UrlBytes(data: string): Uint8Array {
   return bytes;
 }
 
-function charsetOf(part: JsonRecord): string {
+function charsetOf(ctx: ConnectorContext, part: JsonRecord): string {
   const type = header(part, "Content-Type") ?? "";
+  if (redactBeforeCut(ctx, type, "leaf") !== type) return "[redacted]";
   // Consume complete parameters so a semicolon inside another quoted value
   // cannot masquerade as a charset. MIME allows whitespace between tokens.
   const parameters = /;\s*([^=;\s]+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^;\s]*))/g;
   for (const match of type.matchAll(parameters)) {
     if (match[1]!.toLowerCase() === "charset") {
-      return (match[2]?.replace(/\\(.)/g, "$1") ?? match[3] ?? "").trim();
+      const source = match[2] ?? match[3] ?? "";
+      if (redactBeforeCut(ctx, source, "leaf") !== source) return "[redacted]";
+      return redactBeforeCut(ctx, source.replace(/\\(.)/g, "$1"), "leaf").trim();
     }
   }
   return "utf-8";
@@ -188,7 +195,7 @@ function decodeIn(ctx: ConnectorContext, part: JsonRecord, data: string): { text
 }
 
 function decodeBytes(ctx: ConnectorContext, part: JsonRecord, bytes: Uint8Array): { text: string; note?: string } {
-  const charset = charsetOf(part);
+  const charset = charsetOf(ctx, part);
   try {
     return { text: new TextDecoder(charset).decode(bytes) };
   } catch {
@@ -311,7 +318,7 @@ async function readBody(
   const decoded = data ? decodeIn(ctx, chosen, data) : { text: "" };
   // Uncut: the caller caps it, by characters and by the result's bytes.
   return {
-    text: format === "html" ? htmlToText(decoded.text) : decoded.text,
+    text: format === "html" ? htmlToText(ctx, decoded.text) : decoded.text,
     bodyFormat: format,
     ...(decoded.note ? { bodyNote: decoded.note } : {}),
   };
@@ -535,7 +542,7 @@ async function readAttachment(
       const value = own.map((entry) => header(entry, name)).find((entry) => entry !== undefined);
       return value === undefined ? [] : [`${name}: ${value}`];
     });
-    const body = mimeOf(chosen) === "text/html" ? htmlToText(rendered.text) : rendered.text;
+    const body = mimeOf(chosen) === "text/html" ? htmlToText(ctx, rendered.text) : rendered.text;
     if (!body.trim()) return unavailable("This forwarded message has no readable text body; open it in Gmail.");
     decoded = headers.length > 0 ? `${headers.join("\n")}\n\n${body}` : body;
     envelope = { ...envelope, ...compact({ note: rendered.note }) };
@@ -647,7 +654,7 @@ async function projectMessage(
     subject: headerOf("Subject"),
     messageIdHeader: headerOf("Message-ID"),
     inReplyTo: headerOf("In-Reply-To"),
-    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(message["snippet"]), HEADER_BYTES) : undefined,
+    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(ctx, message["snippet"]), HEADER_BYTES) : undefined,
     body: "",
     bodyTruncated: false,
     bodyFormat: read.bodyFormat,
@@ -823,7 +830,7 @@ function projectThreadSummary(ctx: ConnectorContext, value: unknown, listedSnipp
     lastMessageAt: isoFromMillis(latest),
     unread: labels.has("UNREAD"),
     ...labelsOf([...labels]),
-    snippet: snippet ? clipped(ctx, decodeEntities(snippet), FIELD_BYTES) : undefined,
+    snippet: snippet ? clipped(ctx, decodeEntities(ctx, snippet), FIELD_BYTES) : undefined,
   });
 }
 
@@ -836,7 +843,7 @@ function projectDraftSummary(ctx: ConnectorContext, value: unknown): JsonRecord 
     subject: clipped(ctx, header(payload, "Subject"), FIELD_BYTES),
     to: clipped(ctx, header(payload, "To"), FIELD_BYTES),
     updatedAt: isoFromMillis(message["internalDate"]),
-    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(message["snippet"]), FIELD_BYTES) : undefined,
+    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(ctx, message["snippet"]), FIELD_BYTES) : undefined,
   });
 }
 

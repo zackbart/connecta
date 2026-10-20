@@ -355,7 +355,7 @@ describe("open tails of bounded reads", () => {
   };
 
   it.each(echoForms(SECRET))("INV-5: a read that stops inside the %s form loses that tail", (_name, form) => {
-    // Eight decoded characters is the least a tail is matched by: 48 units of a \u form.
+    // Include long prefixes as well as the one-unit cases in the fix-round suite.
     for (const end of [form.startsWith("\\u") ? 48 : 8, Math.floor(form.length / 2), form.length - 1]) {
       const text = `intro ${form.slice(0, end)}`;
       expect(secrets().redactOpenTail(text)).toBe("intro [redacted]");
@@ -376,10 +376,10 @@ describe("open tails of bounded reads", () => {
     expect(set.redactOpenTail(`intro ${value.slice(0, 280)}`)).toBe("intro [redacted]");
   });
 
-  it("keeps a tail shorter than eight units, a whole form, and text that begins nothing", () => {
-    expect(secrets().redactOpenTail(`intro ${SECRET.slice(0, 7)}`)).toBe(`intro ${SECRET.slice(0, 7)}`);
-    expect(secrets().redactOpenTail(`intro ${SECRET} done`)).toBe(`intro ${SECRET} done`);
-    expect(secrets().redactOpenTail("intro unrelated text")).toBe("intro unrelated text");
+  it("INV-5: redacts short tails and whole forms, and keeps text that begins nothing", () => {
+    expect(secrets().redactOpenTail(`intro ${SECRET.slice(0, 7)}`)).toBe("intro [redacted]");
+    expect(secrets().redactOpenTail(`intro ${SECRET} done!`)).toBe("intro [redacted] done!");
+    expect(secrets().redactOpenTail("intro unrelated text!")).toBe("intro unrelated text!");
     expect(new SentSecrets().redactOpenTail(`intro ${SECRET.slice(0, 20)}`)).toBe(`intro ${SECRET.slice(0, 20)}`);
   });
 });

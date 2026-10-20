@@ -380,7 +380,7 @@ function classifyApiFailure(
   const { provider, api, scopes } = context;
   const error = asRecord(asRecord(payload)["error"]);
   const message =
-    typeof error["message"] === "string" ? redactBeforeCut(ctx, error["message"].trim()).slice(0, 500) : "";
+    typeof error["message"] === "string" ? redactBeforeCut(ctx, error["message"]).trim().slice(0, 500) : "";
   const detail = message ? `${provider}: ${message}` : `${provider} returned HTTP ${status}.`;
   const reasons = reasonsOf(error);
   const precondition = PRECONDITION_REASONS.some((reason) => reasons.has(reason));

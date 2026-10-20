@@ -1292,9 +1292,16 @@ header lines are also withheld.
 
 Text Connecta or a maintained provider shortens before returning it, such as
 a long error message, a capped field, or one page of a long text, is redacted
-whole first, so a cut never leaves part of a sent value behind. Text read only
-up to a bound also loses a tail that begins a sent value the read stopped
-inside.
+whole before any trimming, whitespace normalization, extraction, or cut, so
+derived titles, previews, summaries, and raw branches share the same protection.
+An extraction whose source changed under redaction returns `[redacted]`.
+Text read only up to a bound also loses a tail that begins a sent value the
+read stopped inside. Complete matches and unfinished tails are found against
+the original text and replaced together; even a one-unit prefix is withheld.
+This can conservatively suppress a legitimate tail that shares a secret's
+prefix. Text paging that counts redacted units binds its cursor to that
+representation and refuses continuation if a changed request secret set
+changes it, even when the vendor revision is unchanged.
 
 Submitted values under JSON Schema `writeOnly: true` join this memory-only
 request set, including nested objects, arrays, and local references. Strings

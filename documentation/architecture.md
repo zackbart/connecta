@@ -837,7 +837,14 @@ private arguments included, before the cut (`redactBeforeCut`, and
 `clampText` in the Workspace products): a cut through an echo leaves a fragment
 that no registered form matches. Text read only up to a bound, or that a vendor
 stopped listing, also loses a tail that begins a registered form
-(`redactBoundedRead`). Final
+(`redactBoundedRead`). Complete forms and open-tail prefixes are matched
+against the original text, their spans merged, and replacement happens once.
+There is no minimum open-tail length: even a one-unit shared prefix is
+conservatively withheld. Redaction also precedes normalization and extraction,
+and every derived copy and raw branch shares the protection. Text-offset
+cursors bind the redacted representation as well as the vendor revision;
+changed secret sets that change that representation refuse continuation.
+Final
 transports register sensitive headers and query values after assembling the
 request; custom API handlers use `ctx.fetch`. Values shorter than eight
 characters do not enter the matcher, including Basic usernames, passwords

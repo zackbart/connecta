@@ -370,6 +370,10 @@ function paragraphText(paragraph: JsonRecord, state: RenderState): string {
     if (last && last.url === piece.url) last.text += piece.text;
     else pieces.push(piece);
   }
+  for (const piece of pieces) {
+    piece.text = redactBeforeCut(state.ctx, piece.text, "leaf");
+    if (piece.url) piece.url = redactBeforeCut(state.ctx, piece.url, "leaf");
+  }
   const lastPiece = pieces[pieces.length - 1];
   if (lastPiece) lastPiece.text = lastPiece.text.replace(/\n$/, "");
   return pieces
@@ -385,9 +389,7 @@ function safeCut(value: string, max: number): number {
 }
 
 function preview(ctx: ConnectorContext, value: string): string {
-  const whole = value.replace(/\s+/g, " ").trim();
-  if (whole.length <= PREVIEW_CHARS) return whole;
-  const flat = redactBeforeCut(ctx, whole, "leaf");
+  const flat = redactBeforeCut(ctx, value, "leaf").replace(/\s+/g, " ").trim();
   return flat.length > PREVIEW_CHARS ? `${flat.slice(0, safeCut(flat, PREVIEW_CHARS))}…` : flat;
 }
 

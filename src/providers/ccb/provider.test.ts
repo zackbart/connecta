@@ -9,6 +9,7 @@ import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { memoryStorage } from "../../storage/memory.js";
+import { requestSentSecrets } from "../../sent-secrets.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide, ToolDef } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { echoForms, expectNoFragment, straddling } from "../../../test/helpers/secret-echoes.js";
@@ -504,6 +505,24 @@ describe("ccb() typed failures (H11)", () => {
     fake.route(on("GET", "/groups/5", () => response));
     return failure(call("get_group", { groupId: 5 }));
   }
+
+  it("INV-5: error normalization cannot trim a private value before redaction", async () => {
+    const value = `   ${"private-error-with-whitespace/".repeat(30)}`;
+    const { fake, connector, ctx } = await connected();
+    const context = ctx();
+    context.requestScope = {};
+    requestSentSecrets(context).arguments(
+      { private: value },
+      {
+        type: "object",
+        properties: { private: { type: "string", writeOnly: true } },
+      },
+    );
+    fake.route(on("GET", "/groups/5", () => json({ message: value }, {}, 400)));
+    const failed = await failure(Promise.resolve(connector.callTool("get_group", { groupId: 5 }, context)));
+    expect(failed.message).toContain("[redacted]");
+    expect(failed.message).not.toContain("private-error-with-whitespace");
+  });
 
   it("maps a 403 to a non-retryable gap that re-authorizing cannot fix", async () => {
     const failed = await failing(json({ message: "Insufficient scope" }, {}, 403));

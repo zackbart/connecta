@@ -457,15 +457,18 @@ function decodeCursor(
 }
 
 /**
- * The deck state a cursor binds to: the revision when Slides gives one, which
- * it does to anyone who may edit. A viewer gets none, so a cursor binds to a
- * SHA-256 of exactly what its paging depends on instead — content, never a
- * length or a count standing in for it.
+ * List cursors can bind to the revision. Text offsets also bind to a SHA-256
+ * of the redacted representation, even with a revision: a different request's
+ * secret set can change that text without changing the deck. Viewers without
+ * a revision always bind to the content their paging depends on.
  */
-async function stateOf(revisionId: unknown, fingerprint: () => unknown): Promise<string> {
-  if (typeof revisionId === "string" && revisionId !== "") return `r:${revisionId}`;
+async function stateOf(revisionId: unknown, fingerprint: () => unknown, bindRepresentation = false): Promise<string> {
+  if (!bindRepresentation && typeof revisionId === "string" && revisionId !== "") return `r:${revisionId}`;
   const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(fingerprint()))),
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(JSON.stringify([revisionId ?? null, fingerprint()])),
+    ),
   );
   return `f:${Array.from(digest.subarray(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
@@ -483,21 +486,21 @@ function assertUnchanged(cursor: Cursor | undefined, state: string, what: string
 // --- Reading elements ---------------------------------------------------------------
 
 /** A shape's or cell's text: runs and auto text in order, soft breaks as newlines. */
-function textOf(content: unknown): string {
+function textOf(ctx: ConnectorContext, content: unknown): string {
   let out = "";
   for (const element of asArray(asRecord(content)["textElements"]).map(asRecord)) {
     const run = asRecord(element["textRun"])["content"] ?? asRecord(element["autoText"])["content"];
     if (typeof run === "string") out += run;
   }
-  return out.replaceAll("\u000b", "\n").replace(/\s+$/, "");
+  return redactBeforeCut(ctx, out, "leaf").replaceAll("\u000b", "\n").replace(/\s+$/, "");
 }
 
 /** A table as tab-separated cells, one row per line. */
-function tableText(table: JsonRecord): string {
+function tableText(ctx: ConnectorContext, table: JsonRecord): string {
   return asArray(table["tableRows"])
     .map((row) =>
       asArray(asRecord(row)["tableCells"])
-        .map((cell) => textOf(asRecord(cell)["text"]).replace(/[\t\n]+/g, " "))
+        .map((cell) => textOf(ctx, asRecord(cell)["text"]).replace(/[\t\n]+/g, " "))
         .join("\t")
         .replace(/\t+$/, ""),
     )
@@ -560,12 +563,19 @@ function kindOf(element: JsonRecord): ElementKind {
   return "other";
 }
 
-function collect(elements: unknown, parent: Matrix, groupId: string | undefined, depth: number, out: Leaf[]): void {
+function collect(
+  ctx: ConnectorContext,
+  elements: unknown,
+  parent: Matrix,
+  groupId: string | undefined,
+  depth: number,
+  out: Leaf[],
+): void {
   for (const element of asArray(elements).map(asRecord)) {
     const matrix = compose(parent, matrixOf(element["transform"]));
     const group = asRecord(element["elementGroup"]);
     if (Array.isArray(group["children"]) && depth < 20) {
-      collect(group["children"], matrix, text(element["objectId"]), depth + 1, out);
+      collect(ctx, group["children"], matrix, text(element["objectId"]), depth + 1, out);
       continue;
     }
     const kind = kindOf(element);
@@ -575,9 +585,9 @@ function collect(elements: unknown, parent: Matrix, groupId: string | undefined,
       kind,
       text:
         kind === "shape"
-          ? textOf(asRecord(element["shape"])["text"])
+          ? textOf(ctx, asRecord(element["shape"])["text"])
           : kind === "table"
-            ? tableText(asRecord(element["table"]))
+            ? tableText(ctx, asRecord(element["table"]))
             : kind === "wordArt"
               ? (text(asRecord(element["wordArt"])["renderedText"]) ?? "")
               : "",
@@ -594,7 +604,7 @@ function collect(elements: unknown, parent: Matrix, groupId: string | undefined,
  */
 function readingOrder(ctx: ConnectorContext, elements: unknown): Leaf[] {
   const out: Leaf[] = [];
-  collect(elements, IDENTITY, undefined, 0, out);
+  collect(ctx, elements, IDENTITY, undefined, 0, out);
   // Text is cut, and continued from an offset, only with every secret the
   // request sent replaced: a cut through an echo leaves a fragment.
   for (const leaf of out) leaf.text = redactBeforeCut(ctx, leaf.text, "leaf");
@@ -668,7 +678,7 @@ async function projectSlide(
   const properties = asRecord(slide["slideProperties"]);
   const leaves = readingOrder(ctx, slide["pageElements"]);
   let state: Promise<string> | undefined;
-  const slideState = () => (state ??= stateOf(deck.revisionId, () => leafFingerprint(leaves)));
+  const slideState = () => (state ??= stateOf(deck.revisionId, () => leafFingerprint(leaves), true));
   let budget = maxChars;
   let truncated = false;
   let omitted = 0;
@@ -736,7 +746,7 @@ async function projectSlide(
         k: "page",
         p: deck.presentationId,
         g: notesPageId ?? "",
-        s: await stateOf(deck.revisionId, () => leafFingerprint(notesLeaves)),
+        s: await stateOf(deck.revisionId, () => leafFingerprint(notesLeaves), true),
         i: notesAt,
         o: kept.length,
       });
@@ -2173,9 +2183,13 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
-        const items = raw ? rawItems(page) : [];
+        const items = raw ? rawItems(redactBeforeCut(ctx, page)) : [];
         const leaves = raw ? [] : readingOrder(ctx, page["pageElements"]);
-        const state = await stateOf(page["revisionId"], () => (raw ? rawFingerprint(items) : leafFingerprint(leaves)));
+        const state = await stateOf(
+          page["revisionId"],
+          () => (raw ? rawFingerprint(items) : leafFingerprint(leaves)),
+          true,
+        );
         assertUnchanged(cursor, state, "page");
         const header = compact({
           presentationId,
@@ -2369,7 +2383,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             { retryable: false },
           );
         }
-        const comments = asArray(source["comments"]);
+        const comments = redactBeforeCut(ctx, asArray(source["comments"]));
         const pages = pageObjectId === undefined ? commentPages(source) : [source];
         const state = await commentsState(source["revisionId"], comments, pages);
         assertUnchanged(cursor, state, pageObjectId === undefined ? "deck's comments" : "page's comments");

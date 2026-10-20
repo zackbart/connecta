@@ -16,7 +16,10 @@ function base64(value: string): string {
 export function echoForms(value: string): [name: string, form: string][] {
   const percent = encodeURIComponent(value);
   const encoded = base64(value);
-  const escaped = [...value].map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+  const escaped = value
+    .split("")
+    .map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .join("");
   const forms: [string, string][] = [
     ["raw", value],
     ["percent (upper hex)", percent],

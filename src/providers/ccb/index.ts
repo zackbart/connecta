@@ -322,7 +322,7 @@ function endpointPartition(toolName: string, raw: unknown): string {
 // ---------------------------------------------------------------------------
 
 function errorDetail(payload: unknown, status: number, ctx: ConnectorContext): string {
-  const root = asRecord(payload);
+  const root = asRecord(redactBeforeCut(ctx, payload));
   const parts: string[] = [];
   for (const key of ["message", "error_description", "error"]) {
     const value = root[key];

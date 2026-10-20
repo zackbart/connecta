@@ -283,7 +283,7 @@ async function callBreeze(
   return await send(request, ctx, async (response) => {
     const text = await response.text();
     if (!response.ok) {
-      throw breezeFailure(response.status, response.headers, text);
+      throw breezeFailure(response.status, response.headers, redactBeforeCut(ctx, text));
     }
     if (!text.trim()) return null;
     let payload: unknown;
@@ -492,13 +492,19 @@ function projectEvent(value: unknown): JsonRecord {
   });
 }
 
-function projectContribution(value: unknown): JsonRecord {
+function projectContribution(ctx: ConnectorContext, value: unknown): JsonRecord {
   const payment = asRecord(value);
   const paidOn = payment["paid_on"];
+  const safePaidOn = typeof paidOn === "string" ? redactBeforeCut(ctx, paidOn, "leaf") : undefined;
   return compact({
     id: idString(payment["id"]),
-    // The day of a timestamp; anything else stays whole, so redaction sees all of it.
-    paidOn: typeof paidOn === "string" ? (/^\d{4}-\d{2}-\d{2}/.exec(paidOn)?.[0] ?? paidOn) : undefined,
+    // Extract only from unchanged public text; a redacted source yields no extracted fragment.
+    paidOn:
+      safePaidOn === undefined
+        ? undefined
+        : safePaidOn !== paidOn
+          ? "[redacted]"
+          : (/^\d{4}-\d{2}-\d{2}/.exec(safePaidOn)?.[0] ?? safePaidOn),
     amount: idString(payment["amount"]),
     method: payment["method"],
     methodId: idString(payment["method_id"]),
@@ -1454,9 +1460,12 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           ),
         );
         return {
-          contributions: args["raw"] === true ? rows : rows.map(projectContribution),
+          contributions: redactBeforeCut(
+            ctx,
+            args["raw"] === true ? rows : rows.map((row) => projectContribution(ctx, row)),
+          ),
           count: rows.length,
-          totalAmount: totalAmount(rows.map((row) => asRecord(row)["amount"])),
+          totalAmount: totalAmount(rows.map((row) => redactBeforeCut(ctx, asRecord(row)["amount"], "leaf"))),
         };
       },
     },

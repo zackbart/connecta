@@ -21,7 +21,7 @@ import {
 import { carriesWithheldLink, valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { NOTION_FILE_HOSTS, NOTION_VALUE_SAFETY, sanitizeLinks } from "./value-safety.js";
-import { redactBoundedRead } from "../../sent-secrets.js";
+import { redactBeforeCut, redactBoundedRead } from "../../sent-secrets.js";
 
 /** Notion's REST origin. Every request this connector sends goes to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -373,7 +373,7 @@ const VENDOR: RestVendor = {
   // Not an envelope to unwrap: page Markdown carries pre-signed file links
   // inside its text, where redaction's URL rule cannot reach. Every success
   // response passes here, named tools and paging included.
-  result: sanitizeLinks,
+  result: (body, _call, _response, ctx) => sanitizeLinks(redactBeforeCut(ctx, protectTruncatedText(ctx, body))),
   admit: refuseWithheldLinks,
   page,
   upload:
@@ -420,6 +420,33 @@ const id = (value: unknown): string => encodeURIComponent(String(value));
 function plainText(value: unknown): string {
   if (!Array.isArray(value)) return "";
   return value.map((run: any) => (typeof run?.plain_text === "string" ? run.plain_text : "")).join("");
+}
+
+/** Sanitize the fresh parsed response before any raw branch or derived title can copy it.
+ * A truncated rich-text value may span runs and has two copies of each run's text. When
+ * unsafe, replace the array with one safe run so neither representation retains a fragment. */
+function protectTruncatedText(ctx: ConnectorContext, body: unknown): unknown {
+  const pending = [body];
+  while (pending.length) {
+    const value = pending.pop();
+    if (!value || typeof value !== "object") continue;
+    if (isRecord(value) && value.has_more === true && (value.type === "title" || value.type === "rich_text")) {
+      const runs = value[value.type];
+      if (Array.isArray(runs)) {
+        const joined = runs.map((run) => run?.plain_text ?? run?.text?.content ?? "").join("");
+        const authored = runs.map((run) => run?.text?.content ?? run?.plain_text ?? "").join("");
+        const safe = redactBoundedRead(ctx, joined);
+        const safeAuthored = redactBoundedRead(ctx, authored);
+        if (safe !== joined || safeAuthored !== authored) {
+          // The two copies need not agree; retain only the checked public text.
+          const shown = safeAuthored !== authored && safe === joined ? "[redacted]" : safe;
+          value[value.type] = [{ type: "text", plain_text: shown, text: { content: shown } }];
+        }
+      }
+    }
+    for (const child of Object.values(value)) pending.push(child);
+  }
+  return body;
 }
 
 /**
@@ -544,19 +571,14 @@ interface ProjectedProperties {
   truncated: TruncatedProperty[];
 }
 
-function projectProperties(ctx: ConnectorContext, source: unknown, select: string[] | undefined): ProjectedProperties {
+function projectProperties(source: unknown, select: string[] | undefined): ProjectedProperties {
   const properties: Record<string, unknown> = {};
   const truncated: TruncatedProperty[] = [];
   if (!source || typeof source !== "object") return { properties, truncated };
   for (const [name, value] of Object.entries(source as Record<string, unknown>)) {
     if (select && !select.includes(name)) continue;
     const projected = projectPropertyValue(value);
-    // Notion stopped listing this property's items, so its joined text can
-    // stop inside a secret the request sent.
-    properties[name] =
-      (value as any)?.has_more === true && typeof projected === "string"
-        ? redactBoundedRead(ctx, projected)
-        : projected;
+    properties[name] = projected;
     if ((value as any)?.has_more === true) {
       truncated.push({ name, id: typeof (value as any)?.id === "string" ? (value as any).id : null });
     }
@@ -594,8 +616,8 @@ function iconRef(icon: any): string | null {
   return icon.external?.url ?? icon.file?.url ?? null;
 }
 
-function projectPage(ctx: ConnectorContext, page: any, select?: string[]): Record<string, unknown> {
-  const { properties, truncated } = projectProperties(ctx, page?.properties, select);
+function projectPage(page: any, select?: string[]): Record<string, unknown> {
+  const { properties, truncated } = projectProperties(page?.properties, select);
   return {
     id: page?.id ?? null,
     object: "page",
@@ -967,7 +989,7 @@ function namedTools(defaultPageSize: number): ApiTool[] {
           query: propertyQuery(args.properties, MAX_PAGE_PROPERTY_FILTERS),
         });
         if (args.raw) return payload;
-        return projectPage(ctx, payload, args.properties);
+        return projectPage(payload, args.properties);
       },
     },
     {
@@ -1166,7 +1188,7 @@ function namedTools(defaultPageSize: number): ApiTool[] {
           body,
         });
         if (args.raw) return payload;
-        const rows = mappedListEnvelope(payload, (row: any) => projectPage(ctx, row, args.properties));
+        const rows = mappedListEnvelope(payload, (row: any) => projectPage(row, args.properties));
         return incomplete(payload) ? { ...rows, incomplete: true } : rows;
       },
     },
@@ -1244,7 +1266,7 @@ function namedTools(defaultPageSize: number): ApiTool[] {
         if (args.markdown !== undefined) body["markdown"] = args.markdown;
         if (args.children !== undefined) body["children"] = args.children;
         if (args.icon !== undefined) body["icon"] = { type: "emoji", emoji: args.icon };
-        return projectPage(ctx, await notion(ctx, "POST", "/v1/pages", { body }));
+        return projectPage(await notion(ctx, "POST", "/v1/pages", { body }));
       },
     },
     {

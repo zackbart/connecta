@@ -505,7 +505,7 @@ class Matcher {
   }
 
   /** The source start of the earliest suffix of a view that a form begins with but the view
-   * ends inside: at least MIN_SECRET_LENGTH units of an indexed form, or a long form whose
+   * ends inside: any nonempty prefix of an indexed form, or a long form whose
    * indexed prefix matched and whose length runs past the view. -1 when there is none. */
   openAt(units: Units): number {
     let state = 0;
@@ -529,7 +529,7 @@ class Matcher {
       }
     }
     const depth = this.depth[state]!;
-    let open = depth >= MIN_SECRET_LENGTH ? this.starts[(count - depth) & mask]! : -1;
+    let open = depth > 0 ? this.starts[(count - depth) & mask]! : -1;
     for (let index = 0; index < longs.length; index += 2) {
       if (longs[index + 1]! > count || longs.length >= 2 * MAX_PENDING_RUNS) {
         open = open < 0 ? longs[index]! : Math.min(open, longs[index]!);
@@ -731,17 +731,20 @@ export class SentSecrets {
     return this.walk(value, this.scan(mode !== "envelope"), prose, 0, 0) as T;
   }
 
-  /** Text that stops where a bounded read stopped, its rest never read. Whole forms are
-   * replaced by `redact`; this replaces a tail that begins a form the text ends inside, in
-   * any view, since no whole-form match can find a form whose rest never arrived. A trailing
-   * escape the read cut short is set aside while the decoded views are matched. */
+  /** Complete and unfinished forms in bounded text, all found against its original bytes.
+   * Replacing a complete match first could hide a longer open match containing it. Even a
+   * one-unit shared prefix is withheld: a read boundary gives no evidence it is public text.
+   * A trailing escape the read cut short is set aside for the decoded views and withheld. */
   redactOpenTail(text: string): string {
     if (this.idle()) return text;
     const matcher = this.matcher();
     // A form too large to register or index could begin anywhere in what was read.
     if (this.unmatched < Infinity || matcher.unindexed < Infinity) return REDACTED;
+    const found = this.find(text, this.scan(true), true, 0);
+    if (!found || found.exact) return REDACTED;
     let open = matcher.openAt(new Source(text));
     const whole = text.replace(/\\+u?[0-9a-fA-F]{0,3}$/, "");
+    if (whole.length < text.length) open = open < 0 ? whole.length : Math.min(open, whole.length);
     for (let layer = 1, more = whole.includes("\\"); more && layer <= MAX_DECODE_LEVELS; layer++) {
       let units: Units = new Source(whole);
       for (let depth = 0; depth < layer; depth++) units = new Unescaped(units);
@@ -749,7 +752,8 @@ export class SentSecrets {
       if (at >= 0) open = open < 0 ? at : Math.min(open, at);
       more = units instanceof Unescaped && units.decoded > 0 && units.slashes > 0;
     }
-    return open < 0 ? text : `${text.slice(0, open)}${REDACTED}`;
+    if (open >= 0) found.spans.push(open, text.length);
+    return found.spans.length ? replace(text, found.spans) : text;
   }
 
   /** Credentials alone: later calls keep the private arguments they submit, and cached
@@ -1094,8 +1098,7 @@ export function redactBeforeCut<T>(ctx: ConnectorContext, value: T, mode: "paylo
 /** Downstream text read only up to a bound, as a field an agent reads: whole forms are
  * replaced, and so is a tail that begins one the read stopped inside. */
 export function redactBoundedRead(ctx: ConnectorContext, text: string): string {
-  const secrets = requestSentSecrets(ctx);
-  return secrets.redactOpenTail(secrets.redact(text, "leaf"));
+  return requestSentSecrets(ctx).redactOpenTail(text);
 }
 
 /** Sanitize listing facts before any cache or consumer receives them. A name
