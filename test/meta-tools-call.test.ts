@@ -514,6 +514,8 @@ describe("call_tool", () => {
 
   it("passes a deadline signal to API handlers and returns a timeout error", async () => {
     let sawSignal = false;
+    let started!: () => void;
+    const handling = new Promise<void>((resolve) => (started = resolve));
     const connector = api("slow", {
       tools: [
         {
@@ -522,6 +524,7 @@ describe("call_tool", () => {
           annotations: { readOnlyHint: true },
           async handler(_args, ctx) {
             sawSignal = Boolean(ctx.signal);
+            started();
             await new Promise<void>((resolve) => {
               ctx.signal?.addEventListener("abort", () => resolve(), {
                 once: true,
@@ -532,13 +535,23 @@ describe("call_tool", () => {
         },
       ],
     });
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+    // The deadline also covers catalog resolution. Expire it only once the
+    // handler is waiting, so a slow host cannot end the call before dispatch.
+    vi.useFakeTimers();
+    let output: Awaited<ReturnType<ReturnType<typeof createMetaTools>["callTool"]>>;
+    try {
+      const calling = createMetaTools(makeRegistry([connector]), BASE).callTool({
         address: "slow.wait",
         resultMode: "value",
         timeoutMs: 10,
-      }),
-    ) as {
+      });
+      await handling;
+      await vi.advanceTimersByTimeAsync(10);
+      output = await calling;
+    } finally {
+      vi.useRealTimers();
+    }
+    const parsed = textOf(output) as {
       ok: boolean;
       error: { message: string; retryable: boolean };
       attempts: number;
@@ -580,11 +593,12 @@ describe("call_tool", () => {
     }).callTool(call);
     expect(seen[1]).toEqual({ timeoutMs: 5_000, hasSignal: true });
 
-    // …and an explicit per-call timeoutMs still wins over it.
+    // …and an explicit per-call timeoutMs still wins over it. It must outlast
+    // catalog resolution on a slow host, which runs inside the same deadline.
     await createMetaTools(makeRegistry([connector]), BASE, {
       defaultToolTimeoutMs: 5_000,
-    }).callTool({ ...call, timeoutMs: 25 });
-    expect(seen[2]).toEqual({ timeoutMs: 25, hasSignal: true });
+    }).callTool({ ...call, timeoutMs: 2_500 });
+    expect(seen[2]).toEqual({ timeoutMs: 2_500, hasSignal: true });
   });
 
   it("a configured default deadline aborts and times out a hanging call", async () => {
