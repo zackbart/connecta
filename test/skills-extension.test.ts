@@ -445,9 +445,9 @@ it("INV-8: stops catalog intake at aggregate bounds before cloning or fetching l
 });
 
 it("INV-7: cancels bounded skill work and closes its owned connector scope", async () => {
-  // Both deadlines start before local manifests are hashed, so a real 5 ms
-  // timer can expire before the downstream scope opens. Expire each one only
-  // after the downstream listing has started.
+  // The guest utility deadline starts before local manifests are hashed, so a
+  // real 5 ms timer can expire before the downstream scope opens. Expire each
+  // deadline only after the downstream listing has started.
   vi.useFakeTimers();
   try {
     let signal: AbortSignal | undefined;
