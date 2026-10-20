@@ -103,7 +103,14 @@ describe("deployment shapes", () => {
     ]) {
       expect(code).toContain(binding);
     }
-    expect(code).toContain('flags: ["nodejs_compat", "enable_request_signal"]');
+    // Production and local development keep the same runtime opt-ins.
+    const flags = ["nodejs_compat", "enable_request_signal", "unhandled_rejection_after_microtask_checkpoint"];
+    expect(code).toContain('date: "2025-01-01"');
+    for (const flag of flags) {
+      expect(code.match(/flags:\s*\[([^\]]*)\]/)?.[1]).toContain(`"${flag}"`);
+      expect(readWorker("wrangler.jsonc").match(/"compatibility_flags":\s*\[([^\]]*)\]/)?.[1]).toContain(`"${flag}"`);
+    }
+    expect(readWorker("wrangler.jsonc")).toContain('"compatibility_date": "2025-01-01"');
     // Access is attached to the Worker itself, and the bypass covers only /agent/*.
     expect(code).toMatch(/Cloudflare\.Worker\("Connecta", \{[\s\S]*\n\s+access,\n/);
     expect(code).toContain("/agent/*`");

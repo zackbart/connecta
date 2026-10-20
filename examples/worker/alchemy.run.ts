@@ -65,7 +65,10 @@ export default Alchemy.Stack(
       name: "connecta",
       main: "./src/index.ts",
       // Keep enable_request_signal: a client disconnect aborts its request.
-      compatibility: { date: "2025-01-01", flags: ["nodejs_compat", "enable_request_signal"] },
+      compatibility: {
+        date: "2025-01-01",
+        flags: ["nodejs_compat", "enable_request_signal", "unhandled_rejection_after_microtask_checkpoint"],
+      },
       access,
       env: {
         CONNECTA_DB: database,
