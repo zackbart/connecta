@@ -121,12 +121,15 @@ deployments with one Organization each. This stops Clerk applications from
 multiplying on the account.
 
 - **Admission.** `clerkAuth({ ..., organizationId })` admits only members of
-  that org. Membership is always confirmed through the Backend API, cached for
-  at most about 60 s per user and org, and a failed lookup refuses. Clerk OAuth
-  tokens can live for a day, so a token's `org_id` claim (granted through the
-  `user:org:read` scope, which connecta advertises) never admits on its own; it
-  only refuses early when it names a different org. Issuer, subject and
-  audience are verified before any claim is read.
+  that org. The membership lookup is the only org rule, for every token type
+  and session. It goes through the Backend API, is cached for at most about
+  60 s per user and org (30 s for a non-member), and a failed lookup refuses.
+  Org claims are not read, and connecta advertises no org scope. Clerk OAuth
+  tokens can live for a day, so a claim could not admit on its own, and it
+  needs no early refusal either. A member's token is bound to this
+  deployment's audience whichever org they picked at consent, and the lookup
+  refuses a non-member. Issuer, subject and audience are verified before the
+  lookup.
 - **Resource-bound tokens are mandatory in org mode.** `allowedOAuthClientIds`
   is refused, because a shared instance makes the deployment-bound audience the
   only barrier between deployments.

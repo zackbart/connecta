@@ -11,12 +11,11 @@ interface BrowserAuth {
   frontendApiUrl?: string;
   signInUrl?: string;
   signUpUrl?: string;
-  organizationId?: string;
 }
 
 interface BrowserClerkSession {
   id?: string;
-  getToken(options?: { organizationId?: string }): Promise<string | null>;
+  getToken(): Promise<string | null>;
 }
 
 interface BrowserClerk {

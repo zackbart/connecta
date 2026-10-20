@@ -1659,30 +1659,27 @@ clerkAuth({ publishableKey, secretKey,
 
 Admission in organization mode:
 
-- Every admitted Clerk user is a member of that Organization. Connecta asks
-  Clerk's Backend API,
+- Membership is the only organization rule. Every admitted Clerk user is a
+  member of that Organization. Connecta asks Clerk's Backend API,
   `GET /v1/organizations/{organization_id}/memberships?user_id={user_id}`,
   for MCP OAuth tokens (JWT and opaque) and for operator sessions. It caches
   each answer per Organization and user: a member for 60 seconds, a non-member
-  for 30. A token or session claim never replaces the lookup, so removing a
-  member takes effect within 60 seconds even while their day-long access token
-  remains valid.
-- A lookup that fails, times out after ten seconds, or is cancelled by the
-  caller refuses the request with `403`. Connecta does not cache it, so the
-  next request asks Clerk again.
-- Connecta checks the token's audience, issuer, and subject before it reads an
-  organization claim. The issuer must be the Frontend API origin encoded in
-  `publishableKey`. An opaque token's verification response comes from the
-  instance's Backend API and is matched by subject instead.
-- A verified OAuth token whose `org_id` names another Organization gets `401`
-  with `error="invalid_token"`, before any lookup. The person chose another
-  Organization at consent; reconnecting the host lets them choose this one.
-- A session whose active Organization is another one gets `401` too. Clerk
-  session tokens carry it in `o.id`, or `org_id` in version 1 tokens. Operator
-  pages request session tokens for the deployment's Organization with ClerkJS
-  `getToken({ organizationId })`, which leaves the active Organization
-  unchanged. The `/connect` sign-in page makes the deployment's Organization
-  active before it retries the link, even when `signInUrl` is set.
+  for 30. Removing a member takes effect within 60 seconds even while their
+  day-long access token remains valid.
+- Organization claims are never read. A token's `org_id` and a session's
+  active Organization neither admit nor refuse. A member's token is bound to
+  this deployment's URL whichever Organization they chose in Clerk, and a
+  non-member gets `403` from the lookup.
+- A lookup that fails, answers with an error status or an unreadable or
+  oversized body, times out after ten seconds, or is cancelled by the caller
+  refuses the request with `403`. Connecta ends the Backend API request on
+  every outcome and does not cache a failure, so the next request asks Clerk
+  again.
+- Connecta checks the token's audience, issuer, and subject before the lookup.
+  The issuer must be the Frontend API origin encoded in `publishableKey`, and
+  the subject must be the user the lookup names. An opaque token's
+  verification response comes from the instance's Backend API and is matched by
+  subject instead. A mismatch gets `401`.
 - Organization roles and permissions grant nothing. `maintainers` and pool
   `members` still list Clerk user ids in code. A member of the Organization in
   neither list gets `404` at `/mcp` and at every `/mcp/<pool>`.
@@ -1692,33 +1689,22 @@ Admission in organization mode:
   throws at construction; omit it or pass `[]`. Every deployment on a shared
   instance gets tokens from one issuer, so the resource audience is what keeps
   one deployment's token out of another.
-- The default advertised scopes become `openid profile email user:org:read`.
-  With `user:org:read`, Clerk's consent screen shows an Organization selector
-  and puts the chosen Organization in the token's `org_id`. An explicit
-  `scopes` list is advertised as written. Without `user:org:read`, tokens carry
-  no `org_id`; admission is unchanged because membership is always looked up.
+- Advertised scopes are unchanged. Organization mode needs no Clerk
+  organization scope, operator page, or sign-in page setting.
 
 Set up a shared instance:
 
 1. Enable Organizations on the Clerk instance. Create one Organization per
    deployment. Add each person who signs in to that deployment as a member;
    any role works.
-2. Enable the `user:org:read` scope in the instance's OAuth application
-   settings in the Clerk Dashboard. Keep the consent screen enabled. Without
-   consent, Clerk fills `org_id` from the person's active or last active
-   Organization, and connecta refuses it when that is another deployment's.
-3. Enable resource audiences as described in
+2. Enable resource audiences as described in
    [Enable resource audiences in Clerk](#enable-resource-audiences-in-clerk).
    Each deployment has its own public URL, so its tokens name only it.
-4. Set `organizationId` to the deployment's Organization id. List
+3. Set `organizationId` to the deployment's Organization id. List
    `maintainers` and pool `members` by Clerk user id as usual.
-5. Restart or redeploy. Verify that a member is admitted at `/mcp` and on the
+4. Restart or redeploy. Verify that a member is admitted at `/mcp` and on the
    operator pages, a signed-in non-member gets `403`, and a token issued for
-   another Organization gets `401`.
-
-If a host's authorization fails with `invalid_scope`, Clerk is not offering
-`user:org:read` to that client. Pass `scopes: ["openid", "profile", "email"]`;
-admission does not depend on the scope.
+   another deployment's URL gets `401`.
 
 Isolation tradeoff: the secret key is instance-wide. It reaches every
 Organization, user, and OAuth application on the instance, so whoever reads it
@@ -1728,10 +1714,9 @@ administration. When a deployment needs its own keys, users, or instance
 settings, give it its own Clerk instance and omit `organizationId`; that shape
 remains fully supported.
 
-Organization denials log the fixed codes `organization_mismatch`,
-`organization_membership_denied`, `organization_lookup_failed`, and
-`token_identity_mismatch`. They carry no user ids, Organization ids, or
-Backend API response text.
+Organization denials log the fixed codes `organization_membership_denied`,
+`organization_lookup_failed`, and `token_identity_mismatch`. They carry no user
+ids, Organization ids, or Backend API response text.
 
 ### Session and diagnostic boundaries
 

@@ -18,7 +18,6 @@ import { clerkAuth, type ClerkAuthOptions } from "../src/auth/clerk.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { failureRecord } from "../src/operator-record.js";
-import { renderUiHtml } from "../src/ui.js";
 import { createTestConnecta } from "./helpers.js";
 
 // One Clerk instance, one Organization per deployment (documentation/auth.md).
@@ -55,14 +54,13 @@ function oauth(token: string, userId = ALICE) {
   });
 }
 
-function session(claims: { orgId?: string; iss?: string; sub?: string } = {}) {
+function session(claims: { iss?: string; sub?: string } = {}) {
   mocks.authenticateRequest.mockResolvedValue({
     headers: new Headers(),
     toAuth: () => ({
       isAuthenticated: true,
       tokenType: "session_token",
       userId: ALICE,
-      orgId: claims.orgId,
       sessionClaims: { azp: BASE, iss: claims.iss ?? FRONTEND, sub: claims.sub ?? ALICE },
     }),
   });
@@ -85,7 +83,6 @@ function membershipRow(organizationId: string, userId: string, role = "org:membe
 
 /** Clerk's membership answers, as `<organization>/<user>`. Tests edit it. */
 const members = new Set<string>();
-let opaqueClaims: Record<string, unknown> = {};
 
 function backendApi(input: RequestInfo | URL): Response {
   const url = new URL(String(input));
@@ -103,7 +100,6 @@ function backendApi(input: RequestInfo | URL): Response {
       expiration: null,
       created_at: 0,
       updated_at: 0,
-      ...opaqueClaims,
     });
   }
   const organizationId = /^\/v1\/organizations\/([^/]+)\/memberships$/.exec(url.pathname)?.[1];
@@ -134,6 +130,23 @@ function mcp(signal?: AbortSignal) {
   });
 }
 
+/** Headers now, then a body that never closes. `reading` resolves once a read waits on it. */
+function stalled(status: number, chunk: string) {
+  const cancelled = vi.fn();
+  let reading!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    reading = resolve;
+  });
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (chunk) controller.enqueue(new TextEncoder().encode(chunk));
+    },
+    pull: () => reading(),
+    cancel: cancelled,
+  });
+  return { response: new Response(body, { status }), cancelled, waiting };
+}
+
 function operator() {
   return new Request(`${BASE}/ui/api/config`, { headers: { Authorization: "Bearer clerk-session-jwt" } });
 }
@@ -150,7 +163,6 @@ beforeEach(() => {
   mocks.fetch.mockReset();
   mocks.fetch.mockImplementation(async (input: RequestInfo | URL) => backendApi(input));
   members.clear();
-  opaqueClaims = {};
   vi.stubGlobal("fetch", mocks.fetch);
   warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -188,54 +200,32 @@ describe("clerkAuth organizationId construction", () => {
     expect(() => orgAuth()).not.toThrow();
   });
 
-  it("advertises user:org:read in protected-resource metadata and the challenge", async () => {
+  it("advertises the default scopes unchanged and asks for no organization scope", async () => {
     const auth = orgAuth();
     for (const path of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/support"]) {
       const metadata = await auth.handleMetadata!(new Request(`${BASE}${path}`), BASE);
-      expect(await metadata!.json()).toMatchObject({
-        scopes_supported: ["openid", "profile", "email", "user:org:read"],
-      });
+      expect(await metadata!.json()).toMatchObject({ scopes_supported: ["openid", "profile", "email"] });
     }
-    expect(auth.challenge!(new Request(`${BASE}/mcp`), BASE)).toContain('scope="openid profile email user:org:read"');
-    // An explicit list is advertised as written, and the default without an
-    // organization is unchanged.
-    const explicit = await orgAuth({ scopes: ["openid"] }).handleMetadata!(
-      new Request(`${BASE}/.well-known/oauth-protected-resource`),
-      BASE,
-    );
-    expect(await explicit!.json()).toMatchObject({ scopes_supported: ["openid"] });
-    const single = await clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }).handleMetadata!(
-      new Request(`${BASE}/.well-known/oauth-protected-resource`),
-      BASE,
-    );
-    expect(await single!.json()).toMatchObject({ scopes_supported: ["openid", "profile", "email"] });
+    expect(auth.challenge!(new Request(`${BASE}/mcp`), BASE)).toContain('scope="openid profile email"');
+    // Operator pages need no organization-aware session token.
+    expect(auth.uiAuth).not.toHaveProperty("organizationId");
   });
 
   it("INV-6: organization denial reasons pass the operator record allowlist", () => {
     for (const reason of [
       "token_identity_mismatch",
-      "organization_mismatch",
       "organization_membership_denied",
       "organization_lookup_failed",
     ] as const) {
       expect(failureRecord({ reason })).toEqual({ reason });
     }
   });
-
-  it("hands the organization to operator pages, gated before it reaches the page", () => {
-    const uiAuth = orgAuth().uiAuth;
-    expect(uiAuth).toMatchObject({ kind: "clerk", organizationId: ORG });
-    expect(renderUiHtml(uiAuth)).toContain(`"organizationId":"${ORG}"`);
-    const forged = renderUiHtml({ ...uiAuth!, organizationId: '"</script><script>alert(1)</script>' } as never);
-    expect(forged).not.toContain("organizationId");
-    expect(clerkAuth({ publishableKey, secretKey: "sk_test_fake" }).uiAuth).not.toHaveProperty("organizationId");
-  });
 });
 
 describe("clerkAuth organization membership on MCP OAuth tokens", () => {
-  it("INV-4: confirms membership with the Backend API even when the token names this organization", async () => {
+  it("INV-4: confirms membership with the Backend API for every token", async () => {
     members.add(`${ORG}/${ALICE}`);
-    oauth(jwt({ org_id: ORG }));
+    oauth(jwt());
     await expect(orgAuth().authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
     expect(lookups()).toHaveLength(1);
     const [input, init] = lookups()[0]! as [URL, RequestInit];
@@ -245,25 +235,20 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("admits a member whose token names no organization", async () => {
-    members.add(`${ORG}/${ALICE}`);
-    oauth(jwt());
-    await expect(orgAuth().authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
-    expect(lookups()).toHaveLength(1);
-  });
-
-  it.each([OTHER_ORG, "", 123, [ORG]])(
-    "INV-6: refuses a token whose org_id names another organization before any lookup: %j",
+  // A member's token is audience-bound to this deployment whichever
+  // organization they chose at consent, and a non-member is refused by the
+  // lookup, so the claim decides nothing.
+  it.each([ORG, OTHER_ORG, "", 123, [ORG], null])(
+    "INV-4: never reads a token's org_id; membership alone decides: %j",
     async (orgId) => {
-      members.add(`${ORG}/${ALICE}`);
       oauth(jwt({ org_id: orgId }));
-      const result = await orgAuth().authorize(mcp(), BASE);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.response.status).toBe(401);
-      expect(result.response.headers.get("WWW-Authenticate")).toContain('error="invalid_token"');
-      expect(lookups()).toHaveLength(0);
-      expect(denials(warn)).toEqual([{ reason: "organization_mismatch" }]);
+      const refused = await orgAuth().authorize(mcp(), BASE);
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) expect(refused.response.status).toBe(403);
+      expect(denials(warn)).toEqual([{ reason: "organization_membership_denied" }]);
+      members.add(`${ORG}/${ALICE}`);
+      await expect(orgAuth().authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
+      expect(lookups()).toHaveLength(2);
     },
   );
 
@@ -369,13 +354,13 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
     expect(lookups()).toHaveLength(3);
   });
 
-  it("INV-4: checks audience, issuer, and subject before reading the organization claim", async () => {
+  it("INV-4: checks audience, issuer, and subject before the membership lookup", async () => {
     members.add(`${ORG}/${ALICE}`);
     const cases: [Record<string, unknown>, string][] = [
-      [{ aud: "https://other.test/mcp", org_id: OTHER_ORG }, "oauth_binding_mismatch"],
-      [{ iss: "https://clerk.other.example", org_id: OTHER_ORG }, "token_identity_mismatch"],
+      [{ aud: "https://other.test/mcp" }, "oauth_binding_mismatch"],
+      [{ iss: "https://clerk.other.example" }, "token_identity_mismatch"],
       [{ iss: undefined }, "token_identity_mismatch"],
-      [{ sub: BOB, org_id: OTHER_ORG }, "token_identity_mismatch"],
+      [{ sub: BOB }, "token_identity_mismatch"],
     ];
     for (const [claims, reason] of cases) {
       warn.mockClear();
@@ -388,21 +373,14 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
     expect(lookups()).toHaveLength(0);
   });
 
-  it("reads org_id from opaque token verification and still confirms membership", async () => {
-    members.add(`${ORG}/${ALICE}`);
+  it("INV-4: confirms membership for opaque tokens", async () => {
     oauth("oat_verified");
-    opaqueClaims = { org_id: OTHER_ORG };
-    const mismatch = await orgAuth().authorize(mcp(), BASE);
-    expect(mismatch.ok).toBe(false);
-    if (!mismatch.ok) expect(mismatch.response.status).toBe(401);
-    expect(denials(warn)).toEqual([{ reason: "organization_mismatch" }]);
-    expect(lookups()).toHaveLength(0);
-
-    for (const claims of [{}, { org_id: ORG }, { org_id: null }]) {
-      opaqueClaims = claims;
-      await expect(orgAuth().authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
-    }
-    expect(lookups()).toHaveLength(3);
+    const refused = await orgAuth().authorize(mcp(), BASE);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.response.status).toBe(403);
+    members.add(`${ORG}/${ALICE}`);
+    await expect(orgAuth().authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
+    expect(lookups()).toHaveLength(2);
   });
 
   it("INV-7: cancels the membership lookup when the caller leaves, and does not cache it", async () => {
@@ -446,6 +424,36 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
     if (!result.ok) expect(result.response.status).toBe(403);
     expect(timeout).toHaveBeenCalledWith(10_000);
     expect(denials(warn)).toEqual([{ reason: "organization_lookup_failed" }]);
+  });
+
+  it.each([
+    ["a non-2xx status", 500, "planted-upstream-text", undefined],
+    ["an oversized body", 200, " ".repeat(65_537), undefined],
+    ["a caller that leaves", 200, '{"data":[', "caller"],
+    ["the ten-second deadline", 200, '{"data":[', "deadline"],
+  ] as const)("INV-7: ends a membership lookup whose body never closes on %s", async (_name, status, chunk, leave) => {
+    members.add(`${ORG}/${ALICE}`);
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const { response, cancelled, waiting } = stalled(status, chunk);
+    mocks.fetch.mockResolvedValueOnce(response);
+    oauth(jwt());
+    const caller = new AbortController();
+    const auth = orgAuth();
+    const pending = auth.authorize(mcp(caller.signal), BASE);
+    if (leave) {
+      await waiting;
+      (leave === "caller" ? caller : deadline).abort();
+    }
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(403);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect((lookups()[0]![1] as RequestInit).signal!.aborted).toBe(true);
+    expect(denials(warn)).toEqual([{ reason: "organization_lookup_failed" }]);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/planted-upstream-text/);
+    timeout.mockRestore();
+    await expect(auth.authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
   });
 
   it("runs before allowedDomains and gate, which still narrow admission", async () => {
@@ -532,14 +540,7 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
 });
 
 describe("clerkAuth organization membership on operator sessions", () => {
-  it("confirms membership when the session's organization is this one", async () => {
-    members.add(`${ORG}/${ALICE}`);
-    session({ orgId: ORG });
-    await expect(orgAuth().authorize(operator(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
-    expect(lookups()).toHaveLength(1);
-  });
-
-  it("confirms membership for a session with no active organization", async () => {
+  it("INV-4: confirms membership for every operator session", async () => {
     session();
     const refused = await orgAuth().authorize(operator(), BASE);
     expect(refused.ok).toBe(false);
@@ -550,8 +551,7 @@ describe("clerkAuth organization membership on operator sessions", () => {
   });
 
   it.each([
-    [{ orgId: OTHER_ORG }, "organization_mismatch"],
-    [{ orgId: OTHER_ORG, iss: "https://clerk.other.example" }, "token_identity_mismatch"],
+    [{ iss: "https://clerk.other.example" }, "token_identity_mismatch"],
     [{ sub: BOB }, "token_identity_mismatch"],
   ])("INV-6: refuses session %j before any lookup", async (claims, reason) => {
     members.add(`${ORG}/${ALICE}`);
@@ -563,7 +563,7 @@ describe("clerkAuth organization membership on operator sessions", () => {
     expect(denials(warn)).toEqual([{ reason }]);
   });
 
-  it("reads the active organization from real v2 `o` and v1 `org_id` session claims", async () => {
+  it("INV-4: ignores the organization a real v2 or v1 session names; membership decides", async () => {
     const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
     const keys = (await crypto.subtle.generateKey(
       { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
@@ -580,7 +580,6 @@ describe("clerkAuth organization membership on operator sessions", () => {
       telemetry: { disabled: true },
     });
     mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
-    members.add(`${ORG}/${ALICE}`);
     const now = Math.floor(Date.now() / 1000);
     const sign = (claims: Record<string, unknown>) =>
       signJwt(
@@ -597,19 +596,25 @@ describe("clerkAuth organization membership on operator sessions", () => {
         privateKey,
         { algorithm: "RS256", header: { typ: "JWT", kid: "test" } },
       );
-    const cases: [Record<string, unknown>, number][] = [
-      [{ v: 2, o: { id: ORG, rol: "admin", slg: "alpha" } }, 200],
-      [{ v: 2, o: { id: OTHER_ORG, rol: "admin", slg: "beta" } }, 401],
-      [{ v: 2 }, 200],
-      [{ org_id: OTHER_ORG, org_role: "org:admin" }, 401],
-      [{ org_id: ORG }, 200],
+    const cases: Record<string, unknown>[] = [
+      { v: 2, o: { id: ORG, rol: "admin", slg: "alpha" } },
+      { v: 2, o: { id: OTHER_ORG, rol: "admin", slg: "beta" } },
+      { v: 2 },
+      { org_id: OTHER_ORG, org_role: "org:admin" },
+      { org_id: ORG },
     ];
-    for (const [claims, status] of cases) {
-      const request = operator();
-      request.headers.set("Authorization", `Bearer ${await sign(claims)}`);
-      const result = await orgAuth().authorize(request, BASE);
-      expect(result.ok ? 200 : result.response.status).toBe(status);
+    for (const claims of cases) {
+      const token = await sign(claims);
+      for (const member of [true, false]) {
+        if (member) members.add(`${ORG}/${ALICE}`);
+        else members.clear();
+        const request = operator();
+        request.headers.set("Authorization", `Bearer ${token}`);
+        const result = await orgAuth().authorize(request, BASE);
+        expect(result.ok ? 200 : result.response.status).toBe(member ? 200 : 403);
+      }
     }
-    expect(lookups()).toHaveLength(3);
-  });
+    expect(lookups()).toHaveLength(10);
+    // Real RSA key generation and verification run slowly on a loaded workerd.
+  }, 15_000);
 });

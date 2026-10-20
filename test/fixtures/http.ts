@@ -106,7 +106,6 @@ export function fakeClerkAuth(options: {
   userId?: string;
   signInUrl?: string;
   signUpUrl?: string;
-  organizationId?: string;
   unauthorized?: () => Response;
 } = {}): InboundAuth {
   const matches = (request: Request) => request.headers.has("authorization")
@@ -123,7 +122,6 @@ export function fakeClerkAuth(options: {
       frontendApiUrl: options.frontendApiUrl ?? "https://clerk.example.test",
       ...(options.signInUrl === undefined ? {} : { signInUrl: options.signInUrl }),
       ...(options.signUpUrl === undefined ? {} : { signUpUrl: options.signUpUrl }),
-      ...(options.organizationId === undefined ? {} : { organizationId: options.organizationId }),
     },
     authorize(request) {
       if (matches(request)) {

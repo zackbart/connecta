@@ -30,7 +30,6 @@ export {
 } from "./operator-ui/model.js";
 
 import { brandMark, escapeHtml, isSafeHttpsUrl, renderPage, resolveBranding } from "./branding.js";
-import { isClerkOrganizationId } from "./clerk-organization-id.js";
 export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
 export type OperatorPage = import("./operator-ui/view.js").OperatorPage;
 
@@ -171,7 +170,6 @@ export function renderUiHtml(
         ...(clerkScriptOrigin ? { frontendApiUrl: clerkScriptOrigin } : {}),
         ...(isSafeHttpsUrl(clerk.signInUrl) ? { signInUrl: clerk.signInUrl } : {}),
         ...(isSafeHttpsUrl(clerk.signUpUrl) ? { signUpUrl: clerk.signUpUrl } : {}),
-        ...(isClerkOrganizationId(clerk.organizationId) ? { organizationId: clerk.organizationId } : {}),
       }
     : (uiAuth ?? { kind: "bearer" as const });
   const brand = resolveBranding(branding);

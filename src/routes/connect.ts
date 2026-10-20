@@ -2,7 +2,6 @@ import { ConnectorCallError } from "../errors.js";
 import { authorizationCredential } from "../inbound-credential.js";
 import { Effect } from "effect";
 import { escapeHtml, renderPage } from "../branding.js";
-import { isClerkOrganizationId } from "../clerk-organization-id.js";
 import { htmlSecurityHeaders } from "../html-security.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { drainOAuthStartResets } from "../auth/oauth-start-reset.js";
@@ -31,12 +30,7 @@ function clerkSignIn(context: RouteContext): Response | undefined {
   if (clerk?.kind !== "clerk") return undefined;
   const returnUrl = new URL(context.path, context.baseUrl);
   returnUrl.search = context.url.search;
-  const organization = isClerkOrganizationId(clerk.organizationId) ? clerk.organizationId : undefined;
-  // A signed-in browser refused under organization mode needs this page, which
-  // activates the deployment's organization; the Account Portal would only
-  // send it straight back.
-  const signedIn = /(?:^|;\s*)__session(?:_[^=;]+)?=/.test(context.request.headers.get("cookie") ?? "");
-  if (clerk.signInUrl && !(organization && signedIn)) {
+  if (clerk.signInUrl) {
     try {
       const target = new URL(clerk.signInUrl);
       if (target.protocol === "https:" && !target.username && !target.password) {
@@ -57,19 +51,10 @@ function clerkSignIn(context: RouteContext): Response | undefined {
   }
   const nonce = crypto.randomUUID();
   const target = JSON.stringify(returnUrl.href).replace(/</g, "\\u003c");
-  // Activating the organization refreshes the session cookie before the link
-  // is retried. A refusal stays on this page instead of looping.
-  const activate = organization
-    ? `if (window.Clerk.organization?.id !== ${JSON.stringify(organization)}) {
-    try { await window.Clerk.setActive({ organization: ${JSON.stringify(organization)} }); }
-    catch { document.getElementById("signin").textContent = "Sign in with an account in this deployment's organization."; return; }
-  }
-  `
-    : "";
   const body = `<main class="page shell"><h1>Sign in to connect</h1><p>Sign in as the user who requested this connection.</p><div id="signin"></div></main>
 <script nonce="${nonce}" crossorigin="anonymous" data-clerk-publishable-key="${escapeHtml(clerk.publishableKey)}" src="${escapeHtml(origin)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>
-<script nonce="${nonce}">window.Clerk.load().then(async () => {
-  if (window.Clerk.session) { ${activate}window.location.replace(${target}); return; }
+<script nonce="${nonce}">window.Clerk.load().then(() => {
+  if (window.Clerk.session) { window.location.replace(${target}); return; }
   window.Clerk.mountSignIn(document.getElementById("signin"), { routing: "hash", forceRedirectUrl: ${target}, signUpForceRedirectUrl: ${target} });
 }).catch(() => { document.getElementById("signin").textContent = "Sign-in could not load. Try again."; });</script>`;
   return new Response(

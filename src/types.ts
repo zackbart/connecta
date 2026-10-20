@@ -826,12 +826,6 @@ export type UiAuthConfig =
       signInUrl?: string;
       /** Hosted Account Portal sign-up address. Gated exactly like `signInUrl`. */
       signUpUrl?: string;
-      /**
-       * The Clerk Organization the deployment admits. Operator pages ask
-       * Clerk for session tokens naming it, and the connect sign-in page makes
-       * it the session's active organization before returning to the link.
-       */
-      organizationId?: string;
     };
 
 /**

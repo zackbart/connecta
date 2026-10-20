@@ -64,7 +64,7 @@ const PAGE_CONSTANTS = {
 
 interface FakeSession {
   id: string;
-  getToken(options?: { organizationId?: string }): Promise<string>;
+  getToken(): Promise<string>;
 }
 
 function deferred<T>() {
@@ -352,20 +352,6 @@ describe("operator store identity wiring", () => {
     expect(store.getState().data).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(paths).toEqual([]);
-  });
-
-  it("asks Clerk for a session token naming the deployment's organization", async () => {
-    const organizationId = `org_${"A".repeat(27)}`;
-    const getToken = vi.fn(async () => "token-org");
-    const loaded = await loadStore(
-      { id: "sess_a", getToken },
-      { kind: "clerk", publishableKey: "pk_test_fake", organizationId },
-    );
-    await bootMaintainer(loaded);
-    expect(getToken).toHaveBeenCalledWith({ organizationId });
-    const plain = vi.fn(async () => "token-plain");
-    await bootMaintainer(await loadStore({ id: "sess_b", getToken: plain }));
-    expect(plain).toHaveBeenCalledWith();
   });
 
   it("uses the same-origin Access session without a browser-readable token", async () => {
