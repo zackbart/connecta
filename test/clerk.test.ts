@@ -853,7 +853,7 @@ describe("clerkAuth inbound auth", () => {
           expect(mocks.fetch.mock.calls[1]![0]).toBe(
             "https://api.clerk.com/v1/oauth_applications/access_tokens/verify",
           );
-          expect(directInit.redirect).toBe("error");
+          expect(directInit.redirect).toBe("manual");
           expect(directInit.signal).toBeInstanceOf(AbortSignal);
           expect(new Headers(directInit.headers).get("Clerk-API-Version")).toBe("2026-05-12");
           if (!result.ok) {
@@ -881,6 +881,12 @@ describe("clerkAuth inbound auth", () => {
 
     it.each([
       () => Response.json({ message: "oat_private" }, { status: 503 }),
+      // A redirect is not an answer, even one carrying a valid verification.
+      () =>
+        Response.json(opaqueVerification({ aud: [`${BASE}/mcp`] }), {
+          status: 302,
+          headers: { Location: "https://api.clerk.com/oat_private" },
+        }),
       () => new Response("oat_private"),
       () => Response.json(null),
       () => {
@@ -980,6 +986,7 @@ describe("clerkAuth inbound auth", () => {
 
     it.each([
       ["a non-2xx status", 503, "oat_private", undefined],
+      ["a redirect", 302, "oat_private", undefined],
       ["an oversized body", 200, " ".repeat(65_537), undefined],
       ["a caller that leaves", 200, '{"object":', "caller"],
       ["the ten-second deadline", 200, '{"object":', "deadline"],

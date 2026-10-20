@@ -309,16 +309,20 @@ async function organizationMember(
 
 /**
  * One Backend API request, bounded by the signal, a ten-second deadline, and
- * `MAX_BACKEND_RESPONSE_BYTES`. A non-2xx status or unreadable body throws.
- * Every exit aborts the request and cancels its body, so no upstream outlives
- * the caller's decision (INV-7).
+ * `MAX_BACKEND_RESPONSE_BYTES`. A redirect, a non-2xx status, or an unreadable
+ * body throws. Every exit aborts the request and cancels its body, so no
+ * upstream outlives the caller's decision (INV-7).
  */
 async function backendJson(url: URL | string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
   const settled = new AbortController();
   const request = AbortSignal.any([signal, settled.signal, AbortSignal.timeout(BACKEND_LOOKUP_TIMEOUT_MS)]);
   let response: Response | undefined;
   try {
-    response = await fetch(url, { ...init, redirect: "error", signal: request });
+    // Workers reject `redirect: "error"`; `manual` returns a redirect
+    // unfollowed, and a redirect is not an answer. Workers and Node return
+    // its 3xx; an `opaqueredirect` has status 0, which `ok` refuses.
+    response = await fetch(url, { ...init, redirect: "manual", signal: request });
+    if (response.status >= 300 && response.status < 400) throw new Error("Clerk Backend API request redirected");
     if (!response.ok) throw new Error("Clerk Backend API request failed");
     return JSON.parse(await boundedText(response, request));
   } finally {
@@ -357,15 +361,27 @@ async function boundedText(response: Response, signal: AbortSignal): Promise<str
   }
 }
 
-interface MembershipWaiter {
-  resolve(member: boolean): void;
-  reject(error: unknown): void;
+/**
+ * A cached membership answer: when its lookup started by the wall clock, and
+ * its place in start order. Plain values only, because every lookup's fetch,
+ * signal, and body belong to the request that made it (INV-7). Once found
+ * expired, an entry keeps its place without `member`, so no later clock step
+ * revives it and no older lookup writes over it.
+ */
+interface MembershipVerdict {
+  readonly member?: boolean;
+  readonly started: number;
+  readonly sequence: number;
 }
 
-/** A Backend API membership lookup and the requests waiting on its answer. */
-interface MembershipLookup {
-  readonly controller: AbortController;
-  readonly waiters: Set<MembershipWaiter>;
+/**
+ * Valid only while the clock reads from the lookup's start to start + ttl.
+ * A step back before the start expires the entry, and a step forward can
+ * only expire it early.
+ */
+function withinTtl(started: number, ttl: number): boolean {
+  const age = Date.now() - started;
+  return age >= 0 && age < ttl;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -492,8 +508,11 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   }
   const scopes = [...requestedScopes];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
-  const membershipCache = new Map<string, { member: boolean; exp: number }>();
-  const membershipLookups = new Map<string, MembershipLookup>();
+  const membershipCache = new Map<string, MembershipVerdict>();
+  // Membership lookups started, in order, and the latest start among the
+  // entries the cache has evicted.
+  let membershipLookupsStarted = 0;
+  let evictedMembershipSequence = 0;
   const activityLabelCache = new Map<string, { label?: string; exp: number }>();
   const pendingActivityLabels = new Map<string, Promise<string | undefined>>();
   const inFlightActivityLabelIds = new Set<string>();
@@ -617,72 +636,36 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     return true;
   };
 
-  /**
-   * Start the one Backend API lookup for an organization and user. It stays
-   * registered under `key` until it settles or its last waiter leaves, and
-   * only a registered lookup caches its answer. So no lookup starts while
-   * another for the same key runs, an abandoned one never writes, and answers
-   * reach the cache in the order their lookups started. Expiry counts from
-   * the start, since Clerk answered no earlier, and a request that joins
-   * waits on a lookup at most ten seconds old. So every request that reaches
-   * this check 60 seconds or more after a member's removal is refused.
-   */
-  const startMembershipLookup = (organization: string, userId: string, key: string): MembershipLookup => {
-    const started = Date.now();
-    const lookup: MembershipLookup = { controller: new AbortController(), waiters: new Set() };
-    const settle = (answer: (waiter: MembershipWaiter) => void) => {
-      for (const waiter of lookup.waiters) answer(waiter);
-      lookup.waiters.clear();
-    };
-    void organizationMember(opts.secretKey, organization, userId, lookup.controller.signal).then(
-      (member) => {
-        if (membershipLookups.get(key) === lookup) {
-          membershipLookups.delete(key);
-          writeIdentityCache(membershipCache, key, {
-            member,
-            exp: started + (member ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
-          });
-        }
-        settle((waiter) => waiter.resolve(member));
-      },
-      (error: unknown) => {
-        if (membershipLookups.get(key) === lookup) membershipLookups.delete(key);
-        settle((waiter) => waiter.reject(error));
-      },
-    );
-    membershipLookups.set(key, lookup);
-    return lookup;
+  /** A cached answer still within its TTL, counted from its lookup's start. */
+  const cachedMembership = (key: string): boolean | undefined => {
+    const verdict = membershipCache.get(key);
+    if (verdict?.member === undefined) return undefined;
+    if (!withinTtl(verdict.started, verdict.member ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS)) {
+      membershipCache.set(key, { started: verdict.started, sequence: verdict.sequence });
+      return undefined;
+    }
+    membershipCache.delete(key);
+    membershipCache.set(key, verdict);
+    return verdict.member;
   };
 
   /**
-   * Wait for a lookup's answer for as long as this request's signal allows.
-   * A request that leaves stops waiting at once without disturbing the
-   * others; the last one to leave unregisters and aborts the lookup, which
-   * cancels its request and body (INV-7).
+   * Cache a lookup's answer unless a lookup that started later has already
+   * written this key. Evicting an entry raises a floor under every key,
+   * because the evicted entry no longer guards its own: a lookup that started
+   * before it never writes. Either way an older answer never replaces a
+   * newer verdict.
    */
-  const awaitMembership = (lookup: MembershipLookup, key: string, signal: AbortSignal): Promise<boolean> =>
-    new Promise((resolve, reject) => {
-      const leave = () => {
-        lookup.waiters.delete(waiter);
-        if (lookup.waiters.size === 0) {
-          if (membershipLookups.get(key) === lookup) membershipLookups.delete(key);
-          lookup.controller.abort();
-        }
-        reject(signal.reason);
-      };
-      const waiter: MembershipWaiter = {
-        resolve: (member) => {
-          signal.removeEventListener("abort", leave);
-          resolve(member);
-        },
-        reject: (error) => {
-          signal.removeEventListener("abort", leave);
-          reject(error);
-        },
-      };
-      lookup.waiters.add(waiter);
-      signal.addEventListener("abort", leave, { once: true });
-    });
+  const cacheMembership = (key: string, verdict: MembershipVerdict & { member: boolean }): void => {
+    const current = membershipCache.get(key);
+    if (verdict.sequence <= evictedMembershipSequence || (current && current.sequence > verdict.sequence)) return;
+    membershipCache.delete(key);
+    membershipCache.set(key, verdict);
+    if (membershipCache.size <= GATE_CACHE_MAX_IDENTITIES) return;
+    const [oldestKey, oldest] = membershipCache.entries().next().value!;
+    membershipCache.delete(oldestKey);
+    evictedMembershipSequence = Math.max(evictedMembershipSequence, oldest.sequence);
+  };
 
   /**
    * The organization half of admission, checked before the domain allowlist
@@ -691,24 +674,31 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    * by a day, and a member's token is audience-bound to this deployment
    * whichever organization they chose at consent. Membership always comes
    * from the Backend API, cached per organization and user for 60 seconds
-   * from the start of the lookup that answered (30 for a non-member).
-   * Requests that miss the cache together share one lookup. A failed lookup
-   * is not an answer, so it refuses without being cached.
+   * from the start of the lookup that answered (30 for a non-member), since
+   * Clerk answered no earlier. So every request that reaches this check 60
+   * seconds or more after a member's removal is refused.
+   *
+   * Each request that misses the cache runs and owns its own lookup. On
+   * Workers one request may not touch another's fetch, signal, or body, so
+   * concurrent misses each ask Clerk, and a caller that leaves cancels only
+   * its own lookup. A failed or abandoned lookup is not an answer, so it
+   * refuses without being cached.
    */
   const checkOrganization = async (userId: string, signal: AbortSignal): Promise<boolean> => {
     if (!organizationId) return true;
     const key = `${organizationId}/${userId}`;
-    const hit = readIdentityCache(membershipCache, key);
-    if (hit) return hit.member;
+    const cached = cachedMembership(key);
+    if (cached !== undefined) return cached;
+    const started = Date.now();
+    const sequence = ++membershipLookupsStarted;
     let member: boolean;
     try {
-      signal.throwIfAborted();
-      const lookup = membershipLookups.get(key) ?? startMembershipLookup(organizationId, userId, key);
-      member = await awaitMembership(lookup, key, signal);
+      member = await organizationMember(opts.secretKey, organizationId, userId, signal);
     } catch {
       logDenial("organization_lookup_failed");
       return false;
     }
+    cacheMembership(key, { member, started, sequence });
     if (!member) logDenial("organization_membership_denied");
     return member;
   };

@@ -132,8 +132,8 @@ function mcp(signal?: AbortSignal) {
 }
 
 /**
- * The next membership lookup answers only when `answer` says so, as a fetch
- * that ignores its signal would. `sent` resolves once the lookup is sent.
+ * The next membership lookup answers only when `answer` says so and, like a
+ * real fetch, rejects once its signal aborts. `sent` resolves once it is sent.
  */
 function heldLookup() {
   let answer!: (member: boolean) => void;
@@ -141,9 +141,10 @@ function heldLookup() {
   const sent = new Promise<void>((resolve) => {
     send = resolve;
   });
-  mocks.fetch.mockImplementationOnce(() => {
+  mocks.fetch.mockImplementationOnce((_input, { signal }: RequestInit) => {
     send();
-    return new Promise<Response>((resolve) => {
+    return new Promise<Response>((resolve, reject) => {
+      signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
       answer = (member) => {
         const data = member ? [membershipRow(ORG, ALICE)] : [];
         resolve(Response.json({ data, total_count: data.length }));
@@ -155,11 +156,6 @@ function heldLookup() {
 
 function lookupSignal(index = 0) {
   return (lookups()[index]![1] as RequestInit).signal!;
-}
-
-/** Let every request already started reach its membership wait. */
-function settle() {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function operator() {
@@ -246,7 +242,7 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
     const [input, init] = lookups()[0]! as [URL, RequestInit];
     expect(String(input)).toBe(`https://api.clerk.com${MEMBERSHIPS}?user_id=${ALICE}`);
     expect(init.headers).toEqual({ Authorization: "Bearer sk_test_fake", "Clerk-API-Version": "2026-05-12" });
-    expect(init.redirect).toBe("error");
+    expect(init.redirect).toBe("manual");
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -308,6 +304,20 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
       () => {
         throw new Error("planted-upstream-text");
       },
+    ],
+    // A redirect is not an answer, even one whose body names a membership.
+    [
+      "a redirect",
+      () =>
+        Response.json(
+          { data: [membershipRow(ORG, ALICE)], total_count: 1 },
+          { status: 302, headers: { Location: "https://api.clerk.com/planted-upstream-text" } },
+        ),
+    ],
+    [
+      "an opaque redirect",
+      () =>
+        ({ type: "opaqueredirect", status: 0, ok: false, body: null, headers: new Headers() }) as unknown as Response,
     ],
     ["a body without data", () => Response.json({ planted: "planted-upstream-text" })],
     ["a non-array data", () => Response.json({ data: "planted-upstream-text" })],
@@ -443,6 +453,7 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
 
   it.each([
     ["a non-2xx status", 500, "planted-upstream-text", undefined],
+    ["a redirect", 302, "planted-upstream-text", undefined],
     ["an oversized body", 200, " ".repeat(65_537), undefined],
     ["a caller that leaves", 200, '{"data":[', "caller"],
     ["the ten-second deadline", 200, '{"data":[', "deadline"],
@@ -554,7 +565,7 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
   });
 });
 
-describe("clerkAuth membership lookup order and sharing", () => {
+describe("clerkAuth membership lookups, one per request", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-20T12:00:00Z"));
@@ -588,35 +599,41 @@ describe("clerkAuth membership lookup order and sharing", () => {
     },
   );
 
-  it("INV-4: requests that miss the cache together share one lookup, so no newer lookup races it", async () => {
+  it("INV-7: requests that miss the cache together each run and end their own lookup", async () => {
     const started = Date.now();
-    const lookup = heldLookup();
+    const held = [heldLookup(), heldLookup()];
     const auth = orgAuth();
     const first = auth.authorize(mcp(), BASE);
-    await lookup.sent;
-    // Alice is removed while the lookup runs. A request arriving now waits
-    // for that lookup's answer instead of starting a newer one.
+    await held[0]!.sent;
     const second = auth.authorize(mcp(), BASE);
-    await settle();
-    lookup.answer(true);
+    await held[1]!.sent;
+    expect(lookups()).toHaveLength(2);
+    expect(lookupSignal(0)).not.toBe(lookupSignal(1));
+
+    held[1]!.answer(true);
+    held[0]!.answer(true);
     await expect(first).resolves.toEqual({ ok: true, userId: ALICE });
     await expect(second).resolves.toEqual({ ok: true, userId: ALICE });
-    expect(lookups()).toHaveLength(1);
+    expect([lookupSignal(0).aborted, lookupSignal(1).aborted]).toEqual([true, true]);
+    await expect(auth.authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
+    expect(lookups()).toHaveLength(2);
 
-    // The answer expires 60 seconds after the lookup began.
+    // Alice was removed meanwhile. The answer expires 60 seconds after the
+    // lookups began.
     vi.setSystemTime(started + 60_000);
     expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
-    expect(lookups()).toHaveLength(2);
+    expect(lookups()).toHaveLength(3);
   });
 
-  it("INV-6: requests sharing a failed lookup are all refused, and the failure is not cached", async () => {
+  it("INV-6: a failed lookup refuses only its own request, and the failure is not cached", async () => {
     members.add(`${ORG}/${ALICE}`);
     mocks.fetch.mockImplementationOnce(async () => new Response("planted-upstream-text", { status: 500 }));
     const auth = orgAuth();
     const results = await Promise.all([auth.authorize(mcp(), BASE), auth.authorize(mcp(), BASE)]);
-    expect(results.map((result) => result.ok)).toEqual([false, false]);
-    expect(lookups()).toHaveLength(1);
-    expect(denials(warn)).toEqual([{ reason: "organization_lookup_failed" }, { reason: "organization_lookup_failed" }]);
+    expect(results.filter((result) => result.ok)).toEqual([{ ok: true, userId: ALICE }]);
+    expect(lookups()).toHaveLength(2);
+    expect(denials(warn)).toEqual([{ reason: "organization_lookup_failed" }]);
+    // The other request's answer is cached.
     await expect(auth.authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
     expect(lookups()).toHaveLength(2);
   });
@@ -625,72 +642,151 @@ describe("clerkAuth membership lookup order and sharing", () => {
     ["an older member answer after a newer refusal", true, false],
     ["an older refusal after a newer member answer", false, true],
   ])("INV-4: never lets %s replace the newer verdict", async (_name, older, newer) => {
-    const stale = heldLookup();
+    const [stale, fresh] = [heldLookup(), heldLookup()];
     const auth = orgAuth();
-    const caller = new AbortController();
-    const first = auth.authorize(mcp(caller.signal), BASE);
+    const first = auth.authorize(mcp(), BASE);
     await stale.sent;
-    // Its only caller leaves, so the lookup is abandoned and aborted.
-    caller.abort();
-    expect((await first).ok).toBe(false);
-    expect(lookupSignal().aborted).toBe(true);
+    vi.setSystemTime(Date.now() + 1_000);
+    const second = auth.authorize(mcp(), BASE);
+    await fresh.sent;
 
-    // Clerk's answer changes, and a newer request asks again.
-    if (newer) members.add(`${ORG}/${ALICE}`);
-    expect((await auth.authorize(mcp(), BASE)).ok).toBe(newer);
-    expect(lookups()).toHaveLength(2);
-
-    // The abandoned lookup's answer arrives last.
+    // The newer lookup answers first and the older one last. Each request
+    // gets its own lookup's answer.
+    fresh.answer(newer);
+    expect((await second).ok).toBe(newer);
     stale.answer(older);
-    await settle();
-    vi.setSystemTime(Date.now() + 29_000);
+    expect((await first).ok).toBe(older);
+
+    vi.setSystemTime(Date.now() + 28_000);
     expect((await auth.authorize(mcp(), BASE)).ok).toBe(newer);
     expect(lookups()).toHaveLength(2);
   });
 
-  it("INV-7: a caller leaving a shared lookup does not cancel it for the others", async () => {
-    const lookup = heldLookup();
+  it("INV-7: a caller that leaves cancels only its own lookup and body", async () => {
+    const { response, cancelled, waiting } = stalledResponse(200, '{"data":[');
+    mocks.fetch.mockResolvedValueOnce(response);
+    const held = heldLookup();
     const auth = orgAuth();
     const leaving = new AbortController();
     const left = auth.authorize(mcp(leaving.signal), BASE);
-    await lookup.sent;
+    await waiting;
     const staying = auth.authorize(mcp(), BASE);
-    await settle();
+    await held.sent;
+
     leaving.abort();
     expect((await left).ok).toBe(false);
-    expect(lookupSignal().aborted).toBe(false);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect(lookupSignal(0).aborted).toBe(true);
+    expect(lookupSignal(1).aborted).toBe(false);
 
-    lookup.answer(true);
+    held.answer(true);
     await expect(staying).resolves.toEqual({ ok: true, userId: ALICE });
     expect(denials(warn)).toEqual([{ reason: "organization_lookup_failed" }]);
-    // The answer still reaches the cache.
-    await expect(auth.authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
-    expect(lookups()).toHaveLength(1);
-  });
-
-  it("INV-7: the last caller to leave a shared lookup aborts it and cancels its body", async () => {
-    members.add(`${ORG}/${ALICE}`);
-    const { response, cancelled, waiting } = stalledResponse(200, '{"data":[');
-    mocks.fetch.mockResolvedValueOnce(response);
-    const auth = orgAuth();
-    const callers = [new AbortController(), new AbortController()];
-    const pending = callers.map((caller) => auth.authorize(mcp(caller.signal), BASE));
-    await waiting;
-    await settle();
-    callers[0]!.abort();
-    expect((await pending[0])!.ok).toBe(false);
-    expect(lookupSignal().aborted).toBe(false);
-    expect(cancelled).not.toHaveBeenCalled();
-
-    callers[1]!.abort();
-    expect((await pending[1])!.ok).toBe(false);
-    expect(lookupSignal().aborted).toBe(true);
-    expect(cancelled).toHaveBeenCalledTimes(1);
-    expect(lookups()).toHaveLength(1);
-
-    // An abandoned lookup is not an answer: the next request asks again.
+    // The staying request's answer reaches the cache; the abandoned one does not.
     await expect(auth.authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
     expect(lookups()).toHaveLength(2);
+  });
+
+  it("INV-4: evicts past 1,024 identities, and an older answer never writes after the newer verdict is evicted", async () => {
+    const stale = heldLookup();
+    const auth = orgAuth();
+    const older = auth.authorize(mcp(), BASE);
+    await stale.sent;
+    // A newer lookup refuses Alice. Then 1,024 other identities push that
+    // verdict out of the cache.
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    for (let index = 0; index < 1_024; index++) {
+      const user = `user_${index}`;
+      oauth(jwt({ sub: user }), user);
+      expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    }
+    oauth(jwt());
+    stale.answer(true);
+    expect((await older).ok).toBe(true);
+
+    // The older member answer was not cached, so Clerk is asked again.
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    expect(lookups()).toHaveLength(1_027);
+    // Real loops of 1,027 authorizations run slowly on a loaded workerd.
+  }, 15_000);
+});
+
+describe("clerkAuth membership cache under clock steps", () => {
+  const start = new Date("2026-10-20T12:00:00Z").getTime();
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(start);
+    oauth(jwt());
+  });
+
+  /** Alice is admitted and cached at `start`, then removed in Clerk. */
+  async function removedAfterAdmission() {
+    members.add(`${ORG}/${ALICE}`);
+    const auth = orgAuth();
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(true);
+    members.delete(`${ORG}/${ALICE}`);
+    return auth;
+  }
+
+  it.each([
+    ["to before the lookup started", [-1]],
+    ["120 seconds after 61 seconds passed", [61_000, 61_000 - 120_000]],
+  ])("INV-4: a member's answer expires when the clock steps back %s", async (_name, steps) => {
+    const auth = await removedAfterAdmission();
+    for (const offset of steps) vi.setSystemTime(start + offset);
+    const result = await auth.authorize(mcp(), BASE);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(403);
+    expect(lookups()).toHaveLength(2);
+  });
+
+  it("INV-4: an answer found expired stays expired when the clock steps back", async () => {
+    const auth = await removedAfterAdmission();
+    vi.setSystemTime(start + 61_000);
+    // This lookup fails, so no newer answer replaces the expired one.
+    mocks.fetch.mockImplementationOnce(async () => new Response(null, { status: 503 }));
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    vi.setSystemTime(start + 30_000);
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    expect(lookups()).toHaveLength(3);
+    expect(denials(warn)).toEqual([
+      { reason: "organization_lookup_failed" },
+      { reason: "organization_membership_denied" },
+    ]);
+  });
+
+  it("INV-4: an older answer never writes after the newer verdict is found expired", async () => {
+    const stale = heldLookup();
+    const auth = orgAuth();
+    const older = auth.authorize(mcp(), BASE);
+    await stale.sent;
+    vi.setSystemTime(start + 1_000);
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+
+    // The clock steps back before the newer lookup started, which expires its
+    // refusal, and the lookup that follows fails.
+    vi.setSystemTime(start + 500);
+    mocks.fetch.mockImplementationOnce(async () => new Response(null, { status: 503 }));
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    stale.answer(true);
+    expect((await older).ok).toBe(true);
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    expect(lookups()).toHaveLength(4);
+  });
+
+  it("INV-4: a forward step only expires answers early, and is not trusted after it is corrected", async () => {
+    const auth = await removedAfterAdmission();
+    vi.setSystemTime(start + 3_600_000);
+    expect((await auth.authorize(mcp(), BASE)).ok).toBe(false);
+    expect(lookups()).toHaveLength(2);
+
+    // The clock comes back. The refusal that started an hour ahead does not
+    // apply, so Clerk is asked again and now answers member.
+    members.add(`${ORG}/${ALICE}`);
+    vi.setSystemTime(start + 20_000);
+    await expect(auth.authorize(mcp(), BASE)).resolves.toEqual({ ok: true, userId: ALICE });
+    expect(lookups()).toHaveLength(3);
   });
 });
 

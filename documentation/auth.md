@@ -1629,9 +1629,10 @@ claims. SDK 3.12.0 drops opaque `aud`, so connecta makes one additional Backend
 API verification request and reads the raw response. Its subject and client
 must agree with the SDK, and it must report an unrevoked, unexpired token.
 The extra call follows request cancellation, times out after ten seconds,
-reads at most 64 KiB, caches no token or audience, and denies admission on
-failure. It ends its request and response body on every outcome, including an
-error status and a body that stops arriving.
+reads at most 64 KiB, follows no redirect, caches no token or audience, and
+denies admission on failure, including a redirect. It ends its request and
+response body on every outcome, including an error status and a body that
+stops arriving.
 
 ### Explicit fallback for unbound tokens
 
@@ -1667,23 +1668,32 @@ Admission in organization mode:
   `GET /v1/organizations/{organization_id}/memberships?user_id={user_id}`,
   for MCP OAuth tokens (JWT and opaque) and for operator sessions. It caches
   each answer per Organization and user, counted from when the lookup
-  started: a member for 60 seconds, a non-member for 30. Requests that miss
-  the cache together share one lookup, and no lookup starts while another for
-  the same user runs, so an older answer never replaces a newer one. Every
-  request that reaches the check 60 seconds or more after a member's removal
-  in Clerk is refused, even while their day-long access token remains valid;
-  a person added is admitted 30 seconds after the addition at the latest.
+  started: a member for 60 seconds, a non-member for 30. Each request that
+  misses the cache runs its own lookup, so concurrent requests for one user
+  each ask Clerk. An answer is cached only if no lookup that started later
+  has already cached one, so an older answer never replaces a newer one.
+  Every request that reaches the check 60 seconds or more after a member's
+  removal in Clerk is refused, even while their day-long access token remains
+  valid; a person added is admitted 30 seconds after the addition at the
+  latest.
+- The cache reads the deployment's clock. An answer is used only while the
+  clock reads from its lookup's start to that start plus 60 or 30 seconds.
+  A step forward only ends it early. A step back to before the start ends it
+  too, and once an answer has been found expired no later step revives it. A
+  step back that lands within that window before any request has seen the
+  answer expire cannot be detected, and keeps the answer until the clock
+  again reads its start plus the TTL.
 - Organization claims are never read. A token's `org_id` and a session's
   active Organization neither admit nor refuse. A member's token is bound to
   this deployment's URL whichever Organization they chose in Clerk, and a
   non-member gets `403` from the lookup.
-- A lookup that fails, answers with an error status or an unreadable or
-  oversized body, or times out ten seconds after it started refuses every
-  request waiting on it with `403`. A caller that leaves stops waiting and is
-  refused; the lookup continues for the other requests waiting on it, and the
-  last one to leave cancels it. Connecta ends the Backend API request and its
-  body on every outcome and caches neither a failure nor a cancelled lookup,
-  so the next request asks Clerk again.
+- A lookup that fails, answers with a redirect, an error status, or an
+  unreadable or oversized body, or times out ten seconds after it started
+  refuses its request with `403`. Redirects are never followed. A caller that
+  leaves cancels its own lookup and is refused; other requests' lookups go
+  on. Connecta ends the Backend API request and its body on every outcome and
+  caches neither a failure nor a cancelled lookup, so the next request asks
+  Clerk again.
 - Connecta checks the token's audience, issuer, and subject before the lookup.
   The issuer must be the Frontend API origin encoded in `publishableKey`, and
   the subject must be the user the lookup names. An opaque token's
@@ -2060,7 +2070,8 @@ boundaries, and `src/storage/keys.ts` owns credential key families.
 Inbound adapters live in [src/auth](https://github.com/zackbart/connecta/tree/main/src/auth);
 [auth routes](https://github.com/zackbart/connecta/blob/main/src/routes/oauth.ts)
 own connection handoffs and callbacks. Check [inbound auth tests](https://github.com/zackbart/connecta/blob/main/test/inbound-auth.test.ts),
-[Clerk organization tests](https://github.com/zackbart/connecta/blob/main/test/clerk-organization.test.ts),
+[Clerk organization tests](https://github.com/zackbart/connecta/blob/main/test/clerk-organization.test.ts)
+and their [workerd counterpart](https://github.com/zackbart/connecta/blob/main/test/clerk-organization-workerd.test.ts),
 [Access tests](https://github.com/zackbart/connecta/blob/main/test/cloudflare-access-auth.test.ts),
 and [identity-scope tests](https://github.com/zackbart/connecta/blob/main/test/identity-scope.test.ts)
 for credential precedence and disclosure boundaries.
