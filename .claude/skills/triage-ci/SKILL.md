@@ -69,7 +69,7 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   need new baselines from the Operator snapshots workflow
   ([documentation/operator-tests.md](../../../documentation/operator-tests.md)).
   A comparison that flakes without a code change gets the `@unstable` tag in
-  `UNSTABLE_VARIANTS` until its cause is found. `overview-trace` and
+  `UNSTABLE_VARIANTS`, for the flaking scheme only, until its cause is found. `overview-trace` and
   `narrow-matrix` (dark) each failed one first attempt in 150 runs with a
   stable capture, then passed the retry; no cause has been found.
 - **Chromium install.** The first install can time out; the retry runs
