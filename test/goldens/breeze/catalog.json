@@ -15,7 +15,7 @@
   "tools": [
     {
       "name": "breeze_api_get",
-      "description": "Call a reviewed Breeze read endpoint and return its untouched response. Refuses every path and parameter not on the read allowlist, since Breeze writes are GETs too.",
+      "description": "Call a reviewed Breeze read endpoint and return its response as sent, less calendar feed addresses. Refuses every path and parameter not on the read allowlist, since Breeze writes are GETs too.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -66,7 +66,7 @@
         "type": "object",
         "properties": {
           "result": {
-            "description": "Breeze's untouched response."
+            "description": "Breeze's response, less calendar feed addresses and embed keys."
           }
         },
         "required": [
@@ -79,7 +79,7 @@
     },
     {
       "name": "breeze_api_mutate",
-      "description": "Call any Breeze API endpoint, including writes and undocumented routes, and return its untouched response. The approval-gated hatch; Breeze takes writes as GET query parameters.",
+      "description": "Call any Breeze API endpoint, including writes and undocumented routes, and return its response as sent, less calendar feed addresses. The approval-gated hatch; Breeze takes writes as GET query parameters.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -130,7 +130,7 @@
         "type": "object",
         "properties": {
           "result": {
-            "description": "Breeze's untouched response."
+            "description": "Breeze's response, less calendar feed addresses and embed keys."
           }
         },
         "required": [

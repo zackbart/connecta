@@ -232,6 +232,10 @@ describe("API provider failure sweep", () => {
               });
               if (classification === "read")
                 expect((result.structuredContent as { error: object }).error).not.toHaveProperty("writeOutcome");
+              // One unknown-outcome advice: a provider's own is never followed by the shared one.
+              const { message } = (result.structuredContent as { error: { message: string } }).error;
+              if (/so its outcome is unknown|may or may not have been applied/.test(message))
+                expect(message).not.toContain("Whether the write took effect at");
               if (decision)
                 expect(
                   decision.mock.calls.some(

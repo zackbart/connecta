@@ -165,19 +165,7 @@
                   "name": "Building",
                   "status": "0"
                 }
-              ],
-              "bank": {
-                "account_number_last4": "6789",
-                "name": "TEST BANK",
-                "country": "US",
-                "currency": "USD"
-              },
-              "legal": {
-                "entity_type": "organization",
-                "first_name": "Mike",
-                "last_name": "Rogers",
-                "date_of_birth": "5/23/1985"
-              }
+              ]
             },
             "donor_account": {
               "account_id": "user_jane",

@@ -340,6 +340,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Breeze rejected the request (HTTP 400). Breeze said: Golden 400 failure",
@@ -364,6 +365,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure An operator must replace it with the key from this church's Extensions → API page.",
@@ -400,6 +402,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Breeze rejected the configured API key (HTTP 403). Breeze said: Golden 403 failure An operator must replace it with the key from this church's Extensions → API page.",
@@ -436,6 +439,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "not_found",
             "message": "Breeze has no such endpoint or record (HTTP 404). Check the path against the API reference, or re-read the id from its list tool.",
@@ -460,6 +464,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Breeze request failed (HTTP 409). Breeze said: Golden 409 failure",
@@ -484,6 +489,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Breeze rejected the request (HTTP 422). Breeze said: Golden 422 failure",
@@ -508,6 +514,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "Breeze is throttling requests (HTTP 429). Breeze said: Golden 429 failure Breeze publishes no limit; slow the fan-out before retrying.",
@@ -534,9 +541,10 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "unavailable",
-            "message": "Breeze is failing upstream (HTTP 500).",
-            "retryable": true
+            "code": "connector_call_failed",
+            "message": "Breeze is failing upstream (HTTP 500). Whether the write took effect at Breeze is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -557,6 +565,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Breeze rejected the configured API key (HTTP 401). Breeze said: Golden 401 failure: rejected [redacted] An operator must replace it with the key from this church's Extensions → API page.",
@@ -593,6 +602,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "unavailable",
             "message": "Could not reach the Breeze API.",
@@ -632,6 +642,7 @@
               "stage": "downstream",
               "elapsedMs": 0
             },
+            "writeOutcome": "unknown",
             "connector": "church",
             "operation": "church.add_person",
             "uncertainCall": {

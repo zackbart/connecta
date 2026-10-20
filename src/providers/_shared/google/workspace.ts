@@ -747,7 +747,9 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       "connector_call_failed",
       `${provider} answered HTTP ${status} after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it.`,
       {
-        retryable: collecting ? mapped.retryable : false,
+        // Already the unknown-outcome advice: a ledger's later decision must
+        // not read it as a retryable failure and append its own.
+        retryable: false,
         ...(collecting ? {} : { writeOutcome: "unknown" as const }),
         cause: mapped,
       },

@@ -344,6 +344,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Vercel answered HTTP 400 (bad_request); its message is withheld because this operation handles secret values.",
@@ -374,6 +375,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Vercel answered HTTP 401 (unauthorized); its message is withheld because this operation handles secret values. The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope.",
@@ -416,6 +418,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "provider_permission_denied",
             "message": "Vercel answered HTTP 403 (forbidden); its message is withheld because this operation handles secret values. Vercel refused access to this team or resource. Ask the team administrator to grant access and an operator to widen the configured token's Vercel scope.",
@@ -449,6 +452,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "not_found",
             "message": "Vercel answered HTTP 404 (not_found); its message is withheld because this operation handles secret values. Confirm the team, project, deployment, domain, or environment-variable id with a list read.",
@@ -479,6 +483,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Vercel answered HTTP 409 (conflict); its message is withheld because this operation handles secret values.",
@@ -509,6 +514,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Vercel answered HTTP 422 (bad_request); its message is withheld because this operation handles secret values.",
@@ -539,6 +545,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "Vercel answered HTTP 429 (rate_limited); its message is withheld because this operation handles secret values. Vercel meters endpoints separately; wait for the reported reset before retrying this operation.",
@@ -572,8 +579,9 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Vercel answered HTTP 500 (internal_server_error); its message is withheld because this operation handles secret values. Vercel is failing upstream. Whether the write took effect at Vercel is unknown: it carried no idempotency key, so check the target before repeating it.",
-            "retryable": false
+            "message": "Vercel answered HTTP 500 (internal_server_error); its message is withheld because this operation handles secret values. Vercel is failing upstream. Whether the write took effect at Vercel is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -600,6 +608,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Vercel answered HTTP 401 (unauthorized); its message is withheld because this operation handles secret values. The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope.",
@@ -642,6 +651,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "unavailable",
             "message": "Could not reach the Vercel API.",
@@ -687,6 +697,7 @@
               "stage": "downstream",
               "elapsedMs": 0
             },
+            "writeOutcome": "unknown",
             "connector": "hosting",
             "operation": "hosting.vercel_api_write",
             "uncertainCall": {

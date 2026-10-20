@@ -356,6 +356,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Notion golden_400: Notion answered HTTP 400; its message is withheld because this operation handles credentials.",
@@ -402,6 +403,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Notion golden_401: Notion answered HTTP 401; its message is withheld because this operation handles credentials. The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI.",
@@ -460,6 +462,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "provider_permission_denied",
             "message": "Notion golden_403: Notion answered HTTP 403; its message is withheld because this operation handles credentials. The token is valid but Notion refused this operation, and Notion's message says why. Usually an operator must enable the matching capability on the Notion integration (comment capabilities are off by default) or share the object with it; a workspace past its plan's block limit also answers 403. Re-authorizing will not help.",
@@ -509,6 +512,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Notion golden_404: Notion answered HTTP 404; its message is withheld because this operation handles credentials. Notion returns this both for an object that does not exist and for one that exists but has not been shared with this integration — do not treat it as proof of deletion. Confirm the id, then confirm the page or database is shared with the integration in Notion.",
@@ -555,10 +559,12 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
-            "code": "connector_call_failed",
-            "message": "Notion golden_409: Notion answered HTTP 409; its message is withheld because this operation handles credentials. Notion reported a write conflict; this is safe to retry. Whether the write took effect at Notion is unknown: it carried no idempotency key, so check the target before repeating it.",
-            "retryable": false
+            "code": "unavailable",
+            "message": "Notion golden_409: Notion answered HTTP 409; its message is withheld because this operation handles credentials. Notion reported a write conflict; this is safe to retry.",
+            "retryable": true,
+            "retryAfterMs": 1000
           }
         }
       },
@@ -601,6 +607,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Notion golden_422: Notion answered HTTP 422; its message is withheld because this operation handles credentials.",
@@ -647,6 +654,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "Notion golden_429: Notion answered HTTP 429; its message is withheld because this operation handles credentials. Notion allows each integration 180 requests a minute (600 on Business and Enterprise), and a separate budget shared by the whole workspace. Wait out the retry window.",
@@ -696,8 +704,9 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Notion golden_500: Notion answered HTTP 500; its message is withheld because this operation handles credentials. Notion is failing upstream. Whether the write took effect at Notion is unknown: it carried no idempotency key, so check the target before repeating it.",
-            "retryable": false
+            "message": "Notion golden_500: Notion answered HTTP 500; its message is withheld because this operation handles credentials. Notion is failing upstream. Whether the write took effect at Notion is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -740,6 +749,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Notion golden_401: Notion answered HTTP 401; its message is withheld because this operation handles credentials. The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI.",
@@ -798,6 +808,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "unavailable",
             "message": "Could not reach the Notion API.",
@@ -859,6 +870,7 @@
               "stage": "downstream",
               "elapsedMs": 0
             },
+            "writeOutcome": "unknown",
             "connector": "workspace",
             "operation": "workspace.integration_create_page",
             "uncertainCall": {
