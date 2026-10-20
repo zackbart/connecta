@@ -175,6 +175,10 @@ updates run only through `workflow_dispatch`.
 On a matching Linux runner, `pnpm install --frozen-lockfile`, install Chromium with the command above,
 then run `pnpm run test:browser:snapshots`. The normal command is
 `pnpm run test:browser`. Missing baselines fail CI; retries cannot bless them.
+Visual comparisons run in their own Playwright project without retries, so a
+mismatch fails on its first attempt. A comparison tagged `@unstable` keeps the
+retry budget until its flake is understood. When any attempt fails, CI uploads
+the HTML report, actual/expected/diff images and traces as `playwright-report`.
 Set `OPERATOR_VISUAL_INSPECT=1` to retain local screenshots under ignored
 `test-results/` for inspection, without updating committed baselines.
 

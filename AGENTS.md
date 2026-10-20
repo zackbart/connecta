@@ -75,14 +75,23 @@ and spec enforcement through `vitest.config.node.ts`), `workers` (the complete
 Workers suite), and `build` (build, declarations, bundle, examples, package and
 Docker smoke) in parallel with a shared pnpm store cache. The build job packs
 its existing `dist/` without rebuilding. Superseded PR runs are cancelled;
-every push to main runs every check. `browser` skips a PR whose every path is
+every push to main runs every check. A planning-only PR, whose every path is
+under `decisions/` or `.changes/` (`scripts/ci-planning-paths.sh`), skips
+`node`, `workers`, `build` and `browser`; `static` still runs. Shipped docs are
+not planning. `browser` skips a PR whose every path is
 in the safe set in `scripts/ci-browser-paths.sh`; `security` runs on PRs when
 a root or nested manifest, lockfile, `pnpm-workspace.yaml`, or `.npmrc` changes
 (the list is in `scripts/ci-security-paths.sh`), including the template
 installed by package/Docker smoke and published examples. The nightly Security
-workflow and publishing also audit dependencies. The single required `check` gate requires static, Node, Workers,
-build, and changes to succeed, and browser/security to pass or be intentionally
-skipped. Local `pnpm run check` remains the full core and browser gate.
+workflow and publishing also audit dependencies. The single required `check` gate requires static and changes
+to succeed, Node, Workers and build to succeed or skip as planning-only, and
+browser/security to pass or be intentionally skipped. Playwright's `visual`
+project (pixel comparisons) never retries; `behavior` and `@unstable`-tagged
+comparisons keep two CI retries. A browser run with any failed attempt uploads
+the `playwright-report` artifact (HTML report, diffs, traces). The advisory
+Provider drift workflow scans only the providers a PR changes
+(`scripts/ci-drift-providers.mjs`); the weekly and manual runs scan all of them.
+Local `pnpm run check` remains the full core and browser gate.
 
 ## Source map
 

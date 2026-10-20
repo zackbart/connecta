@@ -1,13 +1,19 @@
 name: Provider drift
 
 # Public vendor contracts only. This workflow reports evidence and never
-# participates in CI's aggregate check gate or accepts a new baseline.
+# participates in CI's aggregate check gate or accepts a new baseline. Pull
+# requests scan the providers they change (scripts/ci-drift-providers.mjs);
+# the weekly schedule and manual dispatch scan every public provider.
 on:
   pull_request:
     paths:
       - "src/providers/**"
+      - "scripts/ci-drift-providers.mjs"
       - "scripts/drift-check.mjs"
+      - "scripts/generate-openapi.mjs"
       - "scripts/providers.mjs"
+      - "scripts/value-safety.mjs"
+      - "scripts/vercel-inventory.mjs"
       - ".github/workflows/provider-drift.yml"
   schedule:
     - cron: "23 10 * * 1"
@@ -28,41 +34,77 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      # Drift tooling and shared provider code widen the scan; see the script.
+      - name: Select providers
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          providers=all
+          # An unreadable diff or provider tree falls back to the full scan, which reports it.
+          if [[ "$EVENT_NAME" == pull_request ]] &&
+             git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/paths"; then
+            providers=$(node scripts/ci-drift-providers.mjs < "$RUNNER_TEMP/paths") || providers=all
+          fi
+          echo "providers=$providers" >> "$GITHUB_OUTPUT"
       - name: Compare public provider contracts
         id: report
+        if: steps.scope.outputs.providers != ''
         continue-on-error: true
+        env:
+          PROVIDERS: ${{ steps.scope.outputs.providers }}
         run: |
-          pnpm --silent run providers:check --json > "$RUNNER_TEMP/provider-drift.json" 2> "$RUNNER_TEMP/provider-drift.log"
+          selection=()
+          if [[ "$PROVIDERS" != all ]]; then
+            for provider in $PROVIDERS; do selection+=(--provider "$provider"); done
+          fi
+          pnpm --silent run providers:check --json "${selection[@]}" > "$RUNNER_TEMP/provider-drift.json" 2> "$RUNNER_TEMP/provider-drift.log"
       - name: Summarize advisory findings
         if: always()
         env:
+          PROVIDERS: ${{ steps.scope.outputs.providers }}
           REPORT_OUTCOME: ${{ steps.report.outcome }}
         run: |
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
           import { join } from 'node:path';
+          const { PROVIDERS: providers, REPORT_OUTCOME: outcome, RUNNER_TEMP, GITHUB_STEP_SUMMARY } = process.env;
           let summary = '## Provider drift (advisory)\n\nPublic contracts only. No credentials, operational tool calls, issue filing, or baseline updates. This job is outside the aggregate `check` gate.\n\n';
-          try {
-            const report = JSON.parse(readFileSync(join(process.env.RUNNER_TEMP, 'provider-drift.json'), 'utf8'));
-            summary += `${report.findings} finding(s). Review the attached JSON for contract changes, unavailable references, and required manual reviews.\n\n`;
-            for (const mode of ['specs', 'docs', 'manual', 'records']) {
-              const rows = report[mode];
-              const findings = rows.reduce((sum, row) => sum + row.findings.length + (row.added?.length ?? 0), 0);
-              summary += `- ${mode}: ${rows.length} checks, ${findings} findings\n`;
-            }
+          summary += providers === 'all' ? 'Scope: every public provider.\n\n' : providers ? `Scope: providers this pull request changes, directly or through shared provider code: ${providers}.\n\n` : 'Scope: no provider with a drift record changed; nothing was scanned.\n\n';
+          if (providers) try {
+            const report = JSON.parse(readFileSync(join(RUNNER_TEMP, 'provider-drift.json'), 'utf8'));
+            // manual-required repeats every run until a vendor publishes a contract;
+            // everything else is new or changed against the reviewed evidence.
+            const lines = [];
+            const standing = [];
+            for (const mode of ['specs', 'docs', 'manual', 'records'])
+              for (const row of report[mode]) {
+                for (const finding of row.findings)
+                  (finding.kind === 'manual-required' ? standing : lines).push(`${row.provider} (${mode}): ${finding.kind} ${finding.detail}`);
+                for (const tool of row.added ?? []) lines.push(`${row.provider} (${mode}): unclassified ${tool}`);
+                for (const tool of row.removed ?? []) lines.push(`${row.provider} (${mode}): not documented ${tool}`);
+              }
+            const list = (items) => !items.length ? 'None.\n' : items.slice(0, 50).map((item) => `- ${item.replace(/\s+/g, ' ')}\n`).join('') + (items.length > 50 ? `- …and ${items.length - 50} more in the attached JSON\n` : '');
+            summary += `### ${lines.length} new or changed finding(s)\n\nContract changes, unavailable references, and invalid records against the reviewed evidence.\n\n${list(lines)}\n`;
+            summary += `### ${standing.length} standing manual review(s)\n\nVendors without a machine-readable contract; repeated every run.\n\n${list(standing)}\n`;
+            for (const mode of ['specs', 'docs', 'manual', 'records']) summary += `- ${mode}: ${report[mode].length} checks\n`;
           } catch {
-            summary += `No complete JSON report was produced. Report step outcome: ${process.env.REPORT_OUTCOME || 'not run'}. See the job log and attached stderr.\n`;
+            summary += `No complete JSON report was produced. Report step outcome: ${outcome || 'not run'}. See the job log and attached stderr.\n`;
           }
-          appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          appendFileSync(GITHUB_STEP_SUMMARY, summary);
           NODE
       - name: Upload drift evidence
-        if: always()
+        if: always() && steps.scope.outputs.providers != ''
         uses: actions/upload-artifact@v6
         with:
           name: provider-drift
