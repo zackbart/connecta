@@ -19,6 +19,7 @@ import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Url from "effect/http/Url";
+import { fromSignal } from "../runtime/run.js";
 import {
   RedirectRefused,
   RequestRefused,
@@ -36,6 +37,7 @@ import {
   Signal,
   WriteCapacity,
   reserveWrite,
+  writeRequestKey,
   type CallServices,
   type Dispatch,
 } from "./services.js";
@@ -156,6 +158,10 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
 
   const postprocess = (prepared: Effect.Effect<HttpClientRequest.HttpClientRequest, HttpFailure, R | CallServices>) =>
     Effect.gen(function* () {
+      const callSignal = yield* Signal;
+      const live = () =>
+        callSignal?.aborted ? refuse("This call has ended; no transport work may continue.") : Effect.void;
+      yield* live();
       const facts = yield* RequestFacts;
       const ledger = yield* Dispatches;
       // A new attempt: until it is handed to `fetch`, no failure is its answer.
@@ -173,7 +179,17 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         return reserved;
       });
       if (slot instanceof RequestRefused || slot instanceof ResendRefused) return yield* Effect.fail(slot);
-      const request = yield* prepared.pipe(
+      const preparation = callSignal
+        ? Effect.raceFirst(
+            prepared,
+            fromSignal(callSignal).pipe(
+              Effect.mapError(
+                () => new RequestRefused({ message: "This call has ended; no transport work may continue." }),
+              ),
+            ),
+          )
+        : prepared;
+      const request = yield* preparation.pipe(
         Effect.tapError((failure) =>
           Effect.sync(() => {
             if (slot) slot.failure = failure;
@@ -181,7 +197,28 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
         ),
       );
       const url = wireUrl(request);
-      const callSignal = yield* Signal;
+      yield* live();
+      const expected = slot ? capacity.get(slot.step!)?.get(slot.item) : undefined;
+      if (expected) {
+        const text = bodyText(request);
+        // Bulk requests currently support path/query/form content. Other bodies
+        // fail closed rather than omit identifying content from the reservation.
+        if (
+          request.body._tag !== "Empty" &&
+          (text === undefined || request.headers["content-type"] !== "application/x-www-form-urlencoded")
+        ) {
+          return yield* refuse("A bulk item request must use its declared form body.");
+        }
+        const actual = writeRequestKey({
+          method: request.method as typeof expected.method,
+          path: url.pathname.slice(basePath.length),
+          template: expected.template,
+          query: Object.fromEntries(url.searchParams),
+          form: text === undefined ? {} : Object.fromEntries(new URLSearchParams(text)),
+        });
+        if (actual !== writeRequestKey(expected))
+          return yield* refuse("This write item's request differs from its declared identifying content.");
+      }
       const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== "content-length"));
       const body = bodyInit(request);
       // A reservation is never released, including preparation failures and

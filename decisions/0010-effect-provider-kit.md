@@ -43,11 +43,51 @@ The prototype gives three kinds of evidence:
   verdict through `stripeFailure` and through the kit, and requires the same
   code, message, retry advice and wait.
 
-`test/http-kit.test.ts` (85 tests) covers the kit's own rules, and
+`test/http-kit.test.ts` (98 tests) covers the kit's own rules, and
 `test/kit-stability.node.test.ts` the stability guard (Q7). Every suite but the
 Node-only guard passes on Node and workerd.
 
-**Round-3 evidence.** The fixed-capacity and atomic-reservation regressions,
+**Round-4 ruling and evidence.** B.3 now adopts the core refusal contract;
+all verdict paths examine the entire call ledger. The prototype binds bulk
+items to snapshotted requests and aborts pending authentication and fetches
+when a call or its containing request closes. B.5 is strictly Tithe.ly's
+step 1 under 0011; the prerequisite back-port sequence is fixed below.
+
+The requested out-of-tree run uses #900's
+`origin/t3/provider-characterization-goldens` at `3ac58733`, with #902's
+`unknownOutcome` + `sendingOnce` write-500 back-port applied to the baseline
+from `8d35416d` (without changing #900's core serialization). Only the three
+prototype tools replace today's tools, with privacy set to `return` to compare
+existing behaviour. No harness, back-port or golden from the run is committed:
+
+- `catalog.json`: 34,969 → 34,969 bytes, byte-identical.
+- `calls.json`: 18,057 → 18,057 bytes, byte-identical; every request matches.
+- `failures.json`: 23,686 → 23,958 bytes (+272), **only write 401 and 401 echo
+  differ**, in their added unknown-outcome sentence. The auth code and
+  handoff survive. The six reverted 4xx cases and the back-ported 500 match.
+- This older core omits the explicit `writeOutcome` field; unit tests assert
+  it directly. A supplementary run on #902's full core at `8d35416d` also
+  exposes explicit-field differences in write 404, 409 and timeout, in
+  addition to 401/echo; those cases were already classified unknown there.
+  That run also exposes #902's privacy-description changes in three catalog
+  properties. B.5 must use regenerated post-back-port goldens and align those
+  existing descriptions, not claim this prototype is already byte-identical
+  to an unmerged core. This does not permit a B.5 surface change.
+
+**Round-4 verification.** `VITEST_MAX_WORKERS=2 pnpm run check` ran once and
+passed: 394 suites passed, 3 skipped; 18,837 tests passed, 313 skipped;
+all 13 invariants and 154 spec references are backed by passing tests. The
+requested kit/prototype, Stripe and Tithe.ly suites pass on both projects
+(231 tests each: kit 98, Tithe.ly prototype 55, Stripe prototype 3, Stripe
+provider 38, Tithe.ly provider 37). Purity, package-surface and stability
+pass (41 Node tests). `check:fast` passes with 368 related tests. Build,
+88 reachable declarations with no Effect types, every bundle cap (root
+379,203 B gzip / 399,882 B cap), examples and all 347 Chromium tests pass.
+`dist/` contains no `http/` or `kit-prototype` files. Observed host load was
+about 10–26; there were no full-gate failures or load timeouts and no isolated
+reruns were needed.
+
+**Historical round-3 evidence (superseded by the round-4 ruling below).** The fixed-capacity and atomic-reservation regressions,
 raw-status write mapping, recorded 401 body/later-failure cases and suspended
 schema checks are in the prototype suites. The out-of-tree golden run on
 #900's `f1a2df2b` substitutes the three prototype tools into the original
@@ -63,7 +103,7 @@ the wire; #902's explicit field makes all nine dispatched failures visibly
 unknown and keeps refusal-code accounting from overriding them. No golden
 or harness change from that run is committed.
 
-**Round-3 verification.** The kit/prototype, Stripe and Tithe.ly suites pass
+**Historical round-3 verification.** The kit/prototype, Stripe and Tithe.ly suites pass
 on Node and workerd, along with the purity, package-surface and stability
 guards. `check:fast` passes. `pnpm run check` ran once: 18,503 tests passed,
 4 failed and 304 were skipped; all 13 invariants and 154 spec references are
@@ -95,8 +135,9 @@ Four constraints shape the design:
 - **Classification belongs to the call.** The registry's served verdict
   decides at run time; the builder only annotates the catalog, and the HTTP
   method never decides.
-- **Agent-facing bytes do not change.** A migrated provider matches its
-  goldens unless its PR records a deliberate change.
+- **Step 1 preserves all agent-facing bytes.** Under [0011](./0011-provider-standard.md),
+  every kit migration matches catalog, calls AND failures goldens. Safety
+  changes are back-ported first; surface changes belong to step 2.
 
 A.2 (#902) is not merged yet. Its draft adds `deriveContext`/`contextKey`,
 `callClassification`, the shared `unknownOutcome`, and the
@@ -108,8 +149,9 @@ explicit `writeOutcome: "unknown"` on `ConnectorCallError` and
 `CallErrorDetails`, which `classifyWriteOutcome` reads before its refusal
 codes, so an authorization verdict reached after a write left keeps its code
 and handoff and is still counted unknown. This record uses those names and
-verdicts. The explicit unknown field agrees with A.2; this round fixes a stricter
-raw-dispatch constraint in B.3. The static OAuth divergence is explicitly
+verdicts. The explicit unknown field agrees with A.2. The decided round-4
+contract below adopts the core's `classifyWriteOutcome` and `REFUSALS`;
+rounds 2–3's rule that every dispatched failure is unknown is superseded. The static OAuth divergence is explicitly
 planned B.2 work below, not shipped alignment. Each rule lives in one place
 in the kit. Until #902 merges, the prototype carries a ten-line copy
 of `callClassification` (`attachServedClassification`) and sets
@@ -155,7 +197,7 @@ interface CallShapes extends OperationShapes {
   Credentials: { readonly values: Effect.Effect<ConnectorCredentialValues | null, ConnectorCallError> };
   Signal: AbortSignal | undefined;
   Dispatches: Dispatch[]; // permanent reservations and dispatch facts (B.2/B.3)
-  WriteCapacity: ReadonlyMap<string, ReadonlySet<string | undefined>>; // B.4 declaration, snapshotted once per call
+  WriteCapacity: ReadonlyMap<string, ReadonlyMap<string | undefined, WriteRequest | undefined>>; // B.4: fixed slots and item-derived requests
 }
 // What one request inside a call is; set by `Send`, read by the transport and refresh-once.
 const RequestFacts = Context.Reference<{ effect: "call" | "read"; step?: string; item?: string; operation?: OperationRef }>(…, { defaultValue: () => ({ effect: "call" }) });
@@ -210,8 +252,14 @@ explicit finalizer and a closed-state check:
   and again when their Promise settles. A use after close fails with
   `connector_call_failed` ("This call has ended…"); a read that was pending
   at close does not deliver its values. `Recovery.record` drops late facts,
-  because invocation has already read the record. `Signal` aborts on exit, as
-  today.
+  because invocation has already read the record. Each lease owns an
+  `AbortController`, forwards the admitted parent signal, and aborts its own
+  `Signal` on close, removing the parent listener. Closing the containing
+  request closes every attached call lease too. The transport checks this
+  signal before preparation and immediately before dispatch, races pending
+  preparation (including authentication that never reads `Credentials`)
+  against it, and passes it to fetch. Retained and pending work cannot send
+  after either boundary closes.
 - The Promise view's `credential`, `chargeConnectorCall` and
   `recordRecovery` go through the same lease, so a retained view refuses in
   the same way. B.1 closes the Promise view's credentials too; it does not
@@ -334,8 +382,25 @@ past the declared bound. The selector must derive identities from arguments,
 never an attempt counter, a random value, or mutable retry state. The allowed
 set never grows while the program runs or retries. A send naming an undeclared
 step or unselected item is refused before preparation or dispatch. A bulk tool
-uses `{ step: "rows", item: row.id }`, with `row.id` selected from its validated
-input; an upload declares `session` and `bytes` as separate `"once"` steps.
+uses `sendItem("rows", row.id)`: the kit derives each request with the
+step's pure `request(item, args)` declaration exactly once before `run`,
+snapshots it, and keys the reservation on canonical identifying request
+content as well as its closed slot. Arbitrary selected strings alone prove
+no identity. Aliases with identical canonical request content are rejected
+across the whole call before any send; rotating through selected ids cannot
+send an unchanged request twice. `sendPath` and direct-client paths must
+match the bound request at the transport boundary too. An upload declares
+`session` and `bytes` as separate `"once"` steps.
+
+The prototype canonically compares method, normalized path, sorted query and
+form content (not trace/request ids or credential headers). Bulk declarations
+support these path/form requests only and reject other bodies. B.4 extends
+the same binding to typed operations, JSON payloads and uploads with reviewed
+canonical identity adapters (or vendor idempotency keys), never by ignoring
+unsupported content. Each vendor review must verify its identifying content,
+including equivalent aliases/encodings, so two ids cannot name the same
+logical request. The kit derives the request from the item, not from the
+program's current retry counter.
 
 ```ts
 interface Dispatch {
@@ -379,8 +444,9 @@ The slot's `failure` records only its own preparation or answer failure, never
 `ResendRefused` from a later attempt. `Send`'s attempt slot distinguishes its
 request from later auxiliary requests. B.3 maps a blocked retry from the
 original reservation and its raw dispatch facts. If the reservation never
-dispatched or never connected, its own original verdict stands. Otherwise it
-is unknown and non-retryable unless vendor evidence proves non-execution.
+dispatched or never connected, its own original verdict stands. Otherwise B.3 uses its own definite refusal or reviewed proof, then checks
+all other write slots; any one that may have executed makes the call unknown
+and non-retryable.
 A recorded 401 keeps its auth handoff until renewal succeeds.
 
 This holds below Effect retries, program retries, 307/308 followers, replaying
@@ -473,16 +539,16 @@ evidence Q8 requires. C.5 adopts the rule as it stands.
 Every kit failure is one tag of `HttpFailure`. Each tag reaches the wire
 through `toConnectorCallError` (`src/http/errors.ts`):
 
-| Tag                | Raised by                                                              | Wire                                                        |
-| ------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `RequestRefused`   | confinement, `admit`, header collision                                 | `invalid_args`, before anything is sent                     |
-| `TransportFailure` | `fetch` rejected                                                       | `unavailableCallError`: errno and host only                 |
-| `RedirectRefused`  | 3xx                                                                    | `connector_call_failed`, non-retryable                      |
-| `ResponseTooLarge` | declared or streamed bytes past the ceiling                            | `connector_call_failed`, non-retryable                      |
-| `ResendRefused`    | a second dispatch of a logical write in one call (B.2)                 | the first dispatch's outcome: unknown, non-retryable        |
-| `StatusFailure`    | non-2xx, or an in-band refusal mapped as a status                      | the vendor's rules, then its table, then the defaults       |
-| `UnreadableBody`   | a 2xx that is not JSON                                                 | `connector_call_failed` with the vendor's `unreadable` text |
-| `Refusal`          | the provider or kit's own verdict (in-band, credential, cursor, grant) | the carried `ConnectorCallError`                            |
+| Tag                | Raised by                                                              | Wire                                                               |
+| ------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `RequestRefused`   | confinement, `admit`, header collision                                 | `invalid_args`, before anything is sent                            |
+| `TransportFailure` | `fetch` rejected                                                       | `unavailableCallError`: errno and host only                        |
+| `RedirectRefused`  | 3xx                                                                    | `connector_call_failed`, non-retryable                             |
+| `ResponseTooLarge` | declared or streamed bytes past the ceiling                            | `connector_call_failed`, non-retryable                             |
+| `ResendRefused`    | a second dispatch of a logical write in one call (B.2)                 | the original step's verdict, constrained by the entire call ledger |
+| `StatusFailure`    | non-2xx, or an in-band refusal mapped as a status                      | the vendor's rules, then its table, then the defaults              |
+| `UnreadableBody`   | a 2xx that is not JSON                                                 | `connector_call_failed` with the vendor's `unreadable` text        |
+| `Refusal`          | the provider or kit's own verdict (in-band, credential, cursor, grant) | the carried `ConnectorCallError`                                   |
 
 `StatusFailure` carries its `operation` (`{ method, template, flags? }`), set by
 `Send` before the answer is read, so value safety decides what the failure may
@@ -500,7 +566,7 @@ interface VendorErrors<F extends Facts> {
   readonly statuses: { 401; 403; 404 /* required */; [status: number]; serverError?; otherwise? }; // Classified<F> => Verdict
   readonly detail: (input: { status; facts: F; headers; withheld: boolean; body?: unknown }) => string; // after classification
   readonly unreadable: string;
-  readonly authBeforeExecution?: { readonly evidence: string }; // Q8, raw 401 only
+  readonly authBeforeExecution?: { evidence: string; matches: (input: Classified<F>) => boolean }; // Q8, raw 401 only
   readonly nonExecution?: readonly { evidence: string; matches: (input: Classified<F>) => boolean }[]; // explicit reviewed proof over raw response facts
 }
 interface Classified<F> { status; facts: F; headers; retryAfterMs; operation: OperationRef; withheld: boolean } // no detail, no body
@@ -545,10 +611,10 @@ The kit runs them in this order for every `StatusFailure`:
 - **Defaults cover the rest:** 400 and 422 → `invalid_args`; 429 →
   `rate_limited` with `Retry-After`; 5xx → `unavailable` with `Retry-After`;
   any other status → `connector_call_failed`, non-retryable.
-- **409 has no default.** A vendor may refine its code to `conflict`, but
-  that code never proves the dispatched write did not run. Only explicit
-  `nonExecution` evidence can do that; otherwise `writeOutcome: "unknown"`
-  takes precedence over invocation's refusal-code accounting.
+- **409 has no default.** A vendor may refine its own definite 409 answer to
+  `conflict`, a known refusal under the core contract. Tithe.ly deliberately
+  keeps `connector_call_failed` for its ambiguous 404 and 409, with unchanged
+  wording and non-retryability; the explicit outcome carries uncertainty.
 - **What the types cannot stop.** A rule that closes over mutable module state
   could carry one failure's wording into the next failure's classification.
   That is code review's to refuse; the contract makes it the only way, and a
@@ -570,11 +636,14 @@ const stripeErrors: VendorErrors<{ type?; code?; declineCode?; param? }> = {
 };
 ```
 
-Stripe separately declares `nonExecution` evidence for raw HTTP 429 plus
-`lock_timeout`, citing its object-lock-timeout documentation. That proof is
-independent of the classification rule; without the declaration, the same
-`conflict` verdict is unknown and non-retryable on a write. The fact on HTTP
-503 is not the declared proof. Tests cover all three and raw 409.
+Stripe's own raw HTTP 429 + `lock_timeout` answer maps to `conflict`, a
+known refusal under the core contract, with its existing 1,000 ms wait.
+Its `nonExecution` declaration also cites the vendor's
+[object-lock-timeout guarantee](https://docs.stripe.com/rate-limits#object-lock-timeouts):
+Stripe does not process those failed requests. Removing that declaration
+does not change this definite 4xx refusal. The same token on raw 503 remains
+unknown: neither the 429 rule nor its proof covers 503. Tests cover both,
+ordinary 429 and the vendor's raw 409 refinement.
 
 The one narrowing: a `param` outside the token grammar (a param name with
 spaces) is dropped where `stripeFailure` quotes it; the suite records it.
@@ -637,65 +706,83 @@ ahead of these (Drive's `cannotDownloadAbusiveFile`), reading `facts.reasons`,
 so the `googleReasonsOf` side table goes away. `googleOutcomeOf`'s phases
 become the ledger.
 
-**Write outcome over the ledger.** Raw dispatch facts constrain every mapped
-code. A failure after a write may have reached the resource server always
-carries `writeOutcome: "unknown"`, is non-retryable and carries no wait,
-unless the vendor explicitly declares proof of non-execution. A code chosen
-by a vendor rule is never that proof. An idempotency key records reconciliation
-facts; it does not relax either the one-attempt rule or this outcome contract.
-For a call served as a write, in order:
+**Write outcome over the entire call ledger — decided, round 4.** The kit
+adopts the core's existing `classifyWriteOutcome` + `REFUSALS` contract in
+`src/write-outcome.ts`, including #902's explicit unknown-outcome precedence.
+INV-9 forbids automatically replaying a dispatched write; it does not make
+every vendor answer unknown. This orchestrator ruling supersedes the
+“everything after dispatch is unknown” rule from rounds 2–3.
 
-1. **Nothing left connecta.** No write dispatched (reservations still
-   `reserved`/`preparing`), or every write dispatch is `unconnected`: its own
-   original verdict stands, retry advice included. The permanent reservation
-   still forbids another send within this call.
-2. **A write was answered raw HTTP 401** (Q8). Derive its authorization
-   verdict from that recorded 401, its headers/operation and its parsed body
-   when available, **not from the failure currently being mapped**. A declared
-   or streamed ceiling, a disconnect during body reading, a caught 401 followed
-   by an auxiliary 429, and renewal failures cannot change that verdict.
-   - Without `authBeforeExecution` evidence, retain the vendor's 401 auth code
-     (`auth_required`, converted by invocation to `downstream_oauth_required`
-     for OAuth), structured `authorize_connector` handoff and
-     `reconciliationRequired`. Add the unknown-outcome sentence and explicit
-     field, never a retry or wait. This holds through cancellation too.
-   - A successful renewal alone drops the handoff: use
-     `connector_call_failed`, still non-retryable and explicitly unknown,
-     in #902's renewed-but-unsent words. With several steps, an unrenewed
-     recorded 401 takes precedence over one whose renewal succeeded.
-   - With evidence and no other uncertain write, the recorded 401's refusal
-     stands. It is still never resent within the call.
-3. **A second send was stopped** (`ResendRefused`). Use the first reservation's
-   recorded answer/failure. Only explicit non-execution evidence or proven
-   non-dispatch lets that verdict stand. Otherwise report unknown,
-   non-retryable, with no wait. A 401 follows rule 2.
-4. **The failure is the write's own answer.** A `nonExecution` declaration
-   carries reviewed evidence and a predicate over `Classified` with the **raw
-   recorded status**, token facts and allowlisted headers. It never tests the
-   mapped code. An in-band synthetic status cannot substitute for the wire's
-   status. With proof and no other uncertain write, the vendor's refusal
-   stands. Without proof, preserve vendor code refinements (including
-   `rate_limited`, `conflict`, `invalid_args`, auth codes), add explicit unknown
-   outcome, and remove all retry advice. For compatibility with A.2, ordinary
-   `unavailable` becomes `connector_call_failed` with its unknown-outcome
-   sentence. Raw 503 + `RATE_LIMIT_EXCEEDED`, 429 + `lock_timeout` without
-   evidence, raw 409 and every mapped 5xx variant remain unknown. A transport
-   failure after send or a response/body failure has the same constraint.
-5. **Anything else failed after a write left** (an auxiliary request,
-   projection, provider check or second step). It cannot prove that write's
-   outcome. Keep a later auth code for its handoff; other later codes become
-   `connector_call_failed`, always unknown and non-retryable with no wait.
-   A recorded write 401 takes precedence under rule 2. The message states the
-   recorded 2xx acceptance when known, or that the write was already sent.
+For each write reservation, first distinguish no dispatch (`reserved` or
+`preparing`), proven no connection (`unconnected`), a definite refusal, and
+an execution that may have happened. Then decide over **all** write entries,
+never just the last failed or retried step:
 
-Timeouts receive the same explicit unknown/non-retryable constraint at the
-kit boundary; invocation may promote them to `write_outcome_unknown` with its
-own reconciliation facts. `writeOutcome` is read before refusal codes in
-#902's `classifyWriteOutcome`, so neither a rate-limit rule nor a conflict
-rule can turn an ambiguous dispatched write into known failure in direct calls
-or caught/uncaught programs.
+1. **Nothing may have executed.** No write left, or every dispatched write is
+   proven non-executed. Keep the failure's own code, message and retry advice.
+   Permanent reservations still prohibit another dispatch within this call.
+2. **A write answered raw HTTP 401 (Q8).** Read its own recorded status,
+   headers/operation and available parsed body, never an auxiliary failure's
+   facts. Keep `auth_required` / `downstream_oauth_required`,
+   `authorize_connector` and `reconciliationRequired`, add
+   `writeOutcome: "unknown"`, remove retryability and wait. This survives
+   body failures, renewal failures, auxiliary failures and cancellation.
+   Only a successful renewal drops the handoff (use #902's renewed-but-unsent
+   `connector_call_failed` words, still unknown). An unrenewed 401 takes
+   precedence over a renewed one. Exception: reviewed `authBeforeExecution`
+   evidence and a matching narrow raw-fact predicate prove this step refused
+   before execution; then its refusal stands **only if no other write may
+   have executed**. A `nonExecution` rule cannot bypass this 401 exception.
+3. **A second dispatch was blocked (`ResendRefused`).** Start from that slot's
+   own original answer/failure, but inspect every other slot before returning.
+   A retryable proven lock refusal for `bytes` cannot erase an accepted
+   `session` write; the whole call is unknown, non-retryable, without a wait.
+   The same applies when the blocked slot never dispatched or connected.
+4. **The write's OWN definite vendor refusal.** A readable own 4xx answer
+   mapped to a `REFUSALS` code keeps that code and today's retry advice, with
+   no `writeOutcome: "unknown"`: 400/422 → `invalid_args`, 403 →
+   `provider_permission_denied`, 404 → `not_found`, reviewed 409 → `conflict`,
+   429 → `rate_limited`. Vendor-fact refusals precede defaults: Stripe raw
+   429 + `lock_timeout` and Google revision/precondition refusals → `conflict`.
+   A 429 may advise waiting; none is automatically resent. The raw 401
+   exception is rule 2. This is a refusal **for the call** only when no other
+   write step may have executed.
+5. **Everything ambiguous after dispatch.** Raw 5xx (whatever code a vendor
+   fact rule maps it to), transport failure after send, redirect, oversized,
+   unreadable or unparseable body, any non-refusal code, and cancellation
+   after send carry explicit unknown outcome, non-retryable, without a wait.
+   Raw 503 + `RATE_LIMIT_EXCEEDED` stays unknown even though its code is
+   `rate_limited`. Only reviewed `nonExecution` evidence with a narrow
+   predicate over the raw status, token facts and reviewed headers proves
+   that step did not execute. An in-band synthetic status cannot replace
+   the raw status. Ordinary `unavailable` becomes `connector_call_failed`
+   using #902's words. Already non-retryable own vendor answers keep their
+   message bytes; the explicit field conveys uncertainty.
+6. **Another step may have executed.** Every verdict path, including refusal
+   exceptions, a blocked retry, `departedVerdict`, auxiliary failures and
+   provider checks, must retain whole-call uncertainty. Preserve an auth
+   code for its handoff; otherwise use `connector_call_failed`, always
+   unknown and non-retryable with no wait. The message states any known 2xx
+   acceptance or that the write was sent. Several proven refusals alone do
+   not create uncertainty; one accepted or ambiguous write does.
 
-Rule 5 reports unknown even when the vendor answered the write with a 2xx.
+`nonExecution` and `authBeforeExecution` are **trusted, per-vendor review
+obligations**. Each declaration requires non-empty evidence text and a narrow
+predicate over raw status + token facts + reviewed headers, never mapped code
+or prose. Construction rejects missing evidence or predicates. The reviewer
+of this record and each vendor declaration must verify each claim and
+predicate against vendor documentation; Stripe's linked lock-timeout
+non-processing guarantee is the model, checked for this prototype. A broad
+predicate or a link with no supporting guarantee is not proof. These
+predicates are trusted code: types cannot verify vendor semantics.
+
+Timeouts carry explicit unknown outcome and stay non-retryable; invocation
+may promote them to `write_outcome_unknown`. Idempotency keys never allow an
+automatic resend or erase ambiguous outcome; they supply reconciliation
+facts. #902 reads `writeOutcome` before refusal codes in direct calls and
+caught/uncaught program accounting.
+
+Rule 6 reports unknown even when the vendor answered the write with a 2xx.
 The alternative, accounting it as `ok`, was rejected:
 
 - The call failed, so the agent has no result to compare the target against.
@@ -734,7 +821,7 @@ export function connect<R>(vendor: Vendor, guarded: GuardedClient<R>, options: {
 type Send<R> = <Op extends Operation>(operation: Op, request: RequestOf<Op>, options?: {
   readonly effect?: "read";                                  // an auxiliary lookup inside a write tool; never inferred
   readonly step?: string;                                    // a construction-declared step (B.2), default write
-  readonly item?: string;                                    // one identity in its fixed bounded item set
+  readonly item?: string;                                    // bound to its snapshotted request, never a free alias
   readonly flags?: Readonly<Record<string, true>>;           // facts the vendor's rules read, such as revisionGuarded
 }) => Effect.Effect<Answer, HttpFailure, R>;                 // Answer = { status, data }: settled and safe
 export function manifest(vendor: Vendor): OpenApi.OpenAPISpec; // for scripts/drift-check.mjs only
@@ -810,7 +897,8 @@ interface ToolSpec<I extends Input, O extends Schema.Top> {
   readonly output: O;  // -> outputSchema; `run` is typed by it
   readonly writeSteps?: Readonly<Record<string, "once" | {
     readonly maxItems: number;
-    readonly items: (args: I["Type"]) => readonly string[]; // pure, deterministic input identities, evaluated once before run
+    readonly items: (args: I["Type"]) => readonly string[]; // pure bounded selector, once before run
+    readonly request: (item: string, args: I["Type"]) => WriteRequest; // kit derives and snapshots the request for each item
   }>>;
   readonly run: (args: I["Type"]) => Effect.Effect<O["Type"], HttpFailure, CallServices>;
 }
@@ -901,7 +989,7 @@ the `review` check arrive in B.4.
 
 - **`run` is typed by `output`.** A projection that returns untouched rows does
   not compile. The prototype keeps one cast for Tithe.ly's `raw` flag; B.5
-  declares the union (Q3).
+  preserves the schema bytes until step 2 (Q3).
 
 **Paging (`src/http/paging.ts`).** One strategy set, all producing
 `Page<Row> = {rows, page: {hasMore, nextCursor}}`, all reading redacted data:
@@ -938,10 +1026,9 @@ function hatch(options: {
 ```
 
 An operation with no verdict is refused, so Breeze's GET writes need one. The
-hatch retires the `_api_get`/`_api_mutate` pairs of Tithe.ly, Breeze, CCB,
-Planning Center and Overflow. Each rename is a recorded catalog change in that
-provider's Phase C PR; B.5 may keep Tithe.ly's names (the prototype does) and
-rename in its own recorded step.
+hatch retires the `_api_get`/`_api_mutate` pairs in each provider's **step 2**
+under 0011. B.5 must retain Tithe.ly's existing hatch names and all surface
+bytes; kit primitives never authorize a step-1 rename.
 
 **Provider (`src/http/provider.ts`).** The builder is built on `defineProvider`,
 not `asProviderFactory`. `defineProvider` already validates `purpose`, the
@@ -1023,9 +1110,20 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
 - **B.5, the gate (Q1).** Moves `src/providers/tithely/` onto the kit
   completely: every tool, the writes, the credential and 401 paths, every
   failure path and the hatch.
-  - Its tools match `test/goldens/tithely/`, except changes it records: the
-    hatch rename if it makes one, the `raw` union (Q3), A.2's write outcomes
-    and sensitive fields, and the 401 rule (Q8).
+  - **B.5 is Tithe.ly's STEP 1 under 0011.** `catalog.json`, `calls.json` AND
+    `failures.json` must be byte-identical. Safety and write-outcome changes
+    are back-ported into today's providers first; routine kit differences
+    are not exceptions. Hatch renames, the catalog's `raw` union and every
+    other surface change belong to Tithe.ly's separate step 2, never B.5.
+  - **Prerequisite sequence, decided by the orchestrator:** of round 3's
+    nine write-case differences, 400/403/404/409/422/429 revert to today's
+    behaviour under the round-4 ruling; 500 is already back-ported by #902.
+    The 401 and 401-echo cases need one prerequisite back-port into today's
+    providers: a write answered 401 keeps its auth code and handoff, gains
+    `writeOutcome: "unknown"`, and is non-retryable. The orchestrator will
+    land that as a separate PR after #902 merges and before B.5, then
+    regenerate the goldens. B.5 migrates against those regenerated bytes.
+    No back-port or golden regeneration is part of this design PR.
   - It reports, against today's provider: code lines, cyclomatic complexity
     per tool, the provider entry's gzip size, and catalog render time apart
     from per-call decode time (Q4).
@@ -1103,10 +1201,10 @@ The previous draft asked eight questions. The orchestrator decided them:
    caught and uncaught programs all report it as unknown, with
    reconciliation facts, and never as retryable.
 3. **Tithe.ly's `raw` flag.** Keep A.2's deployment-controlled
-   `sensitiveFields`. B.5 declares the output honestly as a union of the
-   projection and a record schema, and both branches are filtered, which the
-   value-safety boundary does by construction. Removing `raw` waits for the
-   contract phase.
+   `sensitiveFields` and filter both branches. B.5 preserves the existing
+   catalog bytes, including its output schema; the prototype's transitional
+   cast remains until step 2 removes `raw` and declares the standard surface
+   under 0011. No catalog union change is permitted in B.5.
 4. **JSON Schema at runtime for now.** Rendering runs once per connector at
    construction. B.5 measures render cost and per-call decode cost
    separately; rendering moves to `providers:generate` only if a deployed
@@ -1162,8 +1260,8 @@ The previous draft asked eight questions. The orchestrator decided them:
   unknown outcome instead of a retryable `unavailable`. A write answered 401
   keeps `auth_required` and its handoff, but is never retryable and its
   outcome is unknown. A failure after a write left reports the write as
-  unknown instead of the later failure's retry advice. Each migration
-  records it.
+  unknown instead of the later failure's retry advice. Back-port those changes
+  and regenerate goldens first, then migrate byte-identically in step 1.
 - **Classification cannot read prose.** Vendor rules see tokens and
   allowlisted headers and return a code; the message is rendered afterwards.
   A vendor whose current mapper branches on message text must find a code or

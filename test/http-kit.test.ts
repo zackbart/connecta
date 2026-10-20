@@ -16,6 +16,8 @@ import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { guardedClient, type GuardedOptions } from "../src/http/client.js";
 import {
+  departedVerdict,
+  validateVendorErrors,
   RedirectRefused,
   Refusal,
   RequestRefused,
@@ -103,7 +105,7 @@ function services(
     Context.add(Signal, undefined),
     Context.add(Classification, classification),
     Context.add(Dispatches, dispatches),
-    Context.add(WriteCapacity, new Map([["write", new Set([undefined])]])),
+    Context.add(WriteCapacity, new Map([["write", new Map([[undefined, undefined]])]])),
   );
 }
 
@@ -479,10 +481,10 @@ describe("failure mapping (decision 0010, B.3)", () => {
     );
     const reset = new TransportFailure({ failure: { cause: { code: "ECONNRESET" } }, host: "https://acme.example" });
     expect(write(reset, [answered(reset)]).retryable).toBe(false);
-    // Even mapped refusal codes and redirects carry explicit uncertainty without reviewed proof.
+    // Definite own refusals keep the core's known-failure contract.
     const refused = status(400);
     expect(write(refused, [answered(refused)])).toMatchObject({ code: "invalid_args" });
-    expect(writeOutcomeOf(write(refused, [answered(refused)]))).toBe("unknown");
+    expect(writeOutcomeOf(write(refused, [answered(refused)]))).toBeUndefined();
     const redirect = new RedirectRefused({ status: 302 });
     expect(writeOutcomeOf(write(redirect, [answered(redirect, { status: 302 })]))).toBe("unknown");
   });
@@ -510,8 +512,6 @@ describe("failure mapping (decision 0010, B.3)", () => {
 
   it.each([
     [503, "RATE_LIMIT_EXCEEDED", "rate_limited"],
-    [429, "lock_timeout", "conflict"],
-    [409, "ABORTED", "conflict"],
     [500, "denied", "provider_permission_denied"],
     [502, "bad", "invalid_args"],
     [504, "missing", "not_found"],
@@ -539,16 +539,16 @@ describe("failure mapping (decision 0010, B.3)", () => {
     },
   );
 
-  it("INV-9: only explicit vendor proof of non-execution allows a dispatched refusal to stand", () => {
-    const failure = status(429, {}, { code: "lock_timeout" });
+  it("INV-9: explicit raw-fact proof can establish non-execution for an otherwise ambiguous answer", () => {
+    const failure = status(503, {}, { code: "not_executed" });
     const vendor: VendorErrors<{ code: string }> = {
       ...VENDOR,
       facts: (tokens) => (tokens ?? {}) as { code: string },
       classify: [() => ({ code: "conflict", retryable: true, retryAfterMs: 1000 })],
       nonExecution: [
         {
-          evidence: "The vendor documents rejecting lock_timeout before execution.",
-          matches: ({ status, facts }) => status === 429 && facts.code === "lock_timeout",
+          evidence: "https://acme.example/docs/errors proves raw 503 + not_executed precedes execution.",
+          matches: ({ status, facts }) => status === 503 && facts.code === "not_executed",
         },
       ],
     };
@@ -560,15 +560,83 @@ describe("failure mapping (decision 0010, B.3)", () => {
     expect(map(failure)).toMatchObject({ code: "conflict", retryable: true });
     expect(writeOutcomeOf(map(failure))).toBeUndefined();
     // Neither a mapped conflict nor the same fact on a different raw status is proof.
-    expect(map(status(503, {}, { code: "lock_timeout" }))).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    expect(map(status(429, {}, { code: "other" }))).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    const inBand = status(429, {}, { code: "lock_timeout" });
+    expect(map(status(502, {}, { code: "not_executed" }))).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(map(status(503, {}, { code: "other" }))).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    const inBand = status(503, {}, { code: "not_executed" });
     expect(
       toConnectorCallError(inBand, vendor, {
         classification: "write",
         dispatches: [answered(inBand, { status: 200 })],
       }),
     ).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+  });
+
+  it.each([400, 403, 404, 409, 422, 429])(
+    "INV-9: a write's own definite HTTP %i refusal keeps its code and retry advice",
+    (code) => {
+      const failure = status(code, { "Retry-After": "2" });
+      const vendor: VendorErrors = {
+        ...VENDOR,
+        statuses: { ...VENDOR.statuses, 409: () => ({ code: "conflict", retryable: true }) },
+      };
+      const read = toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] });
+      const write = toConnectorCallError(failure, vendor, { classification: "write", dispatches: [answered(failure)] });
+      expect(write).toEqual(read);
+      expect(writeOutcomeOf(write)).toBeUndefined();
+    },
+  );
+
+  it("INV-9 INV-11: non-execution declarations require evidence and narrow raw-fact predicates", () => {
+    for (const proof of [{ evidence: " ", matches: () => true }, { evidence: "docs" }]) {
+      expect(() => validateVendorErrors({ ...VENDOR, authBeforeExecution: proof as never })).toThrow(/evidence/);
+      expect(() => validateVendorErrors({ ...VENDOR, nonExecution: [proof as never] })).toThrow(/evidence/);
+    }
+    const failure = status(401);
+    const vendor: VendorErrors = {
+      ...VENDOR,
+      authBeforeExecution: {
+        evidence: "https://acme.example/docs/auth",
+        matches: ({ headers }) => headers["x-auth-phase"] === "before",
+      },
+      headers: ["x-auth-phase"],
+    };
+    expect(
+      toConnectorCallError(failure, vendor, { classification: "write", dispatches: [answered(failure)] }),
+    ).toMatchObject({ writeOutcome: "unknown" });
+    const proven = status(401, { "x-auth-phase": "before" });
+    expect(
+      writeOutcomeOf(toConnectorCallError(proven, vendor, { classification: "write", dispatches: [answered(proven)] })),
+    ).toBeUndefined();
+  });
+
+  it("INV-9: an unreadable own 4xx body cannot supply a definite refusal", () => {
+    const failure = new StatusFailure({
+      status: 400,
+      headers: new Headers(),
+      body: undefined,
+      unreadable: true,
+      operation: OPERATION,
+    });
+    expect(
+      toConnectorCallError(failure, VENDOR, { classification: "write", dispatches: [answered(failure)] }),
+    ).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
+  });
+
+  it("INV-9: cancellation after an accepted step and a proven 401 considers the whole ledger", () => {
+    const failure = status(401);
+    const vendor: VendorErrors = {
+      ...VENDOR,
+      authBeforeExecution: { evidence: "https://acme.example/docs/auth", matches: ({ status }) => status === 401 },
+    };
+    expect(
+      departedVerdict(vendor, {
+        classification: "write",
+        dispatches: [dispatch("answered", { status: 201 }), answered(failure)],
+      }),
+    ).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+    expect(
+      writeOutcomeOf(departedVerdict(vendor, { classification: "write", dispatches: [answered(failure)] })),
+    ).toBeUndefined();
   });
 
   it("INV-9: a proven 401 refusal still owns auth recovery when another write step is uncertain", () => {
@@ -578,7 +646,10 @@ describe("failure mapping (decision 0010, B.3)", () => {
       throttled,
       {
         ...VENDOR,
-        authBeforeExecution: { evidence: "This vendor checks credentials first." },
+        authBeforeExecution: {
+          evidence: "This vendor checks credentials first.",
+          matches: ({ status }) => status === 401,
+        },
       },
       { classification: "write", dispatches: [answered(unauthorized), dispatch("answered", { status: 201 })] },
     );
@@ -1276,7 +1347,10 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
   });
 
   it("INV-9: a vendor that documents authenticating first gets its 401 refusal, renewal or not", async () => {
-    const documented: VendorErrors = { ...VENDOR, authBeforeExecution: { evidence: "https://acme.example/docs/auth" } };
+    const documented: VendorErrors = {
+      ...VENDOR,
+      authBeforeExecution: { evidence: "https://acme.example/docs/auth", matches: ({ status }) => status === 401 },
+    };
     const { layer } = grant(() => Effect.fail(new Refusal({ error: REJECTED })));
     answers.push(() => new Response(null, { status: 401 }));
     expect(await call(tool("write", layer, { vendor: documented }), "write")).toMatchObject({
@@ -1459,6 +1533,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       writeSteps: {
         rows: {
           maxItems: 2,
+          request: (item: string) => ({ ...POST_ITEMS, path: `/items/${item}` }),
           items: (args: { readonly ids: readonly string[] }) => {
             selections++;
             return args.ids;
@@ -1466,14 +1541,9 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
         },
       },
       run: (args: { readonly ids: readonly string[] }) =>
-        Effect.forEach(
-          args.ids,
-          (id) =>
-            connection
-              .sendPath({ ...POST_ITEMS, path: `/items/${id}` }, { step: "rows", item: id })
-              .pipe(Effect.result),
-          { concurrency: "unbounded" },
-        ).pipe(
+        Effect.forEach(args.ids, (id) => connection.sendItem("rows", id).pipe(Effect.result), {
+          concurrency: "unbounded",
+        }).pipe(
           Effect.flatMap((results) => {
             const failed = results.find((result) => result._tag === "Failure");
             return failed ? Effect.fail(failed.failure) : Effect.succeed(results);
@@ -1516,9 +1586,142 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       unselected.handler!({ ids: ["alice"] }, { ...context(), fetch: globalThis.fetch }),
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(sent).toEqual([]);
-    expect(() => write(connection, { ...spec, writeSteps: { rows: { maxItems: 0, items: () => [] } } })).toThrow(
-      /maxItems/,
+    expect(() =>
+      write(connection, { ...spec, writeSteps: { rows: { maxItems: 0, items: () => [], request: () => POST_ITEMS } } }),
+    ).toThrow(/maxItems/);
+  });
+
+  it("INV-9: a blocked retry of a proven refusal cannot erase an earlier accepted write step", async () => {
+    const failure = status(429, { "Retry-After": "1" }, { code: "lock_timeout" });
+    const errors: VendorErrors = {
+      ...VENDOR,
+      facts: (tokens) => (tokens ?? {}) as Record<string, string>,
+      classify: [() => ({ code: "conflict", retryable: true, retryAfterMs: 1000 })],
+      nonExecution: [
+        {
+          evidence: "https://docs.stripe.com/rate-limits#object-lock-timeouts",
+          matches: ({ status, facts }) => status === 429 && facts["code"] === "lock_timeout",
+        },
+      ],
+    };
+    const connection = { ...acme(), errors };
+    answers = [() => Response.json({ ok: true }, { status: 201 }), () => Response.json(failure.body, { status: 429 })];
+    const tool = write(connection, {
+      name: "upload",
+      description: "Upload.",
+      destructive: false,
+      input: Schema.Struct({}),
+      output: Schema.Unknown,
+      writeSteps: { session: "once", bytes: "once" },
+      run: () =>
+        Effect.gen(function* () {
+          yield* connection.sendPath(POST_ITEMS, { step: "session" });
+          yield* connection.sendPath(POST_ITEMS, { step: "bytes" }).pipe(Effect.retry({ times: 1 }));
+        }),
+    });
+    const result = {
+      error: await Promise.resolve(tool.handler!({}, { ...context(), fetch: globalThis.fetch })).catch(
+        (error: unknown) => error,
+      ),
+    };
+    expect(sent).toHaveLength(2);
+    expect(result.error).toMatchObject({ retryable: false, retryAfterMs: undefined, writeOutcome: "unknown" });
+  });
+
+  it("INV-9: bulk aliases and rotated ids cannot send identical request content twice", async () => {
+    const connection = acme();
+    const base = {
+      name: "bulk",
+      description: "Update items.",
+      destructive: false,
+      input: Schema.Struct({ ids: Schema.Array(Schema.String) }),
+      output: Schema.Unknown,
+    };
+    const aliases = write(connection, {
+      ...base,
+      writeSteps: { rows: { maxItems: 2, items: (args) => args.ids, request: () => POST_ITEMS } },
+      run: () => connection.sendItem("rows", "a"),
+    });
+    await expect(aliases.handler!({ ids: ["a", "b"] }, { ...context(), fetch: globalThis.fetch })).rejects.toThrow(
+      /aliases/,
     );
+    expect(sent).toEqual([]);
+    let attempt = 0;
+    answers = [() => new Response(null, { status: 503 }), () => Response.json({ ok: true })];
+    const rotated = write(connection, {
+      ...base,
+      writeSteps: {
+        rows: { maxItems: 2, items: (args) => args.ids, request: (item) => ({ ...POST_ITEMS, form: { id: item } }) },
+      },
+      run: (args) =>
+        Effect.suspend(() =>
+          connection.sendPath({ ...POST_ITEMS, form: { id: "a" } }, { step: "rows", item: args.ids[attempt++]! }),
+        ).pipe(Effect.retry({ times: 1 })),
+    });
+    await expect(
+      rotated.handler!({ ids: ["a", "b"] }, { ...context(), fetch: globalThis.fetch }),
+    ).rejects.toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(sent).toHaveLength(1);
+  });
+
+  it.each(["call", "request"])(
+    "INV-7: closing the %s revokes retained and pending transport even when authentication ignores Credentials",
+    async (boundary) => {
+      let resume!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const pending = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      const connection = acme({
+        authenticate: Effect.promise(async () => {
+          entered();
+          await pending;
+          return {};
+        }),
+      });
+      const { call } = lease();
+      const scope = {};
+      const request = openRequest(scope);
+      callView(operationView({ ...context(), requestScope: scope }, undefined), call);
+      const retained = connection.sendPath(POST_ITEMS);
+      const result = runEdge(retained.pipe(Effect.result, Effect.provideContext(call.services)));
+      await started;
+      (boundary === "call" ? call : request).close();
+      expect(Context.get(call.services, Signal)?.aborted).toBe(true);
+      expect((await result)._tag).toBe("Failure");
+      resume();
+      await Promise.resolve();
+      expect((await runEdge(retained.pipe(Effect.result, Effect.provideContext(call.services))))._tag).toBe("Failure");
+      expect(sent).toEqual([]);
+    },
+  );
+
+  it.each(["call", "request"])("INV-7: closing the %s aborts an in-flight fetch", async (boundary) => {
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let transportSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          transportSignal = init?.signal ?? undefined;
+          transportSignal?.addEventListener("abort", () => reject(transportSignal?.reason), { once: true });
+          entered();
+        }),
+    ) as typeof fetch;
+    const { call } = lease();
+    const scope = {};
+    const request = openRequest(scope);
+    callView(operationView({ ...context(), requestScope: scope }, undefined), call);
+    const pending = runEdge(acme().sendPath(POST_ITEMS).pipe(Effect.result, Effect.provideContext(call.services)));
+    await started;
+    (boundary === "call" ? call : request).close();
+    expect(transportSignal?.aborted).toBe(true);
+    expect((await pending)._tag).toBe("Failure");
   });
 
   it.each([307, 308])(
@@ -1812,6 +2015,7 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
     const refused = await invoke(acme(), (connection) =>
       connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
     );
-    expect(refused.error).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
+    expect(refused.error).toMatchObject({ code: "invalid_args", retryable: false });
+    expect(writeOutcomeOf(refused.error)).toBeUndefined();
   });
 });

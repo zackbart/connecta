@@ -93,10 +93,31 @@ export interface Dispatch {
 /** Permanent write reservations plus resource dispatches, in reservation order. The outcome rule reads their states. */
 export class Dispatches extends Context.Service<Dispatches, Dispatch[]>()("connecta/http/Dispatches") {}
 
-/** Closed capacity, snapshotted from the tool declaration and validated input before its program runs. */
+/** A bulk item's complete, input-derived request. The kit snapshots it before the program runs. */
+export interface WriteRequest {
+  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  readonly path: string;
+  readonly template: string;
+  readonly query?: Readonly<Record<string, string>>;
+  readonly form?: Readonly<Record<string, string>>;
+}
+
+/** Canonical identifying content, independent of item aliases and form/query property order. No credentials. */
+export function writeRequestKey(request: WriteRequest): string {
+  const pairs = (record: Readonly<Record<string, string>> | undefined) =>
+    Object.entries(record ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify([
+    request.method,
+    new URL(`https://request.example${request.path}`).pathname,
+    pairs(request.query),
+    pairs(request.form),
+  ]);
+}
+
+/** Closed capacity and the requests bound to bulk items, snapshotted before the program runs. */
 export class WriteCapacity extends Context.Service<
   WriteCapacity,
-  ReadonlyMap<string, ReadonlySet<string | undefined>>
+  ReadonlyMap<string, ReadonlyMap<string | undefined, WriteRequest | undefined>>
 >()("connecta/http/WriteCapacity") {}
 
 /** No await or fiber yield between the check and insertion. Reservations are never released. */
@@ -179,6 +200,10 @@ export interface CallInputs {
 /** Build one call's services. Invocation calls this in the scoped attempt that owns the permit (B.1). */
 export function openCall(inputs: CallInputs): CallLease {
   let open = true;
+  const controller = new AbortController();
+  const abort = () => controller.abort(inputs.signal?.reason);
+  if (inputs.signal?.aborted) abort();
+  else inputs.signal?.addEventListener("abort", abort, { once: true });
   // Checked before the work starts and again when it settles: a read that
   // was pending when the call closed does not deliver for it.
   const live = <A>(work: () => Promise<A>, fail: (error: unknown) => ConnectorCallError | unknown) =>
@@ -205,16 +230,19 @@ export function openCall(inputs: CallInputs): CallLease {
       // Late facts are dropped: invocation has already read the record.
       record: (facts) => Effect.sync(() => (open ? inputs.record(facts) : undefined)),
     }),
-    Context.add(Signal, inputs.signal),
+    Context.add(Signal, controller.signal),
     Context.add(Classification, inputs.classification),
     Context.add(Dispatches, []),
-    Context.add(WriteCapacity, new Map([["write", new Set([undefined])]])),
+    Context.add(WriteCapacity, new Map([["write", new Map([[undefined, undefined]])]])),
   );
   return {
     services,
     closed: () => !open,
     close: () => {
+      if (!open) return;
       open = false;
+      inputs.signal?.removeEventListener("abort", abort);
+      controller.abort(ended());
     },
   };
 }

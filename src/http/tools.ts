@@ -17,7 +17,15 @@ import type { ApiTool } from "../connectors/api-connector.js";
 import { runEdge } from "../runtime/run.js";
 import { departedVerdict, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { catalogSchema } from "./json-schema.js";
-import { Classification, Dispatches, WriteCapacity, fromConnectorContext, type CallServices } from "./services.js";
+import {
+  Classification,
+  Dispatches,
+  WriteCapacity,
+  writeRequestKey,
+  fromConnectorContext,
+  type WriteRequest,
+  type CallServices,
+} from "./services.js";
 import type { Connection } from "./vendor.js";
 
 /** An input Schema the kit can render as catalog JSON Schema and decode without services. */
@@ -31,6 +39,8 @@ type WriteSteps<A> = Readonly<
     | {
         readonly maxItems: number;
         readonly items: (args: A) => readonly string[];
+        /** Pure: the kit derives each item's request once, before run. */
+        readonly request: (item: string, args: A) => WriteRequest;
       }
   >
 >;
@@ -96,10 +106,12 @@ function build<I extends Input, O extends Schema.Top>(
     }
     return [name, declaration === "once" ? declaration : { ...declaration }] as const;
   });
-  const capacity = (args: I["Type"]) =>
-    new Map(
+  const capacity = (args: I["Type"]) => {
+    const identities = new Set<string>();
+    return new Map(
       steps.map(([name, declaration]) => {
-        if (declaration === "once") return [name, new Set<string | undefined>([undefined])] as const;
+        if (declaration === "once")
+          return [name, new Map<string | undefined, WriteRequest | undefined>([[undefined, undefined]])] as const;
         const items = [...declaration.items(args)];
         if (
           items.length > declaration.maxItems ||
@@ -108,9 +120,18 @@ function build<I extends Input, O extends Schema.Top>(
         ) {
           throw new Error("Write item identities must be unique nonempty strings within the declared maxItems bound.");
         }
-        return [name, new Set<string | undefined>(items)] as const;
+        const requests = items.map((item) => {
+          // Copy identifying content: a retained mutable object cannot change its request later.
+          const request = structuredClone(declaration.request(item, args));
+          const key = writeRequestKey(request);
+          if (identities.has(key)) throw new Error("Write item aliases must not identify identical request content.");
+          identities.add(key);
+          return [item, request] as const;
+        });
+        return [name, new Map<string | undefined, WriteRequest | undefined>(requests)] as const;
       }),
     );
+  };
   const decode = Schema.decodeUnknownEffect(spec.input);
   const tool: ApiTool = {
     name: spec.name,

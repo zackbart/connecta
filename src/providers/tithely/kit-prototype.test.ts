@@ -393,21 +393,23 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     async ({ tool, args, responses }) => {
       const { before, after } = await both(tool, args, responses);
       expect(after.sent).toEqual(before.sent);
-      if (
-        tool === "tithely_api_mutate" &&
-        (responses[0]?.status || (responses[0]?.body as { status?: string } | undefined)?.status === "fail")
-      ) {
-        // Round 3: raw dispatch, rather than a mapped refusal code, owns uncertainty.
-        const previous = before.result as { message: string };
+      const previous = before.result as { message: string; retryable: boolean };
+      if (tool === "tithely_api_mutate" && responses[0]?.status === 500) {
         expect(after.result).toEqual({
           ...(before.result as object),
+          code: "connector_call_failed",
           retryable: false,
           retryAfterMs: undefined,
           writeOutcome: "unknown",
-          message:
-            `${previous.message} Whether the write took effect at Tithe.ly is unknown: ` +
-            "it carried no idempotency key, so check the target before repeating it.",
+          message: `${previous.message} Whether the write took effect at Tithe.ly is unknown: it carried no idempotency key, so check the target before repeating it.`,
         });
+      } else if (
+        tool === "tithely_api_mutate" &&
+        (responses[0]?.status === 404 ||
+          responses[0]?.status === 409 ||
+          (!responses[0]?.status && (responses[0]?.body as { status?: string } | undefined)?.status === "fail"))
+      ) {
+        expect(after.result).toEqual({ ...(before.result as object), writeOutcome: "unknown" });
       } else expect(after.result).toEqual(before.result);
     },
   );

@@ -25,6 +25,7 @@ import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as OpenApi from "effect/http-api/OpenApi";
 import type { GuardedClient } from "./client.js";
 import {
+  validateVendorErrors,
   RequestRefused,
   ResendRefused,
   StatusFailure,
@@ -40,6 +41,7 @@ import {
   RequestFacts,
   WriteCapacity,
   reserveWrite,
+  type WriteRequest,
   type CallServices,
   type Dispatch,
 } from "./services.js";
@@ -97,14 +99,7 @@ type Send<R = CallServices> = <Op extends Operation>(
 ) => Effect.Effect<Answer, HttpFailure, R>;
 
 /** A request a hatch addresses by path; `template` is its index's operation. */
-interface PathRequest {
-  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  readonly path: string;
-  readonly template: string;
-  readonly query?: Readonly<Record<string, string>>;
-  /** Form fields, sent `application/x-www-form-urlencoded` as URLSearchParams encodes them. */
-  readonly form?: Readonly<Record<string, string>>;
-}
+type PathRequest = WriteRequest;
 
 export interface ConnectOptions {
   readonly errors: VendorErrors<any>;
@@ -132,6 +127,8 @@ export interface Connection<R = CallServices> {
   readonly send: Send<R>;
   /** A hatch's request: the same route as `send`, addressed by a path the guarded client confines. */
   readonly sendPath: (request: PathRequest, options?: SendOptions) => Effect.Effect<Answer, HttpFailure, R>;
+  /** Send the snapshotted request derived for this item, never a request supplied by the running program. */
+  readonly sendItem: (step: string, item: string) => Effect.Effect<Answer, HttpFailure, R>;
 }
 
 type Method<R> = (request: unknown) => Effect.Effect<HttpClientResponse.HttpClientResponse, unknown, R>;
@@ -142,6 +139,7 @@ export function connect<R>(
   guarded: GuardedClient<R>,
   options: ConnectOptions,
 ): Connection<R | CallServices> {
+  validateVendorErrors(options.errors);
   let built: Record<string, Method<R>> | undefined;
   const client = Effect.suspend(() =>
     built
@@ -174,7 +172,13 @@ export function connect<R>(
         const parsed = parse(reply.text);
         if (reply.status < 200 || reply.status > 299) {
           return yield* Effect.fail(
-            new StatusFailure({ status: reply.status, headers: reply.headers, body: parsed?.value, operation }),
+            new StatusFailure({
+              status: reply.status,
+              headers: reply.headers,
+              body: parsed?.value,
+              ...(parsed ? {} : { unreadable: true as const }),
+              operation,
+            }),
           );
         }
         if (!parsed) return yield* Effect.fail(new UnreadableBody());
@@ -204,7 +208,7 @@ export function connect<R>(
       );
     });
 
-  return {
+  const connection: Connection<R | CallServices> = {
     provider: guarded.provider,
     errors: options.errors,
     safety: options.safety,
@@ -227,6 +231,13 @@ export function connect<R>(
         sendOptions,
       );
     },
+    sendItem: (step, item) =>
+      Effect.gen(function* () {
+        const request = (yield* WriteCapacity).get(step)?.get(item);
+        if (!request)
+          return yield* Effect.fail(new RequestRefused({ message: "This write item has no declared request." }));
+        return yield* connection.sendPath(request, { step, item });
+      }),
     sendPath: (request, sendOptions) => {
       return settle(
         {
@@ -252,6 +263,7 @@ export function connect<R>(
       );
     },
   };
+  return connection;
 }
 
 function parse(text: string | undefined): { value: unknown } | undefined {

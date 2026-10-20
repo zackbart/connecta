@@ -20,11 +20,13 @@
 // recorded when it happened, and which failure each one's own answer settled
 // into. A write keeps the meaning of its own answer whatever happens after it
 // (a token renewal, its failure, a cancellation, an auxiliary request's
-// failure), and a write that may have reached the vendor is never advertised
-// as retryable (INV-9). The words are A.2's (#902), so a provider that moves
+// failure). Definite own refusals follow the core contract; any other write
+// in the same call that may have executed keeps the entire call unknown and
+// non-retryable (INV-9). The words are A.2's (#902), so a provider that moves
 // onto the kit keeps its goldens.
 
 import { Data } from "effect";
+import { classifyWriteOutcome } from "../write-outcome.js";
 import { retryAfterMs } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError, networkErrorCode, unavailableCallError, type ConnectorCallErrorCode } from "../errors.js";
 import type { Dispatch } from "./services.js";
@@ -66,6 +68,7 @@ export class StatusFailure extends Data.TaggedError("StatusFailure")<{
   readonly status: number;
   readonly headers: Headers;
   readonly body: unknown;
+  readonly unreadable?: true;
   readonly operation: OperationRef;
 }> {}
 
@@ -169,12 +172,27 @@ export interface VendorErrors<F extends Facts = Facts> {
    * the write's outcome is unknown, since a server may act before it rejects
    * a credential.
    */
-  readonly authBeforeExecution?: { readonly evidence: string };
+  readonly authBeforeExecution?: NonExecution<F>;
   /** Explicit reviewed proof of non-execution, tested against raw response facts, never the mapped code. */
-  readonly nonExecution?: ReadonlyArray<{
-    readonly evidence: string;
-    readonly matches: (input: Classified<F>) => boolean;
-  }>;
+  readonly nonExecution?: ReadonlyArray<NonExecution<F>>;
+}
+
+/** Trusted per-vendor declarations: the reviewer verifies the cited documentation and narrow raw-fact predicate. */
+interface NonExecution<F extends Facts> {
+  readonly evidence: string;
+  readonly matches: (input: Classified<F>) => boolean;
+}
+
+/** Refuse empty evidence at connection construction (INV-11); prose is never proof by itself. */
+export function validateVendorErrors(vendor: VendorErrors<any>): void {
+  for (const proof of [
+    ...(vendor.nonExecution ?? []),
+    ...(vendor.authBeforeExecution ? [vendor.authBeforeExecution] : []),
+  ]) {
+    if (!proof.evidence.trim() || typeof proof.matches !== "function") {
+      throw new Error("Vendor non-execution declarations require nonempty evidence and a narrow raw-fact predicate.");
+    }
+  }
 }
 
 // No 409: `conflict` is a refusal, so it tells invocation a write did not
@@ -317,11 +335,11 @@ export function toConnectorCallError(
 }
 
 /**
- * Raw dispatch facts constrain every vendor verdict. Only a reservation that
- * never dispatched, a proven failure to connect, or explicit vendor evidence
- * proves non-execution. Every other failure after dispatch is non-retryable
- * and explicitly unknown, regardless of its mapped code or an idempotency key.
- * A recorded 401 owns the authorization handoff until renewal succeeds.
+ * Raw facts constrain the core refusal contract over the entire call ledger.
+ * Definite own 4xx refusals, no dispatch/connection, or reviewed vendor proof
+ * establish non-execution for that step. Any other write that may have run
+ * keeps the call unknown and non-retryable, including refusal exceptions and
+ * blocked retries. A recorded 401 owns the handoff until renewal succeeds.
  */
 function writeOutcome(
   failure: HttpFailure,
@@ -339,27 +357,28 @@ function writeOutcome(
       ? verdict(failure.first.failure, vendor, options)
       : error;
   }
-  // A recorded resource-server 401 owns the handoff, regardless of a body
-  // failure or a later auxiliary failure. Never classify that later error as it.
+  // The entire ledger owns the call outcome, including blocked retries and cancellation.
+  const uncertain = left.filter((entry) => !provesNonExecution(entry, vendor, options));
   const is401 = (entry: Dispatch) => entry.status === 401 && entry.state === "answered";
   const unauthorizedWrite = left.find((entry) => is401(entry) && !entry.renewed) ?? left.find(is401);
   if (unauthorizedWrite) {
     const auth = unauthorized(unauthorizedWrite, vendor, options);
-    // Evidence about this step's refusal does not prove another dispatched
-    // step's outcome, but the recorded authorization verdict still owns recovery.
-    const decided = vendor.authBeforeExecution && left.length > 1 ? afterWrite(auth, left, vendor) : auth;
+    const decided = uncertain.some((entry) => entry !== unauthorizedWrite) ? afterWrite(auth, uncertain, vendor) : auth;
     return failure._tag === "ResendRefused" ? reworded(decided, `${decided.message} ${RESEND}`) : decided;
   }
-  // Keep invocation's timeout promotion and diagnostics while enforcing the
-  // kit's explicit non-retryable/unknown contract before it reaches that edge.
+  if (failure._tag === "ResendRefused") {
+    const decided = resend(failure.first, vendor, options);
+    return uncertain.some((entry) => entry !== failure.first) ? afterWrite(decided, uncertain, vendor) : decided;
+  }
+  if (uncertain.length === 0) return error;
   const network = error.details?.code;
   if (error.code === "timeout" || network === "timeout" || network === "ETIMEDOUT" || network?.endsWith("_TIMEOUT")) {
     return unknownWrite(error.code, error.message, error.details);
   }
-  if (failure._tag === "ResendRefused") return resend(failure.first, vendor, options);
   const own = options.dispatches.find((dispatch) => dispatch.failure === failure);
-  if (own !== undefined && left.length === 1 && left[0] === own) return writeAnswer(own, error, vendor, options);
-  return afterWrite(error, left, vendor);
+  if (own !== undefined && uncertain.length === 1 && uncertain[0] === own)
+    return writeAnswer(own, error, vendor, options);
+  return afterWrite(error, uncertain, vendor);
 }
 
 function writeAnswer(
@@ -369,6 +388,8 @@ function writeAnswer(
   options: MapOptions,
 ): ConnectorCallError {
   if (provesNonExecution(own, vendor, options)) return error;
+  // Already non-retryable vendor answers keep their bytes; the explicit field carries uncertainty.
+  if (!error.retryable) return unknownWrite(error.code, error.message, error.details);
   return unknownWrite(
     error.code === "unavailable" ? "connector_call_failed" : error.code,
     `${error.message} Whether the write took effect at ${vendor.provider} is unknown: it carried no idempotency key, ` +
@@ -380,9 +401,9 @@ const RESEND = "A second attempt to send it was stopped before it left: connecta
 
 /**
  * The transport stopped a second dispatch of a write whose first left. The
- * words start from what the first attempt was answered; the outcome is
- * unknown whatever that was, and a 401 keeps its code and handoff (or the
- * vendor's documented refusal) as it would have without the attempt.
+ * words start from what the first attempt was answered; definite refusals
+ * keep their meaning, subject to the entire ledger in writeOutcome. A 401
+ * keeps its handoff or the vendor's proven refusal.
  */
 function resend(first: Dispatch, vendor: VendorErrors<any>, options: MapOptions): ConnectorCallError {
   const answer = first.failure
@@ -422,7 +443,7 @@ function unauthorized(
   options: Pick<MapOptions, "withholds" | "signal">,
 ): ConnectorCallError {
   const error = verdict(recordedAnswer(answer), vendor, options);
-  if (vendor.authBeforeExecution) return error;
+  if (provesNonExecution(answer, vendor, options)) return error;
   if (answer.renewed) {
     return unknownWrite(
       "connector_call_failed",
@@ -485,7 +506,9 @@ export function departedVerdict(
   const answer = options.dispatches.find(
     (dispatch) => dispatch.write && dispatch.state === "answered" && dispatch.status === 401,
   );
-  return answer ? unauthorized(answer, vendor, options) : undefined;
+  return answer
+    ? writeOutcome(recordedAnswer(answer), unauthorized(answer, vendor, options), vendor, options)
+    : undefined;
 }
 
 /** Use a parsed body only when it belongs to this recorded status; ceilings and later failures cannot supply its code. */
@@ -501,10 +524,24 @@ function provesNonExecution(
   options: Pick<MapOptions, "withholds">,
 ): boolean {
   if (dispatch.state !== "answered") return false;
-  if (dispatch.status === 401 && vendor.authBeforeExecution) return true;
   const answer = recordedAnswer(dispatch);
   const input = classificationInput(answer, vendor, options.withholds?.(answer.operation) === true);
-  return vendor.nonExecution?.some((proof) => proof.evidence.trim().length > 0 && proof.matches(input)) === true;
+  if (dispatch.status === 401) {
+    const proof = vendor.authBeforeExecution;
+    return proof !== undefined && proof.evidence.trim().length > 0 && proof.matches(input);
+  }
+  if (vendor.nonExecution?.some((proof) => proof.evidence.trim().length > 0 && proof.matches(input))) return true;
+  // A definite own 4xx refusal adopts the core's REFUSALS contract. A 5xx
+  // mapped to the same code is still ambiguous; so is a body we could not read.
+  return (
+    dispatch.status !== undefined &&
+    dispatch.status >= 400 &&
+    dispatch.status < 500 &&
+    dispatch.failure?._tag === "StatusFailure" &&
+    !dispatch.failure.unreadable &&
+    dispatch.failure.status === dispatch.status &&
+    classifyWriteOutcome({ ok: false, dispatched: true, error: { code: classified(input, vendor).code } }) === "failed"
+  );
 }
 
 /** A recorded answer as the failure it was, from the facts the ledger kept (its body is gone). */

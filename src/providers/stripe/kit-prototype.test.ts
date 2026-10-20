@@ -90,7 +90,7 @@ describe("Stripe's failure mapper on the kit's error contract (decision 0010)", 
     expect(vendor.failure(400, new Headers(), body, open).message).toContain("(param a param with spaces)");
   });
 
-  it("INV-9: a write needs explicit non-execution proof, independent of its mapped code", () => {
+  it("INV-9: a definite own refusal adopts the core contract; raw 5xx still needs non-execution proof", () => {
     for (const [status, body, proved] of [
       [429, bodies["lock timeout"], true],
       [503, bodies["lock timeout"], false],
@@ -109,12 +109,16 @@ describe("Stripe's failure mapper on the kit's error contract (decision 0010)", 
           dispatches: [{ write: true, state: "answered", status, failure }],
         });
       const result = map(stripeErrors);
-      if (proved) {
-        expect(result).toMatchObject({ code: "conflict", retryable: true, retryAfterMs: 1000 });
+      if (status === 503)
+        expect(result).toMatchObject({ retryable: false, retryAfterMs: undefined, writeOutcome: "unknown" });
+      else {
+        expect(observed(result)).toEqual(observed(vendor.failure(status, new Headers(), body, open)));
         expect(writeOutcomeOf(result)).toBeUndefined();
-      } else expect(result).toMatchObject({ retryable: false, retryAfterMs: undefined, writeOutcome: "unknown" });
+        if (proved) expect(result).toMatchObject({ code: "conflict", retryable: true, retryAfterMs: 1000 });
+      }
       const { nonExecution: _proof, ...withoutProof } = stripeErrors;
-      expect(map(withoutProof)).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      expect(observed(map(withoutProof))).toEqual(observed(result));
+      expect(writeOutcomeOf(map(withoutProof))).toBe(writeOutcomeOf(result));
     }
   });
 });
