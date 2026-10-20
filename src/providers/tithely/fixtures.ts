@@ -7,3 +7,5 @@ export const fixture = {
   create(id = "fixture", overrides: Partial<Parameters<typeof tithely>[1]> = {}) { return tithely(id, { ...options, ...overrides } as Parameters<typeof tithely>[1]); },
   conventions: {"verbs":["list","get","tithely"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };
+
+export const createAuthored = () => fixture.create();

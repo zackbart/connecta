@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
-import { buildSync } from "esbuild";
+import { build, buildSync, type Plugin } from "esbuild";
 import { TEST_INCLUDE, NODE_ONLY_EXCLUDE } from "./scripts/test-suites.mjs";
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
@@ -31,6 +31,41 @@ function executorBundles() {
         write: false,
       }).outputFiles[0]?.text;
     },
+  };
+}
+
+// An organization-mode clerkAuth in a Worker of its own, with the Worker
+// example's compatibility settings, so its Backend API fetches meet workerd's
+// own Request validation and each request to it is a separate Worker request
+// (test/clerk-organization-workerd.test.ts). Every outbound fetch it makes
+// goes over TCP to the Clerk Backend API stand-in at `backend`. Built once
+// when the project starts; restart a watch run after editing src/auth/clerk.ts.
+async function clerkOrganizationWorker(backend: string) {
+  const transport: Plugin = {
+    name: "clerk-organization-transport",
+    setup(bundle) {
+      bundle.onResolve({ filter: /\/clerk-transport\.js$/ }, () => ({
+        path: fileURLToPath(new URL("./test/fixtures/clerk-organization-transport.ts", import.meta.url)),
+      }));
+    },
+  };
+  const { outputFiles } = await build({
+    entryPoints: [fileURLToPath(new URL("./test/fixtures/clerk-organization-worker.ts", import.meta.url))],
+    bundle: true,
+    format: "esm",
+    platform: "neutral",
+    conditions: ["workerd", "worker", "browser"],
+    external: ["node:*"],
+    plugins: [transport],
+    write: false,
+  });
+  return {
+    name: "clerk-organization",
+    modules: true,
+    script: outputFiles[0]!.text,
+    compatibilityDate: "2025-01-01",
+    compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
+    outboundService: { external: { address: backend, http: {} } },
   };
 }
 
@@ -78,7 +113,7 @@ export default defineConfig({
       {
         plugins: [
           executorBundles(),
-          cloudflareTest({
+          cloudflareTest(async ({ inject }) => ({
             miniflare: {
               // Match the Worker example's runtime configuration, plus a
               // Worker Loader so the guest API contract suite can run its
@@ -91,12 +126,14 @@ export default defineConfig({
               // one-shot KV → D1 copy (test/kv-to-d1.test.ts).
               kvNamespaces: ["KV_COPY_SOURCE"],
               d1Databases: ["KV_COPY_TARGET"],
+              serviceBindings: { CLERK_ORGANIZATION: "clerk-organization" },
+              workers: [await clerkOrganizationWorker(inject("clerkBackendServer"))],
             },
-          }),
+          })),
         ],
         test: {
           name: "workers",
-          globalSetup: ["./test/fixtures/oauth-http-server.ts"],
+          globalSetup: ["./test/fixtures/oauth-http-server.ts", "./test/fixtures/clerk-backend-server.ts"],
           include: TEST_INCLUDE,
           exclude: [...NODE_ONLY_EXCLUDE, "**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
         },

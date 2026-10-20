@@ -25,6 +25,7 @@ export interface Env {
   CONNECTA_DATABASE?: string;
   CLERK_PUBLISHABLE_KEY?: string;
   CLERK_SECRET_KEY?: string;
+  CLERK_ORGANIZATION_ID?: string;
   CONNECTA_MAINTAINERS?: string;
   CONNECTA_CREDENTIAL_KEY?: string;
   CONNECTA_ACTIVITY?: string;
@@ -43,6 +44,10 @@ export default defineConfig((env: Env) => {
   if (Boolean(clerkPublishableKey) !== Boolean(clerkSecretKey)) {
     throw new Error("Operator sign-in needs both CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY.");
   }
+  const clerkOrganizationId = set("CLERK_ORGANIZATION_ID");
+  if (clerkOrganizationId && !clerkSecretKey) {
+    throw new Error("CLERK_ORGANIZATION_ID needs CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY.");
+  }
   const clerk =
     clerkPublishableKey && clerkSecretKey
       ? clerkAuth({
@@ -51,6 +56,9 @@ export default defineConfig((env: Env) => {
           // Enable Clerk aud_claim_enabled; hosts request the MCP URL as
           // resource. Bound JWT and opaque tokens are the default.
           publicUrl,
+          // One Clerk instance can serve many deployments, one Organization
+          // each: with CLERK_ORGANIZATION_ID set, only its members sign in.
+          ...(clerkOrganizationId ? { organizationId: clerkOrganizationId } : {}),
           // Restrict who may sign in with `allowedDomains: ["acme.com"]`, or
           // `gate` for anything a domain cannot express. Absent, every
           // authenticated Clerk user is admitted.

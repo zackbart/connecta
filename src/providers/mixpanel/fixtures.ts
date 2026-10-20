@@ -38,3 +38,5 @@ export const responses = {
 // Connecta synthesizes readOnlyHint:false for stale digests. Tests supply raw
 // hint scenarios explicitly rather than mistaking those served hints for upstream.
 export const hostedSchemaFixtures: ToolDef[] = hostedSchemas;
+
+export const createAuthored = () => fixture.create();
