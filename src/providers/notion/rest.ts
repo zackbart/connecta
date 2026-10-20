@@ -21,7 +21,7 @@ import {
 import { carriesWithheldLink, valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { NOTION_FILE_HOSTS, NOTION_VALUE_SAFETY, sanitizeLinks } from "./value-safety.js";
-import { redactBeforeCut, redactBoundedRead } from "../../sent-secrets.js";
+import { redactBeforeCut, requestSentSecrets } from "../../sent-secrets.js";
 
 /** Notion's REST origin. Every request this connector sends goes to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -373,7 +373,7 @@ const VENDOR: RestVendor = {
   // Not an envelope to unwrap: page Markdown carries pre-signed file links
   // inside its text, where redaction's URL rule cannot reach. Every success
   // response passes here, named tools and paging included.
-  result: (body, _call, _response, ctx) => sanitizeLinks(redactBeforeCut(ctx, protectTruncatedText(ctx, body))),
+  result: (body, _call, _response, ctx) => sanitizeLinks(redactBeforeCut(ctx, protectRichText(ctx, body))),
   admit: refuseWithheldLinks,
   page,
   upload:
@@ -422,31 +422,42 @@ function plainText(value: unknown): string {
   return value.map((run: any) => (typeof run?.plain_text === "string" ? run.plain_text : "")).join("");
 }
 
-/** Sanitize the fresh parsed response before any raw branch or derived title can copy it.
- * A truncated rich-text value may span runs and has two copies of each run's text. When
- * unsafe, replace the array with one safe run so neither representation retains a fragment. */
-function protectTruncatedText(ctx: ConnectorContext, body: unknown): unknown {
-  const pending = [body];
+/** Rich text, wherever Notion returns it (titles, rich_text, captions, descriptions, table
+ * cells), holds two text lanes: each run's plain_text and its authored text.content. A value
+ * split across runs is matched joined in both before projections or raw branches copy either.
+ * Only the runs a match touches change, so public runs keep their links and annotations; rich
+ * text Notion stopped listing (`has_more` beside it) also loses only its unfinished tail. */
+function protectRichText(ctx: ConnectorContext, body: unknown): unknown {
+  const pending: [unknown, boolean][] = [[body, false]];
   while (pending.length) {
-    const value = pending.pop();
+    const [value, bounded] = pending.pop()!;
     if (!value || typeof value !== "object") continue;
-    if (isRecord(value) && value.has_more === true && (value.type === "title" || value.type === "rich_text")) {
-      const runs = value[value.type];
-      if (Array.isArray(runs)) {
-        const joined = runs.map((run) => run?.plain_text ?? run?.text?.content ?? "").join("");
-        const authored = runs.map((run) => run?.text?.content ?? run?.plain_text ?? "").join("");
-        const safe = redactBoundedRead(ctx, joined);
-        const safeAuthored = redactBoundedRead(ctx, authored);
-        if (safe !== joined || safeAuthored !== authored) {
-          // The two copies need not agree; retain only the checked public text.
-          const shown = safeAuthored !== authored && safe === joined ? "[redacted]" : safe;
-          value[value.type] = [{ type: "text", plain_text: shown, text: { content: shown } }];
-        }
-      }
+    if (
+      Array.isArray(value) &&
+      value.length &&
+      value.every((run) => isRecord(run) && typeof run.plain_text === "string")
+    )
+      protectRuns(ctx, value as Record<string, any>[], bounded);
+    else {
+      const cut = isRecord(value) && value.has_more === true;
+      for (const child of Object.values(value)) pending.push([child, cut]);
     }
-    for (const child of Object.values(value)) pending.push(child);
   }
   return body;
+}
+
+function protectRuns(ctx: ConnectorContext, runs: Record<string, any>[], bounded: boolean): void {
+  for (const authored of [false, true]) {
+    const parts = runs.map((run) =>
+      authored && typeof run.text?.content === "string" ? (run.text.content as string) : (run.plain_text as string),
+    );
+    const safe = requestSentSecrets(ctx).parts(parts, bounded);
+    runs.forEach((run, index) => {
+      if (safe[index] === parts[index]) return;
+      if (!authored) run.plain_text = safe[index];
+      else if (isRecord(run.text) && typeof run.text.content === "string") run.text.content = safe[index];
+    });
+  }
 }
 
 /**

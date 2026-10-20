@@ -33,6 +33,7 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 import { ConnectorCallError } from "../../errors.js";
 import { CONNECTA_VERSION } from "../../version.js";
 import type {
@@ -676,7 +677,11 @@ function planningCenterCall(
       async (response) => {
         const parsed = await response.jsonResult();
         if (!response.ok) {
-          throw planningCenterFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
+          throw planningCenterFailure(
+            response.status,
+            response.headers,
+            redactBeforeCut(ctx, "value" in parsed ? parsed.value : undefined),
+          );
         }
         if ("parseError" in parsed) {
           throw new ConnectorCallError(

@@ -1294,8 +1294,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ]) {
       if (typeof value === "string") secrets.secret(value);
     }
-    if (body.client?.value.client_secret) secrets.add(body.client.value.client_id);
-    if (this.clientOptions?.client?.clientSecret) secrets.add(this.clientOptions.client.clientId);
+    if (body.client?.value.client_secret) secrets.identifier(body.client.value.client_id);
+    if (this.clientOptions?.client?.clientSecret) secrets.identifier(this.clientOptions.client.clientId);
     const urls: string[] = [];
     const collect = (item: unknown): void => {
       if (typeof item === "string") {

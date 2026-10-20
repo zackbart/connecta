@@ -23,6 +23,8 @@ import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
 import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
 
+const PUBLIC_REQUEST_HEADERS = new Set(["accept", "accept-language", "user-agent"]);
+
 /**
  * Downstream OAuth for a hand-written `api()` connector: the authorization
  * code grant against endpoints and a pre-registered client the deployment
@@ -371,7 +373,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
-    for (const [, value] of settings.tokenRequestHeaders) sentSecretsFor(ctx).header(value);
+    // Any other configured value may carry a credential. Content negotiation never does, and
+    // registering a media type would redact the vendor's name wherever its fragments recur.
+    for (const [name, value] of settings.tokenRequestHeaders)
+      if (!PUBLIC_REQUEST_HEADERS.has(name.toLowerCase())) sentSecretsFor(ctx).header(value);
     trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
     return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" }));
   };

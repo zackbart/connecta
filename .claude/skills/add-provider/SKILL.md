@@ -212,6 +212,14 @@ changed under redaction, return the marker rather than extracting from it.
 Bind paging cursors to the redacted representation when offsets count its
 units, even when the vendor also supplies a revision.
 
+The output boundary matches whole forms and every eight-unit run across adjacent
+leaves, so it cannot see a value split into pieces shorter than eight with other
+fields between them, as rich-text runs or styled text runs are. Match such a
+lane joined with `requestSentSecrets(ctx).parts(pieces, bounded)` before the
+pieces are copied, and write each returned piece back. Return binary content as
+`{ format: "base64", content }` (or MCP `blob`/`data`) so the boundary decodes it;
+never base64-encode bytes into another field.
+
 ## Value safety
 
 Value safety is required for every `api` or `dual` provider. Under the

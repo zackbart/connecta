@@ -42,7 +42,7 @@ export function clampText(
   marker: (droppedCharacters: number) => string,
 ): string {
   if (jsonBytes(original) <= maxBytes) return original;
-  return clampRedactedText(redactBeforeCut(ctx, original, "leaf"), maxBytes, marker);
+  return clampRedactedText(redactBeforeCut(ctx, original), maxBytes, marker);
 }
 
 /**

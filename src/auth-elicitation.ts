@@ -20,6 +20,7 @@ import type { DeferredWork } from "./connector-scope.js";
 import { storedCredentialShape } from "./credential-rules.js";
 import { authRecoveryFacts, bindReplayReads, classificationDigest, type ReplayRead } from "./invocation-auth.js";
 import { CatalogService } from "./catalog-service.js";
+import { sentSecretsForRequest } from "./sent-secrets.js";
 import {
   DownstreamElicitation,
   MAX_RELAY_STATE_CHARS,
@@ -359,6 +360,10 @@ export class AuthElicitation {
       reads: [...new Map([...(previous?.reads ?? []), ...facts.reads].map((read) => [read.address, read])).values()],
     };
     const wire = await (await this.stateCodec()).mint(state, context);
+    // Signed state and its connect link carry only Connecta's facts: a coincidental match must
+    // not corrupt them.
+    sentSecretsForRequest(this.options.requestScope).mintedState(wire);
+    sentSecretsForRequest(this.options.requestScope).mintedState(link.url);
     if (wire.length > 8192) {
       const structuredContent = {
         ...result.structuredContent,

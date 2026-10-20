@@ -24,8 +24,8 @@ describeValueSafety("Mixpanel", {
   ctx: () => ({
     ...connectorContext(),
     credential: {
-      get: async () => "fixture-account:fixture-secret",
-      getAll: async () => ({ value: "fixture-account:fixture-secret" }),
+      get: async () => "mp9Qx2.sa:pQ6?eT8+dW3=G5/f",
+      getAll: async () => ({ value: "mp9Qx2.sa:pQ6?eT8+dW3=G5/f" }),
     },
   }),
   echo: {

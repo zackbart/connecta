@@ -234,7 +234,12 @@ it("INV-5: program resource, local guide and downstream skill reads take payload
     }`,
   });
   expect(program.isError, JSON.stringify(program.structuredContent)).toBeFalsy();
-  expect(witnessed).toEqual([REDACTED, REDACTED, REDACTED]);
+  expect(witnessed).toHaveLength(3);
+  for (const echo of witnessed) {
+    // A short private value is replaced wherever it occurs; the text around it stays.
+    expect(echo).toContain(`PIN ${REDACTED}`);
+    expect(echo).not.toContain("7931426");
+  }
 });
 
 it("INV-5: public-schema remote tools redact bare numeric bearer credentials in direct modes and QuickJS", async () => {

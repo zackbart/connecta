@@ -111,3 +111,51 @@ export function expectNoFragment(
   expect(text).not.toContain(`x${form.slice(0, kept)}`);
   expect(leaks(text, secret)).toBe(false);
 }
+
+/** Every view of `text` an agent could decode, three layers deep: JSON escapes, percent
+ * escapes in either hex case, and base64 or base64url runs of 11 characters or more (8 bytes)
+ * at every alignment, read as bytes and as UTF-8. */
+export function decodedViews(text: string): string[] {
+  const views = new Set([text]);
+  let layer = [text];
+  for (let depth = 0; depth < 3 && layer.length; depth++) {
+    const next: string[] = [];
+    for (const view of layer) {
+      const decoded = [
+        view.replace(/\\(u[0-9a-fA-F]{4}|["\\/bfnrt])/g, (_, escape: string) =>
+          escape.length > 1 ? String.fromCharCode(parseInt(escape.slice(1), 16)) : escape,
+        ),
+        view.replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16))),
+      ];
+      for (const run of view.match(/[A-Za-z0-9+/_-]{11,}/g) ?? []) {
+        for (let offset = 0; offset < 4; offset++) {
+          const aligned = run.slice(offset).replace(/-/g, "+").replace(/_/g, "/");
+          try {
+            const bytes = atob(aligned.slice(0, aligned.length - (aligned.length % 4)));
+            decoded.push(bytes, new TextDecoder().decode(Uint8Array.from(bytes, (unit) => unit.charCodeAt(0))));
+          } catch {
+            // Not base64 at this alignment.
+          }
+        }
+      }
+      for (const found of decoded) {
+        if (views.has(found)) continue;
+        views.add(found);
+        next.push(found);
+      }
+    }
+    layer = next;
+  }
+  return [...views];
+}
+
+/** The first run of `units` code units of `secret` that some decoded view of `text` holds,
+ * found independently of redaction's own forms: the output-boundary guarantee's K. */
+export function leakedRun(text: string, secret: string, units = 8): string | undefined {
+  const views = decodedViews(text);
+  for (let at = 0; at + units <= secret.length; at++) {
+    const run = secret.slice(at, at + units);
+    if (views.some((view) => view.includes(run))) return run;
+  }
+  return undefined;
+}

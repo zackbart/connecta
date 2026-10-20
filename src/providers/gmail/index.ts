@@ -129,7 +129,7 @@ const ENTITIES: Readonly<Record<string, string>> = {
 };
 
 function decodeEntities(ctx: ConnectorContext, value: string): string {
-  const safe = redactBeforeCut(ctx, value, "leaf");
+  const safe = redactBeforeCut(ctx, value);
   const decoded = safe.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
     if (name[0] === "#") {
       const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
@@ -137,12 +137,12 @@ function decodeEntities(ctx: ConnectorContext, value: string): string {
     }
     return ENTITIES[name.toLowerCase()] ?? entity;
   });
-  return redactBeforeCut(ctx, decoded, "leaf");
+  return redactBeforeCut(ctx, decoded);
 }
 
 /** Readable text from an HTML part that has no plain-text sibling. */
 function htmlToText(ctx: ConnectorContext, html: string): string {
-  html = redactBeforeCut(ctx, html, "leaf");
+  html = redactBeforeCut(ctx, html);
   return decodeEntities(
     ctx,
     html
@@ -169,15 +169,15 @@ function base64UrlBytes(data: string): Uint8Array {
 
 function charsetOf(ctx: ConnectorContext, part: JsonRecord): string {
   const type = header(part, "Content-Type") ?? "";
-  if (redactBeforeCut(ctx, type, "leaf") !== type) return "[redacted]";
+  if (redactBeforeCut(ctx, type) !== type) return "[redacted]";
   // Consume complete parameters so a semicolon inside another quoted value
   // cannot masquerade as a charset. MIME allows whitespace between tokens.
   const parameters = /;\s*([^=;\s]+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^;\s]*))/g;
   for (const match of type.matchAll(parameters)) {
     if (match[1]!.toLowerCase() === "charset") {
       const source = match[2] ?? match[3] ?? "";
-      if (redactBeforeCut(ctx, source, "leaf") !== source) return "[redacted]";
-      return redactBeforeCut(ctx, source.replace(/\\(.)/g, "$1"), "leaf").trim();
+      if (redactBeforeCut(ctx, source) !== source) return "[redacted]";
+      return redactBeforeCut(ctx, source.replace(/\\(.)/g, "$1")).trim();
     }
   }
   return "utf-8";
@@ -565,7 +565,7 @@ async function readAttachment(
     envelope = { ...envelope, ...compact({ note: rendered.note }) };
   }
   // Every secret the request sent is replaced before either cut below.
-  if (decoded.length > maxChars || jsonBytes(decoded) > maxBytes) decoded = redactBeforeCut(ctx, decoded, "leaf");
+  if (decoded.length > maxChars || jsonBytes(decoded) > maxBytes) decoded = redactBeforeCut(ctx, decoded);
   const characters = Array.from(decoded);
   const marker = (dropped: number) =>
     `\n[… ${dropped} more characters truncated; raise maxChars or maxBytes for a direct call_tool, or open it in Gmail]`;
@@ -602,7 +602,7 @@ function clipped<T extends string | undefined>(ctx: ConnectorContext, value: T, 
  * secret the request sent: a cut through an echo leaves a fragment nothing redacts. */
 function capped(ctx: ConnectorContext, whole: string, max: number): { body: string; bodyTruncated: boolean } {
   if (whole.length <= max) return { body: whole, bodyTruncated: false };
-  const body = redactBeforeCut(ctx, whole, "leaf");
+  const body = redactBeforeCut(ctx, whole);
   if (body.length <= max) return { body, bodyTruncated: false };
   const rest = body.length - max;
   return {

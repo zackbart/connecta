@@ -3,7 +3,7 @@ import { defineGoldenSpec } from "../harness.js";
 
 const RANGE = { from_date: "2025-12-01", to_date: "2025-12-31" };
 
-const SERVICE_ACCOUNT_SECRET = "golden-sa-secret/123+456=";
+const SERVICE_ACCOUNT_SECRET = "mS4x7Qv2Lk9Tz3/123+456=";
 
 const ACCOUNT = {
   status: "ok",
@@ -77,7 +77,7 @@ export default defineGoldenSpec({
       purpose: "Product reporting",
       defaultProjectId: 42,
     }),
-  credential: `golden-sa-user:${SERVICE_ACCOUNT_SECRET}`,
+  credential: `mU6p2Wz8Kd3:${SERVICE_ACCOUNT_SECRET}`,
   // The credential's own password half, so an echo of it alone is a leak too.
   secrets: { secret: SERVICE_ACCOUNT_SECRET },
   failureReply: (status, message) => ({ status, body: { status: "error", error: message } }),

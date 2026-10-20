@@ -262,7 +262,7 @@ function rangeAfter(range: string, rows: number): string | undefined {
  * secret the request sent is replaced first: a cut through an echo leaves a fragment. */
 function cappedCell(ctx: ConnectorContext, whole: unknown, max: number, cut: { cells: number }): unknown {
   if (typeof whole !== "string" || whole.length <= max) return whole;
-  const value = redactBeforeCut(ctx, whole, "leaf");
+  const value = redactBeforeCut(ctx, whole);
   if (value.length <= max) return value;
   cut.cells += 1;
   return `${value.slice(0, max)}[… ${value.length - max} more characters truncated; read this cell alone with maxCellChars up to ${MAX_CELL_CHARS} for the rest]`;

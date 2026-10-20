@@ -57,7 +57,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
-import { redactBeforeCut } from "../../sent-secrets.js";
+import { requestSentSecrets, redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -485,6 +485,27 @@ function assertUnchanged(cursor: Cursor | undefined, state: string, what: string
 
 // --- Reading elements ---------------------------------------------------------------
 
+/** Raw text runs have style metadata between them. Check their text lane
+ * before chunk serialization can separate an echo into independently safe leaves. */
+function protectPageText(ctx: ConnectorContext, page: JsonRecord): JsonRecord {
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    const elements = asRecord(value)["textElements"];
+    if (Array.isArray(elements)) {
+      const runs = elements.map((element) => asRecord(asRecord(element)["textRun"] ?? asRecord(element)["autoText"]));
+      const safe = requestSentSecrets(ctx).parts(
+        runs.map((run) => (typeof run["content"] === "string" ? run["content"] : "")),
+      );
+      runs.forEach((run, index) => {
+        if (typeof run["content"] === "string") run["content"] = safe[index];
+      });
+    }
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(page);
+  return page;
+}
+
 /** A shape's or cell's text: runs and auto text in order, soft breaks as newlines. */
 function textOf(ctx: ConnectorContext, content: unknown): string {
   let out = "";
@@ -492,7 +513,7 @@ function textOf(ctx: ConnectorContext, content: unknown): string {
     const run = asRecord(element["textRun"])["content"] ?? asRecord(element["autoText"])["content"];
     if (typeof run === "string") out += run;
   }
-  return redactBeforeCut(ctx, out, "leaf").replaceAll("\u000b", "\n").replace(/\s+$/, "");
+  return redactBeforeCut(ctx, out).replaceAll("\u000b", "\n").replace(/\s+$/, "");
 }
 
 /** A table as tab-separated cells, one row per line. */
@@ -607,7 +628,7 @@ function readingOrder(ctx: ConnectorContext, elements: unknown): Leaf[] {
   collect(ctx, elements, IDENTITY, undefined, 0, out);
   // Text is cut, and continued from an offset, only with every secret the
   // request sent replaced: a cut through an echo leaves a fragment.
-  for (const leaf of out) leaf.text = redactBeforeCut(ctx, leaf.text, "leaf");
+  for (const leaf of out) leaf.text = redactBeforeCut(ctx, leaf.text);
   return out.sort(
     (left, right) =>
       Math.round(left.y / EMU_PER_PT) - Math.round(right.y / EMU_PER_PT) ||
@@ -1428,7 +1449,7 @@ function postPart(ctx: ConnectorContext, value: unknown): PostPart {
       imported: post["fromImportedPresentation"] === true || undefined,
     }),
     // Paged from offsets, so replaced before any cut (see readingOrder).
-    content: typeof post["content"] === "string" ? redactBeforeCut(ctx, post["content"], "leaf") : "",
+    content: typeof post["content"] === "string" ? redactBeforeCut(ctx, post["content"]) : "",
     idsNotShown:
       (text(post["postId"]) !== undefined && postId === undefined) ||
       (text(author["user"]) !== undefined && user === undefined),
@@ -1519,7 +1540,7 @@ function threadParts(ctx: ConnectorContext, value: unknown, places: ReadonlyMap<
         replies.some((reply) => reply.idsNotShown) ||
         undefined,
     }),
-    quote: typeof thread["plainTextQuote"] === "string" ? redactBeforeCut(ctx, thread["plainTextQuote"], "leaf") : "",
+    quote: typeof thread["plainTextQuote"] === "string" ? redactBeforeCut(ctx, thread["plainTextQuote"]) : "",
     head,
     replies,
   };
@@ -2183,7 +2204,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
-        const items = raw ? rawItems(redactBeforeCut(ctx, page)) : [];
+        const items = raw ? rawItems(redactBeforeCut(ctx, protectPageText(ctx, page))) : [];
         const leaves = raw ? [] : readingOrder(ctx, page["pageElements"]);
         const state = await stateOf(
           page["revisionId"],

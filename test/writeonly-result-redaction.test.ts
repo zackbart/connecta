@@ -348,6 +348,7 @@ it("INV-5: short private strings protect exact leaves and matching prose while e
     for (const resultMode of ["mcp", "value"] as const) {
       const result = await meta.callDestructiveTool({ address: "short.write", args: { value }, resultMode });
       expect(result.content[0]!.type).toBe("text");
+      expect(result.content[0]!.text, `${value}/${resultMode}`).not.toBe("[redacted]");
       const parsed = JSON.parse(result.content[0]!.text);
       expect(resultMode === "value" ? parsed.data : parsed).toEqual({ id: "needed-id", echo: "[redacted]" });
       if (resultMode === "value") expect(parsed).toMatchObject({ ok: true, format: "json" });
@@ -360,6 +361,8 @@ it("INV-5: short private strings protect exact leaves and matching prose while e
     const parsed = JSON.parse(result.content[0]!.text);
     expect(resultMode === "value" ? parsed.data : parsed).toEqual({
       ...metadata,
+      id: "folder-[redacted]-793",
+      label: "[redacted]uction",
       echo: "[redacted]",
       forms: forms("prod").map(() => "[redacted]"),
     });
@@ -371,7 +374,7 @@ it("INV-5: short private strings protect exact leaves and matching prose while e
       args: { value: "prod" },
       resultMode: "value",
     });
-    expect(result.structuredContent).toMatchObject({ ok: true, data: "[redacted]", format: "text" });
+    expect(result.structuredContent).toMatchObject({ ok: true, data: "quoted [redacted]", format: "text" });
   }
   reply = { id: "folder-prod-793", status: "ok", echo: "", text: "ordinary prose" };
   const empty = await meta.callDestructiveTool({ address: "short.write", args: { value: "" }, resultMode: "value" });

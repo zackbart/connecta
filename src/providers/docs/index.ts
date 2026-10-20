@@ -39,7 +39,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
-import { redactBeforeCut } from "../../sent-secrets.js";
+import { requestSentSecrets, redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -354,6 +354,23 @@ function elementText(element: JsonRecord, state: RenderState): { text: string; u
   return { text: "" };
 }
 
+/** Check the source lane across paragraphs before closing newlines disappear.
+ * This also protects raw copies; each affected run keeps its link and style. */
+function protectDocumentText(ctx: ConnectorContext, document: JsonRecord): void {
+  const runs: JsonRecord[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    const run = asRecord(asRecord(value)["textRun"]);
+    if (typeof run["content"] === "string") runs.push(run);
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(document);
+  const safe = requestSentSecrets(ctx).parts(runs.map((run) => run["content"]));
+  runs.forEach((run, index) => {
+    run["content"] = safe[index];
+  });
+}
+
 /** Docs' soft line break (Shift+Enter) inside one paragraph. */
 const VERTICAL_TAB = String.fromCharCode(0x0b);
 
@@ -370,9 +387,10 @@ function paragraphText(paragraph: JsonRecord, state: RenderState): string {
     if (last && last.url === piece.url) last.text += piece.text;
     else pieces.push(piece);
   }
-  for (const piece of pieces) {
-    piece.text = redactBeforeCut(state.ctx, piece.text, "leaf");
-    if (piece.url) piece.url = redactBeforeCut(state.ctx, piece.url, "leaf");
+  const safe = requestSentSecrets(state.ctx).parts(pieces.map((piece) => piece.text));
+  for (const [index, piece] of pieces.entries()) {
+    piece.text = safe[index]!;
+    if (piece.url) piece.url = redactBeforeCut(state.ctx, piece.url);
   }
   const lastPiece = pieces[pieces.length - 1];
   if (lastPiece) lastPiece.text = lastPiece.text.replace(/\n$/, "");
@@ -389,7 +407,8 @@ function safeCut(value: string, max: number): number {
 }
 
 function preview(ctx: ConnectorContext, value: string): string {
-  const flat = redactBeforeCut(ctx, value, "leaf").replace(/\s+/g, " ").trim();
+  // Collapsing whitespace can join a value that spans lines, so the flat text is checked too.
+  const flat = redactBeforeCut(ctx, redactBeforeCut(ctx, value).replace(/\s+/g, " ").trim());
   return flat.length > PREVIEW_CHARS ? `${flat.slice(0, safeCut(flat, PREVIEW_CHARS))}…` : flat;
 }
 
@@ -535,7 +554,7 @@ function endIndexOf(body: unknown): number | undefined {
  * request sent is replaced first: a cut through an echo leaves a fragment nothing redacts. */
 function capped(ctx: ConnectorContext, whole: string, max: number): { text: string; textTruncated: boolean } {
   if (whole.length <= max) return { text: whole, textTruncated: false };
-  const value = redactBeforeCut(ctx, whole, "leaf");
+  const value = redactBeforeCut(ctx, whole);
   if (value.length <= max) return { text: value, textTruncated: false };
   const cut = safeCut(value, max);
   const rest = value.length - cut;
@@ -1070,6 +1089,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
+        protectDocumentText(ctx, document);
         let tabs = flattenTabs(document);
         const wanted = typeof args["tabId"] === "string" ? args["tabId"] : undefined;
         if (wanted !== undefined) {

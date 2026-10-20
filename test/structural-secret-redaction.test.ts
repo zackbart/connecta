@@ -18,7 +18,7 @@ const BASE = "https://connecta.test";
 const logger = { debug() {}, info() {}, warn() {}, error() {} };
 
 const ISSUER = "https://authorization.test";
-const TOKEN = "cached-discovery-credential";
+const TOKEN = "cD7-x2Qk-9Vm4-Lp8R";
 const discovery: OAuthDiscoveryState = {
   authorizationServerUrl: ISSUER,
   authorizationServerMetadata: {
@@ -37,16 +37,12 @@ const encodedUrls = [
   ["double-encoded", TOKEN, `${ISSUER}/authorize?echo=%2563${TOKEN.slice(1)}`],
   [
     "Unicode beside malformed escapes",
-    "cächéd-discovery-credential",
-    `${ISSUER}/authorize?echo=${encodeURIComponent("cächéd-discovery-credential")}%ff`,
+    "cäQ7é-x2Vk-9Lm4",
+    `${ISSUER}/authorize?echo=${encodeURIComponent("cäQ7é-x2Vk-9Lm4")}%ff`,
   ],
-  [
-    "punycode host",
-    "cächéd-discovery-credential",
-    new URL("https://cächéd-discovery-credential.authorization.test/authorize").href,
-  ],
-  ["split path and query", TOKEN, `${ISSUER}/cached-discovery-?echo=credential`],
-  ["split path segments", TOKEN, `${ISSUER}/cached-/discovery-/credential`],
+  ["punycode host", "cäQ7é-x2Vk-9Lm4", new URL("https://cäQ7é-x2Vk-9Lm4.authorization.test/authorize").href],
+  ["split path and query", TOKEN, `${ISSUER}/${TOKEN.slice(0, 9)}?echo=${TOKEN.slice(9)}`],
+  ["split path segments", TOKEN, `${ISSUER}/${TOKEN.slice(0, 4)}/${TOKEN.slice(4, 9)}/${TOKEN.slice(9)}`],
   ["case-changed host", TOKEN.toUpperCase(), `https://${TOKEN}.authorization.test/authorize`],
   ["base64", TOKEN, `${ISSUER}/authorize?echo=${btoa(TOKEN)}`],
   [

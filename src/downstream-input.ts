@@ -435,6 +435,9 @@ export class DownstreamElicitation {
     );
     if (requestState.length > MAX_RELAY_STATE_CHARS)
       return failure("input_required_limit", "The sealed downstream state exceeds 128 KiB.");
+    // Authenticated, encrypted Connecta state, never the vendor's plaintext
+    // state: a coincidental match must not corrupt it.
+    sentSecretsForRequest(scope).mintedState(requestState);
     // Opaque echoes and mutable schemas/URLs were refused during capture.
     // Downstream prompt messages are prose under the payload rules.
     return sentSecretsForRequest(scope).redact(

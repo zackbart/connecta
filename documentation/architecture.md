@@ -829,30 +829,108 @@ auth headers, raw confidential OAuth client IDs and secrets, and outbound
 bearer tokens join the set, including tokens rotated during a call. Token and
 revocation requests register client credentials before dispatch, decoding OAuth
 Basic form components so a raw echo is covered too. Public client IDs remain
-visible. Before any diagnostic is returned, the
-agent boundary replaces these values and their auth prefixes, mixed JSON
-escapes, URL encodings, and base64/base64url forms with `[redacted]`. Text
-Connecta or a provider cuts short is redacted whole against the request's set,
-private arguments included, before the cut (`redactBeforeCut`, and
-`clampText` in the Workspace products): a cut through an echo leaves a fragment
-that no registered form matches. Text read only up to a bound, or that a vendor
-stopped listing, also loses a tail that begins a registered form
-(`redactBoundedRead`). Complete forms and open-tail prefixes are matched
-against the original text, their spans merged, and replacement happens once.
-There is no minimum open-tail length: even a one-unit shared prefix is
-conservatively withheld. Redaction also precedes normalization and extraction,
-and every derived copy and raw branch shares the protection. Text-offset
-cursors bind the redacted representation as well as the vendor revision;
-changed secret sets that change that representation refuse continuation.
-Final
-transports register sensitive headers and query values after assembling the
-request; custom API handlers use `ctx.fetch`. Values shorter than eight
+visible. Redaction replaces these values and their auth prefixes, mixed JSON
+escapes, URL encodings, and base64/base64url forms with `[redacted]`.
+
+Every redaction is one pass over a text projection of the whole value: string
+and number leaves in serialization order, nested JSON strings parsed into their
+own leaves, and errors' own fields (non-enumerable diagnostics and causes
+included). The joined projection is matched once, raw and through each JSON
+decoding layer, so a form split across adjacent leaves is found; each match is
+replaced only in the leaves it touches, so public runs, links, annotations and
+container shapes stay. A second pass replays the first, recorded choices
+included, and copies only changed containers; when nothing matched there is no
+second pass. Object keys, typed `code`/`name` facts and declared binary fields
+are checked on their own. Connecta's framing (envelope keys, MCP and JSON-RPC
+member names, tag values, typed outcome facts) is never rewritten, and exact
+relay states and connect links Connecta mints and authenticates are kept whole:
+they hold only sealed state or Connecta's own facts. Serialized JSON whose keys,
+syntax and leaves together hold a run of a form that no single leaf holds is
+withheld whole.
+
+The guarantee: **no caller-visible text holds a registered form whole, nor any
+run of K = 8 consecutive UTF-16 units of a registered form of a value at least K
+long, in the raw text or any JSON-decoded layer; text cut where the cut can end
+inside a form loses that unfinished tail, however short.** Registered forms are
+the raw value, its URL/form encodings (either percent hex case), base64 and
+base64url, and the `Bearer `/`token ` framings. The framing words are public, so
+no indexed run starts inside them; a run reaching K units of the value is
+indexed from the value's own forms, and an echo carrying the framing is
+replaced with it. A private value shorter than K is matched whole only:
+anywhere in payload text, and as a whole key, number or boolean. Runs of K-1
+units survive away from a cut. Values derived by an unregistered encoding
+(a date from a timestamp, say) are outside the guarantee.
+
+Payload passes run where downstream or guest data enters: the connector's
+result and errors, the invocation's raw reply, executor outcomes and logs,
+emits, and resource and skill reads. The agent boundary (`redactAgentOutput`,
+every meta-tool exit and the MCP route) repeats every check except short
+private values, which would rewrite Connecta's own ids, counts and addresses;
+payload passes already removed them. Identifiers sent beside a credential — a
+confidential client's ID, a Basic username beside a password of at least eight
+characters, and credential-slot fields named as identifiers (`…Id`, `user`,
+`username`, `login`, `email`, `public…`) — are matched whole only: consent URLs
+and vendor metadata carry their parts by design. Continuation cursors sent as
+query parameters (`pageToken`, `next_token`, `continuationToken`, `syncToken`)
+are public result state and are not registered; content-negotiation headers a
+connector adds to token requests (`Accept`, `Accept-Language`, `User-Agent`)
+are not either.
+
+K = 8 equals the credential floor, so exactly the short private values are
+whole-only. It keeps ordinary words, dates and counts out of the index: a public
+run must repeat eight consecutive units of one form to match, so high-entropy
+credentials and private values produce no measured false positives (a 200 KB
+corpus of documents, logs, JSON and URLs is unchanged). Values that embed
+ordinary text do suppress it wherever it recurs within the same request: a
+password holding the word `resource`, a token holding a vendor's name, a
+credential that is a URL, or a PEM key's armor. Base64 forms reach K at six
+bytes of the value. The index stores two independent 32-bit polynomial hashes
+per run (at most 524,288 distinct runs, a table at most half full), so a false
+match is vanishingly rare and only redacts more; index and scan are linear in
+the registered forms and the scanned text, whatever the number of values. A
+pass over a large body costs about what the per-leaf matcher it replaced did
+(`scripts/bench-sent-secrets.mjs` compares builds); declared binary content
+costs more, since it is decoded and checked as bytes and as UTF-8.
+
+Unchecked content is withheld rather than weakening the guarantee: past the
+index's capacity, or under a private value too large to register, every leaf of
+K units or more and every run of adjacent shorter leaves reaching K; a cycle, an
+accessor, a container past depth 512 or one past the node budget that cannot be
+serialized. Leaves too large to match joined within the call's work budget are
+matched alone, in order, withholding one that does not fit, and every seam
+between kept leaves is matched 512 units deep on each side. Text that still
+holds escapes after eight decoding layers withholds the leaves holding them.
+
+Declared binary content (Drive `format: "base64"` content, MCP image/audio
+`data`, and resource `blob`) is decoded and checked as bytes, as UTF-8 and as
+its base64 text, so an echo at any byte alignment is found. A match withholds
+the whole field as the base64 of `[redacted]`, never partially scrubbed bytes.
+
+Text Connecta or a provider cuts short, trims, normalizes or extracts from is
+redacted whole against the request's set, private arguments included, first
+(`redactBeforeCut`, and `clampText` in the Workspace products): a cut leaves a
+remnant shorter than K that no later pass can see, and a normalized number may
+no longer hold the form at all (Drive size strings, Breeze amounts and dates).
+Provider text lanes that the projection does not see as adjacent are matched
+joined (`SentSecrets.parts`): Docs text runs across links and paragraphs, with
+index previews checked again after whitespace collapses; Notion rich text
+wherever it appears, in both `plain_text` and `text.content`; and Slides raw
+text runs, which carry style between them. Text read only up to a bound, or that
+a vendor stopped listing, also loses any suffix that begins a registered form
+(`redactBoundedRead`). Complete forms and open-tail prefixes are matched against
+the original text and merged before replacement. Each decoded layer sets aside
+its own incomplete trailing JSON escape, so a later layer cannot conceal an open
+tail. Only the uncertain suffix changes; checked earlier rich-text runs retain
+their links and annotations. Text-offset cursors bind the redacted
+representation as well as the vendor revision; changed secret sets that change
+that representation refuse continuation with a restart instruction.
+
+Final transports register sensitive headers and query values after assembling
+the request; custom API handlers use `ctx.fetch`. Values shorter than eight
 characters do not enter the matcher, including Basic usernames, passwords
 and explicitly secret fields such as `client_secret`. Configured short
 credentials produce one payload-free warning per connector; use secrets of
-at least eight characters. Encoded and JSON-escaped echoes of registered
-credentials follow the same redaction rules. Connecta's own messages
-never quote a credential.
+at least eight characters. Connecta's own messages never quote a credential.
 Core uncertainty and retry envelopes share one schema-filtered argument snapshot,
 captured before dispatch and byte budgeting. `writeOnly: true` omits values of
 every length, including nested properties, array items and prefixes, local

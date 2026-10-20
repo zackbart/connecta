@@ -180,7 +180,8 @@ function bool(value: unknown): boolean | undefined {
 }
 
 /** Drive reports sizes as int64 strings. */
-function sizeOf(value: unknown): number | undefined {
+function sizeOf(ctx: ConnectorContext, value: unknown): number | undefined {
+  if (redactBeforeCut(ctx, value) !== value) return undefined;
   const size = typeof value === "string" ? Number(value) : value;
   return typeof size === "number" && Number.isSafeInteger(size) && size >= 0 ? size : undefined;
 }
@@ -261,7 +262,7 @@ function projectFile(
     mimeType: cuts.label("mimeType", file["mimeType"]),
     parents: cuts.ids("parents", file["parents"]),
     driveId: cuts.id("driveId", file["driveId"]),
-    size: sizeOf(file["size"]),
+    size: sizeOf(ctx, file["size"]),
     modifiedTime: cuts.label("modifiedTime", file["modifiedTime"]),
     owners: cuts.labels(
       "owners",
@@ -576,7 +577,7 @@ function capped(
   if (codePointCut(whole, max).total <= max && !partial && fits(whole))
     return { content: whole, contentTruncated: false };
   // Every secret the request sent is replaced before the cut, which could otherwise split one.
-  const body = redactBeforeCut(ctx, whole, "leaf");
+  const body = redactBeforeCut(ctx, whole);
   const { total } = codePointCut(body, max);
   if (total <= max && !partial && fits(body)) return { content: body, contentTruncated: false };
   const of = partial
@@ -725,7 +726,7 @@ async function readContent(
     ),
   );
   const mimeType = String(file["mimeType"] ?? "application/octet-stream");
-  const size = sizeOf(file["size"]);
+  const size = sizeOf(ctx, file["size"]);
   const cuts = new Cuts(ctx);
   const base = compact({
     id: cuts.id("id", file["id"]) ?? fileId,

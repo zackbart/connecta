@@ -125,7 +125,7 @@ function integer(value: unknown): number | undefined {
  * is replaced first: a cut through an echo leaves a fragment no later redaction finds. */
 function capped(ctx: ConnectorContext, whole: string | undefined, max: number, remedy: string): string | undefined {
   if (whole === undefined || whole.length <= max) return whole;
-  const value = redactBeforeCut(ctx, whole, "leaf");
+  const value = redactBeforeCut(ctx, whole);
   if (value.length <= max) return value;
   // Never split a surrogate pair: a lone high surrogate before the marker
   // would make the text ill-formed.

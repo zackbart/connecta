@@ -495,7 +495,7 @@ function projectEvent(value: unknown): JsonRecord {
 function projectContribution(ctx: ConnectorContext, value: unknown): JsonRecord {
   const payment = asRecord(value);
   const paidOn = payment["paid_on"];
-  const safePaidOn = typeof paidOn === "string" ? redactBeforeCut(ctx, paidOn, "leaf") : undefined;
+  const safePaidOn = typeof paidOn === "string" ? redactBeforeCut(ctx, paidOn) : undefined;
   return compact({
     id: idString(payment["id"]),
     // Extract only from unchanged public text; a redacted source yields no extracted fragment.
@@ -1297,7 +1297,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           await get("/volunteers/list_roles", { instance_id: args["instanceId"], show_quantity: 1 }, ctx),
         ).map((value) => {
           const role = asRecord(value);
-          const quantity = Number(role["quantity"]);
+          const quantity = Number(redactBeforeCut(ctx, role["quantity"]));
           return compact({
             id: idString(role["id"]),
             name: role["name"],
@@ -1465,7 +1465,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             args["raw"] === true ? rows : rows.map((row) => projectContribution(ctx, row)),
           ),
           count: rows.length,
-          totalAmount: totalAmount(rows.map((row) => redactBeforeCut(ctx, asRecord(row)["amount"], "leaf"))),
+          totalAmount: totalAmount(rows.map((row) => redactBeforeCut(ctx, asRecord(row)["amount"]))),
         };
       },
     },
