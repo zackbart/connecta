@@ -258,12 +258,16 @@ export async function generateProviders({ root = repositoryRoot, check = false }
   outputs.set(
     join(root, "test", "providers.generated.ts"),
     generated +
+      'import type { Connector } from "../src/types.js";\n' +
       providers
         .map(
-          ({ name }, index) => `import { fixture as fixture${index} } from "../src/providers/${name}/fixtures.js";\n`,
+          ({ name, definition }, index) =>
+            `import { fixture as fixture${index}${definition.kind === "mcp" ? "" : `, createAuthored as authored${index}`} } from "../src/providers/${name}/fixtures.js";\n`,
         )
         .join("") +
-      `\nexport const providerFixtures = [${providers.map((_, index) => `fixture${index}`).join(", ")}];\n`,
+      `\nexport const providerFixtures = [${providers.map((_, index) => `fixture${index}`).join(", ")}];\n` +
+      `\nexport const providerKinds: Readonly<Record<string, string>> = ${JSON.stringify(Object.fromEntries(providers.map(({ name, definition }) => [name, definition.kind])), null, 2)};\n` +
+      `\nexport const authoredFixtures: Readonly<Record<string, (() => Pick<Connector, "listTools">) | undefined>> = {\n${providers.flatMap(({ name, definition }, index) => (definition.kind === "mcp" ? [] : [`  ${JSON.stringify(name)}: authored${index},`])).join("\n")}\n};\n`,
   );
   outputs.set(join(root, "scripts", "provider-smoke.generated.mjs"), await smokeFixtures(root, providers));
   const stale = [];

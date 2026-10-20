@@ -7,3 +7,5 @@ export const fixture = {
   create(id = "fixture", overrides: Partial<Parameters<typeof breeze>[1]> = {}) { return breeze(id, { ...options, ...overrides } as Parameters<typeof breeze>[1]); },
   conventions: {"verbs":["list","get","add","update","assign","unassign","record","breeze"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };
+
+export const createAuthored = () => fixture.create();
