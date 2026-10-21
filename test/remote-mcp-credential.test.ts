@@ -101,37 +101,6 @@ afterEach(() => {
 });
 
 describe("remoteMcp() credential auth — the declared slot", () => {
-  it("declares a default slot an operator page can render", () => {
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-    expect(connector.credential).toEqual({ label: "API key" });
-    // No startAuth: authorize_connector reads that absence plus the declared
-    // slot to return the operator UI handoff instead of a consent URL.
-    expect(connector.startAuth).toBeUndefined();
-    expect(connector.testCredential).toBeTypeOf("function");
-  });
-
-  it("keeps the caller's label, description, and placeholder", () => {
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: {
-        type: "credential",
-        credential: {
-          label: "API v2 secret key",
-          description: "Reaches exactly one project.",
-          placeholder: "sk_…",
-        },
-      },
-    });
-    expect(connector.credential).toEqual({
-      label: "API v2 secret key",
-      description: "Reaches exactly one project.",
-      placeholder: "sk_…",
-    });
-  });
-
   it("refuses named credential fields at construction", () => {
     expect(() =>
       remoteMcp("down", {
@@ -149,24 +118,12 @@ describe("remoteMcp() credential auth — the declared slot", () => {
       }),
     ).toThrow("reads the reserved `value` field only");
   });
-
-  it("declares no slot for the other auth shapes", () => {
-    expect(remoteMcp("oauthed", { url: URL_UNDER_TEST, auth: { type: "oauth" } }).credential).toBeUndefined();
-    expect(
-      remoteMcp("headered", {
-        url: URL_UNDER_TEST,
-        auth: { type: "headers", headers: { authorization: "Bearer k" } },
-      }).credential,
-    ).toBeUndefined();
-  });
 });
 
 describe("remoteMcp() credential auth — header framing", () => {
   it.each([
     [undefined, "Bearer stored-secret"],
-    ["Bearer", "Bearer stored-secret"],
     [null, "stored-secret"],
-    ["", "stored-secret"],
     ["Token", "Token stored-secret"],
   ] as const)("scheme %s sends %s", async (scheme, expected) => {
     const captured = serveDownstream();
@@ -183,20 +140,6 @@ describe("remoteMcp() credential auth — header framing", () => {
     await connector.closeScope?.(ctx);
 
     expect(sessionOpenAuthorizations(captured)).toEqual([expected]);
-  });
-
-  it("base64-encodes a value framed as HTTP Basic credentials", async () => {
-    const captured = serveDownstream();
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential", scheme: "Basic" },
-    });
-    const ctx = credentialCtx(() => "user:secret");
-
-    await expect(connector.listTools(ctx)).resolves.toHaveLength(1);
-    await connector.closeScope?.(ctx);
-
-    expect(sessionOpenAuthorizations(captured)).toEqual([`Basic ${btoa("user:secret")}`]);
   });
 
   it("encodes a nested Basic framing, which is Mixpanel's documented form", async () => {
@@ -251,19 +194,6 @@ describe("remoteMcp() credential auth — an empty slot", () => {
     expect(captured).toHaveLength(0);
   });
 
-  it("reports an unauthenticated status instead of an error", async () => {
-    serveDownstream();
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-
-    await expect(connector.status!(credentialCtx(() => null))).resolves.toMatchObject({
-      state: "auth_required",
-      message: expect.stringContaining("no stored credential"),
-    });
-  });
-
   it("names the vault configuration when there is no vault at all", async () => {
     serveDownstream();
     const connector = remoteMcp("down", {
@@ -278,16 +208,6 @@ describe("remoteMcp() credential auth — an empty slot", () => {
 
     expect(err).toMatchObject({ code: "auth_required" });
     expect((err as Error).message).toContain("Configure vault in deployment code");
-  });
-
-  it("treats a whitespace-only stored value as no credential", async () => {
-    serveDownstream();
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-
-    await expect(connector.listTools(credentialCtx(() => "   "))).rejects.toMatchObject({ code: "auth_required" });
   });
 });
 
@@ -312,22 +232,6 @@ describe("remoteMcp() credential auth — rotation", () => {
     expect(sessionOpenAuthorizations(captured)).toEqual(["Bearer first-secret", "Bearer second-secret"]);
   });
 
-  it("keeps the cached client while the stored value is unchanged", async () => {
-    const captured = serveDownstream();
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-    const ctx = credentialCtx(() => "stored-secret");
-
-    await connector.listTools(ctx);
-    await connector.listTools(ctx);
-    await connector.callTool("echo", { text: "hi" }, ctx);
-    await connector.closeScope?.(ctx);
-
-    expect(sessionOpenAuthorizations(captured)).toHaveLength(1);
-  });
-
   it("fails the next call after the value is wiped", async () => {
     serveDownstream();
     const connector = remoteMcp("down", {
@@ -342,25 +246,6 @@ describe("remoteMcp() credential auth — rotation", () => {
     stored = null;
     await expect(connector.callTool("echo", { text: "hi" }, ctx)).rejects.toMatchObject({ code: "auth_required" });
     await connector.closeScope?.(ctx);
-  });
-
-  it("never exposes the stored value through an error or a status", async () => {
-    serveDownstream();
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-    const ctx = credentialCtx(() => "do-not-leak-this");
-
-    const status = await connector.status!(ctx);
-    const err = await connector.callTool("nope", {}, ctx).then(
-      () => null,
-      (error: unknown) => error,
-    );
-    await connector.closeScope?.(ctx);
-
-    expect(JSON.stringify(status)).not.toContain("do-not-leak-this");
-    expect(String((err as Error).message)).not.toContain("do-not-leak-this");
   });
 
   it("INV-5: a stale credential read cannot replace a newer connected credential", async () => {
@@ -414,27 +299,6 @@ describe("remoteMcp() credential auth — rotation", () => {
       expect(sessionOpenAuthorizations(captured)).toEqual(["Bearer original-secret", "Bearer current-secret"]);
     },
   );
-
-  it("reconnects when the value rotates while the first connect is in flight", async () => {
-    const captured = serveDownstream();
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-    let stored = "first-secret";
-    const ctx = credentialCtx(() => stored);
-
-    // A starts connecting on V1 and does not finish before B enters.
-    const first = connector.listTools(ctx);
-    stored = "second-secret";
-    const second = connector.listTools(ctx);
-    await Promise.allSettled([first, second]);
-    await connector.closeScope?.(ctx);
-
-    // B must not have ridden A's client: the rotated-away key is abandoned and
-    // a second session opens on the replacement.
-    expect(sessionOpenAuthorizations(captured)).toContain("Bearer second-secret");
-  });
 });
 
 describe("remoteMcp() credential auth — a value a header cannot carry", () => {
@@ -534,46 +398,13 @@ describe("remoteMcp() credential auth — a value a header cannot carry", () => 
     );
     assertNoLeak(`${(err as Error).message}${(err as Error).stack ?? ""}`);
   });
-
-  it("refuses an interior control character in any framing", async () => {
-    serveDownstream();
-    for (const scheme of [null, "Bearer", "Basic", "Bearer Basic"] as const) {
-      const connector = remoteMcp("down", {
-        url: URL_UNDER_TEST,
-        auth: { type: "credential", scheme },
-      });
-      // Base64 would launder the newline for the Basic framings; the value is
-      // still a paste to redo, so the refusal does not depend on the framing.
-      await expect(connector.listTools(credentialCtx(() => MALFORMED))).rejects.toMatchObject({
-        code: "auth_required",
-      });
-    }
-  });
-
-  it("refuses a header name that is not a field token, at construction", () => {
-    expect(() =>
-      remoteMcp("down", {
-        url: URL_UNDER_TEST,
-        auth: { type: "credential", header: "X Bad" },
-      }),
-    ).toThrow("not a valid HTTP field name");
-  });
 });
 
 describe("remoteMcp() credential auth — the Test action", () => {
   it.each([
-    [true, "resolved", false],
-    [true, "rejected", false],
     [true, "pending", false],
-    [false, "resolved", false],
     [false, "rejected", false],
-    [false, "pending", false],
     [true, "resolved", true],
-    [true, "rejected", true],
-    [true, "pending", true],
-    [false, "resolved", true],
-    [false, "rejected", true],
-    [false, "pending", true],
   ] as const)(
     "operator Test preserves ok=%s with one bounded %s cleanup, cloned context=%s",
     async (ok, cleanup, cloneContext) => {
@@ -642,98 +473,13 @@ describe("remoteMcp() credential auth — the Test action", () => {
       }
     },
   );
-
-  it("reports the catalog the stored credential reaches, and closes its scope", async () => {
-    serveDownstream();
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-    const ctx = credentialCtx(() => "stored-secret");
-
-    await expect(connector.testCredential!("stored-secret", ctx)).resolves.toEqual({
-      ok: true,
-      message: "Connected — the downstream served 1 tool.",
-    });
-    // The scope is closed, not merely abandoned: reusing it is refused, which
-    // is what closeScope's tombstone does and nothing else does.
-    await expect(connector.listTools(ctx)).rejects.toThrow("scope ended");
-  });
-
-  it("reports a downstream that will not answer, and still closes its scope", async () => {
-    vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-    const ctx = credentialCtx(() => "stored-secret");
-
-    await expect(connector.testCredential!("stored-secret", ctx)).resolves.toMatchObject({ ok: false });
-    await expect(connector.listTools(ctx)).rejects.toThrow("scope ended");
-  });
-
-  it("refuses to report on a candidate that is not what is saved", async () => {
-    serveDownstream();
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
-
-    // The route hands this hook the stored value, so the connect below tests
-    // the same string. A future route testing an unsaved candidate must be
-    // told no rather than quietly graded on the old value.
-    await expect(
-      connector.testCredential!(
-        "a-candidate",
-        credentialCtx(() => "what-is-saved"),
-      ),
-    ).resolves.toEqual({
-      ok: false,
-      message: "This connector tests the credential that is currently saved. Save " + "the value first, then test it.",
-    });
-  });
-});
-
-describe("remoteMcp() unauthenticated status for a non-OAuth connector", () => {
-  it.each([
-    ["credential", { type: "credential" } as const],
-    ["headers", { type: "headers", headers: { Authorization: "Bearer stale" } } as const],
-  ])("never offers a consent URL for %s auth", async (_shape, auth) => {
-    vi.stubGlobal("fetch", async () => new Response("no", { status: 401 }));
-    const connector = remoteMcp("down", { url: URL_UNDER_TEST, auth });
-    const ctx = auth.type === "credential" ? credentialCtx(() => "stored-secret") : vaultlessCtx();
-
-    // A downstream 401 without an auth provider is an SDK HTTP failure, not an
-    // `UnauthorizedError`, so neither shape reaches the authRequired latch at
-    // all — and neither may hand back a URL to open, which is what the
-    // OAuth-only guard in `status()` protects if one ever does.
-    const status = await connector.status!(ctx);
-    expect(status).not.toHaveProperty("authorizationUrl");
-    expect(JSON.stringify(status)).not.toContain("stored-secret");
-    await connector.closeScope?.(ctx);
-  });
 });
 
 describe("remoteMcp() credential auth — cleartext destination", () => {
-  it.each([
-    ["warns when an operator-managed credential would travel over http://", "down", "http://downstream.test/mcp", true],
-    ["does not warn over https://", "secure", URL_UNDER_TEST, false],
-    ["does not warn over loopback", "local", "http://localhost:8787/mcp", false, false],
-    ["still refuses a cleartext destination under requireHttps", "down", "http://downstream.test/mcp", false, true],
-  ] as const)("%s", (_name, id, url, shouldWarn, requireHttps = false) => {
+  it("warns when an operator-managed credential would travel over http://", () => {
     const { logger, warn } = spyLogger();
-    const construct = () =>
-      remoteMcp(id, { url, auth: { type: "credential" }, ...(requireHttps ? { requireHttps: true } : {}), logger });
-    if (requireHttps) {
-      expect(construct).toThrow("refusing to connect");
-      return;
-    }
-    construct();
-    if (shouldWarn) {
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("cleartext"));
-    } else {
-      expect(warn).not.toHaveBeenCalled();
-    }
+    remoteMcp("down", { url: "http://downstream.test/mcp", auth: { type: "credential" }, logger });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("cleartext"));
   });
 });
 

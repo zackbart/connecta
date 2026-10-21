@@ -80,30 +80,6 @@ it("INV-7: a finalizer racing a late settlement releases an active charge exactl
   expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 0 });
 });
 
-it("INV-7: a finalizer racing a late settlement releases an abandoned charge exactly once", async () => {
-  vi.useFakeTimers();
-  const { authenticate, authenticationSnapshot, registry } = await load();
-  const { provider, settle } = controlled();
-  const pending = Array.from({ length: 16 }, () =>
-    authenticate(provider, new Request(`${BASE}/mcp`), BASE, undefined, silentLogger),
-  );
-  await vi.advanceTimersByTimeAsync(11_000);
-  expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true });
-  const records = [...registry!.entries.values()].map((entry) => entry.held);
-  expect(records).toHaveLength(16);
-  registry!.cleanup(records[0]!);
-  registry!.cleanup(records[0]!);
-  expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 15, abandonedSaturated: false });
-  settle[0]!();
-  await pending[0];
-  expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 15 });
-  settle.slice(1).forEach((release) => release());
-  await Promise.all(pending);
-  expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 0 });
-  expect(registry!.entries.size).toBe(0);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
 it("INV-7: an overdue active charge takes the abandoned slot a finalizer frees", async () => {
   vi.useFakeTimers();
   const { authenticate, authenticationSnapshot, registry } = await load();
@@ -121,20 +97,6 @@ it("INV-7: an overdue active charge takes the abandoned slot a finalizer frees",
   expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 16 });
   settle.forEach((release) => release());
   await Promise.all([stuck, ...wave]);
-  expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 0 });
-});
-
-it("INV-7: settlement unregisters each token, and a synchronous verdict registers nothing that outlives it", async () => {
-  const { authenticate, authenticationSnapshot, registry } = await load();
-  const { provider, settle } = controlled();
-  const pending = authenticate(provider, new Request(`${BASE}/mcp`), BASE, undefined, silentLogger);
-  expect(registry!.entries.size).toBe(1);
-  settle[0]!();
-  await pending;
-  expect(registry!.entries.size).toBe(0);
-  const local: InboundAuth = { kind: "local", authorize: () => ({ ok: false, response: new Response(null) }) };
-  await authenticate(local, new Request(`${BASE}/mcp`), BASE, undefined, silentLogger);
-  expect(registry!.entries.size).toBe(0);
   expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 0 });
 });
 

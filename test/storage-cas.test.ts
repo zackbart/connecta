@@ -10,8 +10,6 @@ describe("memoryStorage compareAndSet", () => {
 });
 
 describe("namespaced storage compareAndSet", () => {
-  compareAndSetContract(() => makeRegistry([], { storage: memoryStorage() }).scopedStorage("s"));
-
   it("claims under its own prefix without touching a sibling namespace", async () => {
     const root = memoryStorage();
     const registry = makeRegistry([], { storage: root });

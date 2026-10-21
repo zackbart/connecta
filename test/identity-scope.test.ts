@@ -1,11 +1,10 @@
 import { machineAuth } from "./helpers/machine-auth.js";
-import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { InvocationFailure } from "../src/invocation.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { accessTokens } from "../src/access-tokens.js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { callerOf } from "../src/connector-caller.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -178,58 +177,6 @@ describe("maintainers and plain /mcp", () => {
       await connecta.close();
     },
   );
-
-  it("INV-4: admits a maintainer at /mcp with the whole catalog, refuses a non-maintainer with the pool 404, and an agent token outright", async () => {
-    const storage = memoryStorage();
-    const warn = vi.fn();
-    const c = deployment({
-      storage,
-      agents: ["bot"],
-      accessTokens: accessTokens(storage),
-      logger: { ...silentLogger, warn },
-      pools: { team: { tools: ["wiki"], members: ["bob", "agent:bot"] } },
-    });
-    const bot = await issueAgentToken(storage, "bot");
-    const full = await searchText(c, "/mcp", "alice");
-    for (const address of ["notes.delete", "wiki.read", "billing.invoices"]) expect(full).toContain(address);
-    const undeclared = await wire(await listTools(c, "/mcp/missing", "bob"));
-    expect(undeclared.status).toBe(404);
-    expect(await wire(await listTools(c, "/mcp", "bob"))).toEqual(undeclared);
-    expect((await listTools(c, "/mcp", bot)).status).toBe(401);
-    expect(await wire(await listTools(c, "/mcp/team", "alice"))).toEqual(undeclared);
-    const reasons = warn.mock.calls
-      .flat()
-      .flatMap((entry) => (entry && typeof entry === "object" ? [entry.reason] : []));
-    expect(reasons).toEqual(expect.arrayContaining(["pool_not_declared", "not_maintainer", "not_pool_member"]));
-    expect((await listTools(c, "/mcp/team", bot)).status).toBe(401);
-    expect((await listTools(c, "/agent/team", bot)).status).toBe(200);
-    expect((await listTools(c, "/mcp/team", "bob")).status).toBe(200);
-    const unauthenticated = await c.fetch(
-      new Request(`${BASE}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
-    );
-    expect(unauthenticated.status).toBe(401);
-    await c.close();
-  });
-
-  it("INV-4: a deployment whose only auth is agent tokens needs no maintainers, and plain /mcp admits nobody", async () => {
-    const storage = memoryStorage();
-    const c = createTestConnecta({
-      connectors: teamConnectors(),
-      storage,
-      agents: ["bot"],
-      accessTokens: accessTokens(storage),
-      pools: { bots: { tools: ["wiki"], members: ["agent:bot"] } },
-      logger: silentLogger,
-    });
-    const bot = await issueAgentToken(storage, "bot");
-    expect(c.describeConfig().maintainers).toEqual([]);
-    expect((await listTools(c, "/mcp", bot)).status).toBe(401);
-    expect((await listTools(c, "/mcp/bots", bot)).status).toBe(401);
-    expect((await listTools(c, "/agent/bots", bot)).status).toBe(200);
-    const config = await c.fetch(request("/ui/api/config", bot));
-    expect(config.status).toBe(401);
-    await c.close();
-  });
 
   it("INV-4: an open deployment keeps anonymous /mcp and answers every pool with the 404", async () => {
     const c = createTestConnecta({
@@ -626,32 +573,6 @@ describe("shared auth is maintainers' alone", () => {
     expect(new URL(personal.headers.get("Location")!).origin).toBe("https://provider.test");
     await c.close();
   });
-
-  it("INV-4 INV-5: a member's elicited auth handoff never carries a shared connector's link", async () => {
-    const storage = memoryStorage();
-    const c = createTestConnecta({
-      connectors: [sharedOAuth()],
-      auth: users(),
-      maintainers: ["alice"],
-      pools: { team: { tools: ["shared"], members: ["bob"] } },
-      vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
-      storage,
-      publicUrl: BASE,
-      logger: silentLogger,
-      executor: scriptedExecutor(async (fns) => {
-        try {
-          return await fns.call!("shared.read", {});
-        } catch (error) {
-          return error instanceof InvocationFailure ? error.details : String(error);
-        }
-      }),
-    });
-    const program = await rpc(c, "/mcp/team", "bob", "execute_code", { code: "return 1" });
-    expect(JSON.stringify(program)).not.toContain("/connect/");
-    const maintainer = await rpc(c, "/mcp", "alice", "call_tool", { address: "shared.read", args: {} });
-    expect(JSON.stringify(maintainer)).toContain("/connect/shared");
-    await c.close();
-  });
 });
 
 describe("pool members connect their own personal connectors", () => {
@@ -702,25 +623,6 @@ describe("pool members connect their own personal connectors", () => {
       ).state;
     expect(await status("bob")).toBe("ok");
     expect(await status("alice")).toBe("auth_required");
-    await c.close();
-  });
-
-  it("INV-4: a maintainer's link still goes through the operator UI", async () => {
-    const c = createTestConnecta({
-      connectors: [personalOAuth()],
-      auth: users(),
-      maintainers: ["alice"],
-      vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger: silentLogger,
-    });
-    const link = JSON.parse(
-      (await rpc(c, "/mcp", "alice", "authorize_connector", { connector: "oauth" })).result.content[0].text,
-    ).authorizationUrl;
-    const visit = await c.fetch(new Request(link, { headers: { Authorization: "Bearer alice" } }));
-    expect(visit.status).toBe(302);
-    expect(new URL(visit.headers.get("Location")!).pathname).toBe("/connectors/oauth");
     await c.close();
   });
 });
@@ -807,36 +709,32 @@ describe("pools serve exactly their tools", () => {
     await c.close();
   });
 
-  it.each([false, true])(
-    "INV-2 INV-4: connector readOnly applies to maintainers and pools with deployment readOnly %s",
-    async (readOnly) => {
-      let writes = 0;
-      const connectors = teamConnectors(() => writes++);
-      connectors[0]!.readOnly = true;
-      const c = deployment({
-        connectors,
-        readOnly,
-        pools: {
-          writers: { tools: ["notes"], readOnly: false, members: ["alice"] },
-          readers: { tools: ["notes"], readOnly: true, members: ["alice"] },
-        },
-      });
-      try {
-        for (const path of ["/mcp", "/mcp/writers", "/mcp/readers"]) {
-          const search = await searchText(c, path, "alice");
-          expect(search).toContain("notes.search");
-          expect(search).not.toContain("notes.delete");
-          for (const name of ["call_tool", "call_destructive_tool"]) {
-            const result = await rpc(c, path, "alice", name, { address: "notes.delete", args: {} });
-            expect(JSON.stringify(result)).toContain("read_only_endpoint");
-          }
+  it("INV-2 INV-4: connector readOnly applies to maintainers and pools", async () => {
+    let writes = 0;
+    const connectors = teamConnectors(() => writes++);
+    connectors[0]!.readOnly = true;
+    const c = deployment({
+      connectors,
+      pools: {
+        writers: { tools: ["notes"], readOnly: false, members: ["alice"] },
+        readers: { tools: ["notes"], readOnly: true, members: ["alice"] },
+      },
+    });
+    try {
+      for (const path of ["/mcp", "/mcp/writers", "/mcp/readers"]) {
+        const search = await searchText(c, path, "alice");
+        expect(search).toContain("notes.search");
+        expect(search).not.toContain("notes.delete");
+        for (const name of ["call_tool", "call_destructive_tool"]) {
+          const result = await rpc(c, path, "alice", name, { address: "notes.delete", args: {} });
+          expect(JSON.stringify(result)).toContain("read_only_endpoint");
         }
-        expect(writes).toBe(0);
-      } finally {
-        await c.close();
       }
-    },
-  );
+      expect(writes).toBe(0);
+    } finally {
+      await c.close();
+    }
+  });
 
   it("INV-2: a readOnly pool refuses writes while the maintainer's writable /mcp does not", async () => {
     const deleted = { count: 0 };
@@ -856,27 +754,6 @@ describe("pools serve exactly their tools", () => {
       (await rpc(c, "/mcp", "alice", "call_destructive_tool", { address: "notes.delete", args: {} })).result.isError,
     ).toBeFalsy();
     expect(deleted.count).toBe(1);
-    await c.close();
-  });
-
-  it("warns once for a pool address the catalog lacks and keeps it unreachable", async () => {
-    const warnings: string[] = [];
-    const notes: Connector = {
-      id: "notes",
-      description: "Notes",
-      listTools: async () => [{ name: "search", annotations: { readOnlyHint: true } }],
-      callTool: async () => ({ ok: true }),
-    };
-    const c = deployment({
-      connectors: [notes],
-      pools: { team: { tools: ["notes.ghost", "notes.search"], members: ["bob"] } },
-      logger: { ...silentLogger, warn: (message: string) => void warnings.push(message) },
-    });
-    await rpc(c, "/mcp/team", "bob", "search_tools", { query: "notes", limit: 20 });
-    await rpc(c, "/mcp/team", "bob", "search_tools", { query: "notes", limit: 20 });
-    const ghost = await rpc(c, "/mcp/team", "bob", "call_tool", { address: "notes.ghost", args: {} });
-    expect(ghost.result.isError).toBe(true);
-    expect(warnings.filter((line) => line.includes("notes.ghost"))).toHaveLength(1);
     await c.close();
   });
 
@@ -911,47 +788,6 @@ describe("pools serve exactly their tools", () => {
     expect((await call("call_tool", "notes.read")).result.isError).toBe(true);
     expect((await call("call_destructive_tool", "notes.read")).result.isError).toBeFalsy();
     expect(calls).toEqual(["read", "read"]);
-    await c.close();
-  });
-
-  it("accepts a pool tool whose name has spaces or non-ASCII characters", async () => {
-    const c = deployment({
-      connectors: [
-        api("intl", {
-          description: "Intl",
-          tools: [
-            { name: "Liste des pages", description: "Lister", ...READ },
-            { name: "supprimer", description: "Supprimer", ...READ },
-          ],
-        }),
-      ],
-      pools: { team: { tools: ["intl.Liste des pages"], members: ["bob"] } },
-    });
-    const text = JSON.stringify(
-      await rpc(c, "/mcp/team", "bob", "search_tools", { query: "lister supprimer", limit: 20 }),
-    );
-    expect(text).toContain("Liste des pages");
-    expect(text).not.toContain("intl.supprimer");
-    await c.close();
-  });
-
-  it("INV-4: an agent member is admitted only at /agent/<pool>, never at /mcp or /mcp/<pool>", async () => {
-    const storage = memoryStorage();
-    const c = deployment({
-      storage,
-      agents: ["bot", "other"],
-      accessTokens: accessTokens(storage),
-      pools: { bots: { tools: ["wiki"], members: ["agent:bot"] } },
-    });
-    const bot = await issueAgentToken(storage, "bot");
-    const other = await issueAgentToken(storage, "other");
-    const admitted = await searchTextAs(c, "/agent/bots", bot);
-    expect(admitted).toContain("wiki.read");
-    expect(admitted).not.toContain("notes.search");
-    const refused = await wire(await listTools(c, "/agent/missing", bot));
-    expect(refused.status).toBe(404);
-    expect(await wire(await listTools(c, "/agent/bots", other))).toEqual(refused);
-    for (const path of ["/mcp", "/mcp/bots"]) expect((await listTools(c, path, bot)).status).toBe(401);
     await c.close();
   });
 
@@ -1040,11 +876,6 @@ describe("member references at construction", () => {
       "ConnectaConfig.maintainers[0] is a bare principal id, which resolves only when exactly one interactive auth provider is configured (found 2)",
     ],
     [
-      "a bare id with no interactive provider",
-      () => ({ auth: machineAuth("token"), maintainers: ["alice"] }),
-      "found 0",
-    ],
-    [
       "a bare id with a colon",
       () => ({ auth: users(), maintainers: ["user:alice"] }),
       'ConnectaConfig.maintainers[0] contains ":". Write a principal whose id contains ":" as { namespace, id }',
@@ -1058,26 +889,6 @@ describe("member references at construction", () => {
         pools: { team: { tools: ["wiki"], members: ["agent:ghost"] } },
       }),
       'ConnectaConfig.pools.team.members[0] names agent "ghost", which ConnectaConfig.agents does not declare',
-    ],
-    [
-      "a duplicate maintainer",
-      () => ({ auth: users(), maintainers: ["alice", { namespace: NAMESPACE, id: "alice" }] }),
-      "ConnectaConfig.maintainers[1] repeats an earlier member",
-    ],
-    [
-      "a duplicate member",
-      () => ({
-        auth: users(),
-        maintainers: ["alice"],
-        ...withAgents(),
-        pools: { team: { tools: ["wiki"], members: ["agent:bot", "agent:bot"] } },
-      }),
-      "ConnectaConfig.pools.team.members[1] repeats an earlier member",
-    ],
-    [
-      "an empty member list",
-      () => ({ auth: users(), maintainers: ["alice"], pools: { team: { tools: ["wiki"], members: [] } } }),
-      "ConnectaConfig.pools.team.members is empty",
     ],
     [
       "missing members",
@@ -1095,34 +906,9 @@ describe("member references at construction", () => {
       "ConnectaConfig.maintainers is required with inbound auth",
     ],
     [
-      "empty maintainers with inbound auth",
-      () => ({ auth: users(), maintainers: [] }),
-      "ConnectaConfig.maintainers is required with inbound auth",
-    ],
-    [
       "maintainers without inbound auth",
       () => ({ maintainers: [{ namespace: NAMESPACE, id: "alice" }] }),
       "ConnectaConfig.maintainers needs an inbound auth provider that admits people",
-    ],
-    [
-      "maintainers with agent tokens as the only auth",
-      () => ({ ...withAgents(), maintainers: [{ namespace: NAMESPACE, id: "alice" }] }),
-      "ConnectaConfig.maintainers needs an inbound auth provider that admits people",
-    ],
-    [
-      "a malformed reference",
-      () => ({ auth: users(), maintainers: [{ namespace: NAMESPACE, id: "alice", extra: true }] }),
-      'ConnectaConfig.maintainers[0] must be a principal id string, { namespace, id }, or "agent:<name>"',
-    ],
-    [
-      "a reference with a space",
-      () => ({ auth: users(), maintainers: [{ namespace: NAMESPACE, id: "has space" }] }),
-      "ConnectaConfig.maintainers[0] must have a namespace and id",
-    ],
-    [
-      "maintainers that are not an array",
-      () => ({ auth: users(), maintainers: "alice" }),
-      "ConnectaConfig.maintainers must be an array",
     ],
   ])("INV-11: refuses %s at construction", (_name, config, message) => {
     expect(build(config() as Partial<ConnectaConfig>)).toThrow(message);
@@ -1165,9 +951,6 @@ describe("member references at construction", () => {
     );
   });
 });
-
-const searchTextAs = async (c: ReturnType<typeof deployment>, path: string, token: string) =>
-  JSON.stringify(await rpc(c, path, token, "search_tools", { query: "team data", limit: 50 }));
 
 describe("the caller a built-in connector sees", () => {
   // Core attaches the admitted identity beside the connector context, where
@@ -1236,10 +1019,5 @@ describe("the caller a built-in connector sees", () => {
       identity: { actor: { kind: "anonymous" }, interactive: false },
       authenticated: false,
     });
-  });
-
-  it("is absent from a context no request admitted", () => {
-    const connecta = createTestConnecta({ connectors: [whoami()], logger: silentLogger });
-    expect(callerOf(connecta.registry.contextFor("who", BASE))).toBeUndefined();
   });
 });

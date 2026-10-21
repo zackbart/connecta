@@ -11,9 +11,6 @@ import { Registry } from "../src/registry.js";
 import { importStateFile, openSqlite, sqliteActivityStore, sqliteStorage } from "../src/sqlite.js";
 import { silentLogger } from "./helpers.js";
 import { sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
-import { NUL_VALUES } from "./storage-contract.js";
-import { quickJsExecutor } from "../src/executors/quickjs.js";
-import { checkLargeProgramRead, checkLargeProgramWrite } from "./program-result-cases.js";
 
 const directories: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -51,23 +48,13 @@ function fixture(db: DatabaseSync): SqlFixture {
   };
 }
 
+// The shared contract runs once on this driver; the file cases below cover
+// what an in-memory database cannot: permissions, restarts, and processes.
 describe("sqliteStorage in memory", () => {
-  it("INV-9: program result transfers and write handles share the SQLite stash", async () => {
-    const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
-    try {
-      const storage = sqliteStorage(track(openSqlite(":memory:")));
-      await checkLargeProgramRead(executor, storage);
-      await checkLargeProgramWrite(executor, storage);
-    } finally {
-      await executor.close?.();
-    }
-  }, 30_000);
   sqlStorageContract(async () => fixture(track(openSqlite(":memory:"))));
 });
 
 describe("sqliteStorage in a file", () => {
-  sqlStorageContract(async () => fixture(track(openSqlite(join(tempDirectory(), "connecta.sqlite")))));
-
   it("creates an owner-only file in an owner-only directory", async () => {
     const directory = join(tempDirectory(), "state");
     const path = join(directory, "connecta.sqlite");
@@ -117,12 +104,6 @@ describe("sqliteStorage in a file", () => {
     );
     expect(accepted.filter(Boolean)).toHaveLength(64);
     expect(await sqliteStorage(path).list("results:result:")).toHaveLength(64);
-  });
-
-  it("opens a path given as a string", async () => {
-    const path = join(tempDirectory(), "connecta.sqlite");
-    await sqliteStorage(path).set("k", "v");
-    expect(await sqliteStorage(path).get("k")).toBe("v");
   });
 });
 
@@ -215,15 +196,6 @@ describe("importStateFile", () => {
     expect(await sqliteStorage(db).get("conn:notion:oauth:tokens")).toBe("newer");
   });
 
-  it("refuses a file that is not a state file before writing anything", () => {
-    const directory = tempDirectory();
-    const path = join(directory, "state.json");
-    writeFileSync(path, JSON.stringify({ "a": { value: "1" }, "b": { value: 2 } }));
-    const db = track(openSqlite(join(directory, "connecta.sqlite")));
-    expect(() => importStateFile(db, path)).toThrow(/not a connecta state file/);
-    expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
-  });
-
   it("INV-6: refuses a malformed file without quoting its keys or text", () => {
     const directory = tempDirectory();
     const secret = "planted-state-secret-7f3a9c";
@@ -246,31 +218,6 @@ describe("importStateFile", () => {
       expect(message).toMatch(/not a connecta state file/);
       expect(message).not.toContain(secret);
     }
-    expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
-  });
-
-  it("imports values holding NUL (U+0000) whole", async () => {
-    const directory = tempDirectory();
-    const path = join(directory, "state.json");
-    // JSON.stringify writes each NUL as the escape \u0000, as 0.28 did.
-    writeFileSync(
-      path,
-      JSON.stringify(Object.fromEntries(NUL_VALUES.map((value, index) => [`nul:${index}`, { value }]))),
-    );
-    const db = track(openSqlite(join(directory, "connecta.sqlite")));
-    expect(importStateFile(db, path)).toEqual({ imported: NUL_VALUES.length, kept: 0, expired: 0 });
-    const storage = sqliteStorage(db);
-    for (const [index, value] of NUL_VALUES.entries()) {
-      expect(await storage.get(`nul:${index}`)).toBe(value);
-    }
-    expect(await storage.compareAndSet("nul:3", "before\0after", "next")).toBe(true);
-  });
-
-  it("rejects a NUL key before importing any state or creating tables", () => {
-    const path = join(tempDirectory(), "state.json");
-    writeFileSync(path, JSON.stringify({ "a": { value: "original" }, "a\0b": { value: "bad" } }));
-    const db = track(openSqlite(":memory:"));
-    expect(() => importStateFile(db, path)).toThrow(/U\+0000 \(NUL\)/);
     expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
   });
 });

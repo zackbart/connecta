@@ -977,7 +977,7 @@ const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_WINDOW_MS = 30_000;
 
 /** Navigation, unmount and identity resets also cancel in-flight poll reads. */
-export function stopOAuthPolling(connector?: string): void {
+function stopOAuthPolling(connector?: string): void {
   ++oauthPollGeneration;
   if (connector && !awaitingAuthorization.has(connector)) return;
   if (connector) awaitingAuthorization.delete(connector);
