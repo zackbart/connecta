@@ -867,7 +867,9 @@ describe("GitHub App provider", () => {
       const direct = await connector.callTool("get_file_contents", args, context()).catch((error) => error);
       if (responseKind === "success") {
         expect(outcome).toMatchObject({ ok: true });
-        expect(guestResult).toEqual({ data: { echo: "[redacted]" }, format: "json" });
+        // The blocks unwrap joined by a newline, so the split document is text; each block
+        // keeps its own piece of the echo as a placeholder.
+        expect(guestResult).toEqual({ data: '{"echo":"[redacted]\n[redacted]"}', format: "text" });
       } else {
         expect(outcome).toMatchObject({ ok: false });
         expect(guestError).toBeInstanceOf(Error);

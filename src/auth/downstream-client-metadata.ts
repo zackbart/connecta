@@ -32,7 +32,7 @@ export function trackRemoteClientRequest(secrets: SentSecrets, input: RequestInf
         const decode = (value: string) => new URLSearchParams(`value=${value}`).get("value")!;
         const secret = decode(decoded.slice(colon + 1));
         if (secret) {
-          secrets.add(decode(decoded.slice(0, colon)));
+          secrets.identifier(decode(decoded.slice(0, colon)));
           secrets.secret(secret);
         }
       }
@@ -47,7 +47,7 @@ export function trackRemoteClientRequest(secrets: SentSecrets, input: RequestInf
     const form = new URLSearchParams(init.body);
     const secret = form.get("client_secret");
     if (secret) {
-      secrets.add(form.get("client_id") ?? "");
+      secrets.identifier(form.get("client_id") ?? "");
       secrets.secret(secret);
     }
     // RFC 7009 uses token, rather than the token endpoint's refresh_token.

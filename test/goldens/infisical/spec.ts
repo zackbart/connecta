@@ -39,7 +39,7 @@ const SECRET_IDENTIFIERS = {
 export default defineGoldenSpec({
   provider: "infisical",
   create: () => infisical("infisical", { purpose: "Deployment secrets for the crm and tickets services" }),
-  credential: { clientId: "golden-client-id/4d2+e81=", clientSecret: "golden-client-secret/9b5+1f0=" },
+  credential: { clientId: "iC3m9Xv6Kp1/4d2+e81=", clientSecret: "golden-client-secret/9b5+1f0=" },
   secrets: { accessToken: ACCESS_TOKEN },
   auxiliary: [
     {

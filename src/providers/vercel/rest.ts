@@ -7,6 +7,7 @@ import type { ApiTool } from "../../connectors/api-connector.js";
 import { guardedFetch, retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
 import {
@@ -600,11 +601,17 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
     }
     return await logs({ method: "GET", path: call.path, query, prefixOnly: true }, ctx, async (response) => {
       if (!response.ok) {
-        throw vercelFailure(response.status, response.headers, await failureBody(response), family(call));
+        throw vercelFailure(
+          response.status,
+          response.headers,
+          redactBeforeCut(ctx, await failureBody(response)),
+          family(call),
+        );
       }
       const { bytes, truncated } = await response.prefix(MAX_LOG_BYTES);
+      // Whole rows, redacted before `clamp` cuts their text.
       const rows = completeRows(new TextDecoder().decode(bytes)).map((row) =>
-        SAFETY.redact(row, call.method, call.op.path),
+        redactBeforeCut(ctx, SAFETY.redact(row, call.method, call.op.path)),
       );
       return { rows, stopped: truncated ? "bytes" : (stopped ?? "end") };
     });
@@ -1076,7 +1083,12 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
           ctx,
           async (response) => {
             if (!response.ok) {
-              throw vercelFailure(response.status, response.headers, await failureBody(response), family(call));
+              throw vercelFailure(
+                response.status,
+                response.headers,
+                redactBeforeCut(ctx, await failureBody(response)),
+                family(call),
+              );
             }
             let body: string;
             try {

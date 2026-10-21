@@ -48,6 +48,7 @@ import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
 import { tracksEveryRequest } from "../../provider-call.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 
 /**
  * Overflow's two published environments. They are separate deployments with
@@ -341,7 +342,8 @@ async function callOverflow(
   return await send(request, ctx, async (response) => {
     const text = await response.text();
     if (!response.ok) {
-      throw overflowFailure(response.status, response.headers, parseBody(text), request.method);
+      // detailFor cuts a plain-text body short, so it is redacted whole first.
+      throw overflowFailure(response.status, response.headers, redactBeforeCut(ctx, parseBody(text)), request.method);
     }
     const body = parseBody(text);
     if (mode === "strict" && typeof body === "string") {

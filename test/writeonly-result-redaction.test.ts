@@ -131,17 +131,14 @@ it.each(["mcp", "api"] as const)(
       logger: { debug: record, info: record, warn: record, error: record },
     });
     const meta = createMetaTools(registry, BASE, { readOnly: false, activity: activity.activity });
-    for (const value of [SECRET, "q"]) {
+    // A short private value (four to seven units) is replaced wherever it occurs, as a longer one is.
+    for (const value of [SECRET, "q7Zx"]) {
       const args = { config: { password: value } };
       for (const failed of [false, true]) {
         source.fail(failed);
         const check = (result: unknown, echoed = true) => {
           const text = JSON.stringify(result);
-          if (value === SECRET) for (const form of forms(value)) expect(text).not.toContain(form);
-          else if (failed || kind === "mcp") {
-            expect(text).not.toContain("Downstream quoted");
-            expect(text).not.toContain(btoa(value));
-          }
+          for (const form of forms(value)) expect(text).not.toContain(form);
           if (echoed) expect(text).toContain("[redacted]");
         };
         for (const resultMode of ["mcp", "value"] as const) {
@@ -200,7 +197,7 @@ it.each(["mcp", "api"] as const)(
     }
     expect(source.received).toHaveLength(24);
     expect(source.received.slice(0, 12)).toEqual(Array.from({ length: 12 }, () => ({ config: { password: SECRET } })));
-    expect(source.received.slice(12)).toEqual(Array.from({ length: 12 }, () => ({ config: { password: "q" } })));
+    expect(source.received.slice(12)).toEqual(Array.from({ length: 12 }, () => ({ config: { password: "q7Zx" } })));
     expect(JSON.stringify([record.mock.calls, activity.events])).not.toContain(SECRET);
     expect(JSON.stringify([record.mock.calls, activity.events])).not.toContain("Downstream quoted");
   },
@@ -358,6 +355,7 @@ it("INV-5: short private strings protect exact leaves and matching prose while e
     for (const resultMode of ["mcp", "value"] as const) {
       const result = await meta.callDestructiveTool({ address: "short.write", args: { value }, resultMode });
       expect(result.content[0]!.type).toBe("text");
+      expect(result.content[0]!.text, `${value}/${resultMode}`).not.toBe("[redacted]");
       const parsed = JSON.parse(result.content[0]!.text);
       expect(resultMode === "value" ? parsed.data : parsed).toEqual({ id: "needed-id", echo: "[redacted]" });
       if (resultMode === "value") expect(parsed).toMatchObject({ ok: true, format: "json" });
@@ -370,6 +368,8 @@ it("INV-5: short private strings protect exact leaves and matching prose while e
     const parsed = JSON.parse(result.content[0]!.text);
     expect(resultMode === "value" ? parsed.data : parsed).toEqual({
       ...metadata,
+      id: "folder-[redacted]-793",
+      label: "[redacted]uction",
       echo: "[redacted]",
       forms: forms("prod").map(() => "[redacted]"),
     });
@@ -381,7 +381,7 @@ it("INV-5: short private strings protect exact leaves and matching prose while e
       args: { value: "prod" },
       resultMode: "value",
     });
-    expect(result.structuredContent).toMatchObject({ ok: true, data: "[redacted]", format: "text" });
+    expect(result.structuredContent).toMatchObject({ ok: true, data: "quoted [redacted]", format: "text" });
   }
   reply = { id: "folder-prod-793", status: "ok", echo: "", text: "ordinary prose" };
   const empty = await meta.callDestructiveTool({ address: "short.write", args: { value: "" }, resultMode: "value" });

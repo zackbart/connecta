@@ -62,6 +62,7 @@ import {
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
@@ -248,7 +249,7 @@ function shortText(value: unknown): string | undefined {
  * or an `errorCode`. The giving endpoints' success shape is
  * `{ success: true, errors: null }`, so a null or empty `errors` is not one.
  */
-function reportedFailure(payload: unknown): ConnectorCallError | undefined {
+function reportedFailure(payload: unknown, ctx: ConnectorContext): ConnectorCallError | undefined {
   const root = asRecord(payload);
   const errors = root["errors"];
   const hasErrors =
@@ -261,11 +262,13 @@ function reportedFailure(payload: unknown): ConnectorCallError | undefined {
   if (root["success"] !== false && root["errorCode"] === undefined && !hasErrors) {
     return undefined;
   }
+  // Redacted whole before shortText cuts it.
+  const reported = asRecord(redactBeforeCut(ctx, root));
   const message =
-    shortText(root["errorMessage"]) ??
-    shortText(root["message"]) ??
-    shortText(errors) ??
-    shortText(root["errorCode"]) ??
+    shortText(reported["errorMessage"]) ??
+    shortText(reported["message"]) ??
+    shortText(reported["errors"]) ??
+    shortText(reported["errorCode"]) ??
     "no detail";
   // Breeze uses the same envelope for a rejected argument and a missing
   // record, so the code stays the honest generic one and the message says so.
@@ -288,7 +291,7 @@ async function callBreeze(
   return await send(request, ctx, async (response) => {
     const text = await response.text();
     if (!response.ok) {
-      throw breezeFailure(response.status, response.headers, text);
+      throw breezeFailure(response.status, response.headers, redactBeforeCut(ctx, text));
     }
     if (!text.trim()) return null;
     let payload: unknown;
@@ -302,7 +305,7 @@ async function callBreeze(
         retryable: false,
       });
     }
-    const failure = reportedFailure(payload);
+    const failure = reportedFailure(payload, ctx);
     if (failure) throw failure;
     return payload;
   });
@@ -511,12 +514,19 @@ function projectEvent(value: unknown): JsonRecord {
   });
 }
 
-function projectContribution(value: unknown): JsonRecord {
+function projectContribution(ctx: ConnectorContext, value: unknown): JsonRecord {
   const payment = asRecord(value);
   const paidOn = payment["paid_on"];
+  const safePaidOn = typeof paidOn === "string" ? redactBeforeCut(ctx, paidOn) : undefined;
   return compact({
     id: idString(payment["id"]),
-    paidOn: typeof paidOn === "string" ? paidOn.slice(0, 10) : undefined,
+    // Extract only from unchanged public text; a redacted source yields no extracted fragment.
+    paidOn:
+      safePaidOn === undefined
+        ? undefined
+        : safePaidOn !== paidOn
+          ? "[redacted]"
+          : (/^\d{4}-\d{2}-\d{2}/.exec(safePaidOn)?.[0] ?? safePaidOn),
     amount: idString(payment["amount"]),
     method: payment["method"],
     methodId: idString(payment["method_id"]),
@@ -1318,7 +1328,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           await get("/volunteers/list_roles", { instance_id: args["instanceId"], show_quantity: 1 }, ctx),
         ).map((value) => {
           const role = asRecord(value);
-          const quantity = Number(role["quantity"]);
+          const quantity = Number(redactBeforeCut(ctx, role["quantity"]));
           return compact({
             id: idString(role["id"]),
             name: role["name"],
@@ -1481,9 +1491,12 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           ),
         );
         return {
-          contributions: args["raw"] === true ? rows : rows.map(projectContribution),
+          contributions: redactBeforeCut(
+            ctx,
+            args["raw"] === true ? rows : rows.map((row) => projectContribution(ctx, row)),
+          ),
           count: rows.length,
-          totalAmount: totalAmount(rows.map((row) => asRecord(row)["amount"])),
+          totalAmount: totalAmount(rows.map((row) => redactBeforeCut(ctx, asRecord(row)["amount"]))),
         };
       },
     },

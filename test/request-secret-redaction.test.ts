@@ -379,8 +379,9 @@ it("INV-5: future operation-table entries and thrown errors pass through the sam
       },
     };
   });
+  // A match across blocks is replaced in each block it touches; the blocks keep their shape.
   expect(await operations.futureResult()).toMatchObject({
-    content: [{ text: "[redacted]" }, { text: "" }],
+    content: [{ text: "[redacted]" }, { text: "[redacted]" }],
     structuredContent: { echo: "[redacted]" },
   });
   await expect(operations.futureError()).rejects.toThrow("[redacted]");

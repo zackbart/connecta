@@ -144,7 +144,7 @@ let clientCounter = 0;
 async function setup(executor?: Executor, extraConnectors: ReturnType<typeof api>[] = [], readOnly = false, hostCallTimeoutMs?: number) {
   const storage = memoryStorage();
   const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
-  await vault.setAll("infisical", { clientId: `result-client-${++clientCounter}`, clientSecret: "synthetic-client-secret-12345" }, "operator");
+  await vault.setAll("infisical", { clientId: `result-client-${++clientCounter}`, clientSecret: "dW4@jP8!fT2#yN6$rS9?mV3+G7=uE5/k" }, "operator");
   const connector = infisical("infisical", { purpose: "result security tests" });
   const deployment = createTestConnecta({
     storage, vault, connectors: [connector, ...extraConnectors], logger: silentLogger, readOnly,
@@ -185,7 +185,7 @@ export async function checkInfisicalResult(testCase: Case, executor?: Executor) 
     } else {
       const direct = await connector.callTool(testCase.tool, testCase.args, {
         baseUrl: "https://connecta.test", logger: silentLogger, storage,
-        credential: { get: async () => null, getAll: async () => ({ clientId: "direct-result-client-12345", clientSecret: "synthetic-client-secret-12345" }) },
+        credential: { get: async () => null, getAll: async () => ({ clientId: "direct-result-client-12345", clientSecret: "dW4@jP8!fT2#yN6$rS9?mV3+G7=uE5/k" }) },
       });
       expect(direct).toEqual(testCase.expected);
       for (const resultMode of ["mcp", "value"] as const) {

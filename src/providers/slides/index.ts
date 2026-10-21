@@ -46,7 +46,7 @@ import { skill } from "./skill.generated.js";
 import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
-import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
+import { RESULT_BUDGET_BYTES, clampRedactedText, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import {
   googleOutcomeOf,
   googleFailureMessage,
@@ -59,6 +59,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
 import { tracksEveryRequest } from "../../provider-call.js";
+import { encodeForAgent, requestSentSecrets, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -335,10 +336,10 @@ function appliedButUnreadable(tool: string, why: string, reread: string): Connec
 }
 
 /** A label cut to `maxBytes` of JSON, saying where the whole of it is. */
-function label(value: string | undefined, maxBytes: number, whole: string): string | undefined {
+function label(ctx: ConnectorContext, value: string | undefined, maxBytes: number, whole: string): string | undefined {
   return value === undefined
     ? undefined
-    : clampText(value, maxBytes, (dropped) => `[… ${dropped} more characters; ${whole}]`);
+    : clampText(ctx, value, maxBytes, (dropped) => `[… ${dropped} more characters; ${whole}]`);
 }
 
 /** The first `max` UTF-16 units of `value`, never ending half a surrogate pair. */
@@ -351,6 +352,8 @@ function headOf(value: string, max: number): string {
 /**
  * The longest prefix of `value` whose JSON fits `maxBytes` together with the
  * marker its cut earns, as text and as the number of characters it keeps.
+ * `value` is text whose sent secrets were replaced before any page of it was
+ * cut, so a continuation's offsets count the same text.
  */
 function prefixWithin(
   value: string,
@@ -358,7 +361,7 @@ function prefixWithin(
   marker: (dropped: number) => string,
 ): { text: string; kept: number } {
   let dropped = 0;
-  const clamped = clampText(value, maxBytes, (count) => {
+  const clamped = clampRedactedText(value, maxBytes, (count) => {
     dropped = count;
     return marker(count);
   });
@@ -398,12 +401,19 @@ const CURSOR_TOOLS: Readonly<Record<Cursor["k"], string>> = {
   comments: "list_comments",
 };
 
-function encodeCursor(cursor: Cursor): string {
-  let binary = "";
-  for (const byte of new TextEncoder().encode(JSON.stringify(compact(cursor)))) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function cursorText(cursor: Cursor): string {
+  return JSON.stringify(compact(cursor));
+}
+
+/**
+ * A cursor of connecta's claims: the presentation and page the caller named,
+ * or a page Slides reported, redacted ({@link redactSentSecrets}); a state
+ * that holds Slides' revision only when it carries no sent value
+ * ({@link stateOf}); and offsets. An agent decodes it and no later pass reads
+ * through its encoding.
+ */
+function encodeCursor(ctx: ConnectorContext, cursor: Cursor): string {
+  return encodeForAgent(ctx, cursorText(cursor), { url: true, claims: true });
 }
 
 /**
@@ -456,15 +466,30 @@ function decodeCursor(
 }
 
 /**
- * The deck state a cursor binds to: the revision when Slides gives one, which
- * it does to anyone who may edit. A viewer gets none, so a cursor binds to a
- * SHA-256 of exactly what its paging depends on instead — content, never a
- * length or a count standing in for it.
+ * List cursors can bind to the revision. Text offsets also bind to a SHA-256
+ * of the redacted representation, even with a revision: a different request's
+ * secret set can change that text without changing the deck. Viewers without
+ * a revision always bind to the content their paging depends on.
  */
-async function stateOf(revisionId: unknown, fingerprint: () => unknown): Promise<string> {
-  if (typeof revisionId === "string" && revisionId !== "") return `r:${revisionId}`;
+async function stateOf(
+  ctx: ConnectorContext,
+  revisionId: unknown,
+  fingerprint: () => unknown,
+  bindRepresentation = false,
+): Promise<string> {
+  // A revision that holds a sent value is bound by its digest instead: a cursor carries no downstream text.
+  if (
+    !bindRepresentation &&
+    typeof revisionId === "string" &&
+    revisionId !== "" &&
+    redactSentSecrets(ctx, revisionId) === revisionId
+  )
+    return `r:${revisionId}`;
   const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(fingerprint()))),
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(JSON.stringify([revisionId ?? null, fingerprint()])),
+    ),
   );
   return `f:${Array.from(digest.subarray(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
@@ -481,22 +506,43 @@ function assertUnchanged(cursor: Cursor | undefined, state: string, what: string
 
 // --- Reading elements ---------------------------------------------------------------
 
+/** Raw text runs have style metadata between them. Check their text lane
+ * before chunk serialization can separate an echo into independently safe leaves. */
+function protectPageText(ctx: ConnectorContext, page: JsonRecord): JsonRecord {
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    const elements = asRecord(value)["textElements"];
+    if (Array.isArray(elements)) {
+      const runs = elements.map((element) => asRecord(asRecord(element)["textRun"] ?? asRecord(element)["autoText"]));
+      const safe = requestSentSecrets(ctx).parts(
+        runs.map((run) => (typeof run["content"] === "string" ? run["content"] : "")),
+      );
+      runs.forEach((run, index) => {
+        if (typeof run["content"] === "string") run["content"] = safe[index];
+      });
+    }
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(page);
+  return page;
+}
+
 /** A shape's or cell's text: runs and auto text in order, soft breaks as newlines. */
-function textOf(content: unknown): string {
+function textOf(ctx: ConnectorContext, content: unknown): string {
   let out = "";
   for (const element of asArray(asRecord(content)["textElements"]).map(asRecord)) {
     const run = asRecord(element["textRun"])["content"] ?? asRecord(element["autoText"])["content"];
     if (typeof run === "string") out += run;
   }
-  return out.replaceAll("\u000b", "\n").replace(/\s+$/, "");
+  return redactBeforeCut(ctx, out).replaceAll("\u000b", "\n").replace(/\s+$/, "");
 }
 
 /** A table as tab-separated cells, one row per line. */
-function tableText(table: JsonRecord): string {
+function tableText(ctx: ConnectorContext, table: JsonRecord): string {
   return asArray(table["tableRows"])
     .map((row) =>
       asArray(asRecord(row)["tableCells"])
-        .map((cell) => textOf(asRecord(cell)["text"]).replace(/[\t\n]+/g, " "))
+        .map((cell) => textOf(ctx, asRecord(cell)["text"]).replace(/[\t\n]+/g, " "))
         .join("\t")
         .replace(/\t+$/, ""),
     )
@@ -559,12 +605,19 @@ function kindOf(element: JsonRecord): ElementKind {
   return "other";
 }
 
-function collect(elements: unknown, parent: Matrix, groupId: string | undefined, depth: number, out: Leaf[]): void {
+function collect(
+  ctx: ConnectorContext,
+  elements: unknown,
+  parent: Matrix,
+  groupId: string | undefined,
+  depth: number,
+  out: Leaf[],
+): void {
   for (const element of asArray(elements).map(asRecord)) {
     const matrix = compose(parent, matrixOf(element["transform"]));
     const group = asRecord(element["elementGroup"]);
     if (Array.isArray(group["children"]) && depth < 20) {
-      collect(group["children"], matrix, text(element["objectId"]), depth + 1, out);
+      collect(ctx, group["children"], matrix, text(element["objectId"]), depth + 1, out);
       continue;
     }
     const kind = kindOf(element);
@@ -574,9 +627,9 @@ function collect(elements: unknown, parent: Matrix, groupId: string | undefined,
       kind,
       text:
         kind === "shape"
-          ? textOf(asRecord(element["shape"])["text"])
+          ? textOf(ctx, asRecord(element["shape"])["text"])
           : kind === "table"
-            ? tableText(asRecord(element["table"]))
+            ? tableText(ctx, asRecord(element["table"]))
             : kind === "wordArt"
               ? (text(asRecord(element["wordArt"])["renderedText"]) ?? "")
               : "",
@@ -591,9 +644,12 @@ function collect(elements: unknown, parent: Matrix, groupId: string | undefined,
  * by absolute position rounded to the point, so a hairline offset does not
  * reorder a row. The index into this list is what a get_page cursor counts.
  */
-function readingOrder(elements: unknown): Leaf[] {
+function readingOrder(ctx: ConnectorContext, elements: unknown): Leaf[] {
   const out: Leaf[] = [];
-  collect(elements, IDENTITY, undefined, 0, out);
+  collect(ctx, elements, IDENTITY, undefined, 0, out);
+  // Text is cut, and continued from an offset, only with every secret the
+  // request sent replaced: a cut through an echo leaves a fragment.
+  for (const leaf of out) leaf.text = redactBeforeCut(ctx, leaf.text);
   return out.sort(
     (left, right) =>
       Math.round(left.y / EMU_PER_PT) - Math.round(right.y / EMU_PER_PT) ||
@@ -617,13 +673,13 @@ function altTextOf(element: JsonRecord): string | undefined {
 }
 
 /** The fields of an element both readers share: what it is, and how to address it. */
-function describeLeaf(leaf: Leaf, raw: string): JsonRecord {
+function describeLeaf(ctx: ConnectorContext, leaf: Leaf, raw: string): JsonRecord {
   const placeholder = placeholderOf(leaf);
   return compact({
     objectId: text(leaf.element["objectId"]),
     kind: leaf.kind,
     placeholder: text(placeholder["type"]),
-    altText: label(altTextOf(leaf.element), MAX_ALT_TEXT_BYTES, raw),
+    altText: label(ctx, altTextOf(leaf.element), MAX_ALT_TEXT_BYTES, raw),
     // A linked chart's data lives in Sheets; the id is how to reach it.
     spreadsheetId: leaf.kind === "chart" ? text(asRecord(leaf.element["sheetsChart"])["spreadsheetId"]) : undefined,
   });
@@ -652,6 +708,7 @@ const OVER_RESULT = "this slide is larger than one result can carry; continue wi
  * and, for every cut, the get_page cursor that reads on from the cut.
  */
 async function projectSlide(
+  ctx: ConnectorContext,
   value: unknown,
   index: number,
   deck: DeckContext,
@@ -660,10 +717,12 @@ async function projectSlide(
 ): Promise<JsonRecord> {
   const slide = asRecord(value);
   const slideId = text(slide["objectId"]) ?? "";
+  // Slides' ids enter a cursor only redacted, as every downstream value a cursor holds does.
+  const cursorPage = redactSentSecrets(ctx, slideId);
   const properties = asRecord(slide["slideProperties"]);
-  const leaves = readingOrder(slide["pageElements"]);
+  const leaves = readingOrder(ctx, slide["pageElements"]);
   let state: Promise<string> | undefined;
-  const slideState = () => (state ??= stateOf(deck.revisionId, () => leafFingerprint(leaves)));
+  const slideState = () => (state ??= stateOf(ctx, deck.revisionId, () => leafFingerprint(leaves), true));
   let budget = maxChars;
   let truncated = false;
   let omitted = 0;
@@ -690,7 +749,7 @@ async function projectSlide(
           ? `${keep}\n[… ${line.length - keep.length} more characters; the title element's text has them]`
           : line;
     }
-    const row = describeLeaf(leaf, RAW_HAS_IT);
+    const row = describeLeaf(ctx, leaf, RAW_HAS_IT);
     if (row["altText"] !== alt) truncated = true;
     if (leaf.text) {
       const kept = headOf(leaf.text, Math.max(budget, 0));
@@ -699,10 +758,10 @@ async function projectSlide(
         truncated = true;
         row["text"] = `${kept}\n[… ${leaf.text.length - kept.length} more characters truncated; ${why}]`;
         row["truncated"] = true;
-        row["textCursor"] = encodeCursor({
+        row["textCursor"] = encodeCursor(ctx, {
           k: "page",
           p: deck.presentationId,
-          g: slideId,
+          g: cursorPage,
           s: await slideState(),
           i: position,
           o: kept.length,
@@ -717,7 +776,7 @@ async function projectSlide(
   const notesPage = asRecord(properties["notesPage"]);
   const notesPageId = text(notesPage["objectId"]);
   const notesId = text(asRecord(notesPage["notesProperties"])["speakerNotesObjectId"]);
-  const notesLeaves = readingOrder(notesPage["pageElements"]);
+  const notesLeaves = readingOrder(ctx, notesPage["pageElements"]);
   const notesAt = notesLeaves.findIndex((leaf) => notesId !== undefined && leaf.element["objectId"] === notesId);
   const notesText = notesAt >= 0 ? notesLeaves[notesAt]!.text : "";
   let notes: string | undefined;
@@ -727,11 +786,11 @@ async function projectSlide(
     if (kept.length < notesText.length) {
       truncated = true;
       notes = `${kept}\n[… ${notesText.length - kept.length} more characters truncated; ${why.replace("textCursor", "notesCursor")}]`;
-      notesCursor = encodeCursor({
+      notesCursor = encodeCursor(ctx, {
         k: "page",
         p: deck.presentationId,
-        g: notesPageId ?? "",
-        s: await stateOf(deck.revisionId, () => leafFingerprint(notesLeaves)),
+        g: redactSentSecrets(ctx, notesPageId ?? ""),
+        s: await stateOf(ctx, deck.revisionId, () => leafFingerprint(notesLeaves), true),
         i: notesAt,
         o: kept.length,
       });
@@ -780,6 +839,7 @@ function finished(slide: JsonRecord): JsonRecord {
  * the next page whole instead.
  */
 async function fitSlide(
+  ctx: ConnectorContext,
   value: unknown,
   index: number,
   deck: DeckContext,
@@ -787,7 +847,7 @@ async function fitSlide(
   room: number,
 ): Promise<JsonRecord> {
   for (let chars = Math.floor(maxChars / 2); ; chars = Math.floor(chars / 2)) {
-    const slide = await projectSlide(value, index, deck, chars, OVER_RESULT);
+    const slide = await projectSlide(ctx, value, index, deck, chars, OVER_RESULT);
     if (jsonBytes(finished(slide)) <= room) return finished(slide);
     if (chars > 0) continue;
     const elements = asArray(slide["elements"]).map(asRecord);
@@ -797,10 +857,10 @@ async function fitSlide(
         ...slide,
         elements: elements.slice(0, count),
         elementsNotShown: elements.length - count,
-        elementsCursor: encodeCursor({
+        elementsCursor: encodeCursor(ctx, {
           k: "page",
           p: deck.presentationId,
-          g: text(asRecord(value)["objectId"]) ?? "",
+          g: redactSentSecrets(ctx, text(asRecord(value)["objectId"]) ?? ""),
           s: state,
           i: count < elements.length ? Number(elements[count]!["position"]) : 0,
         }),
@@ -830,7 +890,7 @@ function rawNotShown(value: unknown, bytes: number): JsonRecord {
 // --- Layouts ------------------------------------------------------------------------
 
 /** Masters, each followed by its layouts, as rows create_slide and get_page take ids from. */
-function layoutRows(presentation: JsonRecord): JsonRecord[] {
+function layoutRows(ctx: ConnectorContext, presentation: JsonRecord): JsonRecord[] {
   const whole = "get_page on this id with raw: true has the whole name";
   const masters = asArray(presentation["masters"]).map(asRecord);
   const layouts = asArray(presentation["layouts"]).map(asRecord);
@@ -839,8 +899,8 @@ function layoutRows(presentation: JsonRecord): JsonRecord[] {
     return compact({
       objectId: text(layout["objectId"]),
       kind: "layout",
-      name: label(text(properties["name"]), MAX_NAME_BYTES, whole),
-      displayName: label(text(properties["displayName"]), MAX_NAME_BYTES, whole),
+      name: label(ctx, text(properties["name"]), MAX_NAME_BYTES, whole),
+      displayName: label(ctx, text(properties["displayName"]), MAX_NAME_BYTES, whole),
       masterId: text(properties["masterObjectId"]),
     });
   };
@@ -852,7 +912,7 @@ function layoutRows(presentation: JsonRecord): JsonRecord[] {
       compact({
         objectId: id,
         kind: "master",
-        displayName: label(text(asRecord(master["masterProperties"])["displayName"]), MAX_NAME_BYTES, whole),
+        displayName: label(ctx, text(asRecord(master["masterProperties"])["displayName"]), MAX_NAME_BYTES, whole),
       }),
     );
     for (const layout of layouts) {
@@ -872,12 +932,13 @@ function layoutFingerprint(rows: readonly JsonRecord[]): unknown {
 }
 
 /** A layout's name as a person picks it, bounded: its display name, else its kind. */
-function layoutNames(presentation: JsonRecord): Map<string, string> {
+function layoutNames(ctx: ConnectorContext, presentation: JsonRecord): Map<string, string> {
   const names = new Map<string, string>();
   for (const layout of asArray(presentation["layouts"]).map(asRecord)) {
     const id = text(layout["objectId"]);
     const properties = asRecord(layout["layoutProperties"]);
     const name = label(
+      ctx,
       text(properties["displayName"]) ?? text(properties["name"]),
       MAX_NAME_BYTES,
       "get_page on layoutId with raw: true has the whole name",
@@ -920,13 +981,14 @@ function dimension(value: unknown): { magnitude: number; unit: string } | undefi
 /** The size of a page object carrying the longest cursor a result may hold. */
 function pageEnvelopeBytes(cursor: Cursor): number {
   const longest = { ...cursor, i: 999_999, o: 99_999_999, j: cursor.j === undefined ? undefined : 999_999 };
-  return jsonBytes({ page: { hasMore: true, nextCursor: encodeCursor(longest) } });
+  const units = Math.ceil((new TextEncoder().encode(cursorText(longest)).length * 4) / 3);
+  return jsonBytes({ page: { hasMore: true, nextCursor: "x".repeat(units) } });
 }
 
 // --- get_page -------------------------------------------------------------------------
 
 /** What get_page says about the page itself, by the page's kind. */
-function describePage(page: JsonRecord): JsonRecord {
+function describePage(ctx: ConnectorContext, page: JsonRecord): JsonRecord {
   const whole = "raw: true has the whole name";
   const slide = asRecord(page["slideProperties"]);
   const layout = asRecord(page["layoutProperties"]);
@@ -937,8 +999,9 @@ function describePage(page: JsonRecord): JsonRecord {
     notesPageId: text(asRecord(slide["notesPage"])["objectId"]),
     skipped: slide["isSkipped"] === true || undefined,
     speakerNotesObjectId: text(asRecord(page["notesProperties"])["speakerNotesObjectId"]),
-    name: label(text(layout["name"]), MAX_NAME_BYTES, whole),
+    name: label(ctx, text(layout["name"]), MAX_NAME_BYTES, whole),
     displayName: label(
+      ctx,
       text(layout["displayName"]) ?? text(asRecord(page["masterProperties"])["displayName"]),
       MAX_NAME_BYTES,
       whole,
@@ -976,6 +1039,7 @@ interface PageRows {
  * cannot hold it.
  */
 function projectedRows(
+  ctx: ConnectorContext,
   leaves: readonly Leaf[],
   start: { i: number; o: number },
   limit: number,
@@ -989,7 +1053,7 @@ function projectedRows(
     const leaf = leaves[index]!;
     const placeholder = placeholderOf(leaf);
     const row: JsonRecord = {
-      ...describeLeaf(leaf, RAW_HAS_IT),
+      ...describeLeaf(ctx, leaf, RAW_HAS_IT),
       ...compact({
         groupId: leaf.groupId,
         placeholderIndex: typeof placeholder["index"] === "number" ? placeholder["index"] : undefined,
@@ -1059,6 +1123,7 @@ const PAGE_RAW: RawLayout = {
  * in chunks of its JSON text, which concatenated parse to the item.
  */
 function rawRows(
+  ctx: ConnectorContext,
   items: readonly JsonRecord[],
   start: { i: number; o: number },
   limit: number,
@@ -1083,7 +1148,8 @@ function rawRows(
     }
     // Whole on a page of its own: start the next page with it.
     if (offset === 0 && rows > 0 && size <= room) break;
-    const json = JSON.stringify(item);
+    // Chunks of the item with every sent secret replaced, so they still concatenate.
+    const json = JSON.stringify(redactBeforeCut(ctx, item));
     const id = index === 0 && layout.propertiesFirst ? {} : layout.idOf(item);
     const shell = { ...id, rawJson: { json: "", offset, length: json.length } };
     const available = room - used - (jsonBytes(shell) - 2) - 32;
@@ -1241,8 +1307,8 @@ function pruned(
 }
 
 /** The paths a summary left out, bounded: the first ten, then a count. */
-function cutList(cut: readonly string[]): string[] {
-  const named = cut.slice(0, 10).map((path) => clampText(path, 160, () => "…"));
+function cutList(ctx: ConnectorContext, cut: readonly string[]): string[] {
+  const named = cut.slice(0, 10).map((path) => clampText(ctx, path, 160, () => "…"));
   return cut.length > named.length ? [...named, `(${cut.length - named.length} more)`] : named;
 }
 
@@ -1253,12 +1319,12 @@ function cutList(cut: readonly string[]): string[] {
  * and every path left out is named in `cut`, so nothing is dropped without a
  * word.
  */
-function summarizeReply(reply: JsonRecord): JsonRecord {
+function summarizeReply(ctx: ConnectorContext, reply: JsonRecord): JsonRecord {
   if (jsonBytes(reply) <= MAX_REPLY_BYTES) return reply;
   let summary: JsonRecord = {};
   for (const mode of ["short", "ids"] as const) {
     const cut: string[] = [];
-    summary = { ...asRecord(pruned(reply, "", "", mode, cut, 0)), cut: cutList(cut) };
+    summary = { ...asRecord(pruned(reply, "", "", mode, cut, 0)), cut: cutList(ctx, cut) };
     if (jsonBytes(summary) <= MAX_REPLY_BYTES) return summary;
   }
   // Ids alone over the per-reply share: still returned, since what a write
@@ -1302,13 +1368,17 @@ function idsOnlyReply(reply: JsonRecord): JsonRecord {
  * budget, they are all returned anyway (`oversized`) and no text is; nothing
  * a write created is ever dropped to save space.
  */
-function boundedReplies(replies: readonly unknown[], used: number): { replies: JsonRecord[]; oversized: boolean } {
+function boundedReplies(
+  ctx: ConnectorContext,
+  replies: readonly unknown[],
+  used: number,
+): { replies: JsonRecord[]; oversized: boolean } {
   const out = replies.map((reply) => idsOnlyReply(asRecord(reply)));
   const sizes = out.map((reply) => jsonBytes(reply) + 1);
   let total = used + 2 + sizes.reduce((sum, size) => sum + size, 0);
   if (total > RESULT_BUDGET_BYTES) return { replies: out, oversized: true };
   for (const [index, reply] of replies.entries()) {
-    const fuller = summarizeReply(asRecord(reply));
+    const fuller = summarizeReply(ctx, asRecord(reply));
     const size = jsonBytes(fuller) + 1;
     if (total - sizes[index]! + size > RESULT_BUDGET_BYTES) continue;
     total += size - sizes[index]!;
@@ -1338,12 +1408,17 @@ function revisionFields(response: JsonRecord): { revisionId?: string; revisionId
  * is surfaced by name, since its deck changes may have applied while its
  * comments did not, and the batch is then neither all nor none.
  */
-function commentSaveFields(response: JsonRecord, sentComments: boolean): { commentUpdateState?: string } {
+function commentSaveFields(
+  ctx: ConnectorContext,
+  response: JsonRecord,
+  sentComments: boolean,
+): { commentUpdateState?: string } {
   const state = text(response["commentUpdateState"]);
   const settled = sentComments ? state === "ALL_SAVED" : state === undefined || COMMENTS_SETTLED.has(state);
   if (settled) return {};
   return {
-    commentUpdateState: label(state ?? COMMENT_STATE_UNSPECIFIED, MAX_NAME_BYTES, "Slides sent a longer state") ?? "",
+    commentUpdateState:
+      label(ctx, state ?? COMMENT_STATE_UNSPECIFIED, MAX_NAME_BYTES, "Slides sent a longer state") ?? "",
   };
 }
 
@@ -1369,14 +1444,14 @@ const QUIET_ACTIONS: ReadonlySet<string> = new Set(["COMMENT_ACTION_TYPE_UNSPECI
  * long to copy — beside the display name, which is not an identity.
  * `contentHtml` is the same text rendered, and is left behind.
  */
-function postPart(value: unknown): PostPart {
+function postPart(ctx: ConnectorContext, value: unknown): PostPart {
   const post = asRecord(value);
   const author = asRecord(post["author"]);
   const postId = wholeId(post["postId"]);
   const user = wholeId(author["user"]);
   const shownAuthor = compact({
     user,
-    displayName: label(text(author["displayName"]), MAX_NAME_BYTES, "Slides shows the whole name"),
+    displayName: label(ctx, text(author["displayName"]), MAX_NAME_BYTES, "Slides shows the whole name"),
     me: author["me"] === true || undefined,
     anonymous: author["anonymous"] === true || undefined,
   });
@@ -1386,15 +1461,16 @@ function postPart(value: unknown): PostPart {
     row: compact({
       postId,
       author: Object.keys(shownAuthor).length > 0 ? shownAuthor : undefined,
-      commentAction: action && !QUIET_ACTIONS.has(action) ? label(action, MAX_NAME_BYTES, whole) : undefined,
-      assigneeEmail: label(text(post["assigneeEmail"]), MAX_COMMENT_BYTES + 64, whole),
-      createTime: label(text(post["createTime"]), MAX_NAME_BYTES, whole),
-      updateTime: label(text(post["updateTime"]), MAX_NAME_BYTES, whole),
+      commentAction: action && !QUIET_ACTIONS.has(action) ? label(ctx, action, MAX_NAME_BYTES, whole) : undefined,
+      assigneeEmail: label(ctx, text(post["assigneeEmail"]), MAX_COMMENT_BYTES + 64, whole),
+      createTime: label(ctx, text(post["createTime"]), MAX_NAME_BYTES, whole),
+      updateTime: label(ctx, text(post["updateTime"]), MAX_NAME_BYTES, whole),
       deleted: post["deleted"] === true || undefined,
       // Slides gives an imported post no author id; this says why.
       imported: post["fromImportedPresentation"] === true || undefined,
     }),
-    content: typeof post["content"] === "string" ? post["content"] : "",
+    // Paged from offsets, so replaced before any cut (see readingOrder).
+    content: typeof post["content"] === "string" ? redactBeforeCut(ctx, post["content"]) : "",
     idsNotShown:
       (text(post["postId"]) !== undefined && postId === undefined) ||
       (text(author["user"]) !== undefined && user === undefined),
@@ -1402,11 +1478,11 @@ function postPart(value: unknown): PostPart {
 }
 
 /** A post in a write result: its text bounded, never its ids. */
-function writtenPost(value: unknown, maxBytes = MAX_POST_BYTES): JsonRecord {
-  const post = postPart(value);
+function writtenPost(ctx: ConnectorContext, value: unknown, maxBytes = MAX_POST_BYTES): JsonRecord {
+  const post = postPart(ctx, value);
   return compact({
     ...post.row,
-    content: label(text(post.content), maxBytes, "list_comments has the whole post"),
+    content: label(ctx, text(post.content), maxBytes, "list_comments has the whole post"),
   });
 }
 
@@ -1456,7 +1532,7 @@ interface ThreadParts {
   replies: PostPart[];
 }
 
-function threadParts(value: unknown, places: ReadonlyMap<string, AnchorPlace>): ThreadParts {
+function threadParts(ctx: ConnectorContext, value: unknown, places: ReadonlyMap<string, AnchorPlace>): ThreadParts {
   const thread = asRecord(value);
   const commentId = wholeId(thread["commentId"]);
   const anchorId = wholeId(thread["anchorId"]);
@@ -1465,13 +1541,14 @@ function threadParts(value: unknown, places: ReadonlyMap<string, AnchorPlace>): 
     [...(values ?? [])].map(wholeId).filter((id): id is string => id !== undefined);
   const pageIds = ids(place?.pages);
   const objectIds = ids(place?.objects);
-  const replies = asArray(thread["replies"]).map(postPart);
-  const head = thread["headPost"] && typeof thread["headPost"] === "object" ? postPart(thread["headPost"]) : undefined;
+  const replies = asArray(thread["replies"]).map((reply) => postPart(ctx, reply));
+  const head =
+    thread["headPost"] && typeof thread["headPost"] === "object" ? postPart(ctx, thread["headPost"]) : undefined;
   return {
     row: compact({
       commentId,
       anchorId,
-      status: label(text(thread["status"]), MAX_NAME_BYTES, "Slides shows the status"),
+      status: label(ctx, text(thread["status"]), MAX_NAME_BYTES, "Slides shows the status"),
       // Every id, as everywhere: Slides anchors a group's comment to at most
       // 100 elements, and the page's budget holds them.
       pageObjectIds: pageIds.length > 0 ? pageIds : undefined,
@@ -1484,7 +1561,7 @@ function threadParts(value: unknown, places: ReadonlyMap<string, AnchorPlace>): 
         replies.some((reply) => reply.idsNotShown) ||
         undefined,
     }),
-    quote: typeof thread["plainTextQuote"] === "string" ? thread["plainTextQuote"] : "",
+    quote: typeof thread["plainTextQuote"] === "string" ? redactBeforeCut(ctx, thread["plainTextQuote"]) : "",
     head,
     replies,
   };
@@ -1627,11 +1704,12 @@ function threadRows(
  * that skips, repeats, or places a thread where it no longer is.
  */
 function commentsState(
+  ctx: ConnectorContext,
   revisionId: unknown,
   comments: readonly unknown[],
   pages: readonly JsonRecord[],
 ): Promise<string> {
-  return stateOf(undefined, () => [
+  return stateOf(ctx, undefined, () => [
     text(revisionId) ?? null,
     comments,
     pages.map((page) => [page["objectId"] ?? null, page["commentAnchors"] ?? null]),
@@ -1700,7 +1778,7 @@ async function commentWrite(
   requiredRevisionId?: string,
 ): Promise<{ reply: JsonRecord; header: JsonRecord; saved: boolean }> {
   const response = await batchUpdate(client, ctx, presentationId, [request], requiredRevisionId);
-  const state = commentSaveFields(response, true);
+  const state = commentSaveFields(ctx, response, true);
   return {
     reply: asRecord(asArray(response["replies"])[0]),
     header: compact({ presentationId, ...revisionFields(response), ...state }),
@@ -1737,8 +1815,8 @@ async function postToThread(
     compact({
       ...written.header,
       commentId: args["commentId"],
-      post: created && typeof created === "object" ? writtenPost(created) : undefined,
-      idsNotShown: postPart(created).idsNotShown || undefined,
+      post: created && typeof created === "object" ? writtenPost(ctx, created) : undefined,
+      idsNotShown: postPart(ctx, created).idsNotShown || undefined,
       note: written.saved ? undefined : COMMENTS_UNSAVED,
     }),
     tool,
@@ -2022,12 +2100,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         );
         const all = asArray(presentation["slides"]);
         const revisionId = presentation["revisionId"];
-        const state = await stateOf(revisionId, () => all.map((slide) => asRecord(slide)["objectId"] ?? null));
+        const state = await stateOf(ctx, revisionId, () => all.map((slide) => asRecord(slide)["objectId"] ?? null));
         assertUnchanged(cursor, state, "deck's slides");
         const start = cursor?.i ?? 0;
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_PAGE_SIZE;
         const maxChars = typeof args["maxCharsPerSlide"] === "number" ? args["maxCharsPerSlide"] : DEFAULT_SLIDE_CHARS;
-        const deck: DeckContext = { presentationId, revisionId, layouts: layoutNames(presentation) };
+        const deck: DeckContext = { presentationId, revisionId, layouts: layoutNames(ctx, presentation) };
         const pageSize = asRecord(presentation["pageSize"]);
         const width = dimension(pageSize["width"]);
         const height = dimension(pageSize["height"]);
@@ -2035,17 +2113,17 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         // continue in list_layouts from layoutsCursor.
         let preview: JsonRecord = {};
         if (start === 0 && !raw) {
-          const rows = layoutRows(presentation);
+          const rows = layoutRows(ctx, presentation);
           const shown = rowsWithin(rows, 0, MAX_ROWS, MAX_LAYOUT_PREVIEW_BYTES);
           preview = compact({
             layouts: shown.rows,
             layoutsNotShown: shown.next < rows.length ? rows.length - shown.next : undefined,
             layoutsCursor:
               shown.next < rows.length
-                ? encodeCursor({
+                ? encodeCursor(ctx, {
                     k: "layouts",
                     p: presentationId,
-                    s: await stateOf(revisionId, () => layoutFingerprint(rows)),
+                    s: await stateOf(ctx, revisionId, () => layoutFingerprint(rows)),
                     i: shown.next,
                   })
                 : undefined,
@@ -2053,7 +2131,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         }
         const header = compact({
           presentationId: text(presentation["presentationId"]) ?? presentationId,
-          title: label(text(presentation["title"]), MAX_TITLE_BYTES, "Drive shows the whole title"),
+          title: label(ctx, text(presentation["title"]), MAX_TITLE_BYTES, "Drive shows the whole title"),
           // Only an account that may edit the deck is given one.
           revisionId: text(revisionId),
           url: editUrl(presentationId),
@@ -2065,7 +2143,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           ...preview,
         });
         const issue = (i: number) =>
-          encodeCursor({ k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
+          encodeCursor(ctx, { k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
         // A page ends at the slide limit or at the byte budget, whichever is
         // first; the budget counts the header and the longest cursor.
         let used =
@@ -2074,11 +2152,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         let next = start;
         while (next < all.length && slides.length < limit) {
           const room = RESULT_BUDGET_BYTES - used - 1;
-          let slide = raw ? asRecord(all[next]) : finished(await projectSlide(all[next], next, deck, maxChars));
+          let slide = raw ? asRecord(all[next]) : finished(await projectSlide(ctx, all[next], next, deck, maxChars));
           let size = jsonBytes(slide);
           if (size > room) {
             if (slides.length > 0) break;
-            slide = raw ? rawNotShown(all[next], size) : await fitSlide(all[next], next, deck, maxChars, room);
+            slide = raw ? rawNotShown(all[next], size) : await fitSlide(ctx, all[next], next, deck, maxChars, room);
             size = jsonBytes(slide);
           }
           slides.push(slide);
@@ -2147,15 +2225,20 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
-        const items = raw ? rawItems(page) : [];
-        const leaves = raw ? [] : readingOrder(page["pageElements"]);
-        const state = await stateOf(page["revisionId"], () => (raw ? rawFingerprint(items) : leafFingerprint(leaves)));
+        const items = raw ? rawItems(redactBeforeCut(ctx, protectPageText(ctx, page))) : [];
+        const leaves = raw ? [] : readingOrder(ctx, page["pageElements"]);
+        const state = await stateOf(
+          ctx,
+          page["revisionId"],
+          () => (raw ? rawFingerprint(items) : leafFingerprint(leaves)),
+          true,
+        );
         assertUnchanged(cursor, state, "page");
         const header = compact({
           presentationId,
           pageObjectId: text(page["objectId"]) ?? pageObjectId,
           revisionId: text(page["revisionId"]),
-          ...describePage(page),
+          ...describePage(ctx, page),
           elementCount: raw ? items.length - 1 : leaves.length,
         });
         const room =
@@ -2172,9 +2255,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           64;
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_ELEMENTS;
         const start = { i: cursor?.i ?? 0, o: cursor?.o ?? 0 };
-        const rows = raw ? rawRows(items, start, limit, room) : projectedRows(leaves, start, limit, room);
+        const rows = raw ? rawRows(ctx, items, start, limit, room) : projectedRows(ctx, leaves, start, limit, room);
         const nextCursor = rows.next
-          ? encodeCursor({
+          ? encodeCursor(ctx, {
               k: "page",
               p: presentationId,
               g: pageObjectId,
@@ -2230,8 +2313,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
-        const rows = layoutRows(presentation);
-        const state = await stateOf(presentation["revisionId"], () => layoutFingerprint(rows));
+        const rows = layoutRows(ctx, presentation);
+        const state = await stateOf(ctx, presentation["revisionId"], () => layoutFingerprint(rows));
         assertUnchanged(cursor, state, "deck's layouts");
         const header = compact({
           presentationId,
@@ -2246,7 +2329,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_LAYOUTS;
         const shown = rowsWithin(rows, cursor?.i ?? 0, limit, room);
         const next =
-          shown.next < rows.length ? encodeCursor({ k: "layouts", p: presentationId, s: state, i: shown.next }) : null;
+          shown.next < rows.length
+            ? encodeCursor(ctx, { k: "layouts", p: presentationId, s: state, i: shown.next })
+            : null;
         return deliverable({ ...header, layouts: shown.rows, page: nextPage(next) }, "list_layouts");
       },
     },
@@ -2339,13 +2424,13 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         if (mode !== undefined && mode !== COMMENTS_INCLUDED) {
           throw new ConnectorCallError(
             "connector_call_failed",
-            `Slides answered in comments view mode ${label(mode, MAX_NAME_BYTES, "")}, not ${COMMENTS_INCLUDED}, so its threads may be incomplete. It only read, so nothing was changed.`,
+            `Slides answered in comments view mode ${label(ctx, mode, MAX_NAME_BYTES, "")}, not ${COMMENTS_INCLUDED}, so its threads may be incomplete. It only read, so nothing was changed.`,
             { retryable: false },
           );
         }
-        const comments = asArray(source["comments"]);
+        const comments = redactBeforeCut(ctx, asArray(source["comments"]));
         const pages = pageObjectId === undefined ? commentPages(source) : [source];
-        const state = await commentsState(source["revisionId"], comments, pages);
+        const state = await commentsState(ctx, source["revisionId"], comments, pages);
         assertUnchanged(cursor, state, pageObjectId === undefined ? "deck's comments" : "page's comments");
         const header = compact({
           presentationId,
@@ -2371,6 +2456,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         if (raw) {
           // Slides' own threads, chunked like get_page's raw elements.
           const rows = rawRows(
+            ctx,
             comments.map((thread) => rawThread(thread, pages)),
             { i: cursor?.i ?? 0, o: cursor?.o ?? 0 },
             limit,
@@ -2380,11 +2466,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           shown = { threads: rows.elements, next: rows.next };
         } else {
           const places = anchorPlaces(pages);
-          const threads = comments.map((thread) => threadParts(thread, places));
+          const threads = comments.map((thread) => threadParts(ctx, thread, places));
           shown = threadRows(threads, { i: cursor?.i ?? 0, j: cursor?.j ?? 0, o: cursor?.o ?? 0 }, limit, room);
         }
         const next = shown.next
-          ? encodeCursor({
+          ? encodeCursor(ctx, {
               k: "comments",
               p: presentationId,
               ...scope,
@@ -2523,7 +2609,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             presentationId: id,
             revisionId: wholeId(revisionId),
             revisionIdNotShown: revisionId !== undefined && wholeId(revisionId) === undefined ? true : undefined,
-            title: label(text(presentation["title"]), MAX_TITLE_BYTES, "Drive shows the whole title"),
+            title: label(ctx, text(presentation["title"]), MAX_TITLE_BYTES, "Drive shows the whole title"),
             url: editUrl(id),
             slideObjectIds: shownIds,
             slideObjectIdsNotShown: shownIds.length < slideIds.length ? slideIds.length - shownIds.length : undefined,
@@ -2794,7 +2880,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         if (commentId === undefined && written.saved) {
           throw appliedButUnreadable("create_comment", "Google returned no usable id for the new comment", reread);
         }
-        const parts = threadParts(thread, new Map());
+        const parts = threadParts(ctx, thread, new Map());
         const replies = asArray(thread["replies"]);
         return appliedDeliverable(
           compact({
@@ -2802,10 +2888,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             commentId,
             anchorId: wholeId(thread["anchorId"]),
             status: parts.row["status"],
-            quote: label(text(parts.quote), MAX_POST_BYTES, "list_comments has the whole quote"),
-            headPost: thread["headPost"] ? writtenPost(thread["headPost"]) : undefined,
+            quote: label(ctx, text(parts.quote), MAX_POST_BYTES, "list_comments has the whole quote"),
+            headPost: thread["headPost"] ? writtenPost(ctx, thread["headPost"]) : undefined,
             // A new thread has none; any Slides sends keep their ids.
-            replies: replies.length > 0 ? replies.map((reply) => writtenPost(reply, MAX_NAME_BYTES)) : undefined,
+            replies: replies.length > 0 ? replies.map((reply) => writtenPost(ctx, reply, MAX_NAME_BYTES)) : undefined,
             idsNotShown: parts.row["idsNotShown"],
             note: written.saved ? undefined : COMMENTS_UNSAVED,
           }),
@@ -3040,6 +3126,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         // when Slides says ALL_SAVED, and one that is not stops being called
         // all or none.
         const saved = commentSaveFields(
+          ctx,
           response,
           kinds.some(([, kind]) => COMMENT_KINDS.has(kind)),
         );
@@ -3050,7 +3137,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const comments = kinds.some(([, kind]) => COMMENT_KINDS.has(kind));
         const reread = `re-read with get_presentation or get_page for deck changes${comments ? ", and list_comments for comments" : ""}`;
         const all = asArray(response["replies"]);
-        const shown = boundedReplies(all, jsonBytes(header) + 1024);
+        const shown = boundedReplies(ctx, all, jsonBytes(header) + 1024);
         // Neutral about what applied: the comment state, when unconfirmed,
         // says that apart; these say only what the result left out.
         const unsaved = saved.commentUpdateState !== undefined ? COMMENTS_UNSAVED : undefined;

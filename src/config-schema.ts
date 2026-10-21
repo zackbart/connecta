@@ -12,6 +12,8 @@
 // checked by identity or shape and passed through untouched, never cloned, so
 // a private-field receiver or a frozen object reaches core as configured.
 
+import { keepErrorName } from "./redaction-identity.js";
+
 /** One configuration field: its input type, resolved type, and optionality. */
 export interface Field<In, Out, Opt extends boolean = boolean> {
   /** Whether a deployment may omit the field. */
@@ -79,6 +81,7 @@ export type ConfigOutput<S extends Shape> = Simplify<{
 export class ConfigError extends TypeError {
   override readonly name = "ConfigError";
 }
+keepErrorName(ConfigError, "ConfigError");
 
 function fail(message: string): never {
   throw new ConfigError(message);

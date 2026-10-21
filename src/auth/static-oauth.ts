@@ -31,6 +31,17 @@ import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
 
 /**
+ * Token-request header values Connecta itself sends, by lowercase name: JSON
+ * content negotiation and the media types maintained providers configure.
+ * Registering one would redact a vendor's name wherever its fragments recur.
+ * Any other configured value, under any name, may carry a credential and is
+ * registered.
+ */
+export const PUBLIC_TOKEN_REQUEST_HEADERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["accept", new Set(["application/json", "application/vnd.ccbchurch.v2+json"])],
+]);
+
+/**
  * Downstream OAuth for a hand-written `api()` connector: the authorization
  * code grant against endpoints and a pre-registered client the deployment
  * declares, rather than ones a server advertises.
@@ -382,7 +393,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
-    for (const [, value] of settings.tokenRequestHeaders) sentSecretsFor(ctx).header(value);
+    for (const [name, value] of settings.tokenRequestHeaders)
+      if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) sentSecretsFor(ctx).header(value);
     trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
     dispatch.dispatched = true;
     const response = await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" });

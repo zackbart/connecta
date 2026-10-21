@@ -9,8 +9,10 @@ import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { memoryStorage } from "../../storage/memory.js";
+import { requestSentSecrets } from "../../sent-secrets.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide, ToolDef } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
+import { echoForms, expectNoFragment, straddling } from "../../../test/helpers/secret-echoes.js";
 
 const BASE = "https://connecta.test";
 const PROD_API = "https://api.ccbchurch.com";
@@ -556,12 +558,39 @@ describe("ccb() typed failures (H11)", () => {
     return failure(call("get_group", { groupId: 5 }));
   }
 
+  it("INV-5: error normalization cannot trim a private value before redaction", async () => {
+    const value = `   ${"private-error-with-whitespace/".repeat(30)}`;
+    const { fake, connector, ctx } = await connected();
+    const context = ctx();
+    context.requestScope = {};
+    requestSentSecrets(context).arguments(
+      { private: value },
+      {
+        type: "object",
+        properties: { private: { type: "string", writeOnly: true } },
+      },
+    );
+    fake.route(on("GET", "/groups/5", () => json({ message: value }, {}, 400)));
+    const failed = await failure(Promise.resolve(connector.callTool("get_group", { groupId: 5 }, context)));
+    expect(failed.message).toContain("[redacted]");
+    expect(failed.message).not.toContain("private-error-with-whitespace");
+  });
+
   it("maps a 403 to a non-retryable gap that re-authorizing cannot fix", async () => {
     const failed = await failing(json({ message: "Insufficient scope" }, {}, 403));
     expect(failed).toMatchObject({ code: "provider_permission_denied", retryable: false });
     expect(failed.message).toContain("Insufficient scope");
     expect(failed.message).toContain("Re-authorizing alone will not fix it");
   });
+
+  // The fake mints access-1 for the grant; every form of it, cut through its middle.
+  it.each(echoForms("access-1"))(
+    "INV-5: a 400 echoing the sent token %s across the 500-character cap leaks no fragment of it",
+    async (_name, form) => {
+      const failed = await failing(json({ message: straddling(form, 500) }, {}, 400));
+      expectNoFragment(failed.message, form, { secret: "access-1" });
+    },
+  );
 
   it("maps a 404 to not_found, because CCB reports permission gaps as 403", async () => {
     expect(await failing(new Response(null, { status: 404 }))).toMatchObject({ code: "not_found", retryable: false });

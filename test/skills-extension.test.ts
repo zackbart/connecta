@@ -160,7 +160,8 @@ it("INV-5: preserves uncredentialed skill examples and redacts credentials insid
   const text = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", URI) });
   expect(text.result.contents[0].text).toBe(examples);
   const blob = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
-  expect(atob(blob.result.contents[0].blob)).toBe("\u0000\u00ff[redacted]\u0000");
+  // A match withholds the whole file as the marker, never partially scrubbed bytes.
+  expect(atob(blob.result.contents[0].blob)).toBe("[redacted]");
   const meta = await createMetaTools(makeRegistry([remote]), BASE).skills({ name: downstreamSkillUri("remote", URI) });
   expect(meta.content[0]?.text).toBe(examples);
   await c.close();
@@ -226,8 +227,7 @@ it.each([1, 2])(
     try {
       const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
       const decoded = atob(read.result.contents[0].blob);
-      expect(JSON.parse(decoded).echo).toBe("[redacted]");
-      expect(decoded).not.toContain("\\u0065");
+      expect(decoded).toBe("[redacted]");
     } finally {
       await c.close();
     }
@@ -259,7 +259,8 @@ it.each(["", "\u0000\u00ff"])(
     try {
       const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
       expect(atob(read.result.contents[0].blob)).toBe("[redacted]");
-      const innocent = prefix + String.fromCharCode(...new TextEncoder().encode('{"echo":"ordinaryé-token"}'));
+      // Shares only "é-" with the secret: no K-unit run of any of its forms, in any view.
+      const innocent = prefix + String.fromCharCode(...new TextEncoder().encode('{"echo":"ordinaryé-public"}'));
       remote.downstreamSkills!.read = async (uri, ctx) => {
         sentSecretsFor(ctx).secret(secret);
         return [{ uri, blob: btoa(innocent) }];
@@ -355,8 +356,8 @@ it.each(["\u0000", "\\u0000"])(
 it("INV-4 INV-5: fetches personal downstream skills with each principal's credential partition", async () => {
   const storage = memoryStorage();
   const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(9))));
-  await vault.set("remote", "alice-downstream-skills-token", "operator", "alice");
-  await vault.set("remote", "bob-downstream-skills-token", "operator", "bob");
+  await vault.set("remote", "alice-9Kx2-Vq7m-Lp4R", "operator", "alice");
+  await vault.set("remote", "bob-3Wz8-Nc5j-Hs2T", "operator", "bob");
   const fetched: string[] = [];
   const remote = downstream("remote", {
     list: async (ctx) => {
@@ -377,11 +378,7 @@ it("INV-4 INV-5: fetches personal downstream skills with each principal's creden
     const registry = new SkillsRegistry(view, BASE);
     expect((await registry.read(uri)).contents[0]?.text).toBe(TEXT + `${principalKey} guide`);
   }
-  expect(fetched).toEqual([
-    "alice-downstream-skills-token",
-    "bob-downstream-skills-token",
-    "alice-downstream-skills-token",
-  ]);
+  expect(fetched).toEqual(["alice-9Kx2-Vq7m-Lp4R", "bob-3Wz8-Nc5j-Hs2T", "alice-9Kx2-Vq7m-Lp4R"]);
   const anonymous = new SkillsRegistry(root.scoped({ connectorIds: "all" }), BASE);
   expect((await anonymous.list()).skills).not.toContainEqual(expect.objectContaining({ uri }));
 });
@@ -609,7 +606,7 @@ it("INV-5 INV-6: preserves downstream bytes and manifests except sent credential
     resources: [{ digest: DIGEST }],
   });
   expect((await registry.read(uri)).contents[0]?.text).toBe(TEXT);
-  const secret = "sent-downstream-skills-credential";
+  const secret = "sQ4-m8Zx-1Vk7-Lc5R";
   const echo = downstream("echo", {
     read: async (uri, ctx) => {
       sentSecretsFor(ctx).secret(secret);

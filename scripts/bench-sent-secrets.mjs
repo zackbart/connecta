@@ -1,4 +1,4 @@
-// Run with: npx tsx scripts/bench-sent-secrets.mjs
+// Run with: pnpm exec tsx scripts/bench-sent-secrets.mjs
 import { generateKeyPairSync } from "node:crypto";
 import { CredentialVault } from "../src/credentials.ts";
 import { SentSecrets } from "../src/sent-secrets.ts";
@@ -34,3 +34,83 @@ if (result[0].description !== "[redacted]") throw new Error("Benchmark redaction
 process.stdout.write(
   `${JSON.stringify({ rows: rows.length, vaultSecrets: Object.keys(values).length, coldMs, warmMs })}\n`,
 );
+
+// The output boundary on provider-cap bodies, structured rows, wire text and declared binary
+// content, under payload and envelope rules. Medians of three warm runs; no test-time
+// deadlines on a shared host. Set BENCH_MODULE to compare another build of sent-secrets.
+const { SentSecrets: Boundary } = await import(process.env.BENCH_MODULE ?? "../src/sent-secrets.ts");
+const TOKEN = "qL8!mP2#vX6$kN4?rS9@tW3+eZ7=F5/u";
+const boundary = new Boundary();
+boundary.add(TOKEN);
+boundary.arguments(
+  { value: "012345678900" },
+  { type: "object", properties: { value: { type: "string", writeOnly: true } } },
+);
+const sentence = "Public notes: the team will meet on Tuesday to confirm the schedule and publish the agenda. ";
+const body = (bytes) => sentence.repeat(Math.ceil(bytes / sentence.length)).slice(0, bytes);
+function measure(label, value, bytes, run) {
+  const before = performance.now();
+  const result = run(value);
+  const coldMs = performance.now() - before;
+  const samples = [];
+  for (let repeat = 0; repeat < 3; repeat++) {
+    const started = performance.now();
+    run(value);
+    samples.push(performance.now() - started);
+  }
+  samples.sort((a, b) => a - b);
+  const warmMedianMs = samples[1];
+  if (JSON.stringify(result).includes(TOKEN)) throw new Error("Boundary benchmark leaked");
+  process.stdout.write(
+    `${JSON.stringify({ label, bytes, coldMs: Math.round(coldMs), warmMedianMs: Math.round(warmMedianMs), MiBPerSecond: Math.round(bytes / 1_048_576 / (warmMedianMs / 1000)) })}\n`,
+  );
+}
+const payload = (value) => boundary.redact(value);
+const envelope = (value) => boundary.redact(value, "envelope");
+for (const MiB of [1, 4, 16]) {
+  const text = body(MiB * 1_048_576 - 40) + ` echo ${TOKEN}`;
+  measure(`${MiB} MiB text, payload`, { text }, text.length, payload);
+  measure(`${MiB} MiB text, envelope`, { text }, text.length, envelope);
+}
+for (const count of [10_000, 100_000]) {
+  const rows = Array.from({ length: count }, (_, id) => ({ id, text: sentence, public: "Public title.", ok: true }));
+  rows[count - 1].text = `echo ${TOKEN}`;
+  measure(`${count} structured rows, payload`, rows, JSON.stringify(rows).length, payload);
+}
+const wire = JSON.stringify({
+  rows: Array.from({ length: 20_000 }, (_, id) => ({ id, text: `${sentence}"quoted"\\path` })),
+});
+measure("4 MiB-class wire JSON text", wire, wire.length, (value) => boundary.text(value));
+const encode = (binary) => {
+  let out = "";
+  for (let offset = 0; offset < binary.length; offset += 12_288) out += btoa(binary.slice(offset, offset + 12_288));
+  return out;
+};
+const binary = body(1_048_576 - 34) + `x${TOKEN}z`;
+measure("1 MiB declared binary (embedded echo)", { format: "base64", content: encode(binary) }, binary.length, payload);
+// Declared binary under a credential-only set, each run with a fresh set: a first check, before
+// the request remembers clean content. Random bytes hold JSON escapes, so they decode layers too.
+let seed = 1;
+const random = (bytes) => {
+  const chunks = [];
+  for (let at = 0; at < bytes; at += 65_536) {
+    let chunk = "";
+    for (let unit = 0; unit < 65_536; unit++)
+      chunk += String.fromCharCode((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 24);
+    chunks.push(chunk);
+  }
+  return chunks.join("");
+};
+const fresh = () => {
+  const secrets = new Boundary();
+  secrets.add(TOKEN);
+  return secrets;
+};
+for (const [label, bytes] of [
+  ["16 MiB declared binary text (embedded echo)", body(16 * 1_048_576 - 34) + `x${TOKEN}z`],
+  ["16 MiB declared binary text (clean)", body(16 * 1_048_576)],
+  ["16 MiB declared binary random bytes", random(16 * 1_048_576)],
+]) {
+  const content = encode(bytes);
+  measure(`${label}, first check`, { format: "base64", content }, bytes.length, (value) => fresh().redact(value));
+}

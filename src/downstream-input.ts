@@ -162,7 +162,7 @@ export async function captureDownstreamInput(
       if (parsed.issues) return invalidInput();
       // A schema controls the accepted answer. Refuse redaction changes rather
       // than asking the host to submit different field names or enum values.
-      if (secrets.redact(parsed.value.requestedSchema) !== parsed.value.requestedSchema) return invalidInput();
+      if (secrets.changes(parsed.value.requestedSchema)) return invalidInput();
       inputRequests[namespace(connector, index)] = inputRequired.elicit({
         message: `Downstream ${connector}: ${parsed.value.message}`,
         requestedSchema: parsed.value.requestedSchema,
@@ -451,6 +451,9 @@ export class DownstreamElicitation {
     );
     if (requestState.length > MAX_RELAY_STATE_CHARS)
       return failure("input_required_limit", "The sealed downstream state exceeds 128 KiB.", pending.write);
+    // Authenticated, encrypted Connecta state, never the vendor's plaintext
+    // state: a coincidental match must not corrupt it.
+    sentSecretsForRequest(scope).mintedState(requestState);
     // Opaque echoes and mutable schemas/URLs were refused during capture.
     // Downstream prompt messages are prose under the payload rules.
     return sentSecretsForRequest(scope).redact(

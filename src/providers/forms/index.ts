@@ -41,6 +41,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
 import { tracksEveryRequest } from "../../provider-call.js";
+import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -122,9 +123,12 @@ function integer(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-/** Cut text at `max` characters and say so in the text itself. */
-function capped(value: string | undefined, max: number, remedy: string): string | undefined {
-  if (value === undefined || value.length <= max) return value;
+/** Cut text at `max` characters and say so in the text itself. Every secret the request sent
+ * is replaced first: a cut through an echo leaves a fragment no later redaction finds. */
+function capped(ctx: ConnectorContext, whole: string | undefined, max: number, remedy: string): string | undefined {
+  if (whole === undefined || whole.length <= max) return whole;
+  const value = redactBeforeCut(ctx, whole);
+  if (value.length <= max) return value;
   // Never split a surrogate pair: a lone high surrogate before the marker
   // would make the text ill-formed.
   let cut = value.slice(0, max);
@@ -137,10 +141,15 @@ function capped(value: string | undefined, max: number, remedy: string): string 
  * Text cut at `chars` characters, then held to `bytes` of JSON — quotes and
  * escapes counted — so a run of control characters cannot outgrow its place.
  */
-function bounded(value: string | undefined, chars: number, bytes: number): string | undefined {
-  const cut = capped(value, chars, "pass raw: true to read it");
+function bounded(ctx: ConnectorContext, value: string | undefined, chars: number, bytes: number): string | undefined {
+  const cut = capped(ctx, value, chars, "pass raw: true to read it");
   if (cut === undefined || jsonBytes(cut) <= bytes) return cut;
-  return clampText(value!, bytes, (dropped) => `\n[… ${dropped} more characters truncated; pass raw: true to read it]`);
+  return clampText(
+    ctx,
+    value!,
+    bytes,
+    (dropped) => `\n[… ${dropped} more characters truncated; pass raw: true to read it]`,
+  );
 }
 
 function editUrl(formId: string): string {
@@ -161,8 +170,19 @@ async function digestOf(bound: readonly unknown[]): Promise<string> {
   return base64Url(hash.subarray(0, 16));
 }
 
-function encodeCursor(cursor: JsonRecord): string {
-  return base64Url(encoder.encode(JSON.stringify(cursor)));
+/**
+ * A cursor of connecta's claims. An agent decodes it and no later pass reads
+ * through its encoding, so Google's text enters only redacted: a page token
+ * it must send back, redacted ({@link redactSentSecrets}); a value it only
+ * compares, by {@link claimOf}.
+ */
+function encodeCursor(ctx: ConnectorContext, cursor: JsonRecord): string {
+  return encodeForAgent(ctx, JSON.stringify(cursor), { url: true, claims: true });
+}
+
+/** A downstream value a cursor only compares: itself, or its digest when it holds a sent value. */
+async function claimOf(ctx: ConnectorContext, value: string): Promise<string> {
+  return redactSentSecrets(ctx, value) === value ? value : `#${await digestOf(["claim", value])}`;
 }
 
 /**
@@ -221,12 +241,12 @@ const CHOICE_TYPES: Readonly<Record<string, QuestionType>> = {
   DROP_DOWN: "drop_down",
 };
 
-function choiceOptions(choice: JsonRecord): JsonRecord {
+function choiceOptions(ctx: ConnectorContext, choice: JsonRecord): JsonRecord {
   const all = asArray(choice["options"]).map(asRecord);
   const hasOther = all.some((option) => option["isOther"] === true);
   const values = all
     .filter((option) => option["isOther"] !== true)
-    .map((option) => bounded(String(option["value"] ?? ""), MAX_LABEL_CHARS, MAX_LABEL_BYTES) ?? "");
+    .map((option) => bounded(ctx, String(option["value"] ?? ""), MAX_LABEL_CHARS, MAX_LABEL_BYTES) ?? "");
   return compact({
     options: values.slice(0, MAX_OPTIONS),
     moreOptions: values.length > MAX_OPTIONS ? values.length - MAX_OPTIONS : undefined,
@@ -235,7 +255,7 @@ function choiceOptions(choice: JsonRecord): JsonRecord {
 }
 
 /** One question's id, type, and the shape of what it accepts. */
-function projectQuestion(value: unknown, rowTitle?: string): JsonRecord {
+function projectQuestion(ctx: ConnectorContext, value: unknown, rowTitle?: string): JsonRecord {
   const question = asRecord(value);
   const grading = asRecord(question["grading"]);
   const base = {
@@ -246,7 +266,7 @@ function projectQuestion(value: unknown, rowTitle?: string): JsonRecord {
   };
   if (question["choiceQuestion"]) {
     const choice = asRecord(question["choiceQuestion"]);
-    return compact({ ...base, type: CHOICE_TYPES[String(choice["type"])] ?? "unknown", ...choiceOptions(choice) });
+    return compact({ ...base, type: CHOICE_TYPES[String(choice["type"])] ?? "unknown", ...choiceOptions(ctx, choice) });
   }
   if (question["textQuestion"]) {
     return compact({
@@ -295,18 +315,18 @@ type ItemKind = "question" | "question_group" | "page_break" | "text" | "image" 
  * item, one per row for a grid, none for a section break or media. Answers are
  * keyed by question id, so this is the map a response is read through.
  */
-function projectItem(value: unknown): JsonRecord {
+function projectItem(ctx: ConnectorContext, value: unknown): JsonRecord {
   const item = asRecord(value);
   const base = {
     itemId: text(item["itemId"]),
-    title: bounded(text(item["title"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
-    description: bounded(text(item["description"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
+    title: bounded(ctx, text(item["title"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
+    description: bounded(ctx, text(item["description"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
   };
   if (item["questionItem"]) {
     return compact({
       ...base,
       kind: "question" satisfies ItemKind,
-      questions: [projectQuestion(asRecord(item["questionItem"])["question"])],
+      questions: [projectQuestion(ctx, asRecord(item["questionItem"])["question"])],
     });
   }
   if (item["questionGroupItem"]) {
@@ -318,11 +338,12 @@ function projectItem(value: unknown): JsonRecord {
       kind: "question_group" satisfies ItemKind,
       // A grid's rows share its columns: the choices are stated once, here.
       gridType: group["grid"] ? (CHOICE_TYPES[String(columns["type"])] ?? "unknown") : undefined,
-      ...(group["grid"] ? choiceOptions(columns) : {}),
+      ...(group["grid"] ? choiceOptions(ctx, columns) : {}),
       questions: asArray(group["questions"]).map((question) =>
         projectQuestion(
+          ctx,
           question,
-          bounded(text(asRecord(asRecord(question)["rowQuestion"])["title"]), MAX_LABEL_CHARS, MAX_LABEL_BYTES),
+          bounded(ctx, text(asRecord(asRecord(question)["rowQuestion"])["title"]), MAX_LABEL_CHARS, MAX_LABEL_BYTES),
         ),
       ),
     });
@@ -339,18 +360,18 @@ function projectItem(value: unknown): JsonRecord {
   return compact({ ...base, kind });
 }
 
-function projectForm(value: unknown): JsonRecord {
+function projectForm(ctx: ConnectorContext, value: unknown): JsonRecord {
   const form = asRecord(value);
   const info = asRecord(form["info"]);
   const settings = asRecord(form["settings"]);
   const publish = asRecord(asRecord(form["publishSettings"])["publishState"]);
   const formId = text(form["formId"]);
-  const items = asArray(form["items"]).map(projectItem);
+  const items = asArray(form["items"]).map((item) => projectItem(ctx, item));
   return compact({
     formId,
-    title: bounded(text(info["title"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
-    documentTitle: bounded(text(info["documentTitle"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
-    description: bounded(text(info["description"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
+    title: bounded(ctx, text(info["title"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
+    documentTitle: bounded(ctx, text(info["documentTitle"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
+    description: bounded(ctx, text(info["description"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
     revisionId: text(form["revisionId"]),
     responderUri: text(form["responderUri"]),
     editUrl: formId ? editUrl(formId) : undefined,
@@ -416,10 +437,10 @@ interface QuestionLabel {
  * Every question id in the form, labeled the way a person reads it — the
  * item's title, and the row's for a grid — in the form's own order.
  */
-function questionLabels(form: unknown): Map<string, QuestionLabel> {
+function questionLabels(ctx: ConnectorContext, form: unknown): Map<string, QuestionLabel> {
   const labels = new Map<string, QuestionLabel>();
   for (const value of asArray(asRecord(form)["items"])) {
-    const item = projectItem(value);
+    const item = projectItem(ctx, value);
     for (const question of asArray(item["questions"]).map(asRecord)) {
       const id = text(question["questionId"]);
       if (!id) continue;
@@ -434,7 +455,12 @@ function questionLabels(form: unknown): Map<string, QuestionLabel> {
  * A grader's feedback on one answer: its text, and the links or videos it
  * points to, each as the address a person opens and the label they were shown.
  */
-function projectFeedback(value: unknown, maxChars: number | undefined, remedy: string): JsonRecord | undefined {
+function projectFeedback(
+  ctx: ConnectorContext,
+  value: unknown,
+  maxChars: number | undefined,
+  remedy: string,
+): JsonRecord | undefined {
   if (!value || typeof value !== "object") return undefined;
   const feedback = asRecord(value);
   const links = asArray(feedback["material"]).map((entry) => {
@@ -449,12 +475,13 @@ function projectFeedback(value: unknown, maxChars: number | undefined, remedy: s
   });
   const said = text(feedback["text"]);
   return compact({
-    text: maxChars === undefined ? said : capped(said, maxChars, remedy),
+    text: maxChars === undefined ? said : capped(ctx, said, maxChars, remedy),
     links: links.length > 0 ? links : undefined,
   });
 }
 
 function projectResponse(
+  ctx: ConnectorContext,
   value: unknown,
   labels: Map<string, QuestionLabel>,
   maxChars: number | undefined,
@@ -467,7 +494,7 @@ function projectResponse(
     const grade = asRecord(answer["grade"]);
     const values = asArray(asRecord(answer["textAnswers"])["answers"]).map((entry) => {
       const value = String(asRecord(entry)["value"] ?? "");
-      return maxChars === undefined ? value : capped(value, maxChars, remedy)!;
+      return maxChars === undefined ? value : capped(ctx, value, maxChars, remedy)!;
     });
     const files = asArray(asRecord(answer["fileUploadAnswers"])["answers"]).map((entry) => {
       const file = asRecord(entry);
@@ -485,7 +512,7 @@ function projectResponse(
       files: files.length > 0 ? files : undefined,
       score: typeof grade["score"] === "number" ? grade["score"] : undefined,
       correct: typeof grade["correct"] === "boolean" ? grade["correct"] : undefined,
-      feedback: projectFeedback(grade["feedback"], maxChars, remedy),
+      feedback: projectFeedback(ctx, grade["feedback"], maxChars, remedy),
     });
   });
   // The form's order, then anything the form no longer asks.
@@ -507,6 +534,7 @@ function projectResponse(
  * the end and named in `omittedQuestionIds`, for get_response to read by id.
  */
 function fitResponse(
+  ctx: ConnectorContext,
   value: unknown,
   labels: Map<string, QuestionLabel>,
   caps: readonly (number | undefined)[],
@@ -515,7 +543,7 @@ function fitResponse(
 ): JsonRecord {
   let projected: JsonRecord = {};
   for (const cap of caps) {
-    projected = projectResponse(value, labels, cap, remedy);
+    projected = projectResponse(ctx, value, labels, cap, remedy);
     if (jsonBytes(projected) <= budget) return projected;
   }
   const answers = asArray(projected["answers"]).map(asRecord);
@@ -856,9 +884,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           }
           return form;
         }
-        const { items, ...header } = projectForm(form);
+        const { items, ...header } = projectForm(ctx, form);
         const all = asArray(items).map(asRecord);
-        const revision = text(asRecord(form)["revisionId"]) ?? "";
+        const revision = await claimOf(ctx, text(asRecord(form)["revisionId"]) ?? "");
         const digest = await digestOf(["get_form", formId]);
         // A cursor names an item and, inside a grid too large for one page,
         // the first of its questions not yet returned, so every question id
@@ -915,7 +943,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           } else if (lastIndex + 1 < all.length) {
             next = { d: digest, i: lastIndex + 1, q: 0, r: revision };
           }
-          const nextCursor = next ? encodeCursor(next) : null;
+          const nextCursor = next ? encodeCursor(ctx, next) : null;
           return { ...header, page: { hasMore: nextCursor !== null, nextCursor }, items: kept };
         };
         // The estimate above reserved room; the complete result, cursor and
@@ -1113,14 +1141,16 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         ]);
-        const labels = questionLabels(form);
+        const labels = questionLabels(ctx, form);
         const page = asRecord(listing);
         const rows = asArray(page["responses"]);
         const idOf = (row: unknown) => text(asRecord(row)["responseId"]);
         const pageHash = await digestOf(["page", ...rows.map((row) => idOf(row) ?? null)]);
+        // Each response id as a cursor names it.
+        const claims = await Promise.all(rows.map((row) => claimOf(ctx, idOf(row) ?? "")));
         let start = 0;
         if (anchor !== null) {
-          const at = rows.findIndex((row) => idOf(row) === anchor);
+          const at = claims.findIndex((claim, index) => idOf(rows[index]) !== undefined && claim === anchor);
           if (fingerprint !== pageHash || at < 0) {
             throw new ConnectorCallError(
               "conflict",
@@ -1134,15 +1164,16 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         let used = jsonBytes({ formId, responses: [], page: { hasMore: true, nextCursor: null } }) + PAGE_RESERVE_BYTES;
         for (let index = start; index < rows.length; index += 1) {
           const room = RESULT_BUDGET_BYTES - used;
-          let response = projectResponse(rows[index], labels, LIST_ANSWER_CHARS, remedy);
+          let response = projectResponse(ctx, rows[index], labels, LIST_ANSWER_CHARS, remedy);
           if (jsonBytes(response) + 1 > room) {
             if (responses.length > 0) break;
-            response = fitResponse(rows[index], labels, [LIST_ANSWER_CHARS, 200], remedy, room - 1);
+            response = fitResponse(ctx, rows[index], labels, [LIST_ANSWER_CHARS, 200], remedy, room - 1);
           }
           responses.push(response);
           used += jsonBytes(response) + 1;
         }
-        const googleNext = text(page["nextPageToken"]) ?? null;
+        const google = text(page["nextPageToken"]);
+        const googleNext = google === undefined ? null : redactSentSecrets(ctx, google);
         const build = () => {
           const last = start + responses.length - 1;
           // Rows left on Google's page: continue after the last one returned.
@@ -1150,7 +1181,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           // response of its own to anchor on, and moves to Google's next page.
           let next: JsonRecord | undefined;
           if (start + responses.length < rows.length && responses.length > 0) {
-            const after = idOf(rows[last]);
+            const after = idOf(rows[last]) === undefined ? undefined : claims[last];
             if (after === undefined) {
               throw new ConnectorCallError(
                 "connector_call_failed",
@@ -1162,7 +1193,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           } else if (googleNext) {
             next = { d: digest, t: googleNext, a: null, h: null, n: limit };
           }
-          const nextCursor = next ? encodeCursor(next) : null;
+          const nextCursor = next ? encodeCursor(ctx, next) : null;
           return { formId, responses, page: { hasMore: nextCursor !== null, nextCursor } };
         };
         let result = build();
@@ -1172,6 +1203,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         }
         if (jsonBytes(result) > RESULT_BUDGET_BYTES && responses.length === 1) {
           responses[0] = fitResponse(
+            ctx,
             rows[start],
             labels,
             [LIST_ANSWER_CHARS, 200],
@@ -1235,8 +1267,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         // Whole when it fits; otherwise cut, then narrowed, with the ids left
         // out named so a call with questionIds reads them.
         const result = fitResponse(
+          ctx,
           narrowed,
-          questionLabels(form),
+          questionLabels(ctx, form),
           [undefined, MAX_ANSWER_CHARS, LIST_ANSWER_CHARS],
           "more than one result carries; pass questionIds to read fewer answers, or read it in Forms",
           RESULT_BUDGET_BYTES,

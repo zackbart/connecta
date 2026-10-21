@@ -42,6 +42,7 @@ import {
   type RefreshResponseOutcome,
 } from "./oauth-token-response.js";
 import { deleteV2Keys, discoveryIssuer, readV2Grant, type MigratedGrantBody } from "./oauth-v2-migration.js";
+import { keepErrorName } from "../redaction-identity.js";
 
 /** RFC 6749 section 3.3: one or more scope tokens, separated by single spaces. */
 const OAUTH_SCOPE = /^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/;
@@ -78,6 +79,7 @@ export class OAuthCallbackClaimedError extends ConnectorCallError {
     this.name = "OAuthCallbackClaimedError";
   }
 }
+keepErrorName(OAuthCallbackClaimedError, "OAuthCallbackClaimedError");
 
 /** A local destination guard proved that no OAuth HTTP request left. */
 export class OAuthRequestNotSentError extends ConnectorCallError {}
@@ -1294,8 +1296,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ]) {
       if (typeof value === "string") secrets.secret(value);
     }
-    if (body.client?.value.client_secret) secrets.add(body.client.value.client_id);
-    if (this.clientOptions?.client?.clientSecret) secrets.add(this.clientOptions.client.clientId);
+    if (body.client?.value.client_secret) secrets.identifier(body.client.value.client_id);
+    if (this.clientOptions?.client?.clientSecret) secrets.identifier(this.clientOptions.client.clientId);
     const urls: string[] = [];
     const collect = (item: unknown): void => {
       if (typeof item === "string") {
@@ -1309,7 +1311,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     collect(value);
     if (
       [secrets, this.clientOptions?.secrets].some(
-        (source) => source && (source.redact(value) !== value || urls.some((url) => source.containsUrl(url))),
+        (source) => source && (source.changes(value) || urls.some((url) => source.containsUrl(url))),
       )
     ) {
       throw new ConnectorCallError(

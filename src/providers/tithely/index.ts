@@ -58,6 +58,7 @@ import {
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
 import { sensitiveFieldsOption, unprojectedResults } from "../_shared/sensitive-fields.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type {
   Connector,
@@ -339,7 +340,11 @@ async function callTithely(send: GuardedTransport, request: GuardedRequest, ctx:
   return await send(request, ctx, async (response) => {
     const parsed = await response.jsonResult();
     if (!response.ok) {
-      throw tithelyFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
+      throw tithelyFailure(
+        response.status,
+        response.headers,
+        redactBeforeCut(ctx, "value" in parsed ? parsed.value : undefined),
+      );
     }
     if (!("value" in parsed)) {
       throw new ConnectorCallError(
@@ -348,9 +353,12 @@ async function callTithely(send: GuardedTransport, request: GuardedRequest, ctx:
         { retryable: false },
       );
     }
-    const refused = inBandFailure(parsed.value);
+    // Projections parse amounts and times from strings: they read the redacted body, so no
+    // normalized number can show part of a value redaction would have caught.
+    const value = redactBeforeCut(ctx, parsed.value);
+    const refused = inBandFailure(value);
     if (refused) throw refused;
-    return parsed.value;
+    return value;
   });
 }
 

@@ -40,6 +40,7 @@ import {
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
 import { ConnectorCallError, keyResendAdvice, unavailableCallError } from "../../../errors.js";
+import { encodeForAgent, redactBeforeCut } from "../../../sent-secrets.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
 import type { ValueSafety } from "./value-safety.js";
@@ -107,6 +108,8 @@ export interface RestVendor {
    * Map a failed response to what the caller does next (H11); `call` lets a
    * vendor withhold text for secret families. `write` is the served verdict,
    * else the operation's own, for a status whose advice differs by it.
+   * `body` arrives with sent secrets already redacted, so a mapper may cut its
+   * prose short.
    */
   failure(status: number, headers: Headers, body: unknown, call?: RestCall, write?: boolean): ConnectorCallError;
   /** Reviewed POSTs that only read; `_api_read` admits exactly these. */
@@ -133,9 +136,15 @@ export interface RestVendor {
   /**
    * Map a successful body into the envelope's `data`, such as unwrapping a
    * vendor envelope; throw to fail a success-status body that reports an
-   * error. `page` still reads the body as it arrived.
+   * error. `page` still reads the body as it arrived. A failure that cuts
+   * the body's prose short redacts it with `ctx` first (`redactBeforeCut`).
    */
-  result?(body: unknown, call: RestCall, response: { status: number; headers: Headers }): unknown;
+  result?(
+    body: unknown,
+    call: RestCall,
+    response: { status: number; headers: Headers },
+    ctx: ConnectorContext,
+  ): unknown;
   /** Request headers the generic tools accept, by name, with what each does; the vendor validates values. */
   readonly headers?: Readonly<Record<string, string>>;
   /** Whether the generic tools accept a string body, for operations framed as text. */
@@ -248,14 +257,6 @@ async function failureBody(response: Parameters<Parameters<GuardedTransport>[2]>
   }
 }
 
-function base64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
-}
-
 async function successBody(
   vendor: RestVendor,
   response: Parameters<Parameters<GuardedTransport>[2]>[0],
@@ -292,7 +293,8 @@ async function successBody(
       return text === "" ? null : text;
     }
     const bytes = await response.bytes();
-    return bytes.length === 0 ? null : { contentType: type, bytes: bytes.length, base64: base64(bytes) };
+    // Checked before encoding: no later pass reads through base64 a field does not declare.
+    return bytes.length === 0 ? null : { contentType: type, bytes: bytes.length, base64: encodeForAgent(ctx, bytes) };
   } catch (error) {
     if (error instanceof ConnectorCallError) throw error;
     if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
@@ -353,14 +355,22 @@ export async function callRest(
   };
   const write = (callClassification(ctx) ?? request.classification) === "write";
   return await send(request, ctx, async (response) => {
-    if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call, write);
+    // Mappers cut the vendor's prose short, so it is redacted whole first.
+    if (!response.ok)
+      throw vendor.failure(
+        response.status,
+        response.headers,
+        redactBeforeCut(ctx, await failureBody(response)),
+        call,
+        write,
+      );
     // HEAD answers with headers alone; they are its data.
     const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
     // Order: unwrap the vendor's envelope, then redact (every success, HEAD
     // header data and named tools included), then cursors (and, in the
     // tools, `select`). Cursors read the envelope when the vendor unwraps
     // one, and the redacted body otherwise.
-    const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response) : body;
+    const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response, ctx) : body;
     const data = vendor.valueSafety.redact(unwrapped, call.method, call.op.path);
     const page = vendor.page?.(vendor.result ? body : data, call);
     return { status: response.status, data, ...(page ? { page } : {}) };
