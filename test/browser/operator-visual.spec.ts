@@ -256,11 +256,13 @@ function variantPath(variant: VisualVariant): string {
   if (variant.includes("overview")) return "/";
   return "/endpoints";
 }
-// Each once failed a first attempt on Linux CI with a stable capture, then
-// passed its retry; no time, animation, font or late-read cause was found.
-// overview-trace has only failed dark; narrow-matrix has failed both schemes
-// (light by 167 pixels on #902). The visual-unstable project keeps retries for
-// the listed schemes; every other capture stays deterministic. Remove a variant
+// Each failed a first CI attempt and then passed unchanged. overview-trace and
+// dark narrow-matrix each failed a dark first attempt on Linux CI with a stable
+// capture and passed their retry; no time, animation, font or late-read cause
+// was found. Light narrow-matrix failed by 167 pixels around the connector
+// icons (CI run 39521113766, attempt 1) and passed when that job was rerun on
+// the same commit (attempt 2). The visual-unstable project retries only the
+// listed schemes; every other capture stays deterministic. Remove a variant
 // once fixed.
 const UNSTABLE_VARIANTS = new Map<VisualVariant, ReadonlySet<string>>([
   ["overview-trace", new Set(["dark"])],
