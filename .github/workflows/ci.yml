@@ -46,17 +46,17 @@ jobs:
           fi
           test -n "$PR_BASE"
           git fetch --no-tags --depth=1 origin "$PR_BASE"
-          git diff --name-only --no-renames "$base" HEAD > "$RUNNER_TEMP/changed-files"
+          git diff --name-only --no-renames -z "$base" HEAD > "$RUNNER_TEMP/changed-files"
           # Canonical browser input list. The build reads operator-ui/{app,styles},
           # tokens/page CSS, fonts and LICENSE. Playwright fixtures import the real
           # server through helpers.ts, so src/ covers their shared auth/routes/core;
           # fixtures/helpers cover their local dependencies; node.ts uses bin/ tool names.
-          if grep -Eq '^(src/|bin/|test/(browser/|fixtures/|helpers/|helpers\.ts$)|scripts/(build-operator-ui\.mjs|ci-settle-apt\.sh)$|playwright[^/]*\.config\.[^/]+$|tsconfig[^/]*\.json$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|LICENSE$|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
+          if grep -zEq '^(src/|bin/|test/(browser/|fixtures/|helpers/|helpers\.ts$)|scripts/(build-operator-ui\.mjs|ci-settle-apt\.sh)$|playwright[^/]*\.config\.[^/]+$|tsconfig[^/]*\.json$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|LICENSE$|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
             echo 'browser=true' >> "$GITHUB_OUTPUT"
           else
             echo 'browser=false' >> "$GITHUB_OUTPUT"
           fi
-          if grep -Eq '(^|/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$|^\.github/workflows/ci\.yml$' "$RUNNER_TEMP/changed-files"; then
+          if grep -zEq '(^|/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$|^\.github/workflows/ci\.yml$' "$RUNNER_TEMP/changed-files"; then
             echo 'audit=true' >> "$GITHUB_OUTPUT"
           else
             echo 'audit=false' >> "$GITHUB_OUTPUT"
@@ -92,6 +92,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Cache Node suite timings
+        uses: actions/cache@v5
+        with:
+          path: node_modules/.vite/vitest/**/results.json
+          key: ${{ runner.os }}-vitest-node-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-vitest-node-${{ hashFiles('pnpm-lock.yaml') }}-
       - run: pnpm run test:node
 
   # workerd runs only the suites vitest.config.ts lists for it.

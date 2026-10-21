@@ -1596,7 +1596,7 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   fresh module graph, clock, network and cache namespace. Queue replies are
   assigned in canonical request order in both runs; only answer delivery
   changes. Steps remain readable admission cohorts, not simultaneous answers.
-  Ordinary checks compare the canonical observation. In stored fixtures,
+  Workerd checks compare the canonical observation. In stored fixtures,
   identical observations collapse to one
   row; differing reverse observations appear in `variants`, each with
   `order: "reverse"`, complete `steps`, optional `waitedMs`, and `result`.
