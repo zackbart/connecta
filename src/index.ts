@@ -356,8 +356,10 @@ export type {
   ProviderContext,
   ProviderDefinition,
   ProviderFactory,
+  ProviderGuideBlocks,
   ProviderGuideInput,
   ProviderKind,
+  ProviderKitFacts,
   ProviderOptions,
   ProviderSkill,
 } from "./provider.js";
