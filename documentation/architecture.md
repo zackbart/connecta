@@ -2183,11 +2183,24 @@ compiling and configuring the real thing.
   request. Only Stripe declares it (`src/providers/stripe/rest.ts`, reviewed
   as a `manual` check in its `drift.json`): an API v1 answer carrying Stripe's
   `Request-Id`. `test/provider-failure-sweep.test.ts` holds that list to the
-  sources. A write answered 401 without it keeps its authorization
+  sources. A write answered 401 without it keeps an authorization
   code, never retryable, with no wait, `writeOutcome: "unknown"`, and a
   sentence saying the write was sent before the vendor rejected its
-  credential (`answeredUnauthorized`); invocation keeps the
-  `authorize_connector` handoff and picks its reconcile-first words. A 408 is a
+  credential (`unauthorizedWrite`); invocation keeps the
+  `authorize_connector` handoff and picks its reconcile-first words. The
+  ledger's recorded status decides it, not the final error's shape, and it
+  is decided before the untracked-handler, idempotency-key, and timeout
+  exceptions, so no key makes such a write repeatable. It holds whatever
+  surfaced after the 401: a body past the ceiling, a later request in a
+  composite, a handler's own failure, a timeout, or the caller's abort. The
+  code is the final failure's when that is an authorization verdict, else
+  the one the 401's own answer was mapped to (`vendorRefusal` records it on
+  the request), else `auth_required`. A 401 whose credential a renewal then
+  replaced is marked `renewed` on the request (static OAuth's refresh,
+  Infisical's login, Google's fresh token for a read's replay, through
+  `renewedAfterUnauthorized`) and no longer decides the call. A declared
+  401 stands as a refusal only as the call's one request and its own
+  failure; otherwise it too is decided this way. A 408 is a
   timeout, and a 2xx followed by a mapper, parser, or output-validation
   failure may have applied. `classifyWriteOutcome` counts a
   dispatched write `failed` only with that provenance (`answered`, or the
@@ -2277,7 +2290,9 @@ compiling and configuring the real thing.
   as failed in program write accounting. Every other possibly executing
   failure is non-retryable with `writeOutcome: "unknown"`; authorization codes
   keep their handoff. A write answered 401 is one of these unless its
-  transport declares `authBeforeExecution` evidence that matched.
+  transport declares `authBeforeExecution` evidence that matched, and it
+  keeps an authorization code and handoff whatever failure surfaced after
+  it, with no wait.
   A later refusal cannot make an earlier successful request safe to repeat.
   Provider recovery wrappers change wording through helpers that preserve
   verdicts and provenance; Google also retains its response phases and reasons.

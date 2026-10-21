@@ -3,6 +3,7 @@ import {
   boundProviderRequest,
   dispatchProviderRequest,
   providerRequest,
+  vendorRefusal,
 } from "../provider-call.js";
 import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
@@ -535,7 +536,13 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
           renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
         }
-        throw unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal, "downstream_oauth_required");
+        // The call's ledger keeps this 401's verdict, or that renewal
+        // replaced the credential it rejected (Q8).
+        if (renewal === undefined) dispatch.renewed = true;
+        throw vendorRefusal(
+          unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal, "downstream_oauth_required"),
+          dispatch,
+        );
       }
       const accessToken = await renewedToken(provider, ctx, tokens.access_token);
       const second = await send(accessToken);

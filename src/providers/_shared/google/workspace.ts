@@ -57,7 +57,7 @@ import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connec
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
 import { callClassification } from "../../../call-classification.js";
-import { providerRequests } from "../../../provider-call.js";
+import { providerRequests, renewedAfterUnauthorized } from "../../../provider-call.js";
 import { providerCallFailure, providerFailureMessage, unsentAfterUnauthorized } from "../../../write-outcome.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError, resendAdvice } from "../../../errors.js";
@@ -902,6 +902,8 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         // token is minted or request sent.
         delegated = await tokenRequest(ctx);
         token = await delegatedToken(delegated, ctx);
+        // A fresh token replaces the one the last attempt's 401 rejected (Q8).
+        if (attempt > 0) renewedAfterUnauthorized(ctx);
       } catch (error) {
         throw outcome(error, { dispatched: false, phase: "before-send" });
       }

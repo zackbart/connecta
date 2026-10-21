@@ -1049,7 +1049,11 @@ renewed, the failure keeps its authorization code (`auth_required`, or
 `writeOutcome: "unknown"`, `reconciliationRequired: true`, and the
 `authorize_connector` handoff, whose `instructions` say to authorize and then
 re-read the target before any fresh call. That holds whatever renewal meets: a
-refused or unreachable token endpoint, a disconnect, or the caller leaving.
+refused or unreachable token endpoint, a disconnect, or the caller leaving. It
+also holds whatever the call met after the 401: a body past the response
+ceiling, a later failure in the same call, or a 401 on a later request of a
+composite write. An idempotency key never makes such a write repeatable, so
+it gets no key-reuse advice.
 Once renewal succeeds (an OAuth refresh, Infisical's login), nothing is left
 to authorize: the call reports a non-retryable `connector_call_failed` with
 the unknown outcome, and the renewed credential serves any fresh call after

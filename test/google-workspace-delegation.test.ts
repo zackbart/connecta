@@ -1295,6 +1295,34 @@ describe("the in-memory token cache", () => {
     });
     expect(apiCalls).toHaveLength(2);
   });
+
+  it("INV-9: a read's 401 the fresh token replaced leaves a later write's failure to decide the call", async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () =>
+        Response.json({
+          id: "d1",
+          message: {
+            id: "m1",
+            threadId: "t1",
+            payload: { mimeType: "text/plain", headers: [{ name: "To", value: "bob@org.example" }], body: {} },
+          },
+        }),
+      () => Response.json({ error: { code: 503, message: "Backend Error" } }, { status: 503 }),
+    );
+    // A direct call: update_draft's GET is a read, so its 401 earns the replay.
+    const failure = await mailbox()
+      .callTool("update_draft", { draftId: "d1", body: "Revised." }, context(identity("alice")))
+      .catch((error: unknown) => error);
+    const error = classifyCallError(failure);
+    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect(error.message).toContain("answered HTTP 503 after receiving the request");
+    expect(apiCalls.map(({ method, authorization }) => `${method} ${authorization}`)).toEqual([
+      "GET Bearer token-1",
+      "GET Bearer token-2",
+      "PUT Bearer token-2",
+    ]);
+  });
 });
 
 describe("Workspace served classification on unauthorized requests", () => {

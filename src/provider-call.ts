@@ -22,6 +22,12 @@ export interface ProviderRequest {
    * the request. Only that makes a 401 a refusal (`servedRefusal`).
    */
   authBeforeExecution?: true;
+  /**
+   * Its answer was a 401, and a renewal then replaced the credential it
+   * rejected ({@link renewedAfterUnauthorized}). The 401 no longer needs the
+   * operator's recovery, so it no longer decides the call's verdict (Q8).
+   */
+  renewed?: true;
 }
 interface ProviderCall {
   requests: ProviderRequest[];
@@ -33,6 +39,9 @@ type CallContext = ConnectorContext & { [CALL]?: ProviderCall };
 // A redacted copy of a failure is the same failure: its verdict follows it.
 const refusals = followRedactedCopies(new WeakMap<object, ProviderRequest>());
 const knownFailures = followRedactedCopies(new WeakSet<object>());
+// The authorization verdict a request's own 401 was mapped to, kept for the
+// call's verdict whatever failure surfaces after it (Q8).
+const unauthorizedAnswers = new WeakMap<ProviderRequest, ConnectorCallError>();
 const trackedConnectors = new WeakSet<object>();
 
 // Call identities, each bound to the connector object it was built as and
@@ -273,8 +282,40 @@ export function refusedStatus(status: number | undefined): boolean {
  * error code alone is never this evidence.
  */
 export function vendorRefusal<T>(error: T, request: ProviderRequest): T {
-  if (error !== null && typeof error === "object" && refusedStatus(request.status)) refusals.set(error, request);
+  if (error !== null && typeof error === "object" && refusedStatus(request.status)) {
+    refusals.set(error, request);
+    if (request.status === 401 && authorizationFailure(error) && !unauthorizedAnswers.has(request))
+      unauthorizedAnswers.set(request, error);
+  }
   return error;
+}
+
+/** An authorization verdict, the kind that keeps the `authorize_connector` handoff. */
+export function authorizationFailure(error: unknown): error is ConnectorCallError {
+  return (
+    error instanceof ConnectorCallError &&
+    (error.code === "auth_required" || error.code === "downstream_oauth_required")
+  );
+}
+
+/**
+ * The authorization verdict `request`'s own 401 answer was mapped to, as
+ * {@link vendorRefusal} recorded it. Undefined when nothing mapped that
+ * answer, such as a body past the ceiling.
+ */
+export function unauthorizedAnswer(request: ProviderRequest): ConnectorCallError | undefined {
+  return unauthorizedAnswers.get(request);
+}
+
+/**
+ * A renewal succeeded after a 401 in `ctx`'s call (a fresh token minted, a
+ * login, a refresh): the credential every 401 recorded so far rejected is
+ * replaced, so none of them needs the operator's recovery any longer (Q8).
+ * A write such a 401 answered is reported in renewal's words
+ * (`unsentAfterUnauthorized`), still an unknown outcome.
+ */
+export function renewedAfterUnauthorized(ctx: ConnectorContext): void {
+  for (const request of providerRequests(ctx) ?? []) if (request.status === 401) request.renewed = true;
 }
 
 export function refusalRequest(error: unknown): ProviderRequest | undefined {

@@ -10,7 +10,7 @@ import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
 import { providerFailureMessage, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { skill } from "./skill.generated.js";
-import { tracksEveryRequest } from "../../provider-call.js";
+import { renewedAfterUnauthorized, tracksEveryRequest } from "../../provider-call.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
 /** Connecta's response ceiling, before JSON parsing; not an Infisical limit. */
@@ -162,12 +162,17 @@ export const infisical = defineProvider<InfisicalOptions>({
           let renewal: unknown;
           try {
             await tokens.token(ctx, token);
+            renewedAfterUnauthorized(ctx);
           } catch (error) {
             renewal = error;
           }
           throw unsentAfterUnauthorized("Infisical", renewal);
         }
-        if (result.rejected) result = await attempt(await tokens.token(ctx, token));
+        if (result.rejected) {
+          const renewed = await tokens.token(ctx, token);
+          renewedAfterUnauthorized(ctx);
+          result = await attempt(renewed);
+        }
         if (result.error) throw result.error;
         return result.value;
       } catch (error) {
