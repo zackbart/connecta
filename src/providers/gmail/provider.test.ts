@@ -672,6 +672,26 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
       code: "conflict",
     });
   });
+
+  it("budgets get_draft's whole result, wrapper included", async () => {
+    const nasty = (length: number) => '\u0001界😀\ud800"\\'.repeat(Math.ceil(length / 6)).slice(0, length);
+    route = () => ({
+      body: {
+        id: "d".repeat(200),
+        message: {
+          id: "m1",
+          payload: {
+            mimeType: "text/plain",
+            headers: ["From", "To", "Cc", "Subject"].map((name) => ({ name, value: nasty(5000) })),
+            body: { data: b64url(nasty(200_000)) },
+          },
+        },
+      },
+    });
+    const result = await call(connection(), "get_draft", { draftId: "d1", maxBodyChars: 100_000 });
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    expect(result.bodyTruncated).toBe(true);
+  });
 });
 
 describe("round-6: measured budgets, said omissions, declared keys", () => {
