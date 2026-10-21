@@ -126,13 +126,44 @@ export interface ProviderSkill {
   /**
    * Markdown rendered after the heading and the connection context. It states
    * conventions the vendor's schemas cannot carry, and never varies by
-   * deployment.
+   * deployment. A standard guide (decision 0011, G) is `SKILL.md`'s body
+   * followed by its generated `## Conventions`; text that differs by
+   * implementation or option stands in `<!-- when: <key> -->` …
+   * `<!-- end -->` blocks the definition's `blocks` selects.
    */
   content: string;
   /** Heading for deployment instructions, such as `"Workspace instructions"`. */
   instructionsHeading: string;
   /** Exact generated guide fragments used by existing renderers. */
   fragments?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The closed key set of a guide's `<!-- when: <key> -->` blocks and the pure
+ * selector that picks a connection's keys from its options (decision 0011,
+ * G2). A dual provider declares `hosted` and `api`.
+ */
+export interface ProviderGuideBlocks<O> {
+  readonly keys: readonly string[];
+  /** The keys whose blocks this connection renders, in any order. */
+  select(options: Readonly<O>): readonly string[];
+}
+
+/**
+ * Facts the provider kit (decision 0010) declares for `providers:generate`:
+ * `drift.json`'s `generated.operations` and the guide's Conventions. Plain
+ * data, never read at runtime. The kit's `defineApiProvider` sets them.
+ */
+export interface ProviderKitFacts {
+  /** `manifest(vendor)`: every operation the provider's tools send, as `"METHOD /path"`. */
+  readonly operations: readonly string[];
+  /** The `limit` default and maximum every paged read declares. */
+  readonly pageSize?: { readonly default: number; readonly max: number };
+  /** The hatch's tool prefix and its reviewed verdict per `"METHOD /path"`. */
+  readonly hatch?: {
+    readonly name: string;
+    readonly verdicts: Readonly<Record<string, "read" | "write" | "destructive" | "refuse">>;
+  };
 }
 
 /** Connection facts a provider renders around its maintained guide. */
@@ -198,6 +229,10 @@ export interface ProviderDefinition<O extends ProviderOptions> {
    * each tool they author and must omit it.
    */
   classify?: ToolClassification;
+  /** Required when the guide holds `<!-- when: <key> -->` blocks. */
+  blocks?: ProviderGuideBlocks<O>;
+  /** Set by the provider kit; see `ProviderKitFacts`. */
+  kit?: ProviderKitFacts;
   /**
    * Build the connector. Runs synchronously at construction after its closed
    * options and common values are validated. Throw here for provider-specific
@@ -214,9 +249,57 @@ export interface ProviderFactory<O extends ProviderOptions> {
 
 const PROVIDER_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const KINDS: ReadonlySet<string> = new Set(["mcp", "api", "composed", "dual"]);
+const BLOCK_KEY = /^[a-z][a-z0-9:-]*$/;
+/** A when-block marker, alone on its line. */
+const BLOCK_MARKER = /^<!--\s*(?:when:\s*([a-z][a-z0-9:-]*)|end)\s*-->$/;
 
 function nonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
+}
+
+/**
+ * Render a guide's selected when-blocks, or, with no selection, check them
+ * and return their keys. Markers stand alone on their lines and never nest.
+ * Removing an unselected block also removes the blank line it leaves, so
+ * paragraphs and tight lists keep their spacing.
+ */
+function guideBlocks(content: string, selected?: ReadonlySet<string>): { text: string; keys: Set<string> } {
+  const keys = new Set<string>();
+  const kept: string[] = [];
+  let open: string | undefined;
+  let seam = false;
+  for (const line of content.split("\n")) {
+    const marker = BLOCK_MARKER.exec(line.trim());
+    if (marker) {
+      if (marker[1] !== undefined ? open !== undefined : open === undefined) {
+        throw new Error("when-blocks must open and close in turn, unnested");
+      }
+      if (marker[1] !== undefined) keys.add((open = marker[1]));
+      else {
+        seam = selected !== undefined && !selected.has(open!);
+        open = undefined;
+      }
+      continue;
+    }
+    if (/<!--\s*(?:when:|end\s*-->)/.test(line)) throw new Error("a when-block marker stands alone on its line");
+    if (open !== undefined && !selected?.has(open)) continue;
+    if (seam && !line.trim() && (kept.length === 0 || !kept.at(-1)!.trim())) continue;
+    seam = false;
+    kept.push(line);
+  }
+  if (open !== undefined) throw new Error(`the when-block "${open}" is never closed`);
+  return { text: kept.join("\n").trim(), keys };
+}
+
+/** A frozen copy: kit facts are review evidence `providers:generate` reads. */
+function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
+  return Object.freeze({
+    operations: Object.freeze([...kit.operations]),
+    ...(kit.pageSize ? { pageSize: Object.freeze({ ...kit.pageSize }) } : {}),
+    ...(kit.hatch
+      ? { hatch: Object.freeze({ name: kit.hatch.name, verdicts: Object.freeze({ ...kit.hatch.verdicts }) }) }
+      : {}),
+  });
 }
 
 /**
@@ -248,6 +331,26 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
   if (!definition.options?.shape && !definition.options?.variants) {
     throw new Error(`${label} requires a closed options shape from optionsOf().`);
   }
+  const blocks = definition.blocks;
+  if (
+    blocks !== undefined &&
+    (!Array.isArray(blocks.keys) ||
+      blocks.keys.length === 0 ||
+      !blocks.keys.every((key) => typeof key === "string" && BLOCK_KEY.test(key)) ||
+      new Set(blocks.keys).size !== blocks.keys.length ||
+      typeof blocks.select !== "function")
+  ) {
+    throw new Error(`${label} blocks require unique lowercase keys and a select function.`);
+  }
+  let used: Set<string>;
+  try {
+    used = guideBlocks(definition.skill.content).keys;
+  } catch (error) {
+    throw new Error(`${label} skill: ${error instanceof Error ? error.message : String(error)}.`, { cause: error });
+  }
+  for (const key of used) {
+    if (!blocks?.keys.includes(key)) throw new Error(`${label} skill uses the when-block "${key}" its blocks omit.`);
+  }
   // A validated, deep-frozen copy. The definition is what build and check
   // tools read and what every later connector classifies with, so nothing
   // reachable from it may change a verdict after review: neither the
@@ -264,6 +367,8 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
     }),
     ...(definition.bundle ? { bundle: Object.freeze({ ...definition.bundle }) } : {}),
     ...(classify !== undefined ? { classify } : {}),
+    ...(blocks ? { blocks: Object.freeze({ keys: Object.freeze([...blocks.keys]), select: blocks.select }) } : {}),
+    ...(definition.kit ? { kit: kitFacts(definition.kit) } : {}),
   });
   const factoryName = `${frozen.name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase())}()`;
 
@@ -299,7 +404,19 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
         },
         usageGuide(input) {
           const heading = input.heading ?? `${frozen.title} usage`;
-          const body = [...input.context, frozen.skill.content.trim()].join("\n\n");
+          let guide = frozen.skill.content.trim();
+          if (frozen.blocks) {
+            const { keys, select } = frozen.blocks;
+            const selected: unknown = select(resolved);
+            if (!Array.isArray(selected)) throw new Error(`${at} requires blocks.select() to return an array of keys.`);
+            for (const key of selected) {
+              if (!keys.includes(key)) {
+                throw new Error(`${at} requires blocks.select() to return declared keys; it returned ${String(key)}.`);
+              }
+            }
+            guide = guideBlocks(frozen.skill.content, new Set(selected)).text;
+          }
+          const body = [...input.context, guide].join("\n\n");
           return {
             content:
               `# ${heading}\n\n${body}\n` +
