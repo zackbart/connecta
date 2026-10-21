@@ -748,14 +748,17 @@ export function secretEncodings(value: string): string[] {
 }
 
 /**
- * The shortest start of a secret the leak guard treats as the secret, so a
- * truncated echo still leaks. Longer than public token-format prefixes such
- * as `sk_test_` or `github_pat_`, which guides and fixtures may print. It is
- * counted past a secret's public framing (see `publicFraming`).
+ * The shortest run of a secret the leak guard treats as the secret, wherever
+ * it starts, so a truncated or cut echo still leaks: K, the length of the runs
+ * sent-secret redaction matches anywhere. It is counted past a secret's public
+ * framing (see `publicFraming`).
  */
-export const LEAK_PREFIX_UNITS = 12;
+export const LEAK_RUN_UNITS = 8;
 
 const PEM_ARMOR = /^-----BEGIN [A-Z0-9 ]+-----(?:\s|\\n)*/;
+const PEM_END = /(?:\s|\\n)*-----END [A-Z0-9 ]+-----(?:\s|\\n)*$/;
+/** Public token-format prefixes, such as `sk_test_` or `github_pat_`, which guides print. */
+const TOKEN_FORMAT = /^(?:(?:sk|pk|rk)_(?:test|live)_|github_pat_|gh[opsu]_|xox[abeprs]-)/;
 
 /**
  * Bytes of DER structure before a key's first secret value: the tags,
@@ -785,12 +788,12 @@ function derFraming(der: Uint8Array): number {
 /**
  * Leading units of a secret that are public framing, not the secret: a PEM
  * armor line, and the base64 of the DER structure that opens every key of
- * its type (`MIIEvQIBADANBgkqhkiG9w0BAQEFAASC…` for a 2048-bit RSA key).
- * Guides and example keys print both.
+ * its type (`MIIEvQIBADANBgkqhkiG9w0BAQEFAASC…` for a 2048-bit RSA key), or a
+ * token-format prefix. Guides and example keys print them.
  */
 function publicFraming(secret: string): number {
   const armor = PEM_ARMOR.exec(secret);
-  if (!armor) return 0;
+  if (!armor) return TOKEN_FORMAT.exec(secret)?.[0].length ?? 0;
   const body = secret
     .slice(armor[0].length)
     .split("-----")[0]!
@@ -860,14 +863,15 @@ const DECODE_LAYERS = 3;
  * The secret a caller-visible value leaks, or undefined. The guard decodes
  * the value itself rather than trusting redaction's list of forms: JSON
  * escapes, percent escapes in either hex case, and base64 or base64url runs
- * at any alignment, nested up to three layers. It finds any start of a
- * secret that reaches `LEAK_PREFIX_UNITS` past its public framing, so a
- * truncated echo leaks too and a printed PEM header does not.
+ * at any alignment, nested up to three layers. It finds any run of
+ * `LEAK_RUN_UNITS` units of a secret past its public framing and before a PEM
+ * key's closing armor, so a truncated or cut echo leaks too and a printed PEM
+ * header does not.
  *
- * Not detected: a shorter start, in any encoding; a fragment that does not
- * start the secret; a secret whose case was changed. A base64 run is decoded
- * only from 11 characters (8 bytes), so the base64 of a fragment of 7 bytes
- * or fewer is never read; any start the guard looks for is longer.
+ * Not detected: a shorter run, in any encoding; a secret whose case was
+ * changed. A base64 run is decoded only from 11 characters (8 bytes), so the
+ * base64 of a fragment of 7 bytes or fewer is never read; any run the guard
+ * looks for that a base64 run of 11 characters holds is decoded.
  */
 export function leakedSecret(value: unknown, secrets: Record<string, string>): string | undefined {
   const views = new Set([JSON.stringify(value) ?? ""]);
@@ -885,9 +889,13 @@ export function leakedSecret(value: unknown, secrets: Record<string, string>): s
     }
     layer = next;
   }
+  const texts = [...views];
   for (const [name, secret] of Object.entries(secrets)) {
-    const start = secret.slice(0, publicFraming(secret) + LEAK_PREFIX_UNITS);
-    if (start && [...views].some((view) => view.includes(start))) return name;
+    const end = PEM_END.exec(secret)?.index ?? secret.length;
+    for (let at = publicFraming(secret); at + LEAK_RUN_UNITS <= end; at++) {
+      const run = secret.slice(at, at + LEAK_RUN_UNITS);
+      if (texts.some((view) => view.includes(run))) return name;
+    }
   }
   return undefined;
 }

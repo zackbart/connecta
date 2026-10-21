@@ -43,6 +43,7 @@ import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSch
 import { keys, optionsOf } from "../../config-schema.js";
 import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 
 /** CCB's v2 media type. The API and its token endpoint both require it. */
 export const CCB_MEDIA_TYPE = "application/vnd.ccbchurch.v2+json";
@@ -320,8 +321,8 @@ function endpointPartition(toolName: string, raw: unknown): string {
 // Transport and typed failures
 // ---------------------------------------------------------------------------
 
-function errorDetail(payload: unknown, status: number): string {
-  const root = asRecord(payload);
+function errorDetail(payload: unknown, status: number, ctx: ConnectorContext): string {
+  const root = asRecord(redactBeforeCut(ctx, payload));
   const parts: string[] = [];
   for (const key of ["message", "error_description", "error"]) {
     const value = root[key];
@@ -337,7 +338,7 @@ function errorDetail(payload: unknown, status: number): string {
       if (typeof message === "string" && message.trim()) parts.push(message.trim());
     }
   }
-  const detail = parts.join("; ").slice(0, 500);
+  const detail = redactBeforeCut(ctx, parts.join("; ")).slice(0, 500);
   return detail ? `CCB HTTP ${status}: ${detail}` : `CCB returned HTTP ${status}.`;
 }
 
@@ -364,8 +365,8 @@ function rateLimitWaitMs(headers: Headers, payload: unknown): number | undefined
  * lacks the permission in CCB. CCB answers a permission gap with 403 and an
  * absence with 404, so 404 is a genuine `not_found`.
  */
-function ccbFailure(status: number, headers: Headers, payload: unknown): ConnectorCallError {
-  const detail = errorDetail(payload, status);
+function ccbFailure(status: number, headers: Headers, payload: unknown, ctx: ConnectorContext): ConnectorCallError {
+  const detail = errorDetail(payload, status, ctx);
   if (status === 429) {
     const wait = rateLimitWaitMs(headers, payload);
     return new ConnectorCallError(
@@ -427,7 +428,7 @@ async function callCcb(send: GuardedTransport, request: GuardedRequest, ctx: Con
   return await send(request, ctx, async (response) => {
     const parsed = await response.jsonResult();
     if (!response.ok) {
-      throw ccbFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
+      throw ccbFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined, ctx);
     }
     if (!("value" in parsed)) {
       throw new ConnectorCallError("connector_call_failed", "CCB returned a successful response that is not JSON.", {

@@ -4,7 +4,7 @@ import { defineGoldenSpec, type SeenRequest, type StubResponse } from "../harnes
 import { PRIVATE_KEY } from "../rsa-fixture.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const ACCESS_TOKEN = "golden-google-access-token/drive+=";
+const ACCESS_TOKEN = "gD8m3Wz7Kq1Xv5/r9+=";
 
 const FILE = {
   id: "f1",

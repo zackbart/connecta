@@ -2,6 +2,7 @@ import { Deferred, Duration, Effect } from "effect";
 import { admit, provideAdmissionProgram } from "./runtime/admission.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
 import type { AdmittingExecutor, AdmissionSnapshot, Executor, ExecutorLease } from "./types.js";
+import { keepErrorName } from "./redaction-identity.js";
 
 export type ExecutorAdmissionErrorCode = "executor_overloaded" | "executor_cancelled" | "executor_closed";
 
@@ -26,6 +27,7 @@ export class ExecutorAdmissionError extends Error {
     }
   }
 }
+keepErrorName(ExecutorAdmissionError, "ExecutorAdmissionError");
 
 /**
  * A lifecycle failure after the sandbox started running. It keeps the stable
@@ -38,6 +40,7 @@ export class ExecutorExecutionError extends ExecutorAdmissionError {
     this.name = "ExecutorExecutionError";
   }
 }
+keepErrorName(ExecutorExecutionError, "ExecutorExecutionError");
 
 export interface AdmissionLease {
   /** Time spent waiting behind active work. Zero for immediate admission. */

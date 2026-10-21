@@ -120,11 +120,12 @@ it.each(["rpc-error", "http-400", "isError", "structuredContent", "paging", "ser
       expect(text).not.toContain(TOKEN);
       expect(text).toContain("[redacted]");
       if (kind === "isError") {
+        // Each block keeps its own piece of the match as a placeholder.
         expect(
           JSON.parse(text)
             .result.content.map((block: { text: string }) => block.text)
             .join(""),
-        ).toBe("[redacted]");
+        ).toBe("[redacted][redacted]");
       }
     } finally {
       await app.close();

@@ -21,6 +21,7 @@ import {
 import { carriesWithheldLink, valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { NOTION_FILE_HOSTS, NOTION_VALUE_SAFETY, sanitizeLinks } from "./value-safety.js";
+import { redactBeforeCut, requestSentSecrets } from "../../sent-secrets.js";
 
 /** Notion's REST origin. Every request this connector sends goes to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -372,7 +373,7 @@ const VENDOR: RestVendor = {
   // Not an envelope to unwrap: page Markdown carries pre-signed file links
   // inside its text, where redaction's URL rule cannot reach. Every success
   // response passes here, named tools and paging included.
-  result: sanitizeLinks,
+  result: (body, _call, _response, ctx) => sanitizeLinks(redactBeforeCut(ctx, protectRichText(ctx, body))),
   admit: refuseWithheldLinks,
   page,
   upload:
@@ -419,6 +420,44 @@ const id = (value: unknown): string => encodeURIComponent(String(value));
 function plainText(value: unknown): string {
   if (!Array.isArray(value)) return "";
   return value.map((run: any) => (typeof run?.plain_text === "string" ? run.plain_text : "")).join("");
+}
+
+/** Rich text, wherever Notion returns it (titles, rich_text, captions, descriptions, table
+ * cells), holds two text lanes: each run's plain_text and its authored text.content. A value
+ * split across runs is matched joined in both before projections or raw branches copy either.
+ * Only the runs a match touches change, so public runs keep their links and annotations; rich
+ * text Notion stopped listing (`has_more` beside it) also loses only its unfinished tail. */
+function protectRichText(ctx: ConnectorContext, body: unknown): unknown {
+  const pending: [unknown, boolean][] = [[body, false]];
+  while (pending.length) {
+    const [value, bounded] = pending.pop()!;
+    if (!value || typeof value !== "object") continue;
+    if (
+      Array.isArray(value) &&
+      value.length &&
+      value.every((run) => isRecord(run) && typeof run.plain_text === "string")
+    )
+      protectRuns(ctx, value as Record<string, any>[], bounded);
+    else {
+      const cut = isRecord(value) && value.has_more === true;
+      for (const child of Object.values(value)) pending.push([child, cut]);
+    }
+  }
+  return body;
+}
+
+function protectRuns(ctx: ConnectorContext, runs: Record<string, any>[], bounded: boolean): void {
+  for (const authored of [false, true]) {
+    const parts = runs.map((run) =>
+      authored && typeof run.text?.content === "string" ? (run.text.content as string) : (run.plain_text as string),
+    );
+    const safe = requestSentSecrets(ctx).parts(parts, bounded);
+    runs.forEach((run, index) => {
+      if (safe[index] === parts[index]) return;
+      if (!authored) run.plain_text = safe[index];
+      else if (isRecord(run.text) && typeof run.text.content === "string") run.text.content = safe[index];
+    });
+  }
 }
 
 /**
@@ -549,7 +588,8 @@ function projectProperties(source: unknown, select: string[] | undefined): Proje
   if (!source || typeof source !== "object") return { properties, truncated };
   for (const [name, value] of Object.entries(source as Record<string, unknown>)) {
     if (select && !select.includes(name)) continue;
-    properties[name] = projectPropertyValue(value);
+    const projected = projectPropertyValue(value);
+    properties[name] = projected;
     if ((value as any)?.has_more === true) {
       truncated.push({ name, id: typeof (value as any)?.id === "string" ? (value as any).id : null });
     }

@@ -228,6 +228,37 @@ read verdicts (including read-only POST); writes remain destructive regardless
 of method. H9's projection/truncation and H14's confinement and safety split
 still apply.
 
+## Sent-secret text safety (INV-5)
+
+Redact downstream values before cutting, trimming, collapsing whitespace,
+normalizing, or extracting text from them. Use `redactBeforeCut(ctx, …)` from
+`src/sent-secrets.ts`; Workspace products use `clampText(ctx, …)` for bounded
+fields. Redact a joined text value before deriving titles, summaries, previews,
+or other copies. A failure mapper behind `restTools()` receives a redacted
+body; a `result` hook that throws one redacts it with `ctx`.
+
+Text read only up to a bound, or that the vendor stopped listing, takes
+`redactBoundedRead(ctx, …)` on the original text. It merges complete matches
+and unfinished-tail matches before replacing anything, including one-unit
+prefixes. Shared-prefix tails can therefore be conservatively withheld.
+Protect every representation, including raw branches. If extraction's source
+changed under redaction, return the marker rather than extracting from it.
+Bind paging cursors to the redacted representation when offsets count its
+units, even when the vendor also supplies a revision. A cursor an agent decodes
+holds downstream values only redacted: pass each vendor token or id through
+`redactSentSecrets(ctx, …)` before placing it, a value it only compares through
+a digest, and encode the claims with `encodeForAgent(ctx, json, { url: true,
+claims: true })`. Every string in the claims is checked under payload rules, so
+one placed raw withholds the cursor; keep Connecta's own counts as numbers.
+
+The output boundary matches whole forms and every eight-unit run across adjacent
+leaves, so it cannot see a value split into pieces shorter than eight with other
+fields between them, as rich-text runs or styled text runs are. Match such a
+lane joined with `requestSentSecrets(ctx).parts(pieces, bounded)` before the
+pieces are copied, and write each returned piece back. Return binary content as
+`{ format: "base64", content }` (or MCP `blob`/`data`) so the boundary decodes it;
+never base64-encode bytes into another field.
+
 ## Value safety
 
 Value safety is required for every `api` or `dual` provider. Under the

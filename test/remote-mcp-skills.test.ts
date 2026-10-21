@@ -192,8 +192,10 @@ describe("remote MCP Skills transport", () => {
       const ctx = context(principal!, credential!);
       expect(await f.downstream.list(ctx)).toMatchObject([{ frontmatter: { description: `manifest-${credential}` } }]);
       expect(await f.downstream.read(skill().uri, ctx)).toEqual([{ uri: skill().uri, text: `body-${credential}` }]);
+      // `-a-rotated` is ten units of the sent `token-a-rotated`, a fragment the read redacts;
+      // the shorter tokens are below the credential floor and never registered.
       expect(await f.connector.readResource!(ordinaryUri, ctx)).toMatchObject({
-        contents: [{ uri: ordinaryUri, text: `body-${credential}` }],
+        contents: [{ uri: ordinaryUri, text: credential === "a-rotated" ? "body[redacted]" : `body-${credential}` }],
       });
       await f.connector.closeScope!(ctx);
     }

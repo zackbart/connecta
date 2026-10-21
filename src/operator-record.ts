@@ -48,6 +48,7 @@
 // boundary removes credentials used by the upstream request from those answers, including
 // allowed diagnostics, tool results and nested error causes/data (INV-5).
 
+import { followRedactedCopies, keepErrorName } from "./redaction-identity.js";
 import {
   classificationCode,
   ConnectorCallError,
@@ -209,6 +210,8 @@ export function labelErrorClass(ctor: { readonly prototype: object }, label: str
   if (!LABEL_RE.test(label)) throw new TypeError(`Invalid error class label "${label}"`);
   labels.set(ctor.prototype, label);
   labelNames.add(label);
+  // A label is a literal and the class's own name, so redaction keeps it as its instances' name.
+  keepErrorName(ctor, label);
 }
 
 for (const [ctor, label] of [
@@ -313,7 +316,7 @@ function defined<K extends string, V>(key: K, value: V | undefined): { [P in K]?
  * Facts attached to failures by identity, never as properties: nothing about
  * the failure's own shape changes, and nothing a caller can see grows.
  */
-const attached = new WeakMap<object, CarriedFacts>();
+const attached = followRedactedCopies(new WeakMap<object, CarriedFacts>());
 
 /** Note what connecta knows about `failure` for any record made of it later. */
 export function attachFailureFacts<T>(failure: T, facts: FailureFacts): T {
@@ -382,7 +385,7 @@ export interface FailureRecord {
   readonly errno?: string;
 }
 
-const built = new WeakSet<object>();
+const built = followRedactedCopies(new WeakSet<object>());
 
 function count(value: unknown, max: number): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max
@@ -425,7 +428,7 @@ function checkedSubject(subject: FailureSubject): object {
  * identity. A plain object is read as one only when registered here: a thrown
  * object shaped like a classification is just a thrown object.
  */
-const classifications = new WeakSet<object>();
+const classifications = followRedactedCopies(new WeakSet<object>());
 
 /** Vouch for `details` as a classification connecta itself computed. */
 export function classifiedFailure<T extends CallErrorDetails>(details: T): T {
@@ -576,7 +579,7 @@ interface OwnStatus {
   readonly failure?: unknown;
 }
 
-const ownStatuses = new WeakMap<object, OwnStatus>();
+const ownStatuses = followRedactedCopies(new WeakMap<object, OwnStatus>());
 
 function snapshot(status: ConnectorStatus, failure?: unknown): OwnStatus {
   return {

@@ -327,7 +327,7 @@ export async function checkProgramPagingFailure(executor: Executor): Promise<voi
 /** A completed program return uses the direct stash without replaying its write. */
 export async function checkProgramReturnPaging(executor: Executor): Promise<void> {
   // Also crosses the QuickJS per-message IPC ceiling and exercises JSON escaping.
-  const credential = "program-return-credential";
+  const credential = "pR3-x8Wm-5Kq2-Tz7V";
   const value = { text: '雪"\\\n'.repeat(150_000), credential };
   const expected = { ...value, credential: "[redacted]" };
   let writes = 0;

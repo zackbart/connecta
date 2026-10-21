@@ -12,7 +12,7 @@ import {
   goldenFiles,
   GOLDEN_NOW,
   type Replies,
-  LEAK_PREFIX_UNITS,
+  LEAK_RUN_UNITS,
   leakedSecret,
   secretEncodings,
   type FetchSeam,
@@ -205,16 +205,28 @@ function withoutForms(forms: (value: string) => string[]): void {
   });
 }
 
-/** Every provider whose echo fixture does not fail with a leak. */
-async function echoesThatPass(): Promise<string[]> {
+/** Every provider's echo observation, captured before any mutation. */
+async function echoBaselines(): Promise<Map<string, string>> {
+  const baselines = new Map<string, string>();
+  for (const spec of specs) baselines.set(spec.provider, await captureCall(spec, "echo"));
+  return baselines;
+}
+
+/** Every provider whose echo fixture neither fails with a leak nor, given unmutated baselines,
+ * changes. Redaction's fragment matching can cover part of a dropped form through the forms
+ * that remain, so the rest of the echo then shows in the observation instead of a leak. */
+async function echoesThatPass(baselines?: Map<string, string>): Promise<string[]> {
   const passed: string[] = [];
   for (const spec of specs) {
     const leak = new RegExp(`^${spec.provider} .* echoes sent secrets: the caller-visible result leaks <secret:`);
-    const error = await captureCall(spec, "echo").then(
-      () => undefined,
-      (caught: unknown) => caught,
+    const outcome = await captureCall(spec, "echo").then(
+      (observation) => ({ observation }),
+      (caught: unknown) => ({ caught }),
     );
-    if (!(error instanceof Error && leak.test(error.message))) passed.push(spec.provider);
+    const leaked = "caught" in outcome && outcome.caught instanceof Error && leak.test(outcome.caught.message);
+    const changed =
+      "observation" in outcome && baselines !== undefined && outcome.observation !== baselines.get(spec.provider);
+    if (!leaked && !changed) passed.push(spec.provider);
   }
   return passed;
 }
@@ -680,7 +692,10 @@ describe(suiteName, { timeout: 120_000 }, () => {
       encodeURIComponent(secretEncodings(secret).find((form) => form.startsWith("\\u"))!),
       base64(encodeURIComponent(secret)),
       JSON.stringify(JSON.stringify({ token: secret })),
-      secret.slice(0, LEAK_PREFIX_UNITS),
+      secret.slice(0, LEAK_RUN_UNITS),
+      // A run that does not start the secret, as a cut leaves it.
+      secret.slice(1),
+      secret.slice(-LEAK_RUN_UNITS - 1, -1),
     ];
     expect(secretEncodings(secret)).toEqual([
       secret,
@@ -695,11 +710,11 @@ describe(suiteName, { timeout: 120_000 }, () => {
       expect(leakedSecret({ message: `rejected ${leak} today` }, secrets), leak).toBe("probe");
       expect(leakedSecret({ [leak]: true }, secrets), leak).toBe("probe");
     }
-    // Shorter or later fragments, a changed case, and base64 with its case changed are not the secret.
+    // Shorter runs, a changed case, and base64 with its case changed are not the secret.
     for (const safe of [
-      secret.slice(0, LEAK_PREFIX_UNITS - 1),
-      secret.slice(1),
-      secret.toUpperCase(),
+      secret.slice(0, LEAK_RUN_UNITS - 1),
+      secret.slice(5, 5 + LEAK_RUN_UNITS - 1),
+      secret.slice(0, 12).toUpperCase(),
       base64(secret).toLowerCase(),
       "[redacted]",
     ]) {
@@ -734,12 +749,12 @@ describe(suiteName, { timeout: 120_000 }, () => {
       for (const safe of [
         "Paste the key from -----BEGIN PRIVATE KEY----- to -----END PRIVATE KEY-----.",
         `${secret.slice(0, opening)}…`,
-        secret.slice(0, opening + LEAK_PREFIX_UNITS - 1),
+        secret.slice(0, opening + LEAK_RUN_UNITS - 1),
       ]) {
         expect(leakedSecret({ message: safe }, secrets), safe).toBeUndefined();
       }
       for (const leak of [
-        secret.slice(0, opening + LEAK_PREFIX_UNITS),
+        secret.slice(0, opening + LEAK_RUN_UNITS),
         secret,
         base64(secret),
         JSON.stringify({ private_key: secret }),
@@ -752,30 +767,38 @@ describe(suiteName, { timeout: 120_000 }, () => {
   it("INV-5: fails every provider's echo fixture, before placeholders, when sent-secret redaction is disabled", async () => {
     vi.doMock("../src/sent-secrets.js", async () => {
       const module = await vi.importActual<typeof import("../src/sent-secrets.js")>("../src/sent-secrets.js");
+      // Every entry point that returns redacted text: the projection, wire text, provider
+      // lanes, and bounded reads.
       vi.spyOn(module.SentSecrets.prototype, "redact").mockImplementation((value) => value);
+      vi.spyOn(module.SentSecrets.prototype, "text").mockImplementation((value) => value);
+      vi.spyOn(module.SentSecrets.prototype, "parts").mockImplementation((parts) => parts);
+      vi.spyOn(module.SentSecrets.prototype, "redactOpenTail").mockImplementation((value) => value);
       return module;
     });
     await expect(captureGoldens(infisical)).rejects.toThrow(/the caller-visible result leaks <secret:/);
     expect(await echoesThatPass()).toEqual([]);
   });
 
-  it("INV-5: fails every provider's echo fixture when redaction stops registering percent-encoded forms", async () => {
+  it("INV-5: fails or changes every provider's echo fixture when redaction stops registering percent-encoded forms", async () => {
+    const baselines = await echoBaselines();
     withoutForms((value) => [
       new URLSearchParams({ value }).toString().slice(6),
       encodeURIComponent(value),
       encodeURI(value),
     ]);
-    expect(await echoesThatPass()).toEqual([]);
+    expect(await echoesThatPass(baselines)).toEqual([]);
   });
 
-  it("INV-5: fails every provider's echo fixture when redaction stops registering base64 forms", async () => {
+  it("INV-5: fails or changes every provider's echo fixture when redaction stops registering base64 forms", async () => {
+    const baselines = await echoBaselines();
     withoutForms((value) => [base64(value), base64Url(value)]);
-    expect(await echoesThatPass()).toEqual([]);
+    expect(await echoesThatPass(baselines)).toEqual([]);
   });
 
-  it("INV-5: fails every provider's echo fixture when redaction stops registering the base64url form alone", async () => {
+  it("INV-5: fails or changes every provider's echo fixture when redaction stops registering the base64url form alone", async () => {
+    const baselines = await echoBaselines();
     withoutForms((value) => [base64Url(value)].filter((form) => form !== base64(value)));
-    expect(await echoesThatPass()).toEqual([]);
+    expect(await echoesThatPass(baselines)).toEqual([]);
   });
 
   it("matches the stored goldens without a mutation, so no earlier capture's state decided the tests above", async () => {

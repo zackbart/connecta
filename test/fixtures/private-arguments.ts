@@ -1,6 +1,8 @@
 import type { JsonSchema } from "../../src/types.js";
 
-export const PRIVATE_MARKER = "private-argument-marker-987654321";
+// High-entropy, like a real private value: an eight-unit run of ordinary words would also
+// redact Connecta's own guidance wherever those words recur.
+export const PRIVATE_MARKER = "qL8!mP2#vX6$kN4?rS9@tW3+eZ7=F5/u";
 const privateField = { type: "string", writeOnly: true };
 const config = { type: "object", properties: { label: { type: "string" }, password: privateField } };
 const value = { label: "database", password: PRIVATE_MARKER };

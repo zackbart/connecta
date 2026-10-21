@@ -51,11 +51,13 @@
  *    admitted identity to a Workspace address in `subject`. Give each pool
  *    agents use an `owner`, the address they act as there.
  */
+import { followRedactedCopies } from "../../../redaction-identity.js";
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../../errors.js";
+import { redactBeforeCut } from "../../../sent-secrets.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
 import { isWorkspaceAddress } from "../../../workspace-address.js";
 import { tagWorkspaceSubject } from "../../../workspace-subject.js";
@@ -280,7 +282,7 @@ const REASON_TOKEN = /^[A-Za-z0-9_.]{1,64}$/;
 const MAX_REASONS = 8;
 
 /** Google's reasons for each failure this layer mapped, beside the error. */
-const googleReasons = new WeakMap<ConnectorCallError, readonly string[]>();
+const googleReasons = followRedactedCopies(new WeakMap<ConnectorCallError, readonly string[]>());
 
 /**
  * Google's machine-readable reasons for a failure the shared client mapped:
@@ -336,7 +338,7 @@ interface SendFacts {
   serverError?: boolean;
 }
 
-const googleOutcomes = new WeakMap<object, GoogleOutcome>();
+const googleOutcomes = followRedactedCopies(new WeakMap<object, GoogleOutcome>());
 
 function outcome<T>(error: T, facts: GoogleOutcome): T {
   if (error !== null && typeof error === "object") googleOutcomes.set(error, Object.freeze({ ...facts }));
@@ -359,8 +361,9 @@ function apiFailure(
   headers: Headers,
   payload: unknown,
   options: GoogleRequestOptions,
+  ctx: ConnectorContext,
 ): ConnectorCallError {
-  const failure = classifyApiFailure(context, status, headers, payload, options);
+  const failure = classifyApiFailure(context, status, headers, payload, options, ctx);
   const error = asRecord(asRecord(payload)["error"]);
   const reasons = [...reasonsOf(error)].filter((reason) => REASON_TOKEN.test(reason)).slice(0, MAX_REASONS);
   googleReasons.set(failure, Object.freeze(reasons));
@@ -373,10 +376,12 @@ function classifyApiFailure(
   headers: Headers,
   payload: unknown,
   options: GoogleRequestOptions,
+  ctx: ConnectorContext,
 ): ConnectorCallError {
   const { provider, api, scopes } = context;
   const error = asRecord(asRecord(payload)["error"]);
-  const message = typeof error["message"] === "string" ? error["message"].trim().slice(0, 500) : "";
+  const message =
+    typeof error["message"] === "string" ? redactBeforeCut(ctx, error["message"]).trim().slice(0, 500) : "";
   const detail = message ? `${provider}: ${message}` : `${provider} returned HTTP ${status}.`;
   const reasons = reasonsOf(error);
   const precondition = PRECONDITION_REASONS.some((reason) => reasons.has(reason));
@@ -740,7 +745,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     // — a body past the ceiling, a stream that broke off: the status alone
     // still says what to do next.
     if (status !== undefined && status >= 400 && !ctx.signal?.aborted) {
-      const mapped = apiFailure(failure, status, facts.headers ?? new Headers(), undefined, requestOptions);
+      const mapped = apiFailure(failure, status, facts.headers ?? new Headers(), undefined, requestOptions, ctx);
       const unknown = serverErrorOnWrite(mapped, status, method, requestOptions);
       return unknown
         ? outcome(unknown, { dispatched: true, status, phase: "server-error" })
@@ -850,7 +855,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
           if (!response.ok && !(headed.prefixOnly === true && isEmptyRange(response))) {
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
-            const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions);
+            const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions, ctx);
             const unknown = serverErrorOnWrite(mapped, response.status, headed.method, requestOptions);
             if (unknown) {
               facts.serverError = true;

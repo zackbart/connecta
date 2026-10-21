@@ -23,7 +23,7 @@ const CHARGE = (id: string, amount: number) => ({
 export default defineGoldenSpec({
   provider: "stripe",
   create: () => stripe("billing", { purpose: "Rehearsing billing changes", auth: { type: "apiKey" }, mode: "sandbox" }),
-  credential: "sk_test_golden_secret_key/123+456=",
+  credential: "sk_test_sK3x8Qm1Vz5/123+456=",
   failureReply: (status, message) => ({
     status,
     headers: { "request-id": "req_golden" },
