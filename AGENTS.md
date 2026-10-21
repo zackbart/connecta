@@ -56,9 +56,9 @@ instructions in `examples/` and `documentation/`.
 `pnpm run check:fast` runs `check:static`, then Vitest's built-in
 `--changed origin/main` selection on the Node project. It is a partial inner
 loop: INV and spec evidence checks are skipped. Fetch `origin/main` before
-using it. Changed package manifests or Vitest configuration can select every
-suite; deleted modules require the full `check` because their import graph
-is gone. Use ordinary Vitest file/name filters for a focused run.
+using it. Configuration changes need the full `check`; deleted modules also
+need it because their import graph is gone. Use ordinary Vitest file/name
+filters for a focused run.
 
 `pnpm run check` must pass before you claim anything is done. It runs:
 
@@ -78,7 +78,8 @@ CI runs six jobs in parallel on every pull request and main push: `static`,
 `node`, `workers`, `build`, `browser`, and `security`. They run `check:static`,
 `test:node`, `test:workers`, `check:build` plus `check:package`, `test:browser`,
 and `check:security`, respectively. There is no path, planning-only, or goldens
-tier selector. Provider goldens always use the full tier. Each dependency
+tier selector. Provider goldens always use the full tier on both runtimes;
+harness self-tests run once, on Node. Each dependency
 install uses the frozen lockfile and shared pnpm cache.
 
 `check` is the single required status and depends on all six jobs. Its

@@ -40,6 +40,27 @@ describe("deployment shapes", () => {
     expect(options).toEqual(["loader: env.LOADER"]);
   });
 
+  it("pins hosted MCP callbacks in the Worker deployment instructions", () => {
+    const agents = readWorker("AGENTS.md");
+    const readme = readWorker("README.md");
+    const source = readWorker("src", "connecta.config.ts");
+    const stack = readWorker("alchemy.run.ts");
+    const callbacks = [
+      "https://claude.ai/api/mcp/auth_callback",
+      "https://chatgpt.com/connector_platform_oauth_redirect",
+      "https://chatgpt.com/connector/oauth/*",
+    ];
+    for (const callback of callbacks) {
+      expect(agents).toContain(callback);
+      expect(readme).toContain(callback);
+      expect(source).toContain(callback);
+      expect(stack).toContain(`"${callback}"`);
+    }
+    expect(agents).toContain("oauth_configuration.dynamic_client_registration.allowed_uris");
+    expect(readme).toContain('"dynamic_client_registration": {');
+    expect(readme).toContain('"allowed_uris": [');
+  });
+
   // Alchemy deploys the Worker; wrangler.jsonc stays for `wrangler dev`.
   it("deploys the Worker with an Alchemy stack that keeps its state and secrets", () => {
     const stack = readWorker("alchemy.run.ts");
