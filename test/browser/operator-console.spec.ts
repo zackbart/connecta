@@ -3,8 +3,9 @@ import { accessTokens } from "../../src/access-tokens.js";
 import { activityHistory } from "../../src/activity.js";
 import type { OperatorUiContractV2 } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
+import { OPERATOR_V2_MEMBER } from "../fixtures/operator-contract-v2.js";
 import { memoryStorage } from "../../src/storage/memory.js";
-import { crowdedMaintainer, OPERATOR_V2_SLOTS } from "../fixtures/operator-console.js";
+import { crowdedMaintainer, memberWithNotion, OPERATOR_V2_SLOTS } from "../fixtures/operator-console.js";
 import {
   createOperatorVisualFixture,
   operatorVisualVariant,
@@ -176,4 +177,58 @@ test.describe("agent tokens", () => {
     ]);
     await noCsp(page);
   });
+});
+
+test("the member credential form submits named fields and masks its secret input", async ({ page }) => {
+  const sent = await install(page, memberWithNotion(["save"]), ({ method, path }) =>
+    method === "PUT" && path === "/ui/credentials/notion" ? { json: { ok: true } } : undefined,
+  );
+  await page.goto(VISUAL_ORIGIN + "/");
+  await page.getByRole("button", { name: "Add credential Notion", exact: true }).click();
+  await page.getByLabel("Workspace", { exact: true }).fill("acme");
+  const token = page.getByLabel("Token", { exact: true });
+  await expect(token).toHaveAttribute("type", "password");
+  await token.fill("secret_ui834_member_value");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect
+    .poll(() => sent.filter((r) => r.method === "PUT").map((r) => ({ ...r, body: JSON.parse(r.body!) })))
+    .toEqual([
+      {
+        method: "PUT",
+        path: "/ui/credentials/notion",
+        body: { values: { workspace: "acme", token: "secret_ui834_member_value" } },
+      },
+    ]);
+});
+
+test("member OAuth controls connect, reconnect and confirm disconnect", async ({ page }) => {
+  const contract = structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2;
+  const calendar = contract.connectors.find((c) => c.id === "calendar")!;
+  calendar.connection = { state: "auth_required", problem: "oauth_required" };
+  calendar.manage = { kind: "oauth", actions: ["connect", "disconnect"] };
+  const sent = await install(page, contract, ({ method, path }) => {
+    if (!path.startsWith("/ui/oauth/")) return undefined;
+    return method === "POST" ? { json: { state: "ok" } } : { json: { ok: true } };
+  });
+  await page.goto(VISUAL_ORIGIN + "/");
+  await page.getByRole("button", { name: "Connect Calendar", exact: true }).click();
+  await expect(page.locator("#oauthNotice-calendar")).toHaveText("Connected.");
+  await page.getByRole("button", { name: "Reconnect Slack", exact: true }).click();
+  await page
+    .getByRole("group", { name: /^Reconnect Slack\?/ })
+    .getByRole("button", { name: "Reconnect", exact: true })
+    .click();
+  await expect(page.locator("#oauthNotice-slack")).toHaveText("Connected.");
+  await page.getByRole("button", { name: "Disconnect Slack", exact: true }).click();
+  expect(mutations(sent)).toEqual(["POST /ui/oauth/calendar?mode=continue", "POST /ui/oauth/slack?mode=restart"]);
+  await page
+    .getByRole("group", { name: /^Disconnect your Slack account\?/ })
+    .getByRole("button", { name: "Disconnect", exact: true })
+    .click();
+  await expect(page.locator("#oauthNotice-slack")).toHaveText("Disconnected.");
+  expect(mutations(sent)).toEqual([
+    "POST /ui/oauth/calendar?mode=continue",
+    "POST /ui/oauth/slack?mode=restart",
+    "DELETE /ui/oauth/slack",
+  ]);
 });
