@@ -127,7 +127,10 @@ const STATES: ReadonlySet<string> = new Set([...STATUS_STATES, "failed"]);
 
 /** Inbound denial facts, never identity text or provider diagnostics. */
 export type AuthDenialReason =
+  | "authentication_abandoned_saturated"
+  | "authentication_busy"
   | "authentication_failed"
+  | "authentication_unreachable"
   | "authorization_header_invalid"
   | "token_type_mismatch"
   | "oauth_verification_failed"
@@ -149,7 +152,10 @@ export type AuthDenialReason =
   | "not_pool_member";
 
 const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
+  "authentication_abandoned_saturated",
+  "authentication_busy",
   "authentication_failed",
+  "authentication_unreachable",
   "authorization_header_invalid",
   "token_type_mismatch",
   "oauth_verification_failed",
@@ -476,6 +482,8 @@ export function failureRecord(subject: FailureSubject, failure?: unknown): Failu
  * reviewed line here, never a string assembled at the call site.
  */
 export type FailureEvent =
+  | "Authentication admission refused"
+  | "Authentication released after its pending work became unreachable"
   | "negotiation cache read failed"
   | "negotiation cache write failed"
   | "pool tool grant is unreachable"

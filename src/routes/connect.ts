@@ -99,7 +99,14 @@ async function connect(context: RouteContext): Promise<Response> {
       headers: { Location: target.href, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
     });
   };
-  const authz = await authorizeUiIdentity(request, baseUrl, opts.config.auth, "OAuth connection", runtimeContext);
+  const authz = await authorizeUiIdentity(
+    request,
+    baseUrl,
+    opts.config.auth,
+    "OAuth connection",
+    runtimeContext,
+    opts.config.logger,
+  );
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.
     // The sign-in page returns to this link, which then sends a maintainer on

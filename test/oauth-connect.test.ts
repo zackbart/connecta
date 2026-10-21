@@ -9,6 +9,9 @@ import type { Connector } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+import { authenticate } from "../src/auth-admission.js";
+import type { AuthResult } from "../src/types.js";
+import { silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const AS = "https://consent.example/authorize";
@@ -146,6 +149,37 @@ function setup(
     },
   };
 }
+
+it("INV-7: connection starts and callbacks preserve retryable pre-auth refusals without consuming consent", async () => {
+  const flow = setup("access", "personal");
+  const { authorizationUrl } = await flow.authorize();
+  const begun = await flow.browser(authorizationUrl, "alice");
+  expect(begun.status).toBe(302);
+  const retryLink = await flow.authorize();
+  const release: Array<(result: AuthResult) => void> = [];
+  const pending = Array.from({ length: 16 }, () =>
+    authenticate(
+      { kind: "test", authorize: () => new Promise<AuthResult>((resolve) => release.push(resolve)) },
+      new Request(BASE),
+      BASE,
+      undefined,
+      silentLogger,
+    ),
+  );
+  try {
+    for (const response of [await flow.browser(retryLink.authorizationUrl, "alice"), await flow.callback("alice")]) {
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("1");
+      expect(await response.json()).toMatchObject({ error: { code: "authentication_busy", retryable: true } });
+    }
+    expect(flow.finishAuth).not.toHaveBeenCalled();
+  } finally {
+    release.forEach((resolve) => resolve({ ok: false, response: new Response(null, { status: 401 }) }));
+    await Promise.all(pending);
+  }
+  expect((await flow.callback("alice")).status).toBe(200);
+  expect(flow.finishAuth).toHaveBeenCalledTimes(1);
+});
 
 it("INV-4: rejects re-encoded payloads with the original valid signature and requests a fresh link", async () => {
   const flow = setup("clerk", "personal");

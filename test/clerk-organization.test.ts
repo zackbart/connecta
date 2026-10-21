@@ -840,7 +840,11 @@ describe("clerkAuth organization Backend API bounds", () => {
         await held[index]!.sent;
       }
       const refused = await Promise.all(Array.from({ length: 48 }, (_, index) => request(`user_over_${index}`)));
-      for (const response of refused) await busy({ ok: false, response });
+      for (const response of refused) {
+        expect(response.status).toBe(503);
+        expect(response.headers.get("Retry-After")).toBe("1");
+        expect(await response.json()).toMatchObject({ error: { code: "authentication_busy", retryable: true } });
+      }
       expect(lookups()).toHaveLength(16);
       for (const lookup of held) lookup.answer(false);
       for (const response of await Promise.all(pending)) {

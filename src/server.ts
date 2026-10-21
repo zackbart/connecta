@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { authenticationSnapshot } from "./auth-admission.js";
 import { notFoundResponse } from "./branding.js";
 import { aggregateCallAdmissionSnapshots } from "./call-admission.js";
 import { isAdmittingExecutor } from "./executor-admission.js";
@@ -57,6 +58,7 @@ export function createFetchHandler(
       admission: {
         policy: "global-fifo",
         requests: opts.requestAdmission.snapshot(),
+        authentication: authenticationSnapshot(),
         code: codeAdmission ?? { managedByExecutor: true },
         downstreamCalls: {
           policy: "connector-partitioned-per-runtime",

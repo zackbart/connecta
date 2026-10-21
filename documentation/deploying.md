@@ -98,9 +98,9 @@ need Managed OAuth, Dynamic Client Registration, and the documented redirect
 allowlist. Machines are declared agents: they use `/agent/<pool>` with the
 agent's `cta_` bearer as their only credential, once the
 [agent bypass application](#agent-endpoints-behind-cloudflare-access) exists;
-Access service identity alone is refused. Keep
-`enable_request_signal`, construct Connecta once per isolate, and pass `ctx`
-through to `fetch`. The example owns those details and
+Access service identity alone is refused. Keep `enable_request_signal` and
+`enable_weak_ref`, construct Connecta once per isolate, and pass `ctx` through
+to `fetch`. The example owns those details and
 [the machine-token procedure](../examples/worker/README.md#machine-tokens).
 
 Keep `unhandled_rejection_after_microtask_checkpoint` in both `alchemy.run.ts`
@@ -211,6 +211,24 @@ tokens and `aud_claim_enabled`. A person's operator session is not an MCP token.
 Several deployments can share one Clerk instance with one Organization each;
 [Clerk Organizations](./auth.md#one-clerk-instance-one-organization-per-deployment)
 owns that setup and its isolation tradeoff.
+
+Public deployments require ingress rate limiting on all authenticated routes,
+including agent, operator, connection-start, and callback paths. Connecta's
+fixed bound of 16 active inbound authorizations per loaded core/process or
+isolate fast-refuses with retryable 503 `authentication_busy` and `Retry-After: 1`.
+A separate allowance of 16 abandoned operations holds stalled work after its
+hard deadline plus one second of grace. While it is full, new authentication
+receives the same 503, the log records `authentication_abandoned_saturated`,
+and `/health` reports `admission.authentication.abandonedSaturated: true`.
+Stalled work counts until it settles or until the garbage collector frees
+everything that could settle it, as after Cloudflare cancels an invocation.
+That second release is eventual, never timed, and needs `FinalizationRegistry`:
+on Workers, `enable_weak_ref` or a compatibility date of 2025-05-05 or later.
+`/health` reports `admission.authentication.unreachableRelease`.
+These bounds limit outstanding work, not requests per second or a quota shared by several
+isolates or deployments. Budget ingress across the identity-provider account;
+see [authentication capacity](./auth.md#authentication-capacity-and-ingress-limiting)
+for route coverage and the interaction with MCP execution admission.
 
 Every deployment must set `readOnly` in its configuration; startup fails without
 it, and the template and Worker example set `readOnly: false`. Each named pool
