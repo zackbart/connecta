@@ -62,6 +62,8 @@ it.skipIf(!worker).each(["access", "agent"] as const)(
         async () => expect(await health()).toMatchObject({ active: 1, abandoned: 16, abandonedSaturated: true }),
         { timeout: 3_000 },
       );
+      // Every binding still runs, so every charge is reachable and counted.
+      expect((await status()).ids).toHaveLength(17);
       for (let i = 0; i < 4; i++) {
         const saturated = await start("saturated");
         expect(saturated.status).toBe(503);
@@ -119,8 +121,26 @@ async function collectUntil(pressure: () => Promise<string[]>, satisfied: (final
 const SENTINELS = 4;
 const sentinelsCollected = (prefix: string) => async (finalized: string[]) =>
   finalized.filter((name) => name.startsWith(prefix)).length >= 2;
-// The same allowance for released charges: all but one.
-const releasedBut = (via: Fetcher, lingering: number) => async () => (await total(via)) <= lingering;
+// Once workerd cancelled a wave's work, the collector may release any of
+// its charges at any moment, before the first look included. Assert only
+// that the count never grows, then the same allowance as for sentinels: all
+// but one released.
+async function releasedMonotonically(fixture: { via: Fetcher; pressure: () => Promise<string[]> }) {
+  let previous = 16;
+  for (let round = 0; round < 80; round++) {
+    const { active, abandoned } = await healthOf(fixture.via);
+    expect(active).toBe(0);
+    expect(abandoned).toBeLessThanOrEqual(previous);
+    if ((previous = abandoned) <= 1) return;
+    await fixture.pressure();
+  }
+  throw new Error(`Allocation pressure never released the cancelled charges (${previous} remain)`);
+}
+// Regression (round 6): collection pressure at once after cancellation,
+// before any look at the counters, may legally release every charge.
+async function collectEarly(pressure: () => Promise<string[]>) {
+  for (let round = 0; round < 4; round++) await pressure();
+}
 const binding = {
   control: async (path: string) => {
     await (await fetch(`${origin}/binding/${path}`)).text();
@@ -199,10 +219,11 @@ it.skipIf(!worker).each(["access", "agent"] as const)(
     const pending: Promise<unknown>[] = [];
     try {
       await binding.control("reset");
-      // Each invocation ends two seconds after its answer, as production's
-      // waitUntil limit would end it; no lookup ever settles.
+      // Each invocation runs on after its answer until the test closes its
+      // waitUntil window, as production's limit would end it; no lookup ever
+      // settles.
       const wave = Array.from({ length: 16 }, (_, i) =>
-        fixture.start(kind, `ended-${i}`, { "X-Wait-Until-Window": "2000" }),
+        fixture.start(kind, `ended-${i}`, { "X-Wait-Until-Window": "held" }),
       );
       pending.push(...wave.map((response) => response.catch(() => {})));
       await vi.waitFor(async () => expect(await binding.ids("ended-")).toHaveLength(16), { timeout: 10_000 });
@@ -210,19 +231,29 @@ it.skipIf(!worker).each(["access", "agent"] as const)(
         expect(response.status).toBe(kind === "access" ? 503 : 401);
         await response.text();
       }
-      // workerd ended every invocation and closed its upstream connection, so
-      // no settlement callback will ever run.
-      await vi.waitFor(async () => expect(await binding.ids("ended-")).toHaveLength(0), { timeout: 10_000 });
-      expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true });
+      // While every lookup still runs, every charge counts and admission
+      // refuses.
+      await vi.waitFor(
+        async () =>
+          expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true }),
+        { timeout: 3_000 },
+      );
       const refused = await fixture.start(kind, "refused");
       expect(await refused.json()).toMatchObject({ error: { code: "authentication_busy" } });
+      expect(await binding.ids("ended-")).toHaveLength(16);
+      // workerd ends every invocation and closes its upstream connection, so
+      // no settlement callback will ever run.
+      await (await fixture.via.fetch("https://connecta.test/__close-windows")).text();
+      await vi.waitFor(async () => expect(await binding.ids("ended-")).toHaveLength(0), { timeout: 10_000 });
       // Unreachable now, each token is freed and its charge released once.
-      await collectUntil(fixture.pressure, releasedBut(fixture.via, 1));
+      await collectEarly(fixture.pressure);
+      await releasedMonotonically(fixture);
       const recovered = await fixture.start(kind, "fast");
       expect(recovered.status).not.toBe(503);
       await recovered.text();
       expect(await total(fixture.via)).toBeLessThanOrEqual(1);
     } finally {
+      await (await fixture.via.fetch("https://connecta.test/__close-windows")).text();
       await binding.control("release");
       await Promise.all(pending);
     }
@@ -377,9 +408,9 @@ it.skipIf(!worker)(
     const pending: Promise<unknown>[] = [];
     try {
       await binding.control("reset");
-      // Each invocation's waitUntil ends seven seconds after registration,
-      // two seconds after its answer; the event's own context is kept.
-      await fixture.control("/window?ms=7000");
+      // Each invocation's waitUntil runs on after its answer until the test
+      // closes the window; the event's own context is kept.
+      await fixture.control("/window?held");
       const wave = Array.from({ length: 16 }, () => fixture.agent());
       pending.push(...wave.map((response) => response.catch(() => {})));
       await vi.waitFor(async () => expect(await binding.ids("agent-")).toHaveLength(16), { timeout: 10_000 });
@@ -387,9 +418,20 @@ it.skipIf(!worker)(
         expect(response.status).toBe(401);
         await response.text();
       }
+      // Live: every charge counts, and a refusal makes no lookup.
+      await vi.waitFor(
+        async () =>
+          expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true }),
+        { timeout: 3_000 },
+      );
+      const refused = await fixture.agent();
+      expect(await refused.json()).toMatchObject({ error: { code: "authentication_busy" } });
+      expect(await binding.ids("agent-")).toHaveLength(16);
+      expect((await binding.status()).calls).toBe(16);
+      await fixture.control("/window");
       await vi.waitFor(async () => expect(await binding.ids("agent-")).toHaveLength(0), { timeout: 10_000 });
-      expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true });
-      await collectUntil(fixture.pressure, releasedBut(fixture.via, 1));
+      await collectEarly(fixture.pressure);
+      await releasedMonotonically(fixture);
       const recovered = await fixture.human("fast");
       expect(recovered.status).toBe(401);
       await recovered.text();
@@ -410,11 +452,17 @@ it.skipIf(!worker)(
     const pending: Promise<unknown>[] = [];
     try {
       await binding.control("reset");
-      await fixture.control("/window?ms=7000");
+      await fixture.control("/window?held");
       const wave = Array.from({ length: 16 }, () => fixture.agent());
       pending.push(...wave.map((response) => response.catch(() => {})));
       await vi.waitFor(async () => expect(await binding.ids("agent-")).toHaveLength(16), { timeout: 10_000 });
       for (const response of await Promise.all(wave)) await response.text();
+      await vi.waitFor(
+        async () =>
+          expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true }),
+        { timeout: 3_000 },
+      );
+      await fixture.control("/window");
       await vi.waitFor(async () => expect(await binding.ids("agent-")).toHaveLength(0), { timeout: 10_000 });
       for (let round = 0; round < 8; round++) await fixture.pressure();
       expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true });
@@ -422,6 +470,7 @@ it.skipIf(!worker)(
       expect(await refused.json()).toMatchObject({ error: { code: "authentication_busy" } });
       expect((await binding.status()).calls).toBe(16);
     } finally {
+      await fixture.control("/window");
       await binding.control("release");
       await Promise.all(pending);
     }

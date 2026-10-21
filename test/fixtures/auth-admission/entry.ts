@@ -9,11 +9,15 @@ interface Env {
 }
 
 // Production ends an invocation, cancelling its I/O, once waitUntil has run
-// its course after the response; Miniflare never does. With a window set,
-// every ExecutionContext in this isolate settles each waitUntil promise that
-// long after it was registered, so workerd ends the invocation and drops its
-// unfinished operations. Each context stays the event's own object.
-let windowMs: number | undefined;
+// its course after the response; Miniflare never does. While a window is held
+// (`/window?held`), every ExecutionContext in this isolate keeps each
+// waitUntil promise open until the test closes the window (`/window`); then
+// each settles, so workerd ends the invocation and drops its unfinished
+// operations. Each invocation polls the flag on its own timers, so no promise
+// is settled from another request's context, and each context stays the
+// event's own object.
+let windowHeld = false;
+let windowClosed = true;
 let enforcing = false;
 function enforceWindow(ctx: ExecutionContext) {
   if (enforcing) return;
@@ -21,9 +25,12 @@ function enforceWindow(ctx: ExecutionContext) {
   const prototype = Object.getPrototypeOf(ctx) as ExecutionContext;
   const waitUntil = prototype.waitUntil;
   prototype.waitUntil = function (this: ExecutionContext, pending: Promise<unknown>) {
-    const limit = windowMs;
-    if (limit === undefined) return waitUntil.call(this, pending);
-    waitUntil.call(this, Promise.race([pending, new Promise((resolve) => setTimeout(resolve, limit))]));
+    if (!windowHeld) return waitUntil.call(this, pending);
+    const closed = new Promise<void>((resolve) => {
+      const poll = () => (windowClosed ? resolve() : void setTimeout(poll, 25));
+      poll();
+    });
+    waitUntil.call(this, Promise.race([pending, closed]));
   };
 }
 
@@ -134,7 +141,8 @@ export const control = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
     if (url.pathname === "/window") {
-      windowMs = url.searchParams.has("ms") ? Number(url.searchParams.get("ms")) : undefined;
+      windowHeld = url.searchParams.has("held");
+      windowClosed = !windowHeld;
     } else if (url.pathname === "/sentinel") {
       const name = url.searchParams.get("name")!;
       const sentinel = { name };

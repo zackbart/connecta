@@ -7,6 +7,8 @@ import { createConnecta, customExecutor } from "../../../src/index.js";
 // fetch cancelled with its invocation, and garbage that drives V8 to collect.
 const finalized = new Set<string>();
 const sentinels = new FinalizationRegistry<string>((name) => finalized.add(name));
+// Windowed invocations stay live until the test closes every window.
+let windowsClosed = false;
 
 // Native separate requests share only Connecta's plain admission counter.
 // Every adapter fetch, controller, response, and body belongs to its caller.
@@ -47,6 +49,10 @@ export default {
         ctx.waitUntil(Promise.race([held, new Promise((resolve) => setTimeout(resolve, Number(url.searchParams.get("ms") ?? 500)))]));
         return new Response("{}");
       }
+      if (url.pathname === "/__close-windows") {
+        windowsClosed = true;
+        return new Response("{}");
+      }
       if (url.pathname === "/__pressure") {
         let allocated = 0;
         for (let i = 0; i < Number(url.searchParams.get("mb") ?? 32); i++) {
@@ -85,18 +91,20 @@ export default {
         });
         // Production cancels an invocation, and all its I/O, once waitUntil
         // has run its course after the response; Miniflare never does. With
-        // this header the fixture enforces such a window: when it closes,
-        // every waitUntil promise is settled and workerd ends the
-        // invocation, dropping its unfinished operations.
-        const window = Number(request.headers.get("X-Wait-Until-Window") ?? NaN);
-        let closeWindow!: () => void;
+        // this header the fixture enforces such a window, held open until the
+        // test requests /__close-windows: then every waitUntil promise is
+        // settled and workerd ends the invocation, dropping its unfinished
+        // operations. The invocation polls the flag on its own timers, so no
+        // promise is settled from another request's context.
+        const windowed = request.headers.has("X-Wait-Until-Window");
         const windowClosed = new Promise<void>((resolve) => {
-          closeWindow = resolve;
+          const poll = () => (windowsClosed ? resolve() : void setTimeout(poll, 25));
+          if (windowed) poll();
         });
         try {
           const response = await binding.fetch(request, undefined, {
             waitUntil: (pending: Promise<unknown>) =>
-              ctx.waitUntil(Number.isFinite(window) ? Promise.race([pending, windowClosed]) : pending),
+              ctx.waitUntil(windowed ? Promise.race([pending, windowClosed]) : pending),
             access: {
               aud: "app",
               getIdentity: async () => {
@@ -105,7 +113,6 @@ export default {
               },
             },
           });
-          if (Number.isFinite(window)) setTimeout(closeWindow, window);
           return response;
         } finally {
           await binding.close();
