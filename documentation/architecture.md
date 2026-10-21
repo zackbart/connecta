@@ -1905,9 +1905,13 @@ compiling and configuring the real thing.
   pin lookups are auxiliary: they cannot perform the logical resource write. A
   proven pre-connection failure is also distinguished from a possibly
   executing resource request. The guarded transport gathers that proof itself:
-  a connect-phase errno, no response, and a body it framed whole (none, JSON,
-  form, bytes) or a stream it watched and fetch never pulled, so an errno a
-  body producer raised after bytes left proves nothing. Every maintained
+  the runtime's own network-error `TypeError` wrapping a connect-phase errno,
+  on a request whose signal never fired (an abort rejects with its reason,
+  whatever it looks like); no response; and a body it framed whole (none,
+  JSON, a string, bytes, `URLSearchParams`) or a stream it watched and fetch
+  never pulled. A `Blob`, or `FormData` that may carry one, is read through a
+  `stream()` any code can override, so it counts as possibly sent, and an
+  errno a body producer raised after bytes left proves nothing. Every maintained
   provider declares (`tracksEveryRequest`) that its handlers send only through
   channels the ledger records; for an undeclared `api()` handler an empty
   ledger is no evidence, so its served write fails unknown once the handler
@@ -1942,13 +1946,17 @@ compiling and configuring the real thing.
   redaction of refusal errors, and concurrent direct-call ledger isolation.
   The round-6 cases cover a composite write's early refusal while siblings
   await credentials or are in flight, requests started after the call ended,
-  connect-phase errnos with each body kind (a pulled stream included), and
+  connect-phase errnos with each body kind (a pulled stream and a `Blob` or
+  `FormData` with its own producer included), a request aborted with a
+  refusal-shaped reason, an errno outside fetch's network error, and
   undeclared handlers whose untracked send precedes a typed failure. Each
   catalog case also checks that the ledger recorded every resource request
   the network saw, and the inventory that every API connector declares it.
-  `test/write-evidence.test.ts` uses real refused and reset sockets on both
-  runtimes; `test/write-evidence.node.test.ts` streams a body undici partly
-  sends before its producer fails.
+  `test/write-evidence.test.ts` uses real refused, reset, and held sockets on
+  both runtimes, including a write aborted with another fetch's real refusal
+  as its reason after the server read its body;
+  `test/write-evidence.node.test.ts` streams a body, and a `Blob` with an
+  overridden `stream()`, that undici partly sends before its producer fails.
   Additional tests:
   `test/remote-mcp-write-once.test.ts` (real SDK transport),
   `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each

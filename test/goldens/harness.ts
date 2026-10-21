@@ -313,7 +313,9 @@ function respond(reply: StubResponse): Response {
  * A refused connection as Node's undici reports it: a connect-phase errno and
  * no answer. It proves a write unsent only together with the guarded
  * transport's own evidence that no body producer could have raised it after
- * bytes left: no body, or one fetch holds whole (JSON, form, bytes). Every
+ * bytes left: no body, or one fetch holds whole (JSON, form strings, bytes),
+ * on a request whose signal never fired. It is undici's own shape: a
+ * network-error `TypeError` wrapping the system error. Every
  * golden write qualifies. This fake reads a request's body to record it, so a
  * streamed body would count as sent, as it must; workerd's own refusals carry
  * no errno and are never proven unsent (`test/write-evidence.test.ts`).

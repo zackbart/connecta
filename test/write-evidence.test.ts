@@ -87,3 +87,80 @@ describe("write evidence over real connections", () => {
     expect(await exchanges(id)).toEqual([{ method: "POST", bytes: JSON.stringify({ title: "Fixture" }).length }]);
   });
 });
+
+describe("an aborted write never proves itself unsent", () => {
+  const tickets = (baseUrl: string) => {
+    const send = guardedFetch({ provider: "Tickets", baseUrl, authenticate: () => ({}), maxResponseBytes: 1024 });
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Send a ticket",
+            annotations: { readOnlyHint: false },
+            handler: (args, ctx) => send(args as GuardedRequest, ctx, (response) => response.json()),
+          },
+        ],
+      }),
+    );
+    return { send, connector, registry: makeRegistry([connector]) };
+  };
+  const failure = (pending: Promise<unknown>) =>
+    pending.then(
+      () => {
+        throw new Error("expected the write to fail");
+      },
+      (error: unknown) => error,
+    );
+
+  it("INV-9: a write aborted with a real refusal as its reason, after the server read its body, is unknown", async () => {
+    // A genuine connect-phase failure from another request. workerd names no
+    // errno, so there the reason is shaped as undici's own.
+    const refusal = await fetch(inject("refusedHttpOrigin")).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    const reason = WORKERD
+      ? new TypeError("fetch failed", {
+          cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+        })
+      : refusal;
+    expect(reason).toMatchObject({ cause: { code: "ECONNREFUSED" } });
+    const body = { title: "Fixture" };
+    for (const ledger of [true, false]) {
+      const id = crypto.randomUUID();
+      const { send, connector, registry } = tickets(`${inject("evidenceHttpServer")}/${id}`);
+      const controller = new AbortController();
+      const ctx = registry.contextFor("tickets", BASE, undefined, { signal: controller.signal });
+      const request = { method: "POST", path: "/hold", body } as const;
+      const pending = failure(
+        ledger ? connector.callTool("send", request, ctx) : send(request, ctx, (response) => response.json()),
+      );
+      // Abort only once the server holds every byte the write carried.
+      let received: Array<{ method: string; bytes: number }> = [];
+      for (let attempt = 0; attempt < 200 && received[0]?.bytes !== JSON.stringify(body).length; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        received = await exchanges(id);
+      }
+      expect(received).toEqual([{ method: "POST", bytes: JSON.stringify(body).length }]);
+      controller.abort(reason);
+      const error = await pending;
+      expect(error, `ledger: ${ledger}`).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, answered: false, error: error as never })).toBe(
+        "unknown",
+      );
+    }
+  });
+
+  it("INV-9: a refused write with no body and a live signal stays a known failure on Node", async () => {
+    const { connector, registry } = tickets(inject("refusedHttpOrigin"));
+    const ctx = registry.contextFor("tickets", BASE, undefined, { signal: new AbortController().signal });
+    const error = await failure(connector.callTool("send", { method: "DELETE", path: "/tickets/1" }, ctx));
+    if (WORKERD) {
+      expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    } else {
+      expect(error).toMatchObject({ code: "unavailable", retryable: true, details: { code: "ECONNREFUSED" } });
+      expect((error as { writeOutcome?: unknown }).writeOutcome).toBeUndefined();
+    }
+  });
+});

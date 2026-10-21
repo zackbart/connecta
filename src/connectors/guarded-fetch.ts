@@ -501,14 +501,16 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     // Whether body bytes may have come from a producer outside the runtime's
     // fetch, which could fail with any errno after some of them left.
     let produced = false;
+    // Whether the send rejected with the runtime's own connect-phase failure,
+    // never an abort reason that merely looks like one.
+    let refused = false;
     try {
       return await requestOnce(request, ctx, map);
     } catch (error) {
       // Proof the vendor never had the request, gathered here and nowhere
-      // else: a connect-phase errno, no answer, and no body bytes a producer
-      // could have streamed out before raising that errno itself.
-      dispatch.neverConnected =
-        !response && !produced && error instanceof ConnectorCallError && NEVER_CONNECTED.has(error.details?.code ?? "");
+      // else: the runtime's own connect-phase failure, no answer, and no body
+      // bytes a producer could have streamed out before raising that errno.
+      dispatch.neverConnected = refused && !response && !produced;
       throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
         dispatched: dispatched && !auxiliary,
         responded: response !== undefined,
@@ -522,7 +524,8 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     /**
      * The body as sent. One the runtime holds whole is written only after a
      * connection exists. A stream is watched instead: once fetch pulls it, a
-     * connection may exist and bytes may have left. Anything else is unproven.
+     * connection may exist and bytes may have left. Anything else, a `Blob`
+     * or `FormData` included, is unproven.
      */
     function framed(body: BodyInit | undefined): BodyInit | undefined {
       if (body === undefined || heldWhole(body)) return body;
@@ -566,9 +569,10 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         sentSecretsFor(ctx).header(value);
       }
 
+      let init: RequestInit | undefined;
       try {
         const body = request.body !== undefined ? JSON.stringify(request.body) : framed(request.rawBody);
-        const init: RequestInit = {
+        init = {
           method: request.method,
           headers,
           ...(body !== undefined ? { body } : {}),
@@ -594,6 +598,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         dispatch.status = response.status;
       } catch (cause) {
         if (cause instanceof ConnectorCallError) throw cause;
+        refused = dispatched && connectFailure(cause, [ctx.signal, init?.signal]);
         throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);
       }
       if (REDIRECT_STATUSES.has(response.status)) {
@@ -623,15 +628,33 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   };
 }
 
-/** A body fetch frames from memory, with no producer of its own. */
+/**
+ * Whether a send's rejection is the runtime's own report that it never
+ * connected: the Fetch standard's network-error `TypeError`, wrapping a
+ * system error that names a connect-phase errno. An aborted request rejects
+ * with its signal's reason, whatever that looks like (even another fetch's
+ * real refusal), so a request whose signal fired is never eligible.
+ */
+function connectFailure(failure: unknown, signals: readonly (AbortSignal | null | undefined)[]): boolean {
+  if (signals.some((signal) => signal && (signal.aborted || failure === signal.reason))) return false;
+  if (!(failure instanceof TypeError) || (failure as { code?: unknown }).code !== undefined) return false;
+  const cause: unknown = failure.cause;
+  if (!cause || typeof cause !== "object" || cause === failure) return false;
+  const code = (cause as { code?: unknown }).code;
+  return typeof code === "string" && NEVER_CONNECTED.has(code);
+}
+
+/**
+ * A body fetch frames from memory, with no producer of its own. A `Blob` is
+ * not one: fetch reads it through its `stream()`, which any code may
+ * override, and `FormData` may carry one.
+ */
 function heldWhole(body: BodyInit): boolean {
   return (
     typeof body === "string" ||
     body instanceof ArrayBuffer ||
     ArrayBuffer.isView(body) ||
-    body instanceof URLSearchParams ||
-    (typeof Blob !== "undefined" && body instanceof Blob) ||
-    (typeof FormData !== "undefined" && body instanceof FormData)
+    body instanceof URLSearchParams
   );
 }
 

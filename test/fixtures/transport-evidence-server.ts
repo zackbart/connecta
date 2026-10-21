@@ -24,6 +24,8 @@ interface Exchange {
  *   without answering.
  * - `POST /<id>/sink`: count body bytes as they arrive; destroy the socket if
  *   the request breaks off, answer 200 if it ends.
+ * - `POST /<id>/hold`: read the whole request and never answer, until the
+ *   client gives up.
  * - `GET /<id>/exchanges`: what the server received for `<id>`.
  */
 export default async function setup(project: TestProject) {
@@ -47,7 +49,7 @@ export default async function setup(project: TestProject) {
     request.on("aborted", () => response.destroy());
     request.on("end", () => {
       if (route === "reset") response.destroy();
-      else response.writeHead(200, { "content-type": "application/json" }).end("{}");
+      else if (route !== "hold") response.writeHead(200, { "content-type": "application/json" }).end("{}");
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

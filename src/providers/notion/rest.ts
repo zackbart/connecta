@@ -242,8 +242,9 @@ function notionFailure(
   }
   if (status === 409) {
     // Notion's conflict_error: the transaction could not be completed. Its
-    // documentation suggests retrying but guarantees no partial effect, so a
-    // write is a definite refusal to reconcile, never to repeat automatically.
+    // documentation suggests retrying and says nothing about partial effects.
+    // By connecta's policy a write's 409 is a known, non-retryable refusal:
+    // re-read the target and decide, never repeat automatically.
     if (write) {
       return new ConnectorCallError(
         "conflict",

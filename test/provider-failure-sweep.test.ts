@@ -731,6 +731,20 @@ describe("round-6 write evidence sweep", () => {
       { highWaterMark: 0 },
     );
   }
+  /** A Blob whose own stream() produces bytes, then fails like a connect. */
+  function producingBlob(bytes: number): Blob {
+    const blob = new Blob([new Uint8Array(bytes * 2)]);
+    Object.defineProperty(blob, "stream", { value: () => streamed(bytes) });
+    return blob;
+  }
+  function form(bytes: number): FormData {
+    const data = new FormData();
+    data.append("note", "Fixture");
+    // append() copies a Blob into a new File, so the override goes on the copy.
+    data.append("file", new Blob([new Uint8Array(bytes * 2)]), "ticket.txt");
+    Object.defineProperty(data.get("file"), "stream", { value: () => streamed(bytes) });
+    return data;
+  }
   const refusedErrno = () =>
     new TypeError("fetch failed", {
       cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
@@ -742,6 +756,8 @@ describe("round-6 write evidence sweep", () => {
     ["no body", "none", false],
     ["a JSON body", "json", false],
     ["a body of no type fetch holds whole", "opaque", true],
+    ["a Blob whose stream() streamed bytes before ECONNREFUSED", "blob", true],
+    ["FormData carrying such a Blob", "form", true],
   ] as const)("INV-9: a write refused at connect with %s", async (_name, body, unknown) => {
     const received: number[] = [];
     const send = guardedFetch({
@@ -754,6 +770,22 @@ describe("round-6 write evidence sweep", () => {
       fetch: async (_url, init) => {
         if (body === "pulled") {
           const reader = (init.body as ReadableStream<Uint8Array>).getReader();
+          try {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              received.push(value.byteLength);
+            }
+          } catch (cause) {
+            throw new TypeError("fetch failed", { cause });
+          }
+        }
+        // Blobs, a FormData's included, are read through their stream().
+        const blobs =
+          init.body instanceof Blob ? [init.body] : init.body instanceof FormData ? [...init.body.values()] : [];
+        for (const blob of blobs) {
+          if (!(blob instanceof Blob)) continue;
+          const reader = blob.stream().getReader();
           try {
             for (;;) {
               const { done, value } = await reader.read();
@@ -785,7 +817,11 @@ describe("round-6 write evidence sweep", () => {
                       ? { body: { title: "Fixture" } }
                       : body === "opaque"
                         ? { rawBody: { [Symbol.asyncIterator]: async function* () {} } as unknown as BodyInit }
-                        : {}),
+                        : body === "blob"
+                          ? { rawBody: producingBlob(20) }
+                          : body === "form"
+                            ? { rawBody: form(20) }
+                            : {}),
                 },
                 ctx,
                 (r) => r.json(),
@@ -795,12 +831,52 @@ describe("round-6 write evidence sweep", () => {
       }),
     );
     const result = await invoke(connector, "send", "write");
-    if (body === "pulled") expect(received).toEqual([20]);
+    if (body === "pulled" || body === "blob" || body === "form") expect(received).toEqual([20]);
     expect(result).toMatchObject({
       ok: false,
       error: unknown ? { retryable: false, writeOutcome: "unknown" } : { code: "unavailable", retryable: true },
     });
     expect(stateOf(result)).toBe(unknown ? "unknown" : "failed");
+  });
+
+  it.each([
+    ["aborted with a refusal-shaped reason", "aborted"],
+    ["rejected with an errno that is not fetch's network error", "untyped"],
+  ] as const)("INV-9: a guarded write %s is unknown", async (_name, kind) => {
+    const controller = new AbortController();
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      fetch: async () => {
+        if (kind === "untyped") throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+        // Native fetch rejects with the abort reason exactly as given.
+        controller.abort(refusedErrno());
+        throw controller.signal.reason;
+      },
+    });
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Send a ticket",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) =>
+              send({ method: "POST", path: "/tickets", body: { title: "Fixture" } }, ctx, (r) => r.json()),
+          },
+        ],
+      }),
+    );
+    const registry = makeRegistry([connector]);
+    const ctx = registry.contextFor("tickets", BASE, undefined, { signal: controller.signal });
+    const error = await connector.callTool("send", {}, ctx).catch((e: unknown) => e);
+    expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    const direct = await send({ method: "POST", path: "/t" }, registry.contextFor("tickets", BASE), (r) =>
+      r.json(),
+    ).catch((e: unknown) => e);
+    if (kind === "untyped") expect(direct).toMatchObject({ retryable: false, writeOutcome: "unknown" });
   });
 
   it("INV-9: a direct guarded write without a ledger needs the same body evidence", async () => {

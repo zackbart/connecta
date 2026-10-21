@@ -972,9 +972,10 @@ handlers, and the maintained providers alike; reads keep their retryable
 verdict. A write stays a known failure, with its own advice, only on positive
 evidence that the downstream never had it: a refusal it answered, or a
 connection that was never made. A refused connection proves that only when
-the runtime names a connect-phase error, no answer arrived, and no streamed
-request body was read; Node names one, workerd does not, so on Workers a
-refused or reset write is an unknown outcome. A failure during a composite
+the runtime itself names a connect-phase error, the request was not
+cancelled, no answer arrived, and no request body was streamed (a stream
+fetch read, a `Blob`, or form data); Node names one, workerd does not, so on
+Workers a refused or reset write is an unknown outcome. A failure during a composite
 call's later request leaves earlier requests' outcomes unknown, and once the
 call's outcome is decided, a request that had not left is never sent. A
 write the downstream answered with HTTP 401 is not resent: the credential is
