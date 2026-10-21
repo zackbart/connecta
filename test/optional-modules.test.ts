@@ -137,6 +137,35 @@ describe("optional deployment modules", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("bounds a stalled vault read and closes the connector request scope", async () => {
+    const c = connector();
+    c.closeScope = vi.fn(async () => {});
+    const vault = encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32)));
+    let release!: () => void;
+    vault.getAll = () =>
+      new Promise((resolve) => {
+        release = () => resolve(null);
+      });
+    const app = createConnecta({
+      readOnly: false,
+      connectors: [c],
+      executor,
+      auth,
+      maintainers,
+      ui: operatorUi(),
+      vault,
+      logger: "silent",
+      discovery: { probeTimeoutMs: 10 },
+    });
+    const response = await app.fetch(new Request(BASE + "/ui/connectors/shared", { headers }));
+    expect(((await response.json()) as any).status).toBe("error");
+    expect(c.closeScope).toHaveBeenCalledOnce();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(c.status).not.toHaveBeenCalled();
+    expect(c.closeScope).toHaveBeenCalledOnce();
+  });
+
   it("allows authorized MCP OAuth initiation and completion with no UI", async () => {
     const oauth: Connector = {
       ...connector("oauth"),
@@ -173,6 +202,35 @@ describe("optional deployment modules", () => {
     expect(callback.status).toBe(200);
     expect(oauth.finishAuth).toHaveBeenCalledOnce();
     expect(await callback.text()).not.toContain('href="/"');
+  });
+
+  it("keeps shared OAuth capability after details load for a namespaced maintainer", async () => {
+    const oauth: Connector = {
+      ...connector("oauth"),
+      startAuth: vi.fn(async () => ({ state: "ok" as const })),
+      disconnectAuth: vi.fn(async () => {}),
+    };
+    const app = createConnecta({
+      readOnly: false,
+      connectors: [oauth],
+      executor,
+      auth,
+      maintainers,
+      ui: operatorUi(),
+      logger: "silent",
+    });
+    const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
+    const configured = ((await list.json()) as any).connectors[0];
+    const details = await app.fetch(new Request(BASE + "/ui/connectors/oauth", { headers }));
+    const loaded = await details.json();
+    const expected = {
+      oauth: true,
+      permissions: { use: true, manageSharedAuth: true, connectPersonal: false },
+    };
+    expect(configured).toMatchObject(expected);
+    expect(loaded).toMatchObject(expected);
+    expect(oauth.startAuth).not.toHaveBeenCalled();
+    expect(oauth.disconnectAuth).not.toHaveBeenCalled();
   });
 
   it("INV-4: never starts shared OAuth for a pool member who is not a maintainer", async () => {

@@ -8,16 +8,30 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { normalizeCode, quickJsExecutor as untrackedQuickJs } from "../src/executors/quickjs.js";
 import { executeQuickJs, prepareQuickJs } from "../src/executors/quickjs-runtime.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, ExecuteResult, ExecutorProvider } from "../src/types.js";
 import { required, calcConnector, makeRegistry, silentLogger } from "./helpers.js";
 import { trackedQuickJs as quickJsExecutor } from "./fixtures/node.js";
-import { deferred } from "./fixtures/misc.js";
+import { deferred, waitFor } from "./fixtures/misc.js";
 
 // The real-child cases pay for process startup and IPC, which fake clocks
 // cannot control. On a loaded host they outran vitest's 5s default with no
 // behavior at fault. This file budget is a hang guard. The deadlines a case
 // pins are the executor's own, asserted on its outcome.
 vi.setConfig({ testTimeout: 20_000 });
+
+/**
+ * What ended a run its wall deadline cut short. The child reports its own
+ * expiry as a structural `timed out` result; when a loaded host delays that
+ * report past the parent's fixed grace, the parent terminates the child at its
+ * wall budget and the run rejects instead. Both are the deadline. The child's
+ * own report is pinned race-free, in-process, by the runtime case below.
+ */
+function deadlineOutcome(run: Promise<ExecuteResult>): Promise<string | undefined> {
+  return run.then(
+    (out) => out.error,
+    (error: Error) => error.message,
+  );
+}
 
 describe("normalizeCode", () => {
   it("wraps bare statements in an async arrow", () => {
@@ -60,6 +74,18 @@ describe("quickJsExecutor", () => {
     const out = await ex.execute(`async () => unicode.get()`, [{ name: "unicode", fns: { get: async () => payload } }]);
     expect(payload.length).toBeLessThan(256 * 1024);
     expect(out.error).toContain("serialized bridge limit");
+  });
+
+  it("preserves logs when a host result cannot be serialized", async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const ex = quickJsExecutor();
+    const out = await ex.execute(`async () => { console.log("before host call"); return bad.result(); }`, [
+      { name: "bad", fns: { result: async () => circular } },
+    ]);
+    expect(out.result).toBeUndefined();
+    expect(out.error).toContain("could not be serialized");
+    expect(out.logs).toEqual(["before host call"]);
   });
 
   it.each(["native-error", "plain-object", "proxy"] as const)(
@@ -108,6 +134,33 @@ describe("quickJsExecutor", () => {
       [],
     );
     expect(out).toMatchObject({ error: "TypeError: native data", failure: { name: "TypeError", line: 2 } });
+  });
+
+  it("INV-3 INV-6: accessor edits do not replace a retained typed host rejection", async () => {
+    const result = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      "https://connecta.test",
+      quickJsExecutor(),
+      silentLogger,
+    )({
+      code: `async () => {
+        try { await connecta.call("missing.read"); }
+        catch (error) {
+          Object.defineProperties(error, {
+            name: { get() { console.log("name getter ran"); while (true) {} } },
+            message: { get() { console.log("message getter ran"); while (true) {} } },
+            stack: { get() { console.log("stack getter ran"); while (true) {} } }
+          });
+          throw error;
+        }
+      }`,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: { code: "unknown_address" },
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
+    });
+    expect(result.structuredContent).not.toHaveProperty("logs");
   });
 
   it.each(["cpu", "wall"] as const)(
@@ -220,6 +273,19 @@ describe("quickJsExecutor", () => {
       error: "Execution timed out after 50ms.",
     });
   });
+
+  it("times out when a host call hangs", async () => {
+    const hang: ExecutorProvider[] = [{ name: "slow", fns: { forever: () => new Promise(() => {}) } }];
+    // A budget the healthy follow-up below can meet on a loaded host; 300ms
+    // was not always enough for it.
+    const ex = quickJsExecutor({ timeoutMs: 1_000 });
+    expect(await deadlineOutcome(ex.execute(`async () => slow.forever({})`, hang))).toMatch(/timed out|wall budget/);
+    // The deadline ends the run, the parent retires the child, and the
+    // replacement slot keeps serving.
+    await expect(ex.execute("async () => 3", [])).resolves.toEqual({
+      result: 3,
+    });
+  }, 10_000);
 
   // The process boots tsx and a QuickJS child, which takes seconds on a loaded
   // host, so time-to-exit is no signal on its own. What the case pins is that
@@ -339,6 +405,49 @@ describe("quickJsExecutor", () => {
     await ex.close?.();
   });
 
+  it("recycles a running child when the execute watchdog abandons it", async () => {
+    // The ceiling is set below this pool's own deadline only to make the
+    // abandonment observable: releasing the lease must kill the child rather
+    // than hand its slot to the next run with the old program still inside.
+    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
+    const started = performance.now();
+    const out = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      "https://connecta.test",
+      ex,
+      silentLogger,
+      undefined,
+      { watchdogMs: 300 },
+    )({ code: `async () => { while (true) {} }`, diagnostics: true });
+    expect(performance.now() - started).toBeLessThan(3_000);
+    const payload = JSON.parse(required(out.content[0]).text) as {
+      error: { code: string; message: string };
+    };
+    expect(payload.error.code).toBe("timeout");
+    expect(payload.error.message).toContain("unresponsive");
+    expect(ex.admissionSnapshot?.().active).toBe(0);
+    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
+      result: 9,
+    });
+  }, 10_000);
+
+  it("cancels a cold readiness wait without poisoning the warming slot", async () => {
+    const ex = quickJsExecutor({ timeoutMs: 2_000 });
+    const controller = new AbortController();
+    const lease = await ex.acquire({ signal: controller.signal });
+    const started = performance.now();
+    const pending = lease.execute("async () => 1", []);
+    setTimeout(() => controller.abort(), 1);
+    await expect(pending).rejects.toMatchObject({
+      code: "executor_cancelled",
+    });
+    lease.release();
+    expect(performance.now() - started).toBeLessThan(500);
+    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
+      result: 9,
+    });
+  });
+
   it("loads only the canonically called connector end to end", async () => {
     const catalogs: string[] = [];
     const countedCalc: Connector = {
@@ -425,6 +534,32 @@ describe("quickJsExecutor", () => {
     expect(out.result).toContain("IPC limit");
   });
 
+  it("bounds guest-controlled function names before parent IPC", async () => {
+    const ex = quickJsExecutor({ memoryLimitBytes: 16 * 1024 * 1024 });
+    const out = await ex.execute(
+      `async () => {
+        try { return await echo["x".repeat(2 * 1024 * 1024)](); }
+        catch (e) { return e.message; }
+      }`,
+      [{ name: "echo", fns: { read: async () => "ok" } }],
+    );
+    expect(out.result).toContain("IPC limit");
+  });
+
+  it("close terminates active children and rejects new admission", async () => {
+    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
+    const running = ex.execute(`async () => { while (true) {} }`, []);
+    const closed = expect(running).rejects.toMatchObject({
+      code: "executor_closed",
+    });
+    await waitFor(() => (ex.admissionSnapshot?.().active ?? 0) > 0);
+    await ex.close?.();
+    await closed;
+    await expect(ex.execute("async () => 1", [])).rejects.toMatchObject({
+      code: "executor_closed",
+    });
+  });
+
   it("reports emitted blocks discarded by mid-run shutdown", async () => {
     const { promise: started, resolve: callStarted } = deferred<void>();
     const connector: Connector = {
@@ -471,6 +606,8 @@ describe("quickJsExecutor", () => {
     expect(out.structuredContent).toEqual(expected);
   });
 });
+
+describe("the advertised discovery example", () => {});
 
 describe("authenticated host failures (E1, X11)", () => {
   it.each(["x", "😀"])("bounds 50 KB downstream errors containing %j before framing", async (character) => {

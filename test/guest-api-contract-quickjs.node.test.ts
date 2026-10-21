@@ -119,17 +119,16 @@ describe("guest API contract (QuickJS executor)", () => {
     it(`INV-3: ${custom ? "customExecutor: " : ""}provider preludes retain shared lexical bindings`, async () => {
       await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
-    for (const contractCase of CONTRACT_CASES) {
-      it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
-        const harness = contractHarness(contractCase.maxStashEntries);
-        const base = contractCase.deadline ? deadlineExecutor : executor;
-        const chosen = custom ? customExecutor(base, { lifecycle: "self-managed" }) : base;
-        const config = caseConfig(contractCase);
-        const outcome = await harness.run(chosen, contractCase.code, config);
-        const follow = contractCase.follows ? await harness.run(chosen, contractCase.follows, config) : undefined;
-        contractCase.check(outcome, harness.state, follow);
-      });
-    }
+  }
+  for (const contractCase of CONTRACT_CASES) {
+    it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
+      const harness = contractHarness(contractCase.maxStashEntries);
+      const base = contractCase.deadline ? deadlineExecutor : executor;
+      const config = caseConfig(contractCase);
+      const outcome = await harness.run(base, contractCase.code, config);
+      const follow = contractCase.follows ? await harness.run(base, contractCase.follows, config) : undefined;
+      contractCase.check(outcome, harness.state, follow);
+    });
   }
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {

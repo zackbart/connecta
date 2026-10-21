@@ -234,6 +234,48 @@ describe("MCP subscriptions", () => {
     }
   });
 
+  it("bounds authorization for a modern listen without taking a permit", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const c = createTestConnecta({
+      connectors: [],
+      publicUrl: BASE,
+      logger: silentLogger,
+      auth: {
+        kind: "stalled",
+        async authorize() {
+          await blocked;
+          return { ok: true };
+        },
+      },
+      maintainers: [{ namespace: "connecta:test", id: "operator" }],
+      admission: { requests: { maxDurationMs: 100 } },
+    });
+    try {
+      const response = await c.fetch(
+        rpc(
+          "modern",
+          "subscriptions/listen",
+          {
+            notifications: { toolsListChanged: true },
+          },
+          1,
+        ),
+      );
+      expect(response.status).toBe(504);
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -33003 } });
+      const health = await c.fetch(new Request(`${BASE}/health`));
+      expect(await health.json()).toMatchObject({
+        admission: { requests: { active: 0, totals: { admitted: 0 } } },
+      });
+    } finally {
+      release();
+      await c.close();
+    }
+  });
+
   it("cancels a stalled listen body at the request deadline", async () => {
     let cancelled = false;
     const c = createTestConnecta({

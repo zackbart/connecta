@@ -117,6 +117,8 @@ describe("slot revisions", () => {
 describe("token routes require expect", () => {
   it.each([
     ["DELETE", undefined, ""],
+    ["POST", { expect: 7 }, ""],
+    ["DELETE", undefined, "?expect=short"],
     ["POST", "{not json", ""],
   ] as const)(
     "INV-9: %s with a missing or malformed expect (%j%s) is 400 and writes nothing",
@@ -231,6 +233,30 @@ describe("token routes require expect", () => {
       await app.close();
     }
   });
+
+  it("INV-9: a rotation that commits between a revocation's read and its commit makes the revocation 409 and keeps the fresh token", async () => {
+    const base = memoryStorage();
+    const manager = new AccessTokenManager(base, { agents: ["simon"] });
+    const seeded = await manager.rotate("simon");
+    let racer: Awaited<ReturnType<AccessTokenManager["rotate"]>> | undefined;
+    let commits = 0;
+    const storage = beforeSlotCommit(base, async () => {
+      commits++;
+      racer ??= await manager.rotate("simon");
+    });
+    const { app, send } = setup(storage);
+    try {
+      const response = await send("DELETE", { expect: seeded.agent.revision });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "slot_changed" });
+      expect(commits).toBe(1);
+      // Without expect the revocation would revoke whatever the slot named; with it, the fresh rotation stands.
+      expect(await admits(manager, racer!.token)).toBe(true);
+      expect((await manager.list())[0]).toMatchObject({ state: "issued", revision: racer!.agent.revision });
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 /**
@@ -331,3 +357,5 @@ describe("concurrent conditional revocations", () => {
     expect(await admits(manager, issued.token)).toBe(false);
   });
 });
+
+describe("manager preconditions", () => {});

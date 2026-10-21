@@ -147,6 +147,48 @@ describe("compactSchema allOf", () => {
     );
   });
 
+  it("keeps a sibling $ref alongside allOf members", () => {
+    const schema: JsonSchema = {
+      $defs: {
+        Base: {
+          type: "object",
+          properties: { id: { type: "string" } },
+          required: ["id"],
+        },
+      },
+      $ref: "#/$defs/Base",
+      allOf: [{ type: "object", properties: { extra: { type: "boolean" } } }],
+    };
+
+    expect(compactSchema(schema)).toBe("{ id: string } & { extra?: boolean }");
+  });
+
+  it("keeps a sibling enum, const, or items alongside allOf members", () => {
+    // These can't be dropped either. A union half is parenthesized so the
+    // rendering doesn't read as `"a" | ("b" & …)`.
+    expect(
+      compactSchema({
+        enum: ["a", "b"],
+        allOf: [{ type: "string" }],
+      }),
+    ).toBe('("a" | "b") & string');
+
+    expect(
+      compactSchema({
+        const: "emoji",
+        allOf: [{ type: "string" }],
+      }),
+    ).toBe('"emoji" & string');
+
+    expect(
+      compactSchema({
+        type: "array",
+        items: { type: "string" },
+        allOf: [{ type: "array" }],
+      }),
+    ).toBe("string[] & unknown[]");
+  });
+
   it("keeps locally declared properties alongside allOf members", () => {
     // The usual OpenAPI-derived "extend this base" shape. allOf must compose
     // with the schema's own properties, not replace them — dropping either
@@ -193,6 +235,12 @@ describe("compactSchema $ref handling", () => {
     expect(compactSchema(schema)).toBe("{ value: string, next?: Node }");
   });
 });
+
+describe("compactSchema depth limit", () => {});
+
+describe("compactSchema caching", () => {});
+
+describe("compactSchema 2020-12 keyword compatibility", () => {});
 
 function branchingSchema(width: number, onLeafRead?: () => void): JsonSchema {
   const $defs: Record<string, unknown> = {};
@@ -245,6 +293,41 @@ describe("bounded catalog rendering", () => {
     expect(text).toContain("/* truncated */");
   });
 
+  it("keeps multibyte composites at the byte limit and counts their punctuation", () => {
+    const prefix = "{ value?: string // ";
+    const suffix = " }";
+    const room = 8_192 - prefix.length - suffix.length;
+    const description = "😀".repeat(Math.floor(room / 4)) + "x".repeat(room % 4);
+    const object = (text: string) => ({
+      type: "object",
+      properties: { value: { type: "string", description: text } },
+    });
+    const expected = `${prefix}${description}${suffix}`;
+    expect(new TextEncoder().encode(expected).length).toBe(8_192);
+    expect(compactSchema(object(description))).toBe(expected);
+    expect(compactSchema(object(description + "x"))).toContain("/* truncated */");
+
+    const value = "😀".repeat(2_047);
+    const tuple = (text: string) => ({ prefixItems: [{ const: text }], items: false });
+    const expectedTuple = `[${JSON.stringify(value)}]`;
+    expect(new TextEncoder().encode(expectedTuple).length).toBe(8_192);
+    expect(compactSchema(tuple(value))).toBe(expectedTuple);
+    expect(compactSchema(tuple(value + "x"))).toContain("/* truncated */");
+  });
+
+  it("stops visiting a wide schema after the work budget", () => {
+    let visits = 0;
+    const member = {
+      get type() {
+        visits += 1;
+        return "string";
+      },
+    };
+    const schema = { allOf: Array.from({ length: 10_000 }, () => member) };
+    expect(compactDiscoverySchema(schema).truncated).toBe(true);
+    expect(visits).toBeLessThanOrEqual(2_000);
+  });
+
   it("bounds raw JSON fallback", () => {
     let schema: JsonSchema = { type: "string" };
     for (let depth = 0; depth < 10_000; depth += 1) {
@@ -291,7 +374,7 @@ describe("catalog search argument validation", () => {
 
   it.each([1].map((query) => [query]))("rejects non-string query %s", async (query) => {
     const service = new CatalogService(makeRegistry([calcConnector]), BASE);
-    await expect(service.search({ query: query as string })).rejects.toMatchObject({
+    await expect(service.search({ query: query as unknown as string })).rejects.toMatchObject({
       code: "invalid_args",
       message: expect.stringContaining("query must be"),
     });
@@ -326,6 +409,34 @@ describe("2020-12 schemas in search and describe", () => {
       text: "[string, number, ...boolean[]]",
     },
     {
+      name: "open tuple",
+      schema: { prefixItems: [{ type: "string" }] },
+      text: "[string, ...unknown[]]",
+    },
+    {
+      name: "closed tuple",
+      schema: { prefixItems: [{ type: "string" }], items: false },
+      text: "[string]",
+    },
+    {
+      name: "union rest",
+      schema: {
+        prefixItems: [{ type: "string" }],
+        items: { anyOf: [{ type: "number" }, { type: "boolean" }] },
+      },
+      text: "[string, ...(number | boolean)[]]",
+    },
+    {
+      name: "dependentSchemas",
+      schema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        dependentSchemas: { id: { required: ["other"] } },
+      },
+      text: "{ id?: string } /* conditional */",
+      truncated: true,
+    },
+    {
       name: "conditional",
       schema: {
         type: "object",
@@ -339,9 +450,42 @@ describe("2020-12 schemas in search and describe", () => {
       truncated: true,
     },
     {
+      name: "bare conditional",
+      schema: {
+        if: { type: "string" },
+        // oxlint-disable-next-line unicorn/no-thenable -- JSON Schema keyword, not a promise method.
+        then: { minLength: 2 },
+        else: { type: "number" },
+      },
+      text: "unknown /* conditional */",
+      truncated: true,
+    },
+    {
+      name: "allOf conditional",
+      schema: {
+        allOf: [{ type: "string" }],
+        if: { const: "a" },
+        // oxlint-disable-next-line unicorn/no-thenable -- JSON Schema keyword, not a promise method.
+        then: { minLength: 2 },
+      },
+      text: "string /* conditional */",
+      truncated: true,
+    },
+    {
       name: "dynamic reference",
       schema: { $defs: { Entry: { type: "string" } }, $dynamicRef: "#Entry" },
       text: "string",
+    },
+    {
+      name: "dynamic pointer",
+      schema: { $defs: { Entry: { type: "number" } }, $dynamicRef: "#/$defs/Entry" },
+      text: "number",
+    },
+    {
+      name: "unknown dynamic reference",
+      schema: { $dynamicRef: "#Missing" },
+      text: "unknown",
+      truncated: true,
     },
   ];
   it.each(cases)("renders $name honestly in both routes", async ({ schema, text, truncated }) => {

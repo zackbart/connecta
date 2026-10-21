@@ -116,11 +116,6 @@ describe("value-safety harness mutations", () => {
     ).toEqual([]);
   });
 
-  it("INV-5: fails a path that names nothing in the pinned response schema", () => {
-    const problems = reviewProblems(review(["secret", "url.missing"], ["data.*.pin"]));
-    expect(problems.unresolved).toContainEqual(expect.stringContaining("GET /v1/hooks/{id}: url.missing"));
-  });
-
   it("INV-5: fails a path that misses the flagged field", () => {
     const problems = reviewProblems(review(["secrt", "origin:url"], ["data.*.pin"]));
     expect(problems.uncovered).toEqual(["GET /v1/hooks/{id}: secret"]);

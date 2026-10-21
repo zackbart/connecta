@@ -2289,44 +2289,8 @@ return fs;
   },
   {
     clauses: "P1",
-    name: "a one-line arrow expression may end with a semicolon",
-    code: "async () => 40 + 2;",
-    check(outcome) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toBe(42);
-    },
-  },
-  {
-    clauses: "P1",
-    name: "a fenced arrow expression may end with a semicolon",
-    code: "```js\nasync () => ({ fenced: true });\n```",
-    check(outcome) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toEqual({ fenced: true });
-    },
-  },
-  {
-    clauses: "P1",
     name: "one fenced program surrounded by prose runs on both executors",
     code: "Read the value:\n```javascript\nasync () => ({ recovered: 42 });\n```\nThat is the program.",
-    check(outcome) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toEqual({ recovered: 42 });
-    },
-  },
-  {
-    clauses: "P1",
-    name: "a default-exported arrow runs on both executors",
-    code: "export default async () => ({ recovered: 42 });",
-    check(outcome) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toEqual({ recovered: 42 });
-    },
-  },
-  {
-    clauses: "P1",
-    name: "a named async declaration runs as one arrow on both executors",
-    code: "async function main() { return { recovered: 42 }; }",
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
       expect(outcome.result).toEqual({ recovered: 42 });

@@ -136,6 +136,76 @@ it("INV-4 INV-5: isolates skill disclosure across principals, pools and tool-onl
   await c.close();
 });
 
+it("INV-5 INV-8: keeps blob credential collisions validly encoded through HTTP serialization", async () => {
+  const file = "skill://vendor/review/reference.bin";
+  for (const secret of [btoa("abcdefgh"), "AAAAAAAA"]) {
+    const bytes = secret === "AAAAAAAA" ? "\u0000".repeat(12) : "abcdefgh";
+    const remote = downstream("remote", {
+      list: async (ctx) => [
+        {
+          ...(await downstream().downstreamSkills!.list(ctx))[0]!,
+          resources: [
+            { uri: URI, digest: DIGEST, size: TEXT.length },
+            { uri: file, digest: DIGEST, size: bytes.length },
+          ],
+        },
+      ],
+      read: async (uri, ctx) => {
+        sentSecretsFor(ctx).secret(secret);
+        return [{ uri, blob: btoa(bytes) }];
+      },
+    });
+    const c = createTestConnecta({ connectors: [remote], logger: silentLogger });
+    try {
+      const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
+      expect(read.error).toBeUndefined();
+      expect(atob(read.result.contents[0].blob)).toBe("[redacted]");
+      expect(JSON.stringify(read)).not.toContain(secret);
+    } finally {
+      await c.close();
+    }
+  }
+});
+
+it.each(["\u0000\u00ff"])(
+  "INV-5: detects mixed escaped Unicode credentials in UTF-8 blobs without changing unmatched binary bytes %j",
+  async (prefix) => {
+    const secret = "credentialé-token";
+    const binary = prefix + String.fromCharCode(...new TextEncoder().encode('{"echo":"cred\\u0065ntialé-token"}'));
+    const file = "skill://vendor/review/reference.json";
+    const remote = downstream("remote", {
+      list: async (ctx) => [
+        {
+          ...(await downstream().downstreamSkills!.list(ctx))[0]!,
+          resources: [
+            { uri: URI, digest: DIGEST, size: TEXT.length },
+            { uri: file, digest: DIGEST, size: binary.length },
+          ],
+        },
+      ],
+      read: async (uri, ctx) => {
+        sentSecretsFor(ctx).secret(secret);
+        return [{ uri, blob: btoa(binary) }];
+      },
+    });
+    const c = createTestConnecta({ connectors: [remote], logger: silentLogger });
+    try {
+      const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
+      expect(atob(read.result.contents[0].blob)).toBe("[redacted]");
+      // Shares only "é-" with the secret: no K-unit run of any of its forms, in any view.
+      const innocent = prefix + String.fromCharCode(...new TextEncoder().encode('{"echo":"ordinaryé-public"}'));
+      remote.downstreamSkills!.read = async (uri, ctx) => {
+        sentSecretsFor(ctx).secret(secret);
+        return [{ uri, blob: btoa(innocent) }];
+      };
+      const unchanged = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
+      expect(atob(unchanged.result.contents[0].blob)).toBe(innocent);
+    } finally {
+      await c.close();
+    }
+  },
+);
+
 it("INV-5 INV-8: refuses earlier skill URIs after later catalog operations send new credentials", async () => {
   const secret = "later-connector-credential";
   const uri = `skill://${secret}/review/SKILL.md`;
@@ -166,28 +236,55 @@ it("INV-5 INV-8: refuses earlier skill URIs after later catalog operations send 
   }
 });
 
-it.each(["uri"])("INV-5 INV-8: refuses preserved %s fields when a read sends a matching credential", async (field) => {
-  const secret = field === "uri" ? "later-read-credential" : "a".repeat(32);
-  const uri = field === "uri" ? `skill://${secret}/review/SKILL.md` : URI;
-  const remote = downstream("remote", {
-    list: async (ctx) => [
-      {
-        ...(await downstream().downstreamSkills!.list(ctx))[0]!,
-        uri,
-        resources: [{ uri, digest: DIGEST, size: TEXT.length }],
+it.each(["uri", "digest"])(
+  "INV-5 INV-8: refuses preserved %s fields when a read sends a matching credential",
+  async (field) => {
+    const secret = field === "uri" ? "later-read-credential" : "a".repeat(32);
+    const uri = field === "uri" ? `skill://${secret}/review/SKILL.md` : URI;
+    const remote = downstream("remote", {
+      list: async (ctx) => [
+        {
+          ...(await downstream().downstreamSkills!.list(ctx))[0]!,
+          uri,
+          resources: [{ uri, digest: DIGEST, size: TEXT.length }],
+        },
+      ],
+      read: async (uri, ctx) => {
+        sentSecretsFor(ctx).secret(secret);
+        return [{ uri, text: TEXT }];
       },
-    ],
-    read: async (uri, ctx) => {
-      sentSecretsFor(ctx).secret(secret);
-      return [{ uri, text: TEXT }];
-    },
-  });
-  const registry = new SkillsRegistry(makeRegistry([remote]), BASE);
-  const mapped = downstreamSkillUri("remote", uri);
-  expect((await registry.get(mapped)).skill.uri).toBe(mapped);
-  await expect(registry.read(mapped)).rejects.toMatchObject({ code: "unavailable" });
-  await expect(registry.get(mapped)).rejects.toMatchObject({ code: "unavailable" });
-});
+    });
+    const registry = new SkillsRegistry(makeRegistry([remote]), BASE);
+    const mapped = downstreamSkillUri("remote", uri);
+    expect((await registry.get(mapped)).skill.uri).toBe(mapped);
+    await expect(registry.read(mapped)).rejects.toMatchObject({ code: "unavailable" });
+    await expect(registry.get(mapped)).rejects.toMatchObject({ code: "unavailable" });
+  },
+);
+
+it.each(["\\u0000"])(
+  "INV-5 INV-8: serves authenticated escaped skill bytes with bounded redaction scratch space %j",
+  async (padding) => {
+    const secret = "bounded-skills-redaction-credential";
+    const text = TEXT + padding.repeat(1024 * 1024) + secret;
+    const remote = downstream("remote", {
+      list: async (ctx) => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, resources: "dynamic" }],
+      read: async (uri, ctx) => {
+        sentSecretsFor(ctx).secret(secret);
+        return [{ uri, text }];
+      },
+    });
+    const c = createTestConnecta({ connectors: [remote], logger: silentLogger });
+    try {
+      const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", URI) });
+      expect(read.error).toBeUndefined();
+      expect(read.result.contents[0].text).toBe(TEXT + padding.repeat(1024 * 1024) + "[redacted]");
+    } finally {
+      await c.close();
+    }
+  },
+  30_000,
+);
 
 it("INV-4 INV-5: fetches personal downstream skills with each principal's credential partition", async () => {
   const storage = memoryStorage();
@@ -307,6 +404,44 @@ it("INV-7: cancels bounded skill work and closes its owned connector scope", asy
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("INV-7: never opens a downstream skill scope for work cancelled before it starts", async () => {
+  const list = vi.fn(async () => []);
+  const closeScope = vi.fn(async () => {});
+  const remote = downstream("remote", { list });
+  remote.closeScope = closeScope;
+  const registry = makeRegistry([remote]);
+  const contextFor = vi.spyOn(registry, "contextFor");
+  // Hold local manifest hashing so cancellation lands before the downstream
+  // operation is dispatched, as a short deadline can on a slow host.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  // The cancelled listing discards every manifest, so the bytes never matter.
+  const hashing = vi.spyOn(crypto.subtle, "digest").mockImplementation(async () => {
+    await held;
+    return new ArrayBuffer(32);
+  });
+  try {
+    const cancelling = new AbortController();
+    const listing = expect(
+      new SkillsRegistry(registry, BASE, { requestSignal: cancelling.signal }).list(),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(hashing).toHaveBeenCalled());
+    cancelling.abort();
+    release();
+    await listing;
+  } finally {
+    hashing.mockRestore();
+  }
+  const cancelled = new AbortController();
+  cancelled.abort();
+  const guest = (await buildSandboxProviders(registry, BASE, silentLogger, undefined, { signal: cancelled.signal }))[0]!
+    .fns;
+  await expect(guest.skill!(downstreamSkillUri("remote", URI))).rejects.toMatchObject({ code: "cancelled" });
+  expect(contextFor).not.toHaveBeenCalled();
+  expect(list).not.toHaveBeenCalled();
+  expect(closeScope).not.toHaveBeenCalled();
 });
 
 it("INV-8: manifests local bytes and retains authority-rooted downstream skill names", async () => {

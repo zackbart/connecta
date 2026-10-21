@@ -126,6 +126,31 @@ describe("public package boundary", () => {
     expect(packageJson.exports?.["./package.json"]).toBe("./package.json");
   });
 
+  // The rule is about the exports map, not the tarball: `examples/worker`
+  // ships because it is the Workers starting template a consumer copies, and
+  // nothing under examples/ is importable from the package.
+  it("keeps the shipped example adapters out of the importable surface", () => {
+    expect(packageJson.files).toContain("examples/worker");
+    // `./package.json` is the manifest itself — a data file, not a code path
+    // (#374) — so it is the one export that legitimately sits outside dist/.
+    const targets = Object.entries(packageJson.exports ?? {})
+      .filter(([subpath]) => subpath !== "./package.json")
+      .flatMap(([, entry]) => (typeof entry === "string" ? [entry] : Object.values(entry as Record<string, string>)));
+    expect(targets.length).toBeGreaterThan(0);
+    for (const target of targets) {
+      expect(target, `${target} resolves outside dist/`).toMatch(/^\.\/dist\//);
+    }
+  });
+
+  it("INV-13: keeps Clerk behind an optional adapter subpath", () => {
+    expect(packageJson.dependencies).not.toHaveProperty("@clerk/backend");
+    expect(packageJson.peerDependencies).toHaveProperty("@clerk/backend", "^3.12.0");
+    expect(packageJson.peerDependenciesMeta?.["@clerk/backend"]).toEqual({
+      optional: true,
+    });
+    expect(packageJson.exports).toHaveProperty("./auth/clerk");
+  });
+
   it("INV-13: keeps QuickJS behind an optional executor subpath", () => {
     expect(packageJson.dependencies).not.toHaveProperty("quickjs-emscripten");
     expect(packageJson.peerDependencies).toHaveProperty("quickjs-emscripten", "^0.32.0");
@@ -220,7 +245,6 @@ describe("public package boundary", () => {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
   });
-
 });
 
 // Effect is the core's implementation and must never become its API: a
@@ -279,6 +303,19 @@ describe("Effect behind the published surface", () => {
       }
     }, 60_000);
 
+    it("fails on a declaration no exports target reaches", () => {
+      const dir = fixture({
+        "index.d.ts": "export declare const value: number;\n",
+        "orphan.d.ts": "export declare const internal: string;\n",
+      });
+      try {
+        const result = runChecker(["--dist", dir]);
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("dist/orphan.d.ts: orphan declaration");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
   });
 
   it("pins Effect v4 to one exact version", () => {

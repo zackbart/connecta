@@ -25,6 +25,23 @@ describe("eval final-answer evidence", () => {
       ).finalAnswer,
     ).toContain("9f2c1ab");
   });
+  it("clears final evidence when a follow-up has no answer", () => {
+    expect(
+      parseTrace(
+        [message("CI run 4812 failed."), { type: "result", subtype: "success" }],
+        [0, 1],
+        ["Read CI.", "Retry."],
+      ).finalAnswer,
+    ).toBe("");
+  });
+  it("does not double-count cached Codex input", () => {
+    const trace = parseTrace(
+      [{ type: "codex_usage", total: { inputTokens: 100, cachedInputTokens: 40, outputTokens: 10 } }],
+      [],
+      [],
+    );
+    expect(trace.tokens).toEqual({ input: 60, cacheRead: 40, output: 10, cacheCreation: 0 });
+  });
   it("normalizes the native Claude image shape from the first baseline", () => {
     const trace = parseTrace(
       [

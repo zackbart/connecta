@@ -148,6 +148,13 @@ describe("Codex eval app-server", () => {
     }
   });
 
+  it("bounds a follow-up callback that never settles", async () => {
+    const started = performance.now();
+    const run = await fixture("complete", undefined, async () => await new Promise(() => {}), 250);
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(run.timedOut).toBe(true);
+  });
+
   it("stops the batch on a typed usage limit even when its message has no rate keyword", () => {
     const error = infraError(
       [{ type: "result", subtype: "failed", result: "Usage cap reached", codex_error_info: "usageLimitExceeded" }],

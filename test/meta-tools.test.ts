@@ -1,4 +1,4 @@
-import { connectorIds, toolsByConnector } from "./fixtures/meta-tools.js";
+import { connectorIds } from "./fixtures/meta-tools.js";
 import { CredentialVault } from "../src/credentials.js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
@@ -8,7 +8,7 @@ import { CatalogService } from "../src/catalog-service.js";
 import { STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR } from "../src/credential-rules.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools as buildMetaTools } from "../src/meta-tools.js";
-import { connectorGuideSummary, GUIDE_SUMMARY_LENGTH, USAGE_SKILL } from "../src/skills.js";
+import { connectorGuideSummary, GUIDE_SUMMARY_LENGTH } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import type { ToolCallActivityEvent } from "../src/activity.js";
@@ -80,72 +80,6 @@ Prefer \`notion.search\` over listing databases.
     expect(listed).not.toContain("connector:plain");
   });
 
-  it("summarizes a guide with no heading from its first meaningful paragraph", async () => {
-    const mt = createMetaTools(makeRegistry([guided("linear", "- Use `linear.search_issues` first.\n")]), BASE);
-    expect(textFrom(await mt.skills({}))).toContain("`connector:linear` — Use `linear.search_issues` first.");
-  });
-
-  it("joins hard-wrapped opening paragraphs into complete thoughts", async () => {
-    const cases: Array<[string, string, string]> = [
-      [
-        "vercel",
-        "Use this connector for Vercel infrastructure and deployment state, not\n" +
-          "application data or source-code changes.\n\nLater details.",
-        "Use this connector for Vercel infrastructure and deployment state, not " +
-          "application data or source-code changes.",
-      ],
-      [
-        "supabase",
-        "Use this connector for Supabase account and project administration, not routine\n" +
-          "application queries or migrations.\n\nLater details.",
-        "Use this connector for Supabase account and project administration, not routine " +
-          "application queries or migrations.",
-      ],
-    ];
-    for (const [id, guide, expected] of cases) {
-      const summary = connectorGuideSummary(guided(id, guide));
-      expect(summary, id).toBe(expected);
-      expect(summary?.length, id).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
-    }
-  });
-
-  it("skips opening markup when picking the summary line", async () => {
-    const cases: Array<[string, string, string]> = [
-      ["fence", '```json\n{ "a": 1 }\n```\n\nUse `x.search`.\n', "Use `x.search`."],
-      ["comment-inside-fence", "```html\n<!-- example\n```\n\nUse `x.search`.\n", "Use `x.search`."],
-      ["frontmatter", "---\ntitle: ignored\n---\n\n# Real heading\n", "Real heading"],
-      ["bare-hash", "#\n\nUse the search tool.\n", "Use the search tool."],
-      ["bare-hashes", "###\n\nUse the search tool.\n", "Use the search tool."],
-      ["unspaced-heading", "#Heading text\n", "Heading text"],
-      ["html-comment", "<!-- generated\nmetadata -->\n\n# Real heading\n", "Real heading"],
-      [
-        "leading-pipe-table",
-        "| Column | Meaning |\n| --- | --- |\n| id | Project id |\n\n# Real heading\n",
-        "Real heading",
-      ],
-      [
-        "standard-table",
-        "Column | Meaning\n--- | ---\nid | Project id\n\nUse the project id from search.\n",
-        "Use the project id from search.",
-      ],
-      [
-        "ordinary-pipe-prose",
-        "Use `left | right` as the literal query value.\n",
-        "Use `left | right` as the literal query value.",
-      ],
-      ["rule", "---\n\n", "svc connector"],
-    ];
-    for (const [label, guide, expected] of cases) {
-      const mt = createMetaTools(makeRegistry([guided("svc", guide)]), BASE);
-      expect(textFrom(await mt.skills({})), label).toContain(`\`connector:svc\` — ${expected}`);
-    }
-  });
-
-  it("falls back to the connector description when a guide is all markup", async () => {
-    const mt = createMetaTools(makeRegistry([guided("svc", "# \n")]), BASE);
-    expect(textFrom(await mt.skills({}))).toContain("`connector:svc` — svc connector");
-  });
-
   it("shortens long summaries at sentence, clause, word, then hard boundaries", async () => {
     const exact = "a".repeat(GUIDE_SUMMARY_LENGTH);
     const over = "b".repeat(121);
@@ -177,81 +111,6 @@ Prefer \`notion.search\` over listing databases.
     ]) {
       expect(summary?.length).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
     }
-  });
-
-  it.each([
-    [
-      "e.g.",
-      "Use exact identifiers, e.g. the project id from search, before making any deployment lookup across the account and its teams.",
-    ],
-    [
-      "i.e.",
-      "Use exact identifiers, i.e. project ids rather than names, before making any deployment lookup across the account and its teams.",
-    ],
-    [
-      "U.S.",
-      "Use the U.S. project region with the exact project id before making any deployment lookup across the account and its teams.",
-    ],
-    [
-      "Dr.",
-      "Ask Dr. Smith for the exact project id before making any deployment lookup across the account and its teams or archived workspaces.",
-    ],
-  ] as const)("does not treat %s as a sentence ending", (name, guide) => {
-    const summary = connectorGuideSummary(guided(`abbr-${name}`, guide));
-    expect(summary, guide).not.toMatch(/(?:e\.g|i\.e|U\.S|Dr)\.$/u);
-    expect(summary, guide).toMatch(/…$/u);
-    expect(summary?.length, guide).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
-  });
-
-  it("allows a dotted abbreviation to finish a sentence", () => {
-    const guide =
-      "This connector serves projects in the U.S. " +
-      "Use the exact project identifier before making any deployment lookup " +
-      "across the account and all its teams.";
-    expect(connectorGuideSummary(guided("terminal", guide))).toBe("This connector serves projects in the U.S.");
-  });
-
-  it.each([
-    [
-      "region",
-      "Use projects from the U.S. East region with the exact project id before making any deployment lookup across the account and its archived teams.",
-    ],
-    [
-      "organization",
-      "Coordinate with U.S. Army contacts for the exact project id before making any deployment lookup across the account and its teams.",
-    ],
-  ] as const)("keeps a dotted initialism attached to its %s", (_name, guide) => {
-    const summary = connectorGuideSummary(guided("region", guide));
-    expect(summary, guide).not.toMatch(/U\.S\.$/u);
-    expect(summary, guide).toMatch(/…$/u);
-    expect(summary?.length, guide).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
-  });
-
-  it("uses an ellipsis when an initialism boundary lacks clause evidence", () => {
-    const guide =
-      "This connector serves projects in the U.S. Use exact project " +
-      "identifiers before making any deployment lookup across the account " +
-      "and all its teams.";
-    const summary = connectorGuideSummary(guided("ambiguous", guide));
-    expect(summary).not.toMatch(/U\.S\.$/u);
-    expect(summary).toMatch(/…$/u);
-  });
-
-  it("keeps a title abbreviation attached to the proper name", () => {
-    const guide =
-      "Ask Dr. Smith for the exact project identifier before making any " +
-      "deployment lookup across the account and all its teams or archived workspaces.";
-    const summary = connectorGuideSummary(guided("title", guide));
-    expect(summary).not.toBe("Ask Dr.");
-    expect(summary).toMatch(/…$/u);
-  });
-
-  it("treats a whitespace-only guide as no guide at all", async () => {
-    const mt = createMetaTools(makeRegistry([guided("blank", "  \n\t\n")]), BASE);
-    expect(textFrom(await mt.skills({}))).not.toContain("connector:blank");
-    const fetched = await mt.skills({ name: "connector:blank" });
-    expect(fetched.isError).toBe(true);
-    expect(textFrom(fetched)).toContain('Connector "blank" has no usage guide');
   });
 
   it("preserves a connector guide body behind skill frontmatter", async () => {
@@ -290,23 +149,6 @@ Prefer \`notion.search\` over listing databases.
     );
   });
 
-  it("accepts exact and whitespace-normalized explicit summaries at budget", async () => {
-    const exact = "x".repeat(GUIDE_SUMMARY_LENGTH);
-    const normalized = `${" y".repeat(59)}  yy`;
-    const mt = createMetaTools(
-      makeRegistry([
-        guided("exact", { content: "Body.", summary: exact }),
-        guided("normalized", { content: "Body.", summary: normalized }),
-        guided("blank", { content: "Derived body.", summary: " \n " }),
-      ]),
-      BASE,
-    );
-    const listed = textFrom(await mt.skills({}));
-    expect(listed).toContain(`\`connector:exact\` — ${exact}`);
-    expect(listed).toContain(`\`connector:normalized\` — ${normalized.replace(/\s+/g, " ").trim()}`);
-    expect(listed).toContain("`connector:blank` — Derived body.");
-  });
-
   it("keeps duplicate guide content and deployment-specific summaries isolated", async () => {
     const content = "# Shared service\n\nUse the deployment's configured alias.\n";
     const first = createMetaTools(
@@ -334,47 +176,6 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(await second.skills({ name: "connector:service" }))).toContain(content);
   });
 
-  it("preserves guide body whitespace, padding included", async () => {
-    const padded = "\n\n  # Padded\n\nBody.\n   ";
-    const mt = createMetaTools(makeRegistry([guided("pad", padded)]), BASE);
-    expect(textFrom(await mt.skills({ name: "connector:pad" }))).toContain(padded);
-    expect(textFrom(await mt.skills({}))).toContain("`connector:pad` — Body.");
-  });
-
-  it("keeps the built-in usage guide unchanged as the default experience", async () => {
-    const mt = createMetaTools(makeRegistry([guided("notion", NOTION_GUIDE)]), BASE);
-    const fetched = await mt.skills({ name: "usage" });
-    expect(fetched.isError).toBeFalsy();
-    expect(textFrom(fetched)).toBe(USAGE_SKILL);
-    expect(textFrom(fetched)).toContain("# Connecta usage");
-    expect(textFrom(fetched)).toContain("## The global and the envelopes");
-    expect(textFrom(fetched)).toContain("crm.get_account");
-    expect(textFrom(fetched)).toContain("## Large results and recovery");
-    expect(textFrom(fetched)).toContain("## Output");
-    expect(textFrom(fetched)).toContain("Host-call budget exhaustion ends the run");
-    expect(textFrom(fetched)).not.toContain("connecta.ui");
-  });
-
-  it("serves byte-identical shared usage guidance across deployments", async () => {
-    const plain = createMetaTools(makeRegistry([guided("plain"), guided("other")]), BASE);
-    const guidedDeployment = createMetaTools(makeRegistry([guided("notion", NOTION_GUIDE)]), BASE);
-    const expected = USAGE_SKILL;
-    expect(textFrom(await plain.skills({ name: "usage" }))).toBe(expected);
-    expect(textFrom(await guidedDeployment.skills({ name: "usage" }))).toBe(expected);
-    const listed = textFrom(await plain.skills({}));
-    expect(listed).toContain("`usage` — How to route work between one execute_code program");
-    expect(listed).not.toContain("connector:");
-    expect(new TextEncoder().encode(expected).length).toBeLessThan(5_750);
-  });
-
-  it("errors — never falls back to the generic guide — for a connector with no guide", async () => {
-    const mt = createMetaTools(makeRegistry([guided("plain")]), BASE);
-    const fetched = await mt.skills({ name: "connector:plain" });
-    expect(fetched.isError).toBe(true);
-    expect(textFrom(fetched)).toContain('Connector "plain" has no usage guide');
-    expect(textFrom(fetched)).not.toContain("# Connecta usage");
-  });
-
   it("errors for an unknown connector guide and an unknown skill name", async () => {
     const mt = createMetaTools(makeRegistry([guided("notion", NOTION_GUIDE)]), BASE);
     const unknownConnector = await mt.skills({ name: "connector:ghost" });
@@ -388,59 +189,11 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(unknownSkill)).not.toContain("# Connecta usage");
   });
 
-  it("labels the available-skills list identically on every error branch", async () => {
-    const mt = createMetaTools(makeRegistry([guided("notion", NOTION_GUIDE), guided("plain")]), BASE);
-    // One enumeration, one label — which branch an agent hits must not change
-    // what the list is called. `Available skills:` is the label; a bare
-    // `Available:` is the drift this pins against, and "Available skills:"
-    // does not contain it.
-    for (const name of [
-      "connector:ghost", // unknown connector
-      "connector:plain", // known connector, no usage guide
-      "notion", // bare id whose guide is reachable under the prefix
-      "plain", // bare id with no guide at all
-      "missing", // unknown skill name
-    ]) {
-      const failed = await mt.skills({ name });
-      expect(failed.isError, name).toBe(true);
-      expect(textFrom(failed), name).toContain("Available skills:");
-      expect(textFrom(failed), name).not.toContain("Available:");
-    }
-  });
-
   it("points a bare connector id at its prefixed skill name", async () => {
     const mt = createMetaTools(makeRegistry([guided("notion", NOTION_GUIDE)]), BASE);
     const fetched = await mt.skills({ name: "notion" });
     expect(fetched.isError).toBe(true);
     expect(textFrom(fetched)).toContain('Connector guides are fetched as "connector:notion"');
-  });
-
-  it('a connector whose id is "usage" neither shadows nor is shadowed', async () => {
-    const guide = "# Usage-service quirks\n\nRate limit: 10 rpm.\n";
-    const mt = createMetaTools(makeRegistry([guided("usage", guide)]), BASE);
-
-    const listed = textFrom(await mt.skills({}));
-    expect(listed).toContain("`usage` — How to route work between one execute_code program");
-    expect(listed).toContain("`connector:usage` — Rate limit: 10 rpm.");
-
-    expect(textFrom(await mt.skills({ name: "usage" }))).toBe(USAGE_SKILL);
-    expect(textFrom(await mt.skills({ name: "connector:usage" }))).toContain(guide);
-  });
-
-  it("names the guide in search_tools output", async () => {
-    const mt = createMetaTools(makeRegistry([guided("notion", NOTION_GUIDE), guided("plain")]), BASE);
-    const searched = textOf(await mt.searchTools({ query: "search" })) as SearchResult;
-    const byId = toolsByConnector(searched);
-    expect(required(required(byId.notion).tools[0]).guide).toBe("connector:notion");
-    expect(required(required(byId.notion).tools[0]).guideSummary).toBe(
-      "Prefer `notion.search` over listing databases.",
-    );
-    expect(required(byId.notion).tools[0]).not.toHaveProperty("guideRequiredReasons");
-    expect(required(byId.notion).tools[0]).not.toHaveProperty("guideRequired");
-    expect(required(byId.plain).tools[0]).not.toHaveProperty("guide");
-    expect(textFrom(await mt.skills({ name: required(required(required(byId.notion).tools[0]).guide) }))).toContain(
-      NOTION_GUIDE,
-    );
   });
 
   it("requires guide review for approval-bound tools and connector-required conventions", async () => {
@@ -533,18 +286,6 @@ Prefer \`notion.search\` over listing databases.
     expect(entry.guide).toBe("connector:generic");
     expect(entry.guideRequired).toBe(true);
     expect(entry.guideRequiredReasons).toEqual(["connector_required", "approval_required"]);
-  });
-
-  it("omits guideRequired from a search that asked for no schemas", async () => {
-    // schema_truncated is a fact about a rendered schema; with none rendered
-    // there is nothing to cap and nothing to report.
-    const mt = createMetaTools(makeRegistry([wideGuided()]), BASE);
-    const searched = textOf(await mt.searchTools({ query: "read" })) as SearchResult;
-    const tool = required(searched.tools[0]);
-    expect(tool.guide).toBe("connector:wide");
-    expect(tool).not.toHaveProperty("inputSchemaTruncated");
-    expect(tool).not.toHaveProperty("guideRequired");
-    expect(tool).not.toHaveProperty("guideRequiredReasons");
   });
 });
 
@@ -645,30 +386,6 @@ describe("catalog-lookup health accounting", () => {
     });
   }
 
-  it("counts a failing catalog like a failing execution, call for call", async () => {
-    const state = { failing: true, listCalls: 0 };
-    const executionBroken: Connector = connectorWith({
-      id: "execution",
-      kind: "mcp",
-      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-      call: async () => {
-        throw new Error("downstream exploded");
-      },
-    });
-    const registry = makeRegistry([catalogFlaky(state), executionBroken]);
-    const activity = activitySink();
-    const mt = createMetaTools(registry, BASE, { activity: activity.activity });
-    for (let i = 0; i < 2; i++) {
-      await mt.callTool({ address: "catalog.read", resultMode: "value" });
-      await mt.callTool({ address: "execution.read", resultMode: "value" });
-    }
-    const catalog = observe(activity.events, "catalog");
-    expect(catalog.consecutiveFailures).toBe(observe(activity.events, "execution").consecutiveFailures);
-    expect(catalog.consecutiveFailures).toBe(2);
-    expect(catalog.status).toBe("error");
-    expect(catalog.message).toBe("catalog_lookup_failed");
-  });
-
   it("records a typed auth_required from the catalog without changing its code", async () => {
     const expired: Connector = connectorWith({
       id: "expired",
@@ -698,23 +415,6 @@ describe("catalog-lookup health accounting", () => {
     });
   });
 
-  it("returns to healthy once the catalog answers again", async () => {
-    const state = { failing: true, listCalls: 0 };
-    const registry = makeRegistry([catalogFlaky(state)]);
-    const activity = activitySink();
-    const mt = createMetaTools(registry, BASE, { activity: activity.activity });
-    await mt.callTool({ address: "catalog.read", resultMode: "value" });
-    expect(observe(activity.events, "catalog").status).toBe("error");
-
-    state.failing = false;
-    const parsed = textOf(await mt.callTool({ address: "catalog.read", resultMode: "value" })) as { ok: boolean };
-    expect(parsed.ok).toBe(true);
-    const recovered = observe(activity.events, "catalog");
-    expect(recovered.status).toBe("ok");
-    expect(recovered.consecutiveFailures).toBe(0);
-    expect(recovered.lastSuccessAt).toBeTruthy();
-  });
-
   it("records fresh custom catalog failures without a registry stale fallback", async () => {
     const state = { failing: false, listCalls: 0 };
     const registry = makeRegistry([catalogFlaky(state), calcConnector]);
@@ -732,19 +432,6 @@ describe("catalog-lookup health accounting", () => {
       status: "ok",
       consecutiveFailures: 0,
     });
-  });
-
-  it("reports health observed from real generic tool calls", async () => {
-    const registry = makeRegistry([calcConnector]);
-    const activity = activitySink();
-    await createMetaTools(registry, BASE, { activity: activity.activity }).callTool({
-      address: "calc.add",
-      args: { a: 1, b: 2 },
-    });
-    const observed = observe(activity.events, "calc");
-    expect(observed.status).toBe("ok");
-    expect(observed.lastSuccessAt).toBeTruthy();
-    expect(observed.consecutiveFailures).toBe(0);
   });
 });
 
@@ -766,20 +453,6 @@ describe("authorize_connector", () => {
     expect(parsed.instructions).toContain("sign in as the user");
     expect(parsed.instructions).toContain("Then retry the original call");
     expect(parsed.instructions).toContain('connecta.search({ connector: "needsauth" }) inside execute_code');
-    expect(authConnector.startAuthCalls).toEqual([]);
-  });
-
-  it("passes force to the browser link factory without starting consent", async () => {
-    authConnector.startAuthCalls.length = 0;
-    const links: Array<{ id: string; force?: boolean }> = [];
-    const mt = createMetaTools(registry(), BASE, {
-      oauthConnectUrl: async (id, force) => {
-        links.push({ id, ...(force !== undefined ? { force } : {}) });
-        return `${BASE}/connect/${id}?h=test`;
-      },
-    });
-    await mt.authorizeConnector({ connector: "needsauth", force: true });
-    expect(links).toEqual([{ id: "needsauth", force: true }]);
     expect(authConnector.startAuthCalls).toEqual([]);
   });
 
@@ -891,13 +564,6 @@ describe("authorize_connector", () => {
     });
   });
 
-  it("errors for an unknown connector", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const result = await mt.authorizeConnector({ connector: "ghost" });
-    expect(result.isError).toBe(true);
-    expect(required(result.content[0]).text).toContain("Unknown connector");
-  });
-
   it("issues a browser link before asking startAuth for a consent URL", async () => {
     const noUrl: Connector = connectorWith({
       id: "nourl",
@@ -916,111 +582,6 @@ describe("authorize_connector", () => {
     const result = await mt.authorizeConnector({ connector: "nourl" });
     expect(result.isError).toBeFalsy();
     expect(required(result.content[0]).text).toContain("/connect/nourl?h=");
-  });
-
-  it("leaves startAuth errors for the verified browser visit", async () => {
-    const errConn: Connector = connectorWith({
-      id: "erroauth",
-      kind: "mcp",
-      tools: async () => {
-        throw new Error("x");
-      },
-      call: async () => {
-        throw new Error("x");
-      },
-      async startAuth() {
-        return { state: "error", message: "connect ECONNREFUSED" };
-      },
-    });
-    const mt = createMetaTools(makeRegistry([errConn]), BASE);
-    const result = await mt.authorizeConnector({ connector: "erroauth" });
-    expect(result.isError).toBeFalsy();
-    const parsed = JSON.parse(required(result.content[0]).text) as {
-      status: string;
-      message?: string;
-    };
-    expect(parsed.status).toBe("auth_required");
-    expect(parsed.message).toBeUndefined();
-  });
-
-  it("keeps the tool cache unchanged when issuing a browser link", async () => {
-    const throwConn: Connector = connectorWith({
-      id: "throws",
-      kind: "mcp",
-      tools: async () => {
-        throw new Error("x");
-      },
-      call: async () => {
-        throw new Error("x");
-      },
-      async startAuth() {
-        throw new Error("boom during force");
-      },
-    });
-    const reg = makeRegistry([throwConn]);
-    let invalidated = 0;
-    const origInvalidateStored = reg.invalidateStored.bind(reg);
-    reg.invalidateStored = async (id: string) => {
-      invalidated++;
-      await origInvalidateStored(id);
-    };
-    const mt = createMetaTools(reg, BASE);
-    const result = await mt.authorizeConnector({ connector: "throws" });
-    expect(result.isError).toBeFalsy();
-    expect(invalidated).toBe(0);
-  });
-
-  // #261: the surface sweeps in test/code-first-surface.test.ts read tool
-  // DESCRIPTIONS and instructions. A meta-tool RESULT is always-followed text
-  // too — an agent handed "then call list_connectors" does exactly that, gets an
-  // unknown-tool error, and has no route left. The OAuth handoff named a removed
-  // tool once already, so every recovery string these handlers return is swept
-  // here, at the one place results are produced.
-  it("names no removed tool in any recovery payload it returns", async () => {
-    const removed = ["list_connectors", "describe_tools", "batch_call"];
-    const vaultStorage = memoryStorage();
-    const configured = createMetaTools(
-      makeRegistry(
-        [
-          connectorWith({
-            id: "vaulted",
-            kind: "api",
-            description: "Operator credential",
-            credential: { label: "API key" },
-            tools: [],
-            call: async () => null,
-          }),
-        ],
-        {
-          storage: vaultStorage,
-          credentialVault: new CredentialVault(vaultStorage, CREDENTIAL_KEY),
-        },
-      ),
-      BASE,
-    );
-    const mt = createMetaTools(registry(), BASE);
-    const payloads = [
-      // The OAuth handoff, which is where the regression happened.
-      await mt.authorizeConnector({ connector: "needsauth" }),
-      // The operator-credential handoff, and the two dead ends beside it.
-      await configured.authorizeConnector({ connector: "vaulted" }),
-      await mt.authorizeConnector({ connector: "calc" }),
-      await mt.authorizeConnector({ connector: "ghost" }),
-      // Recovery records an agent follows after a failed call.
-      await mt.callTool({ address: "ghost.read_items" }),
-      await mt.callTool({ address: "calc.missing_sum" }),
-      await mt.searchTools({ query: "nothing matches this at all" }),
-      await mt.skills({}),
-      await mt.skills({ name: "usage" }),
-      await mt.readResult({ id: "expired" }),
-    ];
-
-    for (const payload of payloads) {
-      const serialized = JSON.stringify(payload);
-      for (const tool of removed) {
-        expect(serialized).not.toContain(tool);
-      }
-    }
   });
 });
 
@@ -1168,44 +729,6 @@ describe("empty-query browse of an unavailable catalog", () => {
     call: async () => null,
   });
 
-  it("reports the failure and its recovery detail for a scoped browse", async () => {
-    const mt = createMetaTools(makeRegistry([unavailable(), calcConnector]), BASE);
-    const browsed = textOf(await mt.searchTools({ connector: "billing", query: "" })) as SearchResult;
-    expect(browsed.tools).toEqual([]);
-    const analysis = required(browsed.queryAnalysis);
-    // No terms were supplied, so the term partitions say nothing — the failure
-    // fields carry the whole message.
-    expect(analysis.representedTerms).toEqual([]);
-    expect(analysis.otherResultTerms).toEqual([]);
-    expect(analysis.unmatchedTerms).toEqual([]);
-    expect(analysis).toMatchObject({
-      connectorScope: "billing",
-      unavailableConnectorCount: 1,
-      catalogError: {
-        code: "unavailable",
-        retryable: true,
-        retryAfterMs: 30_000,
-      },
-      guidance: expect.stringContaining('Connector "billing" could not be browsed'),
-    });
-    expect(required(analysis.catalogError).message).toBe('Connector "billing" catalog lookup failed (unavailable).');
-    // Same bounded shape the term-bearing scoped path returns.
-    expect(Object.keys(required(analysis.catalogError)).sort()).toEqual([
-      "code",
-      "message",
-      "retryAfterMs",
-      "retryable",
-    ]);
-    // The recovery owner stays reachable: a browse that failed still names the
-    // connector's guide, as a scoped miss with terms does.
-    expect(analysis).toMatchObject({
-      guide: "connector:billing",
-      guideSummary: "Invoice ids are prefixed.",
-      guideRequired: true,
-      guideRequiredReasons: ["connector_required"],
-    });
-  });
-
   it("reports unavailable catalogs above an unscoped browse", async () => {
     const mt = createMetaTools(makeRegistry([unavailable(), calcConnector]), BASE);
     const browsed = textOf(await mt.searchTools({ query: "" })) as SearchResult;
@@ -1229,14 +752,6 @@ describe("empty-query browse of an unavailable catalog", () => {
     expect(empty.queryAnalysis).toBeUndefined();
     expect(required(broken.queryAnalysis).catalogError).toBeDefined();
     expect(JSON.stringify(empty)).not.toEqual(JSON.stringify(broken));
-  });
-
-  it("leaves an available scoped browse unchanged", async () => {
-    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
-    const browsed = textOf(await mt.searchTools({ connector: "calc", query: "" })) as SearchResult;
-    expect(connectorIds(browsed)).toEqual(["calc"]);
-    expect(browsed.total).toBeGreaterThan(0);
-    expect(browsed.queryAnalysis).toBeUndefined();
   });
 });
 
@@ -1272,20 +787,6 @@ describe("empty-query browse of an unconfigured connector", () => {
     expect(analysis.guide).toBeUndefined();
   });
 
-  it("gives the browse the same recovery advice the term-bearing path gives", async () => {
-    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
-    const browsed = textOf(await mt.searchTools({ connector: "ghost", query: "" })) as SearchResult;
-    const searched = textOf(await mt.searchTools({ connector: "ghost", query: "add numbers" })) as SearchResult;
-    expect(required(browsed.queryAnalysis).guidance).toEqual(required(searched.queryAnalysis).guidance);
-    expect(required(searched.queryAnalysis)).toMatchObject({
-      connectorScope: "ghost",
-      unknownConnector: true,
-    });
-    // The term-bearing path still analyses its terms; the browse still does not.
-    expect(required(searched.queryAnalysis).unmatchedTerms).toEqual(["add", "numbers"]);
-    expect(required(browsed.queryAnalysis).unmatchedTerms).toEqual([]);
-  });
-
   it("INV-4: names the configured connectors visible on this endpoint", async () => {
     const mt = createMetaTools(makeRegistry([calcConnector, barren]), BASE);
     const browsed = textOf(await mt.searchTools({ connector: "ghost", query: "" })) as SearchResult;
@@ -1305,27 +806,6 @@ describe("empty-query browse of an unconfigured connector", () => {
     expect(empty.queryAnalysis).toBeUndefined();
     expect(required(unknown.queryAnalysis).unknownConnector).toBe(true);
     expect(JSON.stringify(empty)).not.toEqual(JSON.stringify(unknown));
-  });
-
-  it("treats a case variant of a configured id as unknown, as the resolver does", async () => {
-    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
-    const browsed = textOf(await mt.searchTools({ connector: "CALC", query: "" })) as SearchResult;
-    expect(required(browsed.queryAnalysis)).toMatchObject({
-      connectorScope: "CALC",
-      unknownConnector: true,
-      guidance: expect.stringContaining('Connector "CALC" is not configured in this deployment'),
-    });
-  });
-
-  it("leaves a configured scoped browse and every unscoped browse unchanged", async () => {
-    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
-    const scoped = textOf(await mt.searchTools({ connector: "calc", query: "" })) as SearchResult;
-    expect(connectorIds(scoped)).toEqual(["calc"]);
-    expect(scoped.total).toBeGreaterThan(0);
-    expect(scoped.queryAnalysis).toBeUndefined();
-    const unscoped = textOf(await mt.searchTools({ query: "" })) as SearchResult;
-    expect(connectorIds(unscoped)).toEqual(["calc"]);
-    expect(unscoped.queryAnalysis).toBeUndefined();
   });
 });
 

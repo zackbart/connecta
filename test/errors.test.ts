@@ -5,6 +5,7 @@ import {
   classifyCallError,
   ConnectorCallError,
   framingError,
+  networkErrorCode,
   unavailableCallError,
   WithheldTextError,
   echoedCallArgs,
@@ -31,7 +32,30 @@ describe("sensitive argument echoes", () => {
     expect(echoedCallArgs({ secret: PRIVATE_MARKER }, wide)).toEqual({ argsRedacted: true });
   });
 
-  it.each([["over-budget", "large-secret-value".repeat(100)]])("omits %s writeOnly input fields before budgeting, independent of value length (INV-5)", (_label, secretValue) => {
+  it("keeps public-only alternative and dynamic-property schemas intact (INV-5)", () => {
+    const schema = {
+      oneOf: [{ properties: { mode: { const: "one" } } }, { properties: { mode: { const: "two" } } }],
+      patternProperties: { ".*": { type: "string" } },
+      additionalProperties: { type: "string" },
+    };
+    const args = { mode: "one", public: "value" };
+    expect(echoedCallArgs(args, schema)).toEqual({ args });
+  });
+  it("preserves JSON serialization of public values in partial snapshots (INV-5)", () => {
+    const date = new Date("2026-01-01T00:00:00Z");
+    expect(echoedCallArgs({ date }, {})).toEqual({ args: { date: date.toJSON() } });
+    expect(
+      echoedCallArgs(
+        { config: { date, password: "private" } },
+        { properties: { config: { properties: { password: { writeOnly: true } } } } },
+      ),
+    ).toEqual({ args: { config: { date: date.toJSON() } }, argsRedacted: true });
+  });
+  it.each([
+    ["short", "z"],
+    ["ordinary", "ordinary-secret-value"],
+    ["over-budget", "large-secret-value".repeat(100)],
+  ])("omits %s writeOnly input fields before budgeting, independent of value length (INV-5)", (_label, secretValue) => {
     const args = { project: "p1", secretValue };
     const schema = { properties: { project: { type: "string" }, secretValue: { type: "string", writeOnly: true } } };
     const echoed = echoedCallArgs(args, schema);
@@ -39,11 +63,22 @@ describe("sensitive argument echoes", () => {
     expect(args.secretValue).toBe(secretValue);
   });
 
+  it("keeps complete public echoes and snapshots partial echoes (INV-5, INV-9)", () => {
+    const schema = { properties: { public: { writeOnly: false }, private: { writeOnly: true } } };
+    expect(echoedCallArgs({ public: "original" }, schema)).toEqual({ args: { public: "original" } });
+    const args = { public: "original", private: "secret" };
+    const echoed = echoedCallArgs(args, schema);
+    args.public = "mutated";
+    expect(echoed).toEqual({ args: { public: "original" }, argsRedacted: true });
+    expect(echoedCallArgs({ ...args, public: "x".repeat(600) }, schema)).toEqual({ argsRedacted: true });
+  });
 });
 
 describe("WithheldTextError", () => {
   it.each([
+    ["Dynamic Client Registration rejected (HTTP 400): secret", "fallback", false],
     ["Dynamic Client Registration rejected (HTTP 503): secret", "fallback", false],
+    ["HTTP 400: secret request timed out", "fallback", false],
   ] as const)("classifies %j as the original would have been", (text, code, retryable) => {
     const original = new Error(text);
     const withheld = new WithheldTextError("connecta's words", original);
@@ -74,6 +109,14 @@ describe("unavailableCallError", () => {
     expect(JSON.stringify(classifyCallError(error))).not.toContain("secret");
   });
 
+  it("keeps only the request's own abort reason as cause", () => {
+    const controller = new AbortController();
+    const reason = new Error("owner left");
+    controller.abort(reason);
+    expect(unavailableCallError(reason, undefined, undefined, controller.signal).cause).toBe(reason);
+    expect(unavailableCallError(new Error("other"), undefined, undefined, controller.signal).cause).toBeUndefined();
+    expect(unavailableCallError(reason).cause).toBeUndefined();
+  });
 });
 
 describe("ConnectorCallError", () => {
@@ -87,9 +130,95 @@ describe("ConnectorCallError", () => {
     expect(new ConnectorCallError("connector_call_failed", "x").retryable).toBe(false);
   });
 
+  it("carries not_found through classification without a recovery envelope", () => {
+    // The point of the code is that a program can branch on it: it survives
+    // classification as itself, non-retryable, with nothing for a caller to
+    // recover — the next move is re-addressing, which only the caller can do.
+    expect(classifyCallError(new ConnectorCallError("not_found", "Zone 4 does not exist."))).toEqual({
+      code: "not_found",
+      message: "Zone 4 does not exist.",
+      retryable: false,
+    });
+    // And it is not something the message heuristic can mint by accident: an
+    // untyped throw whose prose says "not found" is still the generic failure,
+    // because provider prose is never parsed to invent a classification.
+    expect(classifyCallError(new Error("404 not found"))).toEqual({
+      code: "connector_call_failed",
+      message: "404 not found",
+      retryable: false,
+    });
+  });
+
+  it("carries an optional retryAfterMs and ignores nonsense values", () => {
+    expect(new ConnectorCallError("rate_limited", "x", { retryAfterMs: 2_500 }).retryAfterMs).toBe(2_500);
+    expect(new ConnectorCallError("rate_limited", "x").retryAfterMs).toBe(undefined);
+    expect(new ConnectorCallError("rate_limited", "x", { retryAfterMs: -1 }).retryAfterMs).toBe(undefined);
+    expect(new ConnectorCallError("rate_limited", "x", { retryAfterMs: Number.NaN }).retryAfterMs).toBe(undefined);
+    expect(new ConnectorCallError("rate_limited", "x", { retryAfterMs: 1_200.7 }).retryAfterMs).toBe(1_200);
+  });
+
+  it("honors an explicit retryable override and keeps the cause", () => {
+    const cause = new Error("underlying");
+    const err = new ConnectorCallError("timeout", "x", {
+      retryable: false,
+      cause,
+    });
+    expect(err.retryable).toBe(false);
+    expect(err.cause).toBe(cause);
+    expect(err.name).toBe("ConnectorCallError");
+    expect(err).toBeInstanceOf(Error);
+  });
 });
 
 describe("classifyCallError", () => {
+  it("treats a typed error as authoritative — no message sniffing", () => {
+    // The motivating bug: legitimate error text mentioning "timeout" must not
+    // be reclassified as a retryable timeout when the connector typed it.
+    const details = classifyCallError(new ConnectorCallError("invalid_args", 'invalid field: "timeout"'));
+    expect(details).toEqual({
+      code: "invalid_args",
+      message: 'invalid field: "timeout"',
+      retryable: false,
+    });
+  });
+
+  it("preserves structured validation findings", () => {
+    const validation = {
+      issues: [{ path: "/title", code: "type", expected: "string" }],
+    };
+    expect(
+      classifyCallError(
+        new ConnectorCallError("invalid_args", "invalid title", {
+          validation,
+        }),
+      ),
+    ).toEqual({
+      code: "invalid_args",
+      message: "invalid title",
+      retryable: false,
+      validation,
+    });
+  });
+
+  it("bounds validation issue count and fields in the typed constructor", () => {
+    const details = classifyCallError(
+      new ConnectorCallError("invalid_args", "invalid", {
+        validation: {
+          issues: Array.from({ length: 5 }, (_, index) => ({
+            path: `/${"p".repeat(300)}${index}`,
+            code: "c".repeat(100),
+            expected: "e".repeat(200),
+          })),
+        },
+      }),
+    );
+    expect(details.validation?.issues).toHaveLength(3);
+    expect(details.validation?.truncated).toBe(true);
+    expect(details.validation?.issues[0]?.path.length).toBeLessThanOrEqual(256);
+    expect(details.validation?.issues[0]?.code.length).toBeLessThanOrEqual(64);
+    expect(details.validation?.issues[0]?.expected.length).toBeLessThanOrEqual(128);
+  });
+
   it("INV-6: untyped prose never decides code or retryability", () => {
     expect(classifyCallError(new Error("request timed out"))).toMatchObject({
       code: "connector_call_failed",
@@ -105,6 +234,71 @@ describe("classifyCallError", () => {
     });
   });
 
+  it("round-trips retryAfterMs into the error details, omitting it when unset", () => {
+    expect(
+      classifyCallError(
+        new ConnectorCallError("rate_limited", "slow down", {
+          retryAfterMs: 30_000,
+        }),
+      ),
+    ).toEqual({
+      code: "rate_limited",
+      message: "slow down",
+      retryable: true,
+      retryAfterMs: 30_000,
+    });
+    expect(classifyCallError(new ConnectorCallError("rate_limited", "slow down"))).toEqual({
+      code: "rate_limited",
+      message: "slow down",
+      retryable: true,
+    });
+    // The heuristic path has no window to report.
+    expect(classifyCallError(new Error("HTTP 429"))).not.toHaveProperty("retryAfterMs");
+  });
+
+  it("classifies an aborted call as a retryable timeout", () => {
+    // An aborted fetch rejects with a DOMException named AbortError whose text
+    // matches neither message heuristic — without the name check it would read
+    // as a non-retryable connector_call_failed.
+    const aborted = new DOMException("The operation was aborted", "AbortError");
+    expect(aborted).toBeInstanceOf(Error);
+    expect(classifyCallError(aborted)).toEqual({
+      code: "timeout",
+      message: "The operation was aborted",
+      retryable: true,
+    });
+    // Runtimes word it differently; the name is what's stable.
+    expect(classifyCallError(new DOMException("This operation was aborted", "AbortError"))).toMatchObject({
+      code: "timeout",
+      retryable: true,
+    });
+    // Same for the reason an AbortController hands its listeners.
+    const controller = new AbortController();
+    controller.abort();
+    expect(classifyCallError(controller.signal.reason)).toMatchObject({
+      code: "timeout",
+      retryable: true,
+    });
+    // A connector that typed the failure still wins over the name check.
+    expect(
+      classifyCallError(
+        Object.assign(
+          new ConnectorCallError("invalid_args", "bad field", {
+            retryable: false,
+          }),
+          { name: "AbortError" },
+        ),
+      ),
+    ).toMatchObject({ code: "invalid_args", retryable: false });
+  });
+
+  it("uses the given fallback code and stringifies non-Error values", () => {
+    expect(classifyCallError("boom", "catalog_lookup_failed")).toEqual({
+      code: "catalog_lookup_failed",
+      message: "boom",
+      retryable: false,
+    });
+  });
 });
 
 describe("framingError", () => {
@@ -127,6 +321,10 @@ describe("framingError", () => {
     }
   });
 
+  it("INV-6: framing codes never infer retryability from names or prose", () => {
+    expect(framingError("catalog_lookup_failed", "upstream 503 while paging")).toMatchObject({ retryable: false });
+    expect(framingError("catalog_lookup_failed", "field shape mismatch")).toMatchObject({ retryable: false });
+  });
 });
 
 describe("unavailable diagnostics", () => {
@@ -142,7 +340,7 @@ describe("unavailable diagnostics", () => {
     });
   });
 
-  it.each(["ECONNREFUSED secret"])(
+  it.each(["https://private/path", "ECONNREFUSED secret", "E" + "X".repeat(32), "not-an-errno"])(
     "drops invalid diagnostic code %s",
     (code) => {
       expect(
@@ -155,6 +353,43 @@ describe("unavailable diagnostics", () => {
     },
   );
 
+  it("drops oversized and opaque origins instead of clipping them", () => {
+    for (const host of ["https://" + "a".repeat(254) + ".test/private", "data:text/plain,secret", "file:///private"]) {
+      expect(
+        classifyCallError(
+          new ConnectorCallError("unavailable", "x", {
+            details: { host, code: "timeout" },
+          }),
+        ),
+      ).toHaveProperty("details", { code: "timeout" });
+    }
+  });
+
+  it("omits absent diagnostics and diagnostics on other failure classes", () => {
+    expect(classifyCallError(new ConnectorCallError("unavailable", "x"))).not.toHaveProperty("details");
+    expect(
+      classifyCallError(
+        new ConnectorCallError("invalid_args", "timeout", {
+          details: { host: "https://example.com", code: "ECONNRESET" },
+        }),
+      ),
+    ).toEqual({ code: "invalid_args", message: "timeout", retryable: false });
+  });
+});
+
+it("reads runtime codes without consulting messages or unstructured causes", () => {
+  expect(networkErrorCode(Object.assign(new Error("private"), { code: "ECONNRESET" }))).toBe("ECONNRESET");
+  expect(networkErrorCode(new TypeError("fetch failed", { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }))).toBe(
+    "UND_ERR_CONNECT_TIMEOUT",
+  );
+  expect(networkErrorCode(new DOMException("deadline", "TimeoutError"))).toBe("timeout");
+  for (const error of [
+    new Error("ECONNREFUSED timeout"),
+    new Error("fetch failed", { cause: "ENOTFOUND" }),
+    { code: "https://secret/private" },
+  ]) {
+    expect(networkErrorCode(error)).toBeUndefined();
+  }
 });
 
 it("INV-6: runtime facts classify transport errors independently of prose", () => {

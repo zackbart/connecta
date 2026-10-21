@@ -51,6 +51,54 @@ describe("one deadline over resolve, admission, and dispatch", () => {
     vi.useRealTimers();
   });
 
+  it("charges a call that timed out in the admission queue with that wait", async () => {
+    vi.useFakeTimers();
+    const call = vi.fn(async () => "never reached");
+    const registry = limited(call);
+    const held = await registry.admitCall("limited", { toolName: "read", args: {} });
+    const entered = admissionStarted(registry, registry.admitCall.bind(registry));
+
+    const pending = invoke(registry, 100);
+    await entered;
+    await vi.advanceTimersByTimeAsync(100);
+    const outcome = await pending;
+
+    expect(outcome).toMatchObject({ ok: false, error: { code: "timeout" } });
+    expect(outcome.timing.admissionMs).toBe(100);
+    expect(outcome.timing.connectorMs).toBe(0);
+    expect(call).not.toHaveBeenCalled();
+    held.release();
+    expect(registry.callAdmissionSnapshot().limited).toMatchObject({
+      active: 0,
+      queued: 0,
+    });
+  });
+
+  it("charges a call that timed out in an unresponsive connector with that wait", async () => {
+    vi.useFakeTimers();
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const registry = limited(() => {
+      enter();
+      return new Promise(() => {});
+    });
+
+    const pending = invoke(registry, 100);
+    await entered;
+    await vi.advanceTimersByTimeAsync(100);
+    const outcome = await pending;
+
+    expect(outcome).toMatchObject({ ok: false, error: { code: "timeout" } });
+    expect(outcome.timing.connectorMs).toBe(100);
+    // The permit went back before the outcome did.
+    expect(registry.callAdmissionSnapshot().limited).toMatchObject({
+      active: 0,
+      queued: 0,
+    });
+  });
+
   it("releases a permit granted only after the deadline ended the wait", async () => {
     vi.useFakeTimers();
     const call = vi.fn(async () => "never reached");

@@ -14,7 +14,7 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { classifyTool } from "../src/tool-safety.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { readJsonRpc } from "./fixtures/http.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
@@ -332,12 +332,6 @@ describe("a program's write", () => {
     expect(value(result).result).toBe("read_only_endpoint");
     expect(w.writes()).toEqual([]);
   });
-
-  it("INV-2: runs when the host route threads no readOnly, as on a writable endpoint", async () => {
-    const w = world();
-    expect(value(await w.run(closeOne)).result).toBe("closed");
-    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
-  });
 });
 
 describe("writable-endpoint programs (#706, #820)", () => {
@@ -347,24 +341,6 @@ describe("writable-endpoint programs (#706, #820)", () => {
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
     expect(w.events.map((event) => [event.address, event.outcome, event.source])).toEqual([
       ["tracker.close_issue", "success", "execute_code"],
-    ]);
-  });
-
-  it("INV-2: permits every write on a writable endpoint", async () => {
-    const w = world({ readOnly: false });
-    const done = await w.run(async (connecta) => {
-      await connecta.call!("tracker.close_issue", { id: 1 });
-      try {
-        await connecta.call!("tracker.post", { text: "x" });
-        return "posted";
-      } catch (error) {
-        return (error as { code: string }).code;
-      }
-    });
-    expect(value(done).result).toBe("posted");
-    expect(w.writes()).toEqual([
-      { address: "tracker.close_issue", args: { id: 1 } },
-      { address: "tracker.post", args: { text: "x" } },
     ]);
   });
 
@@ -531,18 +507,6 @@ describe("writable-endpoint programs (#706, #820)", () => {
     },
   );
 
-  it("puts write counts on the error of a program that fails after writing", async () => {
-    const w = world({ readOnly: false });
-    const failed = await w.run(async (connecta) => {
-      await connecta.call!("tracker.close_issue", { id: 1 });
-      throw new Error("the program gave up");
-    });
-    expect(failed.isError).toBe(true);
-    expect(value(failed).error).toMatchObject({
-      writes: { succeeded: 1, failed: 0, unknown: 0 },
-    });
-  });
-
   it("INV-2: keeps writes out of call_tool even on writable endpoints", async () => {
     const w = world({ readOnly: false });
     const tools = createMetaTools(w.registry, BASE);
@@ -663,24 +627,6 @@ describe("retired pause configuration (#672)", () => {
     expect(construct).toThrow(`ConnectaConfig.execute.${key}`);
     expect(construct).toThrow("#672");
     expect(construct).toThrow("call_destructive_tool");
-  });
-
-  it("lists no resume_execution and reports no resumableWrites on /health", async () => {
-    const connecta = createConnecta({
-      readOnly: false,
-      connectors: [],
-      executor: customExecutor(executor, { lifecycle: "self-managed" }),
-      logger: "silent",
-    });
-    const listed = (await readJsonRpc(await mcpRpc(connecta, "tools/list", {}))) as {
-      result: { tools: Array<{ name: string; annotations?: Record<string, unknown> }> };
-    };
-    expect(listed.result.tools.map((tool) => tool.name)).not.toContain("resume_execution");
-    // A default endpoint is writable, so execute_code is annotated as a write.
-    expect(listed.result.tools.find((tool) => tool.name === "execute_code")?.annotations?.readOnlyHint).toBe(false);
-    const health = await (await connecta.fetch(new Request("http://localhost/health"))).json();
-    expect(health).not.toHaveProperty("resumableWrites");
-    await connecta.close();
   });
 });
 

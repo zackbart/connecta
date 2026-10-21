@@ -257,7 +257,6 @@ describe("api() transport diagnostics", () => {
       );
     }
   });
-
 });
 
 it("serves guarded API diagnostics in value-mode tool results while activity stays payload-free", async () => {

@@ -1,6 +1,7 @@
 // The request pipeline's lifetime rules (P1-S17): a request is one fiber tied
 // to its signal, and what it holds — the admission permit, its McpServer, its
 // discovery probes — ends with it, however it ends.
+import { McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Connector, InboundAuth } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
@@ -88,6 +89,37 @@ describe("request pipeline lifetime", () => {
     expect(await admission(connecta)).toMatchObject({ active: 0, queued: 0 });
   });
 
+  it("hands a released permit to the next queued request", async () => {
+    let calls = 0;
+    const auth: InboundAuth = {
+      kind: "stalled-first",
+      authorize() {
+        calls++;
+        return calls === 1 ? new Promise(() => {}) : { ok: true, principal: OPERATOR };
+      },
+    };
+    const connecta = createTestConnecta({
+      connectors: [],
+      auth,
+      maintainers: [OPERATOR],
+      logger: silentLogger,
+      admission: ONE_PERMIT,
+    });
+    const controller = new AbortController();
+    const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
+    first.catch(() => {});
+    await waitFor(() => calls === 1);
+    const second = connecta.fetch(mcpRpc("tools/list", {}, { id: 2 }));
+    await waitFor(async () => (await admission(connecta)).queued === 1);
+
+    controller.abort(new Error("caller left"));
+    await expect(first).rejects.toThrow("caller left");
+    const response = await second;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ result: { tools: expect.any(Array) } });
+    expect(await admission(connecta)).toMatchObject({ active: 0, queued: 0 });
+  });
+
   it("aborts search_tools discovery probes when the request's client leaves", async () => {
     let probeSignal: AbortSignal | undefined;
     const connector: Connector = {
@@ -124,6 +156,20 @@ describe("request pipeline lifetime", () => {
     controller.abort(new Error("caller left"));
     await within(pending).catch(() => {});
     expect(probeSignal?.aborted).toBe(true);
+    expect(await admission(connecta)).toMatchObject({ active: 0 });
+  });
+
+  it("closes each request's McpServer once its response has been read", async () => {
+    const close = vi.spyOn(McpServer.prototype, "close");
+    const connecta = createTestConnecta({
+      connectors: [],
+      auth: [],
+      logger: silentLogger,
+    });
+    const response = await connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
+    expect(close).not.toHaveBeenCalled();
+    await response.text();
+    await waitFor(() => close.mock.calls.length === 1);
     expect(await admission(connecta)).toMatchObject({ active: 0 });
   });
 });

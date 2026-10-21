@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
-import { BASE, toolsByConnector, type SearchResult, textOf } from "./fixtures/meta-tools.js";
+import { BASE, connectorIds, toolsByConnector, type SearchResult, textOf } from "./fixtures/meta-tools.js";
 import { api } from "../src/connectors/api.js";
 import { compactDiscoverySchema, compactSchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { createMetaTools, MAX_DISCOVERY_RESULT_BYTES } from "../src/meta-tools.js";
+import { createMetaTools, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
 import type { Connector } from "../src/types.js";
-import { required, calcConnector, makeRegistry } from "./helpers.js";
+import { required, calcConnector, makeRegistry, remoteConnector } from "./helpers.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -38,6 +38,8 @@ function expectStructurallyCompleteTypeShape(text: string): void {
   expect(stack).toEqual([]);
   expect(text).not.toContain("\uFFFD");
 }
+
+describe("structured result compatibility", () => {});
 
 describe("describe recovery", () => {
   it("classifies and bounds catalog failures without call-path detail", async () => {
@@ -106,6 +108,28 @@ describe("describe recovery", () => {
 });
 
 describe("search_tools", () => {
+  it("does not turn a non-empty Unicode-only query into a browse", async () => {
+    const query = "界".repeat(80);
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([calcConnector, remoteConnector]), BASE).searchTools({ query }),
+    ) as SearchResult;
+
+    expect(parsed).toMatchObject({
+      tools: [],
+      total: 0,
+      hasMore: false,
+      queryAnalysis: {
+        representedTerms: [],
+        otherResultTerms: [],
+        unmatchedTerms: [`${"界".repeat(63)}…`],
+        truncated: true,
+        guidance: expect.stringContaining("no searchable lexical terms"),
+      },
+    });
+    expect(parsed.matchMode).toBeUndefined();
+    expect(new TextEncoder().encode(JSON.stringify(parsed.queryAnalysis)).length).toBeLessThan(1_600);
+  });
+
   it("filters discovery with the same fail-closed safety classification as invocation", async () => {
     const classified: Connector = connectorWith({
       id: "classified",
@@ -160,6 +184,26 @@ describe("search_tools", () => {
     }
   });
 
+  it("does not load unrelated catalogs for a connector-scoped search", async () => {
+    const loads = { wanted: 0, unrelated: 0 };
+    const dynamic = (id: keyof typeof loads): Connector =>
+      connectorWith({
+        id,
+        kind: "mcp",
+        tools: async () => {
+          loads[id]++;
+          return [{ name: "read", description: `Read ${id} data` }];
+        },
+        call: async () => null,
+      });
+    const mt = createMetaTools(makeRegistry([dynamic("wanted"), dynamic("unrelated")]), BASE);
+
+    const parsed = textOf(await mt.searchTools({ query: "read", connector: "wanted" })) as SearchResult;
+
+    expect(connectorIds(parsed)).toEqual(["wanted"]);
+    expect(loads).toEqual({ wanted: 1, unrelated: 0 });
+  });
+
   it("defaults to eight results and preserves the remaining page", async () => {
     const connector: Connector = connectorWith({
       id: "default_page",
@@ -183,6 +227,72 @@ describe("search_tools", () => {
     expect(second.limit).toBe(8);
     expect(second.tools).toHaveLength(4);
     expect(second.hasMore).toBe(false);
+  });
+
+  it("bounds page size before loading or ranking a catalog", async () => {
+    let loads = 0;
+    const tools = Array.from({ length: MAX_SEARCH_LIMIT }, (_, i) => ({
+      name: `tool-${i}`,
+    }));
+    const connector: Connector = connectorWith({
+      id: "large",
+      tools: async () => {
+        loads++;
+        return tools;
+      },
+      call: async () => null,
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+
+    for (const limit of [MAX_SEARCH_LIMIT - 1, MAX_SEARCH_LIMIT]) {
+      const result = await mt.searchTools({ limit });
+      expect(result.isError).toBeFalsy();
+      const parsed = textOf(result) as SearchResult;
+      expect(parsed.tools).toHaveLength(limit);
+    }
+    expect(loads).toBe(2);
+
+    for (const limit of [MAX_SEARCH_LIMIT + 1, Number.MAX_SAFE_INTEGER]) {
+      const result = await createMetaTools(makeRegistry([connector]), BASE).searchTools({ limit });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatchObject({
+        error: { code: "invalid_args", retryable: false },
+      });
+    }
+    // The rejected calls never reached listTools.
+    expect(loads).toBe(2);
+  });
+
+  it("keeps action terms and returns every relevant multi-intent match", async () => {
+    const connector: Connector = connectorWith({
+      id: "files",
+      staticTools: [
+        {
+          name: "search_files",
+          description: "Find a drive file",
+        },
+        {
+          name: "share_file",
+          description: "Share a drive file",
+        },
+        {
+          name: "list_folder",
+          description: "List child folders",
+        },
+      ],
+      tools: [],
+      call: async () => null,
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
+        query: "find a drive file and share it",
+      }),
+    ) as SearchResult;
+
+    expect(new Set(parsed.tools.map((tool) => tool.address))).toEqual(
+      new Set(["files.search_files", "files.share_file"]),
+    );
+    expect(parsed.matchMode).toBe("partial");
   });
 
   it("explains supported, mixed, partial, and absent lexical intents", async () => {
@@ -289,6 +399,67 @@ describe("search_tools", () => {
       unmatchedTerms: ["calendar", "availability"],
       guidance: expect.stringContaining('Connector "ghost" is not configured in this deployment'),
     });
+  });
+
+  it("browses an exact connector identity and explains partial identity misses", async () => {
+    const inventory: Connector = connectorWith({
+      id: "inventory",
+      title: "Warehouse stock",
+      staticTools: [
+        {
+          name: "list_skus",
+          description: "List every stock-keeping unit and its bin",
+        },
+        {
+          name: "get_sku",
+          description: "Get one stock-keeping unit by code",
+        },
+      ],
+      tools: [],
+      call: async () => null,
+    });
+    const mt = createMetaTools(makeRegistry([inventory]), BASE);
+
+    const byId = textOf(await mt.searchTools({ query: "inventory" })) as SearchResult;
+    expect(byId.tools.map((tool) => tool.address)).toEqual(["inventory.list_skus", "inventory.get_sku"]);
+    expect(byId.queryAnalysis).toBeUndefined();
+
+    // A partial title word still receives identity guidance.
+    const byTitle = textOf(await mt.searchTools({ query: "warehouse" })) as SearchResult;
+    expect(byTitle.total).toBe(0);
+    expect(required(required(byTitle.queryAnalysis).guidance)).toContain('connector "inventory"');
+
+    // A term the deployment really does not have keeps the stronger claim.
+    const absent = textOf(await mt.searchTools({ query: "calendar" })) as SearchResult;
+    expect(absent.total).toBe(0);
+    expect(required(required(absent.queryAnalysis).guidance)).toContain(
+      "No matching capability is configured in this deployment",
+    );
+
+    // The term cap on the serialized analysis fields is not a cap on the
+    // search: ranking reads every term, so a connector named past the eighth
+    // one must be named back rather than denied.
+    const lateId = textOf(
+      await mt.searchTools({
+        query: "alpha beta gamma delta epsilon zeta eta theta inventory",
+      }),
+    ) as SearchResult;
+    expect(lateId.total).toBe(0);
+    expect(required(required(lateId.queryAnalysis).guidance)).toContain('connector "inventory"');
+
+    const lateTitle = textOf(
+      await mt.searchTools({
+        query: "alpha beta gamma delta epsilon zeta eta theta warehouse",
+      }),
+    ) as SearchResult;
+    expect(lateTitle.total).toBe(0);
+    expect(required(required(lateTitle.queryAnalysis).guidance)).toContain('connector "inventory"');
+
+    // Exact identity contributes ranking without requiring tool descriptions
+    // to repeat the connector's name.
+    const matched = textOf(await mt.searchTools({ query: "inventory sku" })) as SearchResult;
+    expect(matched.tools.map((tool) => tool.address)).toEqual(["inventory.get_sku", "inventory.list_skus"]);
+    expect(matched.queryAnalysis).toBeUndefined();
   });
 
   it("bounds query analysis independently of long search input", async () => {
@@ -679,6 +850,24 @@ describe("compact schema rendering", () => {
     expect(
       compactSchema({ type: "array", items: { anyOf: [{ type: "string" }, { type: "number" }], minLength: 1 } }),
     ).toBe("(string | number) /* length >= 1 */[]");
+  });
+
+  it("renders empty enums as the valid never type in compact discovery", () => {
+    // `never` is the TypeScript bottom type, valid at both root and property
+    // positions; an empty string was neither a type nor a readable constraint.
+    const root = compactDiscoverySchema({ enum: [] });
+    expect(root).toEqual({ text: "never", truncated: false });
+    expectStructurallyCompleteTypeShape(root.text);
+
+    const nested = compactDiscoverySchema({
+      type: "object",
+      properties: { state: { enum: [] } },
+    });
+    expect(nested).toEqual({
+      text: "{ state?: never }",
+      truncated: false,
+    });
+    expectStructurallyCompleteTypeShape(nested.text);
   });
 
   it("bounds nested UTF-8 enums without hiding other property types", () => {

@@ -4,12 +4,57 @@ import { request as httpRequest } from "node:http";
 import { once } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { listen } from "../src/node.js";
+import type { Connecta } from "../src/index.js";
 import { api } from "../src/connectors/api.js";
 import type { Executor } from "../src/types.js";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("Node listen adapter", () => {
+  it("aborts the Web Request when the HTTP client disconnects", async () => {
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let observedSignal: AbortSignal | undefined;
+    const connecta = {
+      async fetch(request: Request) {
+        observedSignal = request.signal;
+        markStarted();
+        return new Promise<Response>((resolve) => {
+          request.signal.addEventListener("abort", () => resolve(new Response("cancelled", { status: 499 })), {
+            once: true,
+          });
+        });
+      },
+      close: async () => {},
+    } as unknown as Connecta;
+    const server = listen(connecta, {
+      port: 0,
+      host: "127.0.0.1",
+      gracefulShutdown: false,
+    });
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected a TCP listen address.");
+    }
+    const request = httpRequest({
+      host: "127.0.0.1",
+      port: address.port,
+      method: "POST",
+      path: "/mcp",
+      headers: { "Content-Type": "application/json" },
+    });
+    request.on("error", () => {});
+    request.end("{}");
+    await started;
+    request.destroy();
+    await viWaitForAbort(() => observedSignal?.aborted === true);
+    expect(observedSignal?.reason).toBeInstanceOf(Error);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
   it("propagates a real MCP socket disconnect into execute_code host calls", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let markStarted!: () => void;

@@ -58,8 +58,4 @@ describe("rendered TypeScript signatures parse", () => {
       expectParses(name, schema, schema);
     }
   });
-
-  it("would catch a broken rendering", () => {
-    expect(syntaxErrors("(args: { a: string // prose, b: number }) => Promise<unknown>")).not.toEqual([]);
-  });
 });

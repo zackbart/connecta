@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AccessTokenError, accessTokens, AccessTokenManager } from "../src/access-tokens.js";
 import { CredentialVault } from "../src/credentials.js";
 import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
@@ -355,6 +355,14 @@ describe("tokens issued before agents", () => {
     for (const [key, value] of Object.entries(fixture.records)) expect(await storage.get(key)).toBe(value);
   });
 
+  it.each(["cta_" + "x".repeat(43), "cta_bad", "", "other-secret"])(
+    "refuses unknown and malformed credentials: %s",
+    async (token) => {
+      const manager = new AccessTokenManager(await legacyStorage(), { agents: ["legacy"] });
+      expect(await admits(manager, token)).toBe(false);
+    },
+  );
+
   it("INV-4: adopt keeps a legacy token's secret for one agent without rewriting the legacy record", async () => {
     const storage = await legacyStorage();
     const manager = new AccessTokenManager(storage, { agents: ["legacy", "other"] });
@@ -421,6 +429,9 @@ describe("tokens issued before agents", () => {
       "not json",
       JSON.stringify({ ...record, revokedAt: "2026-10-01T00:00:00.000Z" }),
       JSON.stringify({ ...record, agent: "other" }),
+      JSON.stringify({ ...record, id: fixture.bound.accessToken.id }),
+      JSON.stringify({ ...record, principal: owner }),
+      JSON.stringify({ ...record, tokenHash: "0".repeat(64) }),
       JSON.stringify(unbound),
     ]) {
       await storage.set(adoptedKey, raw);
@@ -428,6 +439,21 @@ describe("tokens issued before agents", () => {
     }
     await storage.set(adoptedKey, adopted);
     expect(await admits(manager, fixture.unbound.token)).toBe(true);
+  });
+
+  it("INV-4: fails closed on a corrupt agent slot", async () => {
+    const storage = memoryStorage();
+    const manager = new AccessTokenManager(storage, { agents: ["simon"] });
+    const { token } = await manager.rotate("simon");
+    const slot = JSON.parse((await storage.get("access-token:v1:agent:simon"))!) as Record<string, unknown>;
+    for (const raw of [
+      "not json",
+      JSON.stringify({ ...slot, agent: "ci" }),
+      JSON.stringify({ ...slot, state: "live" }),
+    ]) {
+      await storage.set("access-token:v1:agent:simon", raw);
+      expect(await admits(manager, token)).toBe(false);
+    }
   });
 });
 
@@ -527,4 +553,51 @@ describe("agent identity", () => {
       await app.close();
     }
   });
+});
+
+it.each([3])("INV-7: an agent deadline at storage read %i refuses promptly and starts no later read", async (stage) => {
+  vi.useFakeTimers();
+  const { authenticate } = await import("../src/auth-admission.js");
+  const storage = memoryStorage();
+  const manager = new AccessTokenManager(storage, { agents: ["assistant"] });
+  const { token } = await manager.rotate("assistant");
+  const nativeGet = storage.get.bind(storage);
+  let release!: () => void;
+  let count = 0;
+  let settlement: Promise<unknown> | undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const get = vi.spyOn(storage, "get").mockImplementation(async (key) => {
+    if (++count === stage) await held;
+    return nativeGet(key);
+  });
+  const caller = new AbortController();
+  const pending = authenticate(
+    manager.auth,
+    new Request(request(token), { signal: caller.signal }),
+    BASE,
+    undefined,
+    { info() {}, warn() {}, error() {}, debug() {} },
+    (work) => {
+      settlement = work;
+    },
+  );
+  try {
+    await vi.waitFor(() => expect(count).toBe(stage));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await pending;
+    expect(result.admitted).toBe(true);
+    if (result.admitted) expect(result.result.ok).toBe(false);
+    release();
+    await settlement;
+    expect(get).toHaveBeenCalledTimes(stage);
+  } finally {
+    caller.abort();
+    release();
+    await pending;
+    await settlement;
+    get.mockRestore();
+    vi.useRealTimers();
+  }
 });

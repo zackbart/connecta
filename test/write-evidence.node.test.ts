@@ -173,6 +173,47 @@ it("INV-9: a streamed write whose producer raised ECONNREFUSED after the server 
   expect(received).toEqual([{ method: "POST", bytes: 20 }]);
 });
 
+it("INV-9: a Blob write whose overridden stream() raised ECONNREFUSED after the server read 20 bytes is unknown", async () => {
+  const id = crypto.randomUUID();
+  let pulls = 0;
+  // undici reads a Blob body through its stream(), so a Blob can carry a
+  // producer of its own.
+  const blob = new Blob([new Uint8Array(64)]);
+  Object.defineProperty(blob, "stream", {
+    value: () =>
+      new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (pulls++ === 0) controller.enqueue(new Uint8Array(20).fill(65));
+            else controller.error(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
+          },
+        },
+        { highWaterMark: 0 },
+      ),
+  });
+  const send = guardedFetch({
+    provider: "Tickets",
+    baseUrl: `${inject("evidenceHttpServer")}/${id}`,
+    authenticate: () => ({}),
+    maxResponseBytes: 1024,
+  });
+  const ctx = makeRegistry([]).contextFor("tickets", "https://connecta.example");
+  const error = await send({ method: "POST", path: "/sink", rawBody: blob }, ctx, (r) => r.json()).then(
+    () => {
+      throw new Error("expected the write to fail");
+    },
+    (failure: unknown) => failure,
+  );
+  expect(pulls).toBeGreaterThan(1);
+  expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+  let received: Array<{ bytes: number }> = [];
+  for (let attempt = 0; attempt < 50 && received[0]?.bytes !== 20; attempt++) {
+    received = (await (await fetch(`${inject("evidenceHttpServer")}/${id}/exchanges`)).json()) as typeof received;
+    if (received[0]?.bytes !== 20) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(received).toEqual([{ method: "POST", bytes: 20 }]);
+});
+
 // Round 9: repeatability needs a key the vendor actually receives, and a
 // direct caller has no invocation to call a timed-out write unknown.
 
@@ -281,7 +322,6 @@ describe("an idempotency key proves a write repeatable only when the vendor rece
       }
     },
   );
-
 });
 
 describe("a direct write that times out after dispatch", () => {
@@ -317,7 +357,6 @@ describe("a direct write that times out after dispatch", () => {
       await server.close();
     }
   });
-
 });
 
 describe("a direct write that the caller's own signal times out after dispatch", () => {

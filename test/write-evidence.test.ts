@@ -60,9 +60,7 @@ async function exchanges(id: string): Promise<Array<{ method: string; bytes: num
 }
 
 describe("write evidence over real connections", () => {
-  it.each([
-    ["no body", { method: "DELETE", path: "/tickets/1" }],
-  ] as const)(
+  it.each([["no body", { method: "DELETE", path: "/tickets/1" }]] as const)(
     "INV-9: a write whose connection is refused, with %s, is unknown on every runtime",
     async (_name, request) => {
       const { error, state } = await write(inject("refusedHttpOrigin"), request);
@@ -181,5 +179,4 @@ describe("an aborted write never proves itself unsent", () => {
       );
     }
   });
-
 });

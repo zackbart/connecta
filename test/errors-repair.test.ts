@@ -3,8 +3,9 @@ import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { InvocationService } from "../src/invocation.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { connectorWith } from "./fixtures/connectors.js";
-import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
+import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -282,4 +283,84 @@ describe("repairing error envelopes", () => {
     if (!oversized.ok) expect(oversized.error.uncertainCall).not.toHaveProperty("args");
   });
 
+  it("INV-9: a write that times out before dispatch has no uncertain call", async () => {
+    const call = vi.fn();
+    const registry = makeRegistry([
+      connectorWith({
+        id: "notes",
+        kind: "api",
+        tools: async () => {
+          throw new ConnectorCallError("timeout", "catalog deadline");
+        },
+        call,
+      }),
+    ]);
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "notes.create",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    expect(outcome).toMatchObject({ ok: false, dispatched: false, error: { code: "timeout" } });
+    if (!outcome.ok) expect(outcome.error).not.toHaveProperty("uncertainCall");
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("INV-6: OAuth and provider permissions have different recovery actions", async () => {
+    const registry = makeRegistry([
+      connectorWith({
+        id: "oauth",
+        kind: "mcp",
+        tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+        startAuth: async () => ({ state: "auth_required" }),
+        call: async () => {
+          throw new ConnectorCallError("auth_required", "missing grant");
+        },
+      }),
+      connectorWith({
+        id: "permission",
+        kind: "api",
+        tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+        call: async () => {
+          throw new ConnectorCallError("provider_permission_denied", "scope denied");
+        },
+      }),
+    ]);
+    const invocation = new InvocationService(registry, new CatalogService(registry, BASE));
+    const oauth = await invocation.invoke("oauth.read", {}, { source: "call_tool" });
+    expect(oauth).toMatchObject({
+      ok: false,
+      error: {
+        code: "downstream_oauth_required",
+        recovery: "oauth",
+        nextAction: { tool: "authorize_connector", arguments: { connector: "oauth" } },
+      },
+    });
+    const permission = await invocation.invoke("permission.read", {}, { source: "call_tool" });
+    expect(permission).toMatchObject({
+      ok: false,
+      error: { code: "provider_permission_denied", retryable: false, retry: expect.stringContaining("administrator") },
+    });
+    if (!permission.ok) expect(permission.error).not.toHaveProperty("nextAction");
+  });
+
+  it("INV-4: host authentication carries its own code and preserves the HTTP challenge", async () => {
+    const connecta = createTestConnecta({
+      connectors: [],
+      auth: machineAuth("test-token"),
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    const response = await connecta.fetch(new Request(`${BASE}/mcp`));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
+    expect(await response.json()).toEqual({
+      error: {
+        code: "host_auth_required",
+        message: expect.stringContaining("host"),
+        retryable: false,
+        recovery: "host_connection",
+      },
+    });
+    await connecta.close();
+  });
 });

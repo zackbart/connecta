@@ -169,6 +169,76 @@ describe("discriminated factory options", () => {
     expect(String(error)).toContain(message);
     expect(String(error)).not.toContain(SECRET);
   });
+
+  it("INV-11: refuses an accessor discriminant without running it", () => {
+    let reads = 0;
+    const auth = Object.defineProperty({ headers }, "type", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        throw new Error(SECRET);
+      },
+    });
+    expect(() => remoteMcp("docs", loose({ url, auth }))).toThrow(
+      'remoteMcp("docs").auth.type must be a plain value, not a getter or setter.',
+    );
+    expect(reads).toBe(0);
+  });
+});
+
+describe("factory options read as plain data", () => {
+  it("INV-11: refuses options whose inspection throws, by path and without the trap's text", () => {
+    const revocable = Proxy.revocable({ url: "https://mcp.example/mcp" }, {});
+    revocable.revoke();
+    const cases = [
+      [
+        () =>
+          remoteMcp(
+            "docs",
+            loose(
+              new Proxy(
+                {},
+                {
+                  ownKeys() {
+                    throw new Error(SECRET);
+                  },
+                },
+              ),
+            ),
+          ),
+        'remoteMcp("docs")',
+      ],
+      [() => remoteMcp("docs", loose(revocable.proxy)), 'remoteMcp("docs")'],
+      [
+        () =>
+          remoteMcp(
+            "docs",
+            loose({
+              url: "https://mcp.example/mcp",
+              auth: new Proxy(
+                { type: "headers" },
+                {
+                  getOwnPropertyDescriptor() {
+                    throw new Error(SECRET);
+                  },
+                },
+              ),
+            }),
+          ),
+        'remoteMcp("docs").auth',
+      ],
+    ] as const;
+    for (const [build, path] of cases) {
+      let error: unknown;
+      try {
+        build();
+      } catch (caught) {
+        error = caught;
+      }
+      expect(String(error)).toContain(`${path} could not be read as plain configuration.`);
+      expect(String(error)).not.toContain(SECRET);
+    }
+  });
 });
 
 describe("factory options keep behaviour in place", () => {
@@ -208,6 +278,36 @@ describe("factory options keep behaviour in place", () => {
       }
     }
     await expect(call(api("crm", { tools: [new Counter()] }))).resolves.toBe(42);
+  });
+
+  it("INV-11: still checks a tool's own keys and declared accessors, inherited ones included", () => {
+    class Extra {
+      readonly name = "read";
+      readonly description = "Read.";
+      readonly annotations = annotations;
+      readonly readOnly = true;
+      handler() {}
+    }
+    expect(() => api("crm", { tools: [loose(new Extra())] })).toThrow('Unknown option: api("crm").tools[0].readOnly.');
+    let reads = 0;
+    class Computed {
+      readonly name = "read";
+      readonly annotations = annotations;
+      get description(): string {
+        reads += 1;
+        throw new Error(SECRET);
+      }
+      handler() {}
+    }
+    let error: unknown;
+    try {
+      api("crm", { tools: [new Computed()] });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(String(error)).toContain('api("crm").tools[0].description must be a plain value, not a getter or setter.');
+    expect(String(error)).not.toContain(SECRET);
+    expect(reads).toBe(0);
   });
 
   it("INV-11: refuses a tool without a handler at construction", () => {

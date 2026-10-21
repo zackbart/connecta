@@ -9,10 +9,8 @@ import type { RegistryView } from "../src/registry.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { deferred, scriptedExecutor } from "./fixtures/misc.js";
-import { createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
-import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
+import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const qualified = (id: string, uri = "docs://manual/start") => `resource://${id}/${encodeURIComponent(uri)}`;
@@ -77,14 +75,17 @@ it("INV-3, INV-4: hidden connectors and exact-tool grants cannot grant resource 
   expect((await read(registry.scoped({ connectorIds: ["docs"] }), qualified("docs"))).isError).toBeUndefined();
 });
 
-it.each([undefined, "resource://docs@other/docs%3A%2F%2Fmanual", "resource://docs/docs%3A%2F%2Fmanual?subject=other"])("INV-3, INV-4: rejects malformed resource routing without dispatch (case %#)", async (uri) => {
-  const { connector, readResource } = fixture();
-  const registry = makeRegistry([connector]);
-  const output = await read(registry, uri);
-  expect(output.structuredContent).toMatchObject({ error: { code: "invalid_args", retryable: false } });
-  expect(readResource).not.toHaveBeenCalled();
-  expect(registry.listConnectors()).toEqual([connector]);
-});
+it.each([undefined, "resource://docs@other/docs%3A%2F%2Fmanual", "resource://docs/docs%3A%2F%2Fmanual?subject=other"])(
+  "INV-3, INV-4: rejects malformed resource routing without dispatch (case %#)",
+  async (uri) => {
+    const { connector, readResource } = fixture();
+    const registry = makeRegistry([connector]);
+    const output = await read(registry, uri);
+    expect(output.structuredContent).toMatchObject({ error: { code: "invalid_args", retryable: false } });
+    expect(readResource).not.toHaveBeenCalled();
+    expect(registry.listConnectors()).toEqual([connector]);
+  },
+);
 
 it("INV-3, INV-4: resource URI and extra arguments cannot change the personal credential owner", async () => {
   const vault = new CredentialVault(memoryStorage(), btoa("r".repeat(32)));
@@ -120,19 +121,16 @@ it("INV-3, INV-4: resource URI and extra arguments cannot change the personal cr
   expect(getAll.mock.calls).toEqual([["docs", "admitted-owner"]]);
 });
 
-it.each(["auth_required", "rate_limited"] as const)(
-  "INV-5: resource reads keep typed %s failures",
-  async (code) => {
-    const { connector } = fixture({
-      async readResource() {
-        throw new ConnectorCallError(code, "Resource refused.");
-      },
-    });
-    expect((await read(makeRegistry([connector]), qualified("docs"))).structuredContent).toMatchObject({
-      error: { code, retryable: ["rate_limited", "unavailable"].includes(code) },
-    });
-  },
-);
+it.each(["auth_required", "rate_limited"] as const)("INV-5: resource reads keep typed %s failures", async (code) => {
+  const { connector } = fixture({
+    async readResource() {
+      throw new ConnectorCallError(code, "Resource refused.");
+    },
+  });
+  expect((await read(makeRegistry([connector]), qualified("docs"))).structuredContent).toMatchObject({
+    error: { code, retryable: ["rate_limited", "unavailable"].includes(code) },
+  });
+});
 
 it("INV-5: custom resource values, keys, failures and later guest output redact credential echoes", async () => {
   const token = "cE4-x9Pq-7Lm2-Vr6K";
@@ -174,6 +172,29 @@ it("INV-5: custom resource values, keys, failures and later guest output redact 
   });
 });
 
+it("INV-7: resource reads share connector admission and release their permit after timeout", async () => {
+  const readResource = vi.fn((_uri: string, _ctx: ConnectorContext): Promise<unknown> => new Promise(() => {}));
+  const { connector } = fixture({
+    callAdmission: { rules: [{ maxConcurrency: 1, maxQueueSize: 0 }] },
+    readResource,
+  });
+  const registry = makeRegistry([connector]);
+  const output = await read(registry, qualified("docs"), { hostCallTimeoutMs: 25 });
+  expect(output.structuredContent).toMatchObject({ error: { code: "timeout", retryable: true } });
+  expect(registry.callAdmissionSnapshot().docs?.active).toBe(0);
+  expect(readResource).toHaveBeenCalledOnce();
+  expect(readResource.mock.calls[0]?.[1].signal?.aborted).toBe(true);
+  const held = await registry.admitCall("docs", { toolName: "read", args: {} });
+  try {
+    expect((await read(registry, qualified("docs"))).structuredContent).toMatchObject({
+      error: { code: "rate_limited", retryable: true },
+    });
+    expect(readResource).toHaveBeenCalledOnce();
+  } finally {
+    held.release();
+  }
+});
+
 it("INV-7: cancellation aborts a resource read and closes its request scope", async () => {
   const started = deferred<ConnectorContext>();
   const closeScope = vi.fn(async () => {});
@@ -196,6 +217,46 @@ it("INV-7: cancellation aborts a resource read and closes its request scope", as
   expect((await output).structuredContent).toMatchObject({ error: { code: "cancelled", retryable: false } });
   expect(ctx.signal?.aborted).toBe(true);
   expect(closeScope).toHaveBeenCalledOnce();
+});
+
+it("INV-3, INV-7: resource reads share host-call budgets and request scope, with payload-free diagnostics", async () => {
+  const { connector, readResource } = fixture();
+  const registry = makeRegistry([connector]);
+  const execute = createExecuteTool(
+    registry,
+    BASE,
+    scriptedExecutor(async (fns) => {
+      await Promise.all([required(fns.read)(qualified("docs")), required(fns.read)(qualified("docs"))]);
+      return "done";
+    }),
+    silentLogger,
+    undefined,
+    { maxHostCalls: 2 },
+  );
+  const result = await execute({ code: "async () => null", diagnostics: true });
+  expect(result.isError).toBeUndefined();
+  expect(readResource.mock.calls[0]?.[1].requestScope).toBe(readResource.mock.calls[1]?.[1].requestScope);
+  const diagnostics = (result.structuredContent as { diagnostics: { operations: unknown[] } }).diagnostics;
+  expect(diagnostics.operations).toMatchObject([{ operation: "read", count: 2, failures: 0 }]);
+  expect(JSON.stringify(diagnostics)).not.toContain("manual");
+  expect(JSON.stringify(diagnostics)).not.toContain("docs://");
+  const exhausted = await createExecuteTool(
+    registry,
+    BASE,
+    scriptedExecutor(async (fns) => {
+      await required(fns.read)(qualified("docs"));
+      await required(fns.search)({ connector: "docs" });
+      return "must not return";
+    }),
+    silentLogger,
+    undefined,
+    { maxHostCalls: 1 },
+  )({ code: "async () => null" });
+  expect(exhausted.structuredContent).toMatchObject({
+    error: { code: "budget_exceeded", retryable: false },
+    hostCalls: { attempted: 2, admitted: 1 },
+  });
+  expect(readResource).toHaveBeenCalledTimes(3);
 });
 
 it("INV-3, INV-5, INV-7: remote resource reads use resources/read, redact sent headers and keep typed misses", async () => {
@@ -403,13 +464,16 @@ it("INV-3 INV-4 INV-8: reads exact resources and templates from the complete pag
     expect(await f.storage.get(key)).not.toContain("synthetic-resource-payload");
 });
 
-it.each(["docs://public/..", "docs://public/%2fprivate", "docs://public/%2e%2e"])("INV-3 INV-4: refuses template traversal URI %s before dispatch", async (uri) => {
-  const f = advertisedRemote();
-  expect((await read(f.view(), qualified("docs", uri))).structuredContent).toMatchObject({
-    error: { code: "not_found", retryable: false },
-  });
-  expect(f.calls.filter((call) => call.method === "resources/read")).toEqual([]);
-});
+it.each(["docs://public/..", "docs://public/%2fprivate", "docs://public/%2e%2e"])(
+  "INV-3 INV-4: refuses template traversal URI %s before dispatch",
+  async (uri) => {
+    const f = advertisedRemote();
+    expect((await read(f.view(), qualified("docs", uri))).structuredContent).toMatchObject({
+      error: { code: "not_found", retryable: false },
+    });
+    expect(f.calls.filter((call) => call.method === "resources/read")).toEqual([]);
+  },
+);
 
 it.each([
   ["https://h{/x}.evil.com:8443/", "https://h.evil.com:8443/"],
@@ -464,9 +528,7 @@ it.each(["loop", "error"] as const)(
   },
 );
 
-it.each([
-  [Array.from({ length: 500 }, (_, i) => `x:{value}/literal${i}!`), "resource_match_budget_exceeded"],
-] as const)(
+it.each([[Array.from({ length: 500 }, (_, i) => `x:{value}/literal${i}!`), "resource_match_budget_exceeded"]] as const)(
   "INV-3 INV-6 INV-7: typed template refusal prevents dispatch and appears once in operator status (case %#)",
   async (templates, code) => {
     const f = advertisedRemote([...templates]);

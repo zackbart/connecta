@@ -17,6 +17,50 @@ type UnsafeCreateConnecta = (config: Record<PropertyKey, unknown>) => unknown;
 const unsafeCreateConnecta = createConnecta as unknown as UnsafeCreateConnecta;
 
 describe("ConnectaConfig boundary", () => {
+  it("wraps a frozen custom executor without losing private-field receivers or admission", async () => {
+    const events: string[] = [];
+    class SelfManaged {
+      #value = "private";
+      readonly name = "self-managed-test";
+      async execute() {
+        return { result: this.#value };
+      }
+      async acquire(options?: { signal?: AbortSignal }) {
+        events.push(`acquire ${this.#value} ${options?.signal?.aborted}`);
+        return { execute: this.execute.bind(this), release: () => events.push("release") };
+      }
+      admissionSnapshot() {
+        events.push(`snapshot ${this.#value}`);
+        return {
+          concurrency: 1,
+          maxQueueSize: 0,
+          queueTimeoutMs: 1,
+          retryAfterMs: 1,
+          active: 0,
+          queued: 0,
+          closed: false,
+          totals: { admitted: 0, queued: 0, rejected: 0, cancelled: 0, closed: 0 },
+          queueWaitMs: { count: 0, total: 0, max: 0 },
+        };
+      }
+      close() {
+        events.push(`close ${this.#value}`);
+      }
+    }
+    const original = Object.freeze(new SelfManaged());
+    const wrapped = customExecutor(original, { lifecycle: "self-managed" });
+    expect(Object.getOwnPropertySymbols(original)).toEqual([]);
+    expect(wrapped.name).toBe(original.name);
+    await expect(wrapped.execute("", [])).resolves.toEqual({ result: "private" });
+    const lease = await wrapped.acquire({ signal: new AbortController().signal });
+    await expect(lease.execute("", [])).resolves.toEqual({ result: "private" });
+    lease.release();
+    wrapped.admissionSnapshot?.();
+    const app = createConnecta({ readOnly: false, connectors: [], executor: wrapped, logger: "silent" });
+    await app.close();
+    expect(events).toEqual(["acquire private false", "release", "snapshot private", "close private"]);
+  });
+
   it("INV-11: requires explicit opt-in for custom executors regardless of constructor or display name", async () => {
     class CustomExecutor {
       readonly name = "DynamicWorkerExecutor";
@@ -299,8 +343,8 @@ describe("ConnectaConfig boundary", () => {
 });
 
 describe("ConnectaConfig schema", () => {
-  // A numeric limit of each minimum, the smallest value it accepts, and a
-  // sample of the values that once warned and fell back. They now throw.
+  // Every numeric limit, the smallest value it accepts, and a sample of the
+  // values that once warned and fell back. One policy: they now throw.
   const LIMITS = [
     ["calls", "maxResultBytes", 1],
     ["results", "maxStashBytes", 0],
@@ -363,8 +407,8 @@ describe("ConnectaConfig schema", () => {
   });
 });
 
-// Compile-time coverage. These branches never run, but tsc must prove the
-// public call site rejects unknown and mistyped options.
+// Compile-time clean-break coverage. These branches never run, but tsc must
+// prove every removed v0.6 path is rejected at the public call site.
 // oxlint-disable-next-line no-constant-condition -- This branch exists only for tsc.
 if (false) {
   // The schema-derived type keeps every check a hand-written interface had.
@@ -436,6 +480,30 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     expect(String(error)).toContain(`${path} must be a plain value, not a getter or setter.`);
     expect(String(error)).not.toContain(SECRET);
     expect(calls.count).toBe(0);
+  });
+
+  it("INV-11: resolves a root Proxy from its descriptors, so its get trap never runs", async () => {
+    let gets = 0;
+    const config = new Proxy(
+      { readOnly: false, connectors: [], executor, logger: "silent", discovery: { concurrency: 1 } },
+      {
+        get() {
+          gets += 1;
+          throw new Error(SECRET);
+        },
+        has() {
+          throw new Error(SECRET);
+        },
+      },
+    );
+    const app = createConnecta(config as never);
+    try {
+      expect(app.describeConfig().limits.discovery.concurrency).toEqual({ value: 1, source: "config" });
+      expect(JSON.stringify(app.describeConfig())).not.toContain(SECRET);
+    } finally {
+      await app.close();
+    }
+    expect(gets).toBe(0);
   });
 
   it("INV-11: refuses a root config whose inspection throws, by path and without the trap's text", () => {
@@ -530,5 +598,19 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     expect(Object.getPrototypeOf(resolved.pools)).toBeNull();
     expect(resolved.pools?.["constructor"]).toBeUndefined();
     expect(resolved.pools?.["toString"]).toBeUndefined();
+  });
+
+  it("INV-11: keeps a __proto__ classification key as an ordinary entry", async () => {
+    const { resolveConfig } = await import("../src/config.js");
+    const resolved = resolveConfig({
+      readOnly: false,
+      connectors: [],
+      executor,
+      classification: { ["__proto__"]: { read: "read" }, constructor: { write: "write" as const } },
+    });
+    expect(Object.entries(resolved.classification ?? {})).toEqual([
+      ["__proto__", { read: "read" }],
+      ["constructor", { write: "write" }],
+    ]);
   });
 });

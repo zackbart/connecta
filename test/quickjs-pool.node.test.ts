@@ -155,6 +155,29 @@ describe("QuickJS pool crash backoff", () => {
     expect(children).toHaveLength(count + 1);
     await executor.close?.();
   });
+
+  it("counts a child that never reports ready as a crash", async () => {
+    scriptChildren({ ready: false });
+    const executor = quickJsExecutor();
+    const pending = executor.execute("async () => 1", []).catch((error: unknown) => error);
+    await settle();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await pending).toMatchObject({
+      message: "QuickJS child did not become ready within 10000ms.",
+    });
+    expect(children[0]!.kills).toEqual([undefined]);
+
+    const next = executor.execute("async () => 1", []).catch((error: unknown) => error);
+    await settle();
+    await vi.advanceTimersByTimeAsync(99);
+    expect(children).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(children).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await next;
+    await executor.close?.();
+  });
 });
 
 describe("QuickJS pool startup watchdog", () => {
@@ -224,6 +247,27 @@ describe("QuickJS pool child retirement", () => {
     await vi.advanceTimersByTimeAsync(999);
     expect(closed).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
+    await closing;
+    expect(children[0]!.kills).toEqual([undefined, "SIGKILL"]);
+  });
+
+  it("makes close wait for children recycled before it", async () => {
+    scriptChildren({ obeys: new Set(["SIGKILL"]) });
+    const executor = quickJsExecutor();
+    behaviour = "hang";
+    const lease = await executor.acquire();
+    const running = lease.execute("async () => 1", []).catch((error: unknown) => error);
+    await settle();
+    lease.release();
+    await running;
+    // The recycled child is off its slot but still inside its kill grace.
+    let closed = false;
+    const closing = Promise.resolve(executor.close?.()).then(() => {
+      closed = true;
+    });
+    await settle();
+    expect(closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
     await closing;
     expect(children[0]!.kills).toEqual([undefined, "SIGKILL"]);
   });

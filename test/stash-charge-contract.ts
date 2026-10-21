@@ -276,7 +276,7 @@ export function stashChargeContract(open: StashFixtureFactory): void {
     30_000,
   );
 
-  it.each(["compareAndSet"] as const)(
+  it.each(["get", "compareAndSet"] as const)(
     "INV-7: returns within the settlement budget with stalled %s",
     async (operation) => {
       const f = await clocked(open);

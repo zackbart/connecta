@@ -3,13 +3,11 @@
 // itself (`leakedRun`) rather than trusting redaction's own list of forms.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  agentOutputOperations,
   encodeForAgent,
   redactAgentOutput,
   redactBoundedRead,
   requestSentSecrets,
   sentSecretsFor,
-  sentSecretsForRequest,
   SentSecrets,
 } from "../src/sent-secrets.js";
 import { ProtocolError, SdkError, SdkErrorCode, UnauthorizedError } from "@modelcontextprotocol/client";
@@ -37,7 +35,7 @@ import { tithely } from "../src/providers/tithely/index.js";
 import { vercel } from "../src/providers/vercel/index.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { caller, stubGoogle, workspaceOptions } from "./helpers/google-echo.js";
-import { decodedViews, echoForms, holdsValue, leakedRun, SECRET } from "./helpers/secret-echoes.js";
+import { echoForms, holdsValue, leakedRun, SECRET } from "./helpers/secret-echoes.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
@@ -104,13 +102,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** The named echo forms of SECRET a matrix keeps: one per distinct matching branch. */
-function formsOf(...names: string[]): [string, string][] {
-  return echoForms(SECRET).filter(([name]) => names.includes(name));
-}
-
 describe("the output boundary's projection", () => {
-  it.each(formsOf("raw", "\\u-escaped (lower hex)"))(
+  it.each(echoForms(SECRET))(
     "INV-5: a whole %s form split into one-unit leaves is found across them, in nested JSON and error fields, without mutating the input",
     (_name, form) => {
       const secrets = set();
@@ -132,7 +125,7 @@ describe("the output boundary's projection", () => {
     },
   );
 
-  it.each(formsOf("raw", "base64", "\\u-escaped (lower hex)"))(
+  it.each(echoForms(SECRET))(
     "INV-5: every K-unit run of the %s form is removed wherever it starts, checked by independent decoding",
     (name, form) => {
       const secrets = set();
@@ -155,6 +148,28 @@ describe("the output boundary's projection", () => {
       expect(leakedRun(split.parts.join(""), SECRET)).toBeUndefined();
     },
   );
+
+  it("INV-5: object keys holding a K-unit run are renamed; framing keys and keys only partly a short value are kept", () => {
+    const secrets = set(TOKEN);
+    const out = redactAgentOutput(secrets, { [`x${TOKEN.slice(4, 4 + K)}`]: 1, content: [], type: "text" });
+    expect(Object.keys(out)).toEqual([`x${MARK}`, "content", "type"]);
+    const short = set("pin");
+    expect(short.redact({ pin: 1, pinCode: 2 })).toEqual({ [MARK]: 1, pinCode: 2 });
+  });
+
+  it("INV-5: a normalized number holding a K-unit run is withheld; a tiny private value matches only a whole number", () => {
+    expect(redactAgentOutput(set("012345678900"), { size: 12345678900, count: 3 })).toEqual({ size: MARK, count: 3 });
+    expect(set("012345678900").redact({ notice: "A file of 12345678900 bytes." }).notice).toBe(
+      `A file of ${MARK} bytes.`,
+    );
+    expect(set("5").redact({ id: 5, count: 15, label: "page 5" })).toEqual({ id: MARK, count: 15, label: "page 5" });
+    // Digits split across a string and a number are one run.
+    expect(redactAgentOutput(set("ab12345678cd"), { a: "ab", n: 12345678, b: "cd" })).toEqual({
+      a: MARK,
+      n: MARK,
+      b: MARK,
+    });
+  });
 
   it.each(["drive", "resource", "image"])(
     "INV-5: declared %s binary content is decoded at every byte alignment and withheld whole as the marker",
@@ -181,6 +196,14 @@ describe("the output boundary's projection", () => {
     },
   );
 
+  it("INV-5: serialized JSON whose tokens together hold a run of a value is withheld whole", () => {
+    const secrets = set('12345678,"next":"allowed');
+    const raw = JSON.stringify({ id: "needed-id", numeric: 12345678, next: "allowed" });
+    expect(secrets.text(raw)).toBe(MARK);
+    const clean = JSON.stringify({ id: "needed-id", count: 4, label: "denied" });
+    expect(secrets.text(clean)).toBe(clean);
+  });
+
   it("INV-5: only exact Connecta-minted state is framing; vendor state and appended payload are still matched", () => {
     const secrets = set("zq7x");
     const minted = secrets.mintedState("v1.authenticated-zq7x-state");
@@ -188,6 +211,23 @@ describe("the output boundary's projection", () => {
     expect(JSON.parse(secrets.redact(JSON.stringify({ requestState: minted })))).toEqual({ requestState: minted });
     expect(secrets.redact({ requestState: "vendor-zq7x-state" })).toEqual({ requestState: `vendor-${MARK}-state` });
     expect(secrets.redact({ requestState: `${minted}zq7x` }).requestState).not.toContain("zq7x-state");
+  });
+
+  it("INV-5: identifiers are matched whole only; a Basic username is one only beside a registrable password", () => {
+    const secrets = new SentSecrets();
+    secrets.identifier("registered-client-0042");
+    const consent = "https://auth.example/register?client_id=registered-client-0042";
+    expect(secrets.redact(consent)).toBe(`https://auth.example/register?client_id=${MARK}`);
+    expect(secrets.redact("https://auth.example/registered-client")).toBe("https://auth.example/registered-client");
+    expect(secrets.contains("https://auth.example/registered-client")).toBe(false);
+    const paired = new SentSecrets();
+    paired.header(`Basic ${btoa(`service-account-7:${TOKEN}`)}`);
+    expect(paired.redact("service-account-7")).toBe(MARK);
+    expect(paired.redact("service-account")).toBe("service-account");
+    expect(paired.redact(TOKEN.slice(2, 2 + K))).toBe(MARK);
+    const keyOnly = new SentSecrets();
+    keyOnly.header(`Basic ${btoa(`${TOKEN}:x`)}`);
+    expect(keyOnly.redact(TOKEN.slice(2, 2 + K))).toBe(MARK);
   });
 
   it("INV-5: continuation tokens are not registered, so the next page's cursor survives", () => {
@@ -256,7 +296,6 @@ describe("the output boundary's projection", () => {
     expect(leakedRun(`${seam.a.slice(-40)}${seam.b}`, TOKEN)).toBeUndefined();
     expect(seam.b).toBe(`${MARK} public`);
   });
-
 });
 
 describe("open tails and nested escapes", () => {
@@ -381,6 +420,35 @@ describe("provider sites the boundary cannot cover", () => {
     }
   });
 
+  it("INV-5: Slides raw text runs split below K with style between them leave no piece", async () => {
+    const value = "Q8!wZ2?";
+    stubGoogle(() => ({
+      objectId: "s1",
+      revisionId: "r1",
+      pageElements: [
+        {
+          objectId: "shape",
+          shape: {
+            text: {
+              textElements: Array.from(value, (unit) => ({
+                textRun: { content: unit, style: { fontFamily: "PublicFont" } },
+              })),
+            },
+          },
+        },
+      ],
+    }));
+    const result = await slides("decks", await workspaceOptions()).callTool(
+      "get_page",
+      { presentationId: "p1", pageObjectId: "s1", raw: true },
+      context(value),
+    );
+    const text = shown(result);
+    expect(text).toContain(MARK);
+    for (const unit of value) expect(text).not.toContain(`"content":"${unit}"`);
+    expect(text).toContain("PublicFont");
+  });
+
   it.each(["planning-center", "tithely"])(
     "INV-5: %s redacts a short private value padded with spaces before trimming its error text",
     async (name) => {
@@ -436,6 +504,27 @@ describe("provider sites the boundary cannot cover", () => {
     expect(result.charges[0]!.netAmountCents).toBe(4100);
   });
 
+  it("INV-5: Drive checks downloaded bytes at any alignment and size strings before normalizing them", async () => {
+    for (const binary of [true, false]) {
+      const body = `x${SECRET}z`;
+      const size = binary ? String(body.length) : "012345678900";
+      stubGoogle((url) =>
+        url.searchParams.get("alt") === "media"
+          ? new Response(body)
+          : { id: "f1", name: "data.bin", mimeType: "application/octet-stream", size },
+      );
+      const result = (await drive("files", await workspaceOptions()).callTool(
+        "get_file_content",
+        { fileId: "f1" },
+        context(size),
+      )) as { size?: number; format: string; content: string };
+      expect(result.size).toBeUndefined();
+      expect(result.format).toBe("base64");
+      expect(atob(result.content)).toBe(MARK);
+      expect(shown(result)).not.toContain("12345678900");
+      expect(leakedRun(shown(result), SECRET)).toBeUndefined();
+    }
+  });
 });
 
 describe("review round 3", () => {
@@ -534,6 +623,29 @@ describe("review round 3", () => {
     expect(leakedRun(shown(result), TOKEN)).toBeUndefined();
   });
 
+  it("INV-5: a Drive cursor carries Drive's page token only redacted, so decoding it reveals no sent value", async () => {
+    stubGoogle((url) =>
+      url.pathname.endsWith("/files")
+        ? { files: [{ id: "f1", name: "Notes", mimeType: "text/plain" }], nextPageToken: `tok-${TOKEN}-next` }
+        : {},
+    );
+    const result = (await drive("files", await workspaceOptions()).callTool(
+      "search_files",
+      { query: "notes" },
+      context(TOKEN),
+    )) as { page: { hasMore: boolean; nextCursor: string } };
+    expect(result.page.hasMore).toBe(true);
+    const claims = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(atob(result.page.nextCursor.replace(/-/g, "+").replace(/_/g, "/")), (unit) =>
+          unit.charCodeAt(0),
+        ),
+      ),
+    ) as unknown[];
+    expect(claims[0]).toBe(`tok-${MARK}-next`);
+    expect(leakedRun(shown(result), TOKEN)).toBeUndefined();
+  });
+
   it("INV-5: what returns is what was checked: accessors are never invoked and their containers are copied without them", () => {
     const secrets = set(TOKEN);
     let reads = 0;
@@ -560,7 +672,6 @@ describe("review round 3", () => {
     expect(secrets.redact({ dated: { toJSON: () => `echo ${TOKEN}` } })).toEqual({ dated: `echo ${MARK}` });
     expect(secrets.redact({ when: new Date(0) })).toEqual({ when: "1970-01-01T00:00:00.000Z" });
   });
-
 });
 
 describe("review round 4", () => {
@@ -571,6 +682,13 @@ describe("review round 4", () => {
   };
   /** An array of `length` holes. */
   const holes = (length: number): unknown[] => Object.assign([], { length }) as unknown[];
+  /** The claims a base64url cursor holds. */
+  const claimsOf = (cursor: string): Record<string, unknown> =>
+    JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")), (unit) => unit.charCodeAt(0)),
+      ),
+    ) as Record<string, unknown>;
 
   it.each([
     ["four", "Pq4!"],
@@ -594,6 +712,41 @@ describe("review round 4", () => {
       expect(secrets.redact(clean)).toBe(clean);
     },
   );
+
+  it("INV-5: Slides cursors carry a slide's and its notes page's ids only redacted", async () => {
+    const long = "Ordinary public content ".repeat(30);
+    const shape = (objectId: string) => ({
+      objectId,
+      shape: { text: { textElements: [{ textRun: { content: long } }] } },
+    });
+    stubGoogle(() => ({
+      presentationId: "deck",
+      title: "Public deck",
+      revisionId: "rev1",
+      slides: [
+        {
+          objectId: "s0-pin42-id",
+          slideProperties: {
+            notesPage: {
+              objectId: "n0-pin42-id",
+              notesProperties: { speakerNotesObjectId: "notes" },
+              pageElements: [shape("notes")],
+            },
+          },
+          pageElements: [shape("shape1")],
+        },
+      ],
+    }));
+    const result = (await slides("decks", await workspaceOptions()).callTool(
+      "get_presentation",
+      { presentationId: "deck", maxCharsPerSlide: 20 },
+      context("pin42"),
+    )) as { slides: { elements: { textCursor: string }[]; notesCursor: string }[] };
+    const [slide] = result.slides;
+    expect(claimsOf(slide!.elements[0]!.textCursor)).toMatchObject({ k: "page", p: "deck", g: `s0-${MARK}-id` });
+    expect(claimsOf(slide!.notesCursor)).toMatchObject({ k: "page", p: "deck", g: `n0-${MARK}-id` });
+    expect(holdsValue(shown(result), "pin42")).toBe(false);
+  });
 
   it("INV-5: cursor claims are checked under payload rules, strings by value, Connecta's keys and counts left alone", () => {
     const ctx = context("4201");
@@ -725,6 +878,24 @@ describe("review round 4", () => {
     for (const [, chunks] of stash.mock.calls) expect(chunks.join("")).not.toContain(echo);
   });
 
+  it("INV-5: frozen and read-only fields are copied as writable data, so redacting them never throws", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    expect(secrets.redact(Object.freeze({ v: TOKEN, kept: "public" }))).toEqual({ v: MARK, kept: "public" });
+    expect(secrets.redact(Object.freeze([TOKEN, "public"]))).toEqual([MARK, "public"]);
+    const deep = Object.freeze({ outer: Object.freeze({ inner: Object.freeze([`echo ${TOKEN}`]) }) });
+    expect(secrets.redact(deep)).toEqual({ outer: { inner: [`echo ${MARK}`] } });
+    const hidden = Object.defineProperty({}, "v", { value: TOKEN }) as { v: string };
+    const safe = secrets.redact(hidden);
+    expect(Object.getOwnPropertyDescriptor(safe, "v")).toEqual({
+      value: MARK,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(hidden.v).toBe(TOKEN);
+  });
+
   it("INV-5: array and error copies keep the identity facts registered beside them", () => {
     const secrets = new SentSecrets();
     secrets.add(TOKEN);
@@ -759,6 +930,10 @@ describe("review round 5", () => {
   /** Every UTF-16 unit as a `\u` escape. */
   const escapeAll = (text: string) =>
     Array.from(text, (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+  /** Every unit as a lowercase percent escape. */
+  const percentAll = (text: string) =>
+    Array.from(text, (unit) => `%${unit.charCodeAt(0).toString(16).padStart(2, "0")}`).join("");
+
   /** A connector whose one read registers `value` and returns what `reply` makes. */
   const echoing = (value: string, reply: () => unknown, privateValue = true, maxResultBytes?: number): Connector => ({
     id: "notes",
@@ -859,6 +1034,124 @@ describe("review round 5", () => {
     }
   });
 
+  it("INV-5: object keys go through the whole lattice: base64 in a key, raw or under any text view, renames it", () => {
+    const value = "pin42";
+    const secrets = set(value);
+    const run = btoa(`x${value}z`);
+    for (const key of [
+      run,
+      `id:${run}`,
+      encodeURIComponent(run),
+      escapeAll(run),
+      percentAll(run),
+      `a+${btoa(`x${value}`)}`,
+    ]) {
+      const out = secrets.redact({ [key]: "public", kept: "okay" });
+      expect(Object.keys(out), key).toEqual([MARK, "kept"]);
+      expect(holdsValue(shown(out), value), key).toBe(false);
+    }
+    // The review's key, and keys inside a nested JSON string and on an error.
+    expect(secrets.redact({ "eHBpbjQyeg==": "public" })).toEqual({ [MARK]: "public" });
+    expect(holdsValue(shown(secrets.redact({ body: JSON.stringify({ [run]: "public" }) })), value)).toBe(false);
+    const error = secrets.redact(Object.assign(new Error("public"), { [run]: "public" }));
+    expect(Object.getOwnPropertyNames(error)).not.toContain(run);
+    // A credential under the boundary's rules too, its base64 at every alignment.
+    const credential = new SentSecrets();
+    credential.add(TOKEN);
+    for (let prefix = 0; prefix < 3; prefix++) {
+      const echo = encoded(`${"x".repeat(prefix)}${TOKEN}z`);
+      const out = redactAgentOutput(credential, { [echo]: 1, [`k ${echo}`]: 2, [encodeURIComponent(echo)]: 3 });
+      expect(Object.keys(out)).not.toContain(echo);
+      expect(leakedRun(shown(out), TOKEN), String(prefix)).toBeUndefined();
+    }
+    // Ordinary keys are decoded, found clean and kept.
+    const plain = { createdAt: 1, description: "public", nextPageToken: "abc" };
+    expect(secrets.redact(plain)).toBe(plain);
+  });
+
+  it("INV-5: functions are withheld, so no serializer they carry runs at an exit, and an error copy holds no callable toJSON", async () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    const fn = Object.assign(() => "public", { toJSON: () => ({ echo: TOKEN }) });
+    expect(secrets.redact({ value: fn })).toEqual({ value: MARK });
+    expect(secrets.redact(fn)).toBe(MARK);
+    expect(secrets.redact([fn, "public"])).toEqual([MARK, "public"]);
+    expect(secrets.redact({ value: { toJSON: () => fn } })).toEqual({ value: MARK });
+    expect(secrets.redact({ value: Symbol(TOKEN) })).toEqual({ value: MARK });
+    // The review's error: a class getter answering toJSON with a function is never read.
+    let calls = 0;
+    class Serializing extends Error {
+      get toJSON() {
+        calls++;
+        return () => ({ echo: TOKEN });
+      }
+    }
+    const copy = secrets.redact(new Serializing("public"));
+    expect(copy).toBeInstanceOf(Serializing);
+    expect(Object.getOwnPropertyDescriptor(copy, "toJSON")).toMatchObject({ value: undefined });
+    expect(JSON.stringify(copy)).not.toContain(TOKEN);
+    expect(calls).toBe(0);
+    // An own function field and a class accessor answering with a function are withheld too.
+    class Retrying extends Error {
+      get retry() {
+        return () => TOKEN;
+      }
+    }
+    const retrying = secrets.redact(Object.assign(new Retrying("public"), { callback: () => TOKEN }));
+    expect([retrying.retry, retrying.callback]).toEqual([MARK, MARK]);
+    expect(nonJson({ copy, retrying })).toEqual([]);
+    // Through the guest bridge, as a program's connecta.call receives it.
+    const value = await bridged(echoing(TOKEN, () => ({ value: fn, fail: new Serializing("public") }), false));
+    expect(nonJson(value)).toEqual([]);
+    expect(JSON.stringify(value)).not.toContain(TOKEN);
+    expect(leakedRun(JSON.stringify(value), TOKEN)).toBeUndefined();
+  });
+
+  it("INV-5: typed binary leaves only as a fresh Uint8Array of its checked bytes, with no subclass or serializer", async () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    class Bytes extends Uint8Array {
+      toJSON() {
+        return { echo: TOKEN };
+      }
+    }
+    class Buffer extends ArrayBuffer {
+      toJSON() {
+        return { echo: TOKEN };
+      }
+    }
+    class Lying extends Uint8Array {
+      override get byteLength() {
+        return 0;
+      }
+    }
+    const inputs: [unknown, number[]][] = [
+      [new Bytes([1, 2, 3]), [1, 2, 3]],
+      [new Buffer(3), [0, 0, 0]],
+      [new DataView(Uint8Array.of(4, 5).buffer), [4, 5]],
+      [new Uint16Array([1, 258]), [1, 0, 2, 1]],
+      [new Float32Array([1]), [0, 0, 128, 63]],
+      [new Lying([6, 7]), [6, 7]],
+      [Uint8Array.of(8).subarray(0, 1), [8]],
+    ];
+    for (const [input, bytes] of inputs) {
+      const out = secrets.redact({ value: input }).value;
+      expect(out).not.toBe(input);
+      expect(Object.getPrototypeOf(out)).toBe(Uint8Array.prototype);
+      expect([...(out as Uint8Array)]).toEqual(bytes);
+      expect(nonJson(out)).toEqual([]);
+      expect(JSON.stringify(out)).not.toContain(TOKEN);
+    }
+    // The bytes are checked as before.
+    expect(secrets.redact({ value: new Bytes(new TextEncoder().encode(`x${TOKEN}z`)) })).toEqual({ value: MARK });
+    // Through the guest bridge, the review's two subclasses arrive as plain bytes.
+    for (const reply of [() => ({ value: new Bytes([1, 2, 3]) }), () => ({ value: new Buffer(3) })]) {
+      const value = (await bridged(echoing(TOKEN, reply, false))) as { data: { value: unknown } };
+      expect(Object.getPrototypeOf(value.data.value)).toBe(Uint8Array.prototype);
+      expect(JSON.stringify(value)).not.toContain(TOKEN);
+    }
+  });
+
   it("INV-5: every other non-JSON value becomes the data JSON shows for it, checked, or is withheld", () => {
     const secrets = new SentSecrets();
     secrets.add(TOKEN);
@@ -907,6 +1200,26 @@ describe("review round 5", () => {
     expect(nonJson(out)).toEqual([]);
     // A bigint is checked as its digits.
     expect(set("12345678").redact({ id: 12345678n })).toEqual({ id: MARK });
+  });
+
+  it("INV-5: a toJSON result whose fields are copied is replaced by its copy, never put back as the original", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    class Holder {
+      constructor(readonly v: string) {}
+    }
+    // Found by the property test below; the round-4 head returned the original Holder here.
+    const inputs = [
+      { wrap: { toJSON: () => ({ echo: new Holder(TOKEN) }) } },
+      [{ toJSON: () => ({ map: new Map([["k", 1]]), echo: new Holder(TOKEN) }) }],
+      { wrap: { toJSON: () => ({ echo: { toJSON: () => ({ echo: new Holder(`x ${TOKEN}`) }) } }) } },
+    ];
+    for (const input of inputs) {
+      const out = secrets.redact(input);
+      expect(JSON.stringify(out)).not.toContain(TOKEN);
+      expect(JSON.stringify(out)).toContain(MARK);
+      expect(nonJson(out)).toEqual([]);
+    }
   });
 
   it("INV-5: random nested values of every kind redact to JSON data, canonical bytes and error copies only", () => {
@@ -1062,9 +1375,70 @@ describe("review round 5", () => {
     }
   });
 
+  it("INV-5: structural fields are refused through the same lattice: base64 of a sent value in a URL or host", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    const echo = encoded(`x${TOKEN}z`);
+    expect(secrets.contains(`https://example.com/cb?s=${echo}`)).toBe(true);
+    expect(secrets.contains(`https://example.com/cb?s=${encodeURIComponent(echo)}`)).toBe(true);
+    expect(secrets.containsUrl(`https://example.com/cb?s=${echo}`)).toBe(true);
+    expect(secrets.contains(`${TOKEN.slice(0, K).toLowerCase()}.example.com`, true)).toBe(true);
+    expect(secrets.contains("https://example.com/cb?s=public-state")).toBe(false);
+  });
 });
 
 describe("review round 6", () => {
+  const credential = "Q8!wZ2?A7@vR4#";
+
+  it("INV-5: materialized error accessor names pass through the whole lattice", () => {
+    const secrets = new SentSecrets();
+    secrets.add(credential);
+    secrets.arguments({ value: "pin42" }, schema);
+    for (const key of [credential, btoa(`x${credential}z`), btoa("xpin42z"), `echo=x+${btoa("xpin42")}`]) {
+      class Getter extends Error {}
+      Object.defineProperty(Getter.prototype, key, { get: () => "answer", configurable: true });
+      const out = secrets.redact(new Getter("public"));
+      expect(Object.hasOwn(out, key), key).toBe(false);
+      // The renamed accessor's answer is still a checked field of the copy.
+      const names = Object.getOwnPropertyNames(out);
+      expect(names.filter((name) => Object.getOwnPropertyDescriptor(out, name)!.value === "answer").length, key).toBe(
+        1,
+      );
+      expect(holdsValue(everyText(out).join("\n"), "pin42"), key).toBe(false);
+      expect(leakedRun(everyText(out).join("\n"), credential), key).toBeUndefined();
+    }
+    // Two accessors renamed alike keep the first; neither leaves its own name behind.
+    class Twice extends Error {
+      get [credential]() {
+        return "first";
+      }
+      get [`${credential}!`]() {
+        return "second";
+      }
+    }
+    const twice = secrets.redact(new Twice("public"));
+    expect(Object.getOwnPropertyNames(twice).filter((name) => name.includes(credential))).toEqual([]);
+    expect(everyText(twice).join("\n")).not.toContain(credential);
+    // An error's toJSON shadow keeps its name whatever is registered, so it still shadows.
+    const json = new SentSecrets();
+    json.arguments({ value: "JSON" }, schema);
+    class Serializing extends Error {
+      toJSON() {
+        return { echo: credential };
+      }
+    }
+    const own = Object.defineProperty(new Serializing("public"), "toJSON", {
+      value: () => ({ echo: credential }),
+      configurable: true,
+      writable: true,
+    });
+    for (const error of [new Serializing("public"), own]) {
+      const shadowed = json.redact(error);
+      expect(Object.getOwnPropertyDescriptor(shadowed, "toJSON")).toMatchObject({ value: undefined });
+      expect(JSON.stringify(shadowed)).not.toContain(credential);
+    }
+  });
+
   it("INV-5: built-in, Connecta and MCP SDK error names are kept whatever was sent; others are checked", () => {
     // "Error" is a short private value, so it matches inside any name that is not on the allowlist.
     const secrets = set("Error");
@@ -1103,18 +1477,64 @@ describe("review round 6", () => {
     // A plain object's name is never an error name.
     expect(secrets.redact({ name: "TypeError" }).name).toBe(`Type${MARK}`);
   });
-
 });
 
 describe("review round 7", () => {
   const credential = "Q8!wZ2?A7@vR4#";
   // DOMException is typed apart from the Error constructors; every base here is an Error at runtime.
   const bases = [Error, TypeError, RangeError, DOMException] as ErrorConstructor[];
+  const [head, tail] = [credential.slice(0, 7), credential.slice(7)];
   const sent = () => {
     const secrets = new SentSecrets();
     secrets.add(credential);
     return secrets;
   };
+  /** Every leaf an in-process read reaches, in property order and without names, so adjacent
+   * leaves concatenate as the projection joins them. */
+  const joined = (value: unknown): string => everyValue(value).join("");
+
+  it("INV-5: an error name off the allowlist joins the projection, so a credential split across it and a neighbour is withheld", () => {
+    for (const Base of bases) {
+      // Own name, then message.
+      class Own extends Base {}
+      const own = new Own();
+      delete own.stack;
+      Object.defineProperties(own, {
+        name: { value: head, enumerable: true, configurable: true },
+        message: { value: tail, enumerable: true, configurable: true },
+      });
+      // A custom field, then the name a prototype answers, as an accessor or a data field. On a
+      // DOMException the message and code its prototype answers come between them.
+      class Getter extends Base {
+        override get name() {
+          return tail;
+        }
+      }
+      class Inherited extends Base {}
+      Object.defineProperty(Inherited.prototype, "name", { value: tail, configurable: true });
+      const after = [new Getter("public"), new Inherited("public")].map((error) => {
+        delete error.stack;
+        return Object.defineProperty(error, "prefix", { value: head, enumerable: true });
+      });
+      // A name holding both halves as JSON, adjacent inside it.
+      class Nested extends Base {}
+      const nested = Object.defineProperty(new Nested("public"), "name", {
+        value: JSON.stringify([head, tail]),
+        configurable: true,
+      });
+      delete nested.stack;
+      for (const error of [own, ...(Base === (DOMException as unknown) ? [] : after), nested]) {
+        const label = `${Base.name}/${Object.getPrototypeOf(error).constructor.name}`;
+        const copy = sent().redact(error);
+        // Any part of the name changed withholds it whole; the copy keeps its class.
+        expect(copy.name, label).toBe(MARK);
+        expect(Object.getPrototypeOf(copy) === Object.getPrototypeOf(error), label).toBe(true);
+        expect(joined(copy), label).not.toContain(head);
+        expect(joined(copy), label).not.toContain(tail);
+        expect(JSON.stringify(copy), label).not.toContain(head);
+      }
+    }
+  });
 
   it("INV-5: the reviewer's allowlist probes: hostile names, constructor and toStringTag spoofing", () => {
     for (const Base of bases)
@@ -1142,4 +1562,24 @@ describe("review round 7", () => {
     expect(sent().redact(fake).name).toBe(MARK);
   });
 
+  it("INV-5: an error whose split name is withheld keeps its class and the identity facts registered beside it", () => {
+    class RoundSevenHttpError extends Error {}
+    labelErrorClass(RoundSevenHttpError, "RoundSevenHttpError");
+    const original = new RoundSevenHttpError();
+    delete original.stack;
+    Object.defineProperties(original, {
+      name: { value: head, enumerable: true, configurable: true },
+      message: { value: tail, enumerable: true, configurable: true },
+    });
+    attachFailureFacts(original, { httpStatus: 502, origin: "https://api.example.com" });
+    const copy = sent().redact(original);
+    expect(copy).toBeInstanceOf(RoundSevenHttpError);
+    expect([copy.name, copy.message]).toEqual([MARK, MARK]);
+    expect(failureRecord({}, copy)).toEqual(failureRecord({}, original));
+    expect(failureRecord({}, copy)).toMatchObject({ errorClass: "RoundSevenHttpError", httpStatus: 502 });
+    const typed = carryFailureFacts(original, new ConnectorCallError("connector_call_failed", "public"));
+    expect(failureRecord({}, sent().redact(typed))).toMatchObject({ errorClass: "RoundSevenHttpError" });
+  });
 });
+
+describe("mutation checks", () => {});

@@ -6,6 +6,7 @@ import { api } from "../src/connectors/api.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
 import { unwrapMcpResult } from "../src/mcp-result.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -168,6 +169,58 @@ describe("call_tool", () => {
     expect(small.error.nextAction.arguments.args).toEqual({ target: "dupe" });
   });
 
+  it("keeps a routing refusal small when the address is not", async () => {
+    // The argument echo was bounded; the *address* was not. It reaches the
+    // refusal twice over — once in the error message, once as the recovery
+    // record's search query — and each of those lands in both the text content
+    // and structuredContent, so a 50 KB invented address produced a 200 KB
+    // refusal against a deployment that capped results at 1 KB.
+    const mt = createMetaTools(makeRegistry([calcConnector], { maxResultBytes: 1_000 }), BASE);
+    const filler = "x".repeat(50_000);
+
+    const unknownAddress = await mt.callTool({ address: `ghost.${filler}` });
+    expect(unknownAddress.isError).toBe(true);
+    expect(JSON.stringify(unknownAddress).length).toBeLessThan(4_000);
+    const address = textOf(unknownAddress) as {
+      error: {
+        code: string;
+        message: string;
+        nextAction: { arguments: { query: string } };
+      };
+    };
+    expect(address.error.code).toBe("unknown_address");
+    expect(address.error.message).toContain("Unknown address");
+    // Clamped, not dropped: the caller still learns which address was refused,
+    // and the marker says it is not the whole of what it sent.
+    expect(address.error.message).toContain("…");
+    expect(address.error.nextAction.arguments.query).toContain("…");
+    expect(address.error.nextAction.arguments.query.length).toBeLessThan(600);
+
+    // Same bypass one resolution step later: the connector exists, the tool
+    // name is the caller's invention.
+    const unknownTool = await mt.callTool({ address: `calc.${filler}` });
+    expect(unknownTool.isError).toBe(true);
+    expect(JSON.stringify(unknownTool).length).toBeLessThan(4_000);
+    const tool = textOf(unknownTool) as {
+      error: {
+        code: string;
+        message: string;
+        nextAction: { arguments: { query: string; connector: string } };
+      };
+    };
+    expect(tool.error.code).toBe("unknown_tool");
+    expect(tool.error.message).toContain("Unknown tool");
+    expect(tool.error.nextAction.arguments.connector).toBe("calc");
+    expect(tool.error.nextAction.arguments.query.length).toBeLessThan(600);
+
+    // The common case must stay exact — a short address is corrected verbatim.
+    const short = textOf(await mt.callTool({ address: "ghost.read_items" })) as {
+      error: { message: string; nextAction: { arguments: { query: string } } };
+    };
+    expect(short.error.message).toBe('Unknown address "ghost.read_items"');
+    expect(short.error.nextAction.arguments.query).toBe("read items");
+  });
+
   it("keeps call_destructive_tool's reason out of the downstream arguments", async () => {
     const seen: unknown[] = [];
     const dangerous = api("danger", {
@@ -222,6 +275,70 @@ describe("call_tool", () => {
     expect(calls).toBe(1);
   });
 
+  it("returns transient failures after one attempt and preserves read-only admission", async () => {
+    let safeCalls = 0;
+    let unsafeCalls = 0;
+    const connector = api("retry", {
+      tools: [
+        {
+          name: "safe_read",
+          description: "Read a value, retryably",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            safeCalls++;
+            if (safeCalls === 1) throw new ConnectorCallError("unavailable", "temporary 503");
+            return { ok: true };
+          },
+        },
+        {
+          name: "unsafe_write",
+          description: "Write something the host must approve",
+          annotations: { readOnlyHint: false },
+          handler: () => {
+            unsafeCalls++;
+            throw new Error("temporary 503");
+          },
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const safe = textOf(
+      await mt.callTool({
+        address: "retry.safe_read",
+        resultMode: "value",
+
+        diagnostics: true,
+      }),
+    ) as {
+      ok: boolean;
+      attempts: number;
+      timing: {
+        catalogMs: number;
+        connectorMs: number;
+        resultProcessingMs: number;
+        totalMs: number;
+      };
+    };
+    const unsafe = textOf(
+      await mt.callTool({
+        address: "retry.unsafe_write",
+        resultMode: "value",
+      }),
+    ) as { ok: boolean; attempts: number };
+
+    expect(safe).toMatchObject({ ok: false, attempts: 1, error: { retryable: true } });
+    expect(safe.timing.connectorMs).toBeGreaterThanOrEqual(0);
+    expect(safe.timing).not.toHaveProperty("backoffMs");
+    expect(safe.timing.totalMs).toBeGreaterThanOrEqual(safe.timing.connectorMs);
+    expect(safeCalls).toBe(1);
+    expect(unsafe).toMatchObject({
+      ok: false,
+      attempts: 0,
+      error: { code: "destructive_tool_requires_approval" },
+    });
+    expect(unsafeCalls).toBe(0);
+  });
+
   it("INV-7: shares the bounded program deadline by default", async () => {
     const seen: Array<{ timeoutMs?: number; hasSignal: boolean }> = [];
     const connector = api("budget", {
@@ -258,6 +375,113 @@ describe("call_tool", () => {
       defaultToolTimeoutMs: 5_000,
     }).callTool({ ...call, timeoutMs: 2_500 });
     expect(seen[2]).toEqual({ timeoutMs: 2_500, hasSignal: true });
+  });
+
+  it("a configured default deadline aborts and times out a hanging call", async () => {
+    const connector = api("stuck", {
+      tools: [
+        {
+          name: "wait",
+          description: "Wait until the deadline",
+          annotations: { readOnlyHint: true },
+          async handler(_args, ctx) {
+            await new Promise<void>((resolve) => {
+              ctx.signal?.addEventListener("abort", () => resolve(), {
+                once: true,
+              });
+            });
+            return { completedAfterAbort: true };
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE, {
+        defaultToolTimeoutMs: 10,
+      }).callTool({ address: "stuck.wait", resultMode: "value" }),
+    ) as { ok: boolean; error: { code: string; retryable: boolean } };
+    expect(parsed).toMatchObject({
+      ok: false,
+      error: { code: "timeout", retryable: true },
+    });
+  });
+
+  it("surfaces a connector's retryAfterMs in the error envelope", async () => {
+    const connector = api("limited", {
+      tools: [
+        {
+          name: "read",
+          description: "Read a value",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            throw new ConnectorCallError("rate_limited", "slow down", {
+              retryAfterMs: 3_600_000,
+            });
+          },
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const parsed = textOf(await mt.callTool({ address: "limited.read", resultMode: "value" })) as {
+      ok: boolean;
+      attempts: number;
+      error: { code: string; retryable: boolean; retryAfterMs?: number };
+    };
+    // Reported verbatim even though the engine would never wait this long
+    // itself — an hour is the agent's decision to make, not the engine's.
+    expect(parsed).toMatchObject({
+      ok: false,
+      attempts: 1,
+      error: { code: "rate_limited", retryable: true, retryAfterMs: 3_600_000 },
+    });
+  });
+
+  it("a typed auth_required from a call keeps its code so the agent can re-auth", async () => {
+    const connector = api("expired", {
+      tools: [
+        {
+          name: "read",
+          description: "Read a value",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            throw new ConnectorCallError(
+              "auth_required",
+              'Connector "expired" requires authorization — call authorize_connector({ connector: "expired" }).',
+            );
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "expired.read",
+        resultMode: "value",
+      }),
+    ) as {
+      ok: boolean;
+      attempts: number;
+      error: {
+        code: string;
+        message: string;
+        retryable: boolean;
+        retry: string;
+      };
+    };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.attempts).toBe(1);
+    expect(parsed.error.code).toBe("auth_required");
+    expect(parsed.error.retryable).toBe(false);
+    expect(parsed.error.message).toContain("authorize_connector");
+    expect(parsed.error).toMatchObject({
+      connector: "expired",
+      operation: "expired.read",
+      recovery: "unavailable",
+      nextAction: {
+        tool: "authorize_connector",
+        arguments: { connector: "expired" },
+      },
+    });
+    expect(parsed.error.retry).toContain("expired.read");
   });
 
   it("schema-invalid args fail closed as invalid_args without reaching the handler", async () => {
@@ -411,7 +635,59 @@ describe("call_tool", () => {
   });
 });
 
+// An API connector returning a result large enough to exercise paging.
+const dataConnector: Connector = connectorWith({
+  id: "data",
+  kind: "api",
+  description: "Data",
+  tools: [
+    {
+      name: "big",
+      description: "Return a large blob",
+      annotations: { readOnlyHint: true },
+    },
+  ],
+  call: async (name) => {
+    if (name === "big") return { blob: "x".repeat(500) };
+    throw new Error(`Unknown tool "${name}" on connector "data"`);
+  },
+});
+
 describe("call_tool size guard + connecta.result", () => {
+  it("replaces oversized value-mode data with a page handle", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector], { maxResultBytes: 100 }), BASE);
+    const parsed = textOf(
+      await mt.callTool({
+        address: "data.big",
+        resultMode: "value",
+      }),
+    ) as {
+      ok: boolean;
+      data: { truncated: boolean; resultId: string; totalBytes: number };
+    };
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.data.truncated).toBe(true);
+    expect(parsed.data.totalBytes).toBeGreaterThan(100);
+    expect(parsed.data).toMatchObject({
+      nextAction: {
+        tool: "execute_code",
+        arguments: {
+          code: `async () => await connecta.result(${JSON.stringify(parsed.data.resultId)}, { offset: 0, maxBytes: 3829 })`,
+        },
+      },
+    });
+    let text = "";
+    let offset: number | undefined = 0;
+    while (offset !== undefined) {
+      const page = pageOf(await mt.readResult({ id: parsed.data.resultId, offset, maxBytes: 1_000 }));
+      expect(page.text.length).toBeLessThanOrEqual(100);
+      text += page.text;
+      offset = page.nextOffset;
+    }
+    expect(JSON.parse(text)).toEqual({ blob: "x".repeat(500) });
+  });
+
   it("pages multi-byte content at a codepoint-splitting boundary byte-exactly", async () => {
     // "aa😀bb" — the emoji is 4 UTF-8 bytes, so a 4-byte page ending at byte 4
     // lands mid-codepoint. Reassembly must equal the original with no U+FFFD.
@@ -512,7 +788,7 @@ describe("per-connector maxResultBytes override", () => {
 
 describe("maxResultBytes validation", () => {
   /** Caps that are accepted today but silently do something wrong (issue #32). */
-  const BAD_CAPS = [0, Number.NaN];
+  const BAD_CAPS = [0, 1.5, Number.NaN];
 
   /** Stash an oversized result and hand back its page id. */
   async function stash(): Promise<{
@@ -532,6 +808,20 @@ describe("maxResultBytes validation", () => {
     const result = await mt.readResult({ id: resultId, maxBytes });
     expect(result.isError, `maxBytes ${String(maxBytes)}`).toBe(true);
     expect(required(result.content[0]).text).toContain("Invalid maxBytes");
+  });
+
+  it("accepts the 1-byte floor and still pages to completion", async () => {
+    const { mt, resultId } = await stash();
+    let offset = 0;
+    let assembled = "";
+    for (let guard = 0; guard < FULL.length + 10; guard++) {
+      const page = pageOf(await mt.readResult({ id: resultId, offset, maxBytes: 1 }));
+      assembled += page.text;
+      if (page.nextOffset === undefined) break;
+      expect(page.nextOffset).toBeGreaterThan(offset);
+      offset = page.nextOffset;
+    }
+    expect(assembled).toBe(FULL);
   });
 
   it.each(BAD_CAPS)("INV-11: refuses deployment cap %s at construction", (maxResultBytes) => {
@@ -960,6 +1250,50 @@ describe("audit regressions", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not restart the deadline after catalog resolution", async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseCatalog!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        releaseCatalog = resolve;
+      });
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const call = vi.fn(() => {
+        enter();
+        return new Promise(() => {});
+      });
+      const connector = connectorWith({
+        id: "slow",
+        kind: "api",
+        tools: async () => {
+          await ready;
+          return [{ name: "read", annotations: { readOnlyHint: true } }];
+        },
+        call,
+      });
+      const pending = createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "slow.read",
+        timeoutMs: 100,
+        resultMode: "value",
+      });
+      await vi.advanceTimersByTimeAsync(60);
+      releaseCatalog();
+      await entered;
+      await vi.advanceTimersByTimeAsync(40);
+      expect(textOf(await pending)).toMatchObject({
+        ok: false,
+        durationMs: 100,
+        error: { code: "timeout" },
+      });
+      expect(call).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("bounded result stash", () => {
@@ -1023,6 +1357,78 @@ describe("bounded result stash", () => {
       );
     },
   );
+
+  it("keeps a charge booked through fixed chunk expiry within the 30-second write budget", async () => {
+    // Three writes finish after 24 s, within the total write budget.
+    const start = 1_000_000;
+    let clock = start;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const inner = memoryStorage();
+    let slow = true;
+    const root = new Registry([], {
+      logger: silentLogger,
+      results: { maxStashEntries: 1, maxStashBytes: 3 },
+
+      storage: {
+        ...inner,
+        async set(key, value, options) {
+          if (slow) clock += 8_000;
+          await inner.set(key, value, options);
+        },
+      },
+    });
+    const live = async () => {
+      const ledger = JSON.parse((await inner.get("result-stash:v1:ledger")) ?? "null");
+      return (ledger?.entries ?? []).filter((entry: [string, number, number]) => entry[2] > clock).length;
+    };
+    try {
+      expect(await root.stashResult("first", ["h", "a", "b"], 900)).toBe(true);
+      slow = false;
+      // Slow commits do not restart an absolute chunk TTL.
+      clock = start + 899_000;
+      expect(await inner.get("results:result:first")).toBe("h");
+      expect(await root.stashResult("second", ["h", "a", "b"], 900)).toBe(false);
+      // Whenever any chunk is readable, its charge is still booked.
+      for (; clock <= start + 931_000; clock += 500) {
+        const readable = await Promise.all(
+          [0, 1, 2].map((index) => inner.get(`results:result:first${index ? `#${index}` : ""}`)),
+        );
+        if (readable.some((value) => value !== null)) expect(await live()).toBe(1);
+      }
+      expect(await inner.get("results:result:first")).toBeNull();
+      expect(await root.stashResult("second", ["h", "a", "b"], 900)).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it.each([
+    { case: "outlasts its deadline", delayMs: 25_000, chunks: ["h", "a", "b", "c"], ttlSeconds: 60 },
+    { case: "exceeds the 30-second write budget", delayMs: 31_000, chunks: ["h"], ttlSeconds: 900 },
+  ])("fails a stash that $case and releases its charge", async ({ delayMs, chunks, ttlSeconds }) => {
+    let clock = 1_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const inner = memoryStorage();
+    const root = new Registry([], {
+      logger: silentLogger,
+      results: { maxStashEntries: 1 },
+
+      storage: {
+        ...inner,
+        async set(key, value, options) {
+          clock += delayMs;
+          await inner.set(key, value, options);
+        },
+      },
+    });
+    try {
+      expect(await root.stashResult("slow", chunks, ttlSeconds)).toBe(false);
+      expect(await inner.list("results:")).toEqual([]);
+      expect(await inner.get("result-stash:v1:ledger")).toBeNull();
+    } finally {
+      now.mockRestore();
+    }
+  });
 
   it("books every simultaneous claim the ledger has room for, and refuses only past capacity", async () => {
     const storage = memoryStorage();
@@ -1313,6 +1719,31 @@ describe("truncated results lead with their connecta.result handle", () => {
     },
   );
 
+  it("tells a write's caller that the call already ran and must not be repeated", async () => {
+    const mt = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
+      BASE,
+      { readOnly: false },
+    );
+    const { notice } = lead(await mt.callDestructiveTool({ address: "down.run", reason: "export" }));
+    expect(notice.hint).toMatch(/already ran/i);
+    expect(notice.hint).toMatch(/do not (call|repeat|run)/i);
+    expect(notice.hint).toContain("connecta.result");
+    const value = textOf(
+      await mt.callDestructiveTool({ address: "down.run", reason: "export", resultMode: "value" }),
+    ) as { data: LeadingNotice };
+    expect(value.data.hint).toMatch(/already ran/i);
+
+    const read = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
+      BASE,
+      { readOnly: false },
+    );
+    const { notice: readNotice } = lead(await read.callTool({ address: "down.run" }));
+    expect(readNotice.hint).not.toMatch(/already ran/i);
+    expect(readNotice.hint).toContain("connecta.result");
+  });
+
   it("offers a read's caller a reduction inside execute_code before paging", async () => {
     // meta-tools.md prefers reducing a read inside a program; paging eight
     // pages to find one line is how the eval's weakest model missed it.
@@ -1367,6 +1798,21 @@ describe("truncated results lead with their connecta.result handle", () => {
     // The stash holds the same text, so the preview plus the pages after it
     // reassemble the downstream text byte for byte.
     expect(preview + (await pageFrom(mt, notice.resultId, notice.nextOffset))).toBe(JSON_LINES);
+  });
+
+  it("previews several text blocks as readable text and pages their content array", async () => {
+    const content = [
+      { type: "text", text: JSON_LINES.slice(0, 700) },
+      { type: "text", text: JSON_LINES.slice(700, 1_400) },
+    ];
+    const mt = createMetaTools(makeRegistry([downstream(content, true)], { maxResultBytes: 500 }), BASE);
+    const { notice, preview } = lead(await mt.callTool({ address: "down.run" }));
+    expect(preview).toBe(JSON_LINES.slice(0, 500));
+    expect(preview).not.toContain('\\"');
+    // Block boundaries live only in the envelope, which pages from the start.
+    expect(notice.totalBytes).toBe(byteLength(JSON.stringify(content)));
+    expect(notice.nextOffset).toBe(0);
+    expect(JSON.parse(await pageFrom(mt, notice.resultId, 0))).toEqual(content);
   });
 
   it.each([["callTool", true]] as const)(
@@ -1464,6 +1910,19 @@ describe("connecta.result pages raw text, clamped to the result's cap", () => {
       hasMore: true,
       nextOffset: 2_000,
     });
+  });
+
+  it("reports the last page with hasMore false and no next action", async () => {
+    const mt = createMetaTools(
+      makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    const { id } = await truncatedId(mt, "down.run");
+    const total = byteLength(LINES);
+    const { header, body } = rawPage(await mt.readResult({ id, offset: total - 10 }));
+    expect(body).toBe(LINES.slice(-10));
+    expect(header).toMatchObject({ offset: total - 10, bytes: 10, totalBytes: total, hasMore: false });
+    expect(header).not.toHaveProperty("nextAction");
   });
 
   it("pages at the connector's own cap, not the deployment's", async () => {

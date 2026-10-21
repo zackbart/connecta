@@ -14,6 +14,11 @@ import { parseTrace } from "../eval/agent/trace.js";
 import { infraError } from "../eval/agent/infra.js";
 import type { CodexOptions } from "../eval/agent/codex.js";
 
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return { ...original, spawn: vi.fn(original.spawn) };
+});
+
 const CLI = String.raw`
 const fs = require('node:fs');
 const readline = require('node:readline');
@@ -177,24 +182,24 @@ describe("Claude eval CLI", () => {
     expect(infraError(run.events, run.exitCode, trace.loadedTools)).toBeUndefined();
   });
 
-  it.each(["wrong-model", "extra-tool", "duplicate-tool"])(
-    "refuses %s before accepting a trial",
-    async (mode) => {
+  it.each(["wrong-model", "extra-tool", "duplicate-tool"])("refuses %s before accepting a trial", async (mode) => {
+    const run = await fixture(mode);
+    expect(parseTrace(run.events, run.turnStarts, []).claudeCodeVersion).toBe("fake-claude");
+    expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeDefined();
+    expect(run.events.some((event) => event.type === "result" && event.subtype === "error")).toBe(true);
+  });
+
+  it.each([["extra-plugin", '"plugins":["cc-plugin-future@builtin"]']])(
+    "names the offending inventory for %s without plugin settings",
+    async (mode, inventory) => {
       const run = await fixture(mode);
-      expect(parseTrace(run.events, run.turnStarts, []).claudeCodeVersion).toBe("fake-claude");
-      expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeDefined();
-      expect(run.events.some((event) => event.type === "result" && event.subtype === "error")).toBe(true);
+      const error = run.events.find((event) => event.type === "result" && event.subtype === "error");
+      expect(error?.result).toContain("Claude loaded plugins or skills outside the fake MCP config:");
+      expect(error?.result).toContain(inventory);
+      expect(error?.result).not.toContain("fake-secret");
+      expect(error?.result).not.toContain("settings");
     },
   );
-
-  it.each([["extra-plugin", '"plugins":["cc-plugin-future@builtin"]']])("names the offending inventory for %s without plugin settings", async (mode, inventory) => {
-    const run = await fixture(mode);
-    const error = run.events.find((event) => event.type === "result" && event.subtype === "error");
-    expect(error?.result).toContain("Claude loaded plugins or skills outside the fake MCP config:");
-    expect(error?.result).toContain(inventory);
-    expect(error?.result).not.toContain("fake-secret");
-    expect(error?.result).not.toContain("settings");
-  });
 
   it("completes a successful trial when the CLI traps harness SIGTERM and exits 143", async () => {
     const original = runClaude;
@@ -225,16 +230,17 @@ describe("Claude eval CLI", () => {
     }
   });
 
-  it.each([
-    ["cleanup-1", 1],
-  ] as const)("rejects an unexpected exit after harness SIGTERM (%s)", async (mode, exitCode) => {
-    const run = await fixture(mode);
-    expect(run.events.at(-1)?.subtype).toBe("success");
-    expect(run.exitCode).toBe(exitCode);
-    expect(run.timedOut).toBe(false);
-    expect(run.aborted).toBe(false);
-    expect(run.terminatedAfterCompletion).toBe(false);
-  });
+  it.each([["cleanup-1", 1]] as const)(
+    "rejects an unexpected exit after harness SIGTERM (%s)",
+    async (mode, exitCode) => {
+      const run = await fixture(mode);
+      expect(run.events.at(-1)?.subtype).toBe("success");
+      expect(run.exitCode).toBe(exitCode);
+      expect(run.timedOut).toBe(false);
+      expect(run.aborted).toBe(false);
+      expect(run.terminatedAfterCompletion).toBe(false);
+    },
+  );
 
   it("terminates a hung CLI on the wall deadline", async () => {
     const run = await fixture("hang", { timeoutMs: 200 });
@@ -243,4 +249,15 @@ describe("Claude eval CLI", () => {
     expect(run.wallMs).toBeLessThan(5_000);
   });
 
+  it("terminates an active trial when interrupted", async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 200);
+    try {
+      const run = await fixture("hang", { signal: controller.signal });
+      expect(run.aborted).toBe(true);
+      expect(run.terminatedAfterCompletion).toBe(false);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 });

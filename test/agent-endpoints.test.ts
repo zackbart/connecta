@@ -287,6 +287,41 @@ describe("agent endpoint admission", () => {
     await c.close();
   });
 
+  it("INV-4: never consults Clerk at /agent, for a Clerk token, a session cookie, or a handshake parameter", async () => {
+    const storage = memoryStorage();
+    const clerk = clerkAuth({ publishableKey: CLERK_PK, secretKey: "sk_test_fake", publicUrl: BASE });
+    const authorize = vi.spyOn(clerk, "authorize");
+    const recognize = vi.spyOn(clerk, "recognizesCredential" as never);
+    const metadata = vi.spyOn(clerk, "handleMetadata" as never);
+    const c = deployment({
+      storage,
+      auth: clerk,
+      maintainers: [{ namespace: "https://clerk.example.com", id: "user_1" }],
+      pools: { team: { tools: ["wiki"], members: ["agent:bot", { namespace: "https://clerk.example.com", id: "u" }] } },
+    });
+    const bot = await issueAgentToken(storage, "bot");
+    for (const [path, token, headers] of [
+      ["/agent/team", "eyJhbGciOiJSUzI1NiJ9.e30.sig", {}],
+      ["/agent/team", "oat_clerk_oauth_token", {}],
+      ["/agent/team", undefined, { Cookie: "__session=eyJhbGciOiJSUzI1NiJ9.e30.sig; __client_uat=1" }],
+      ["/agent/team?__clerk_db_jwt=dvb_x", undefined, {}],
+    ] as const) {
+      const response = await listTools(c, path, token, headers);
+      expect(response.status, path).toBe(401);
+      expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
+    }
+    expect(authorize).not.toHaveBeenCalled();
+    expect(recognize).not.toHaveBeenCalled();
+    expect(metadata).not.toHaveBeenCalled();
+    // A member agent's cookie or Clerk parameter changes nothing about its admission.
+    expect((await listTools(c, "/agent/team?__clerk_db_jwt=dvb_x", bot, { Cookie: "__session=x" })).status).toBe(200);
+    expect(authorize).not.toHaveBeenCalled();
+    // The same Clerk token at a human pool is Clerk's to judge.
+    expect((await listTools(c, "/mcp/team", "eyJhbGciOiJSUzI1NiJ9.e30.sig")).status).toBe(401);
+    expect(authorize).toHaveBeenCalled();
+    await c.close();
+  });
+
   it("INV-4: ignores Access context and Access JWT headers at /agent and admits only the cta_ token", async () => {
     const storage = memoryStorage();
     const getIdentity = vi.fn(async () => ({ user_uuid: "human" }));

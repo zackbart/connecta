@@ -19,7 +19,11 @@ import type { AuthenticatedIdentity, ConnectorContext } from "../src/types.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext } from "./fixtures/misc.js";
-import { SECRET, echoForms, expectNoFragment, head, leaks, straddling } from "./helpers/secret-echoes.js";
+import { SECRET, echoForms, expectNoFragment, head, straddling } from "./helpers/secret-echoes.js";
+
+// Decoder variants are covered at the shared boundary; each provider keeps raw
+// and escaped cut regressions on its own output path.
+const PROVIDER_ECHO_FORMS = echoForms(SECRET).filter(([name]) => name === "raw" || name === "\\u-escaped (lower hex)");
 
 /** A connector context whose credential slot holds SECRET. */
 const keyed = (): ConnectorContext => ({
@@ -40,12 +44,6 @@ async function refusal(call: unknown): Promise<ConnectorCallError> {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-});
-
-it.each(echoForms(SECRET))("the leak check finds the kept half of the %s form", (_name, form) => {
-  const cut = straddling(form, 500).slice(0, 500);
-  expect(leaks(`prefix: ${cut}`)).toBe(true);
-  expect(leaks(`prefix: ${cut.replace(head(form), "[redacted]")}`)).toBe(false);
 });
 
 describe("Google Workspace error messages", () => {
@@ -81,7 +79,7 @@ describe("Google Workspace error messages", () => {
     return attachCaller(ctx, { identity, authenticated: true });
   }
 
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a 401 echoing the sent token %s across the 500-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -102,7 +100,7 @@ describe("Google Workspace error messages", () => {
 });
 
 describe("shared REST failure mappers", () => {
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a Vercel 400 echoing the sent token %s across the 1,000-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () =>
@@ -114,7 +112,7 @@ describe("shared REST failure mappers", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a Vercel log read's 400 echoing the sent token %s across the 1,000-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () =>
@@ -126,7 +124,7 @@ describe("shared REST failure mappers", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a Vercel upload's 400 echoing the sent token %s across the 1,000-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () =>
@@ -140,7 +138,7 @@ describe("shared REST failure mappers", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a Vercel build log line echoing the sent token %s across the 4,000-character clamp leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () =>
@@ -155,7 +153,7 @@ describe("shared REST failure mappers", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a Cloudflare 400 echoing the sent token %s across the 500-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () =>
@@ -170,7 +168,7 @@ describe("shared REST failure mappers", () => {
     },
   );
 
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a Cloudflare 200 with success false echoing the sent token %s across the 500-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () =>
@@ -189,7 +187,7 @@ describe("shared REST failure mappers", () => {
 });
 
 describe("Breeze reported failures", () => {
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a success: false reply echoing the sent key %s across the 300-character cap leaks no fragment of it",
     async (_name, form) => {
       // shortText cuts JSON.stringify(errors), which opens with {"detail":".
@@ -256,7 +254,7 @@ describe("remote MCP error text", () => {
   };
 
   for (const [route, fail] of Object.entries(cases)) {
-    it.each(echoForms(SECRET))(
+    it.each(PROVIDER_ECHO_FORMS)(
       `INV-5: ${route} echoing a writeOnly argument %s across the 512-byte cut leaks no fragment of it`,
       async (_name, form) => {
         const call = echoing(fail);
@@ -272,7 +270,7 @@ describe("remote MCP error text", () => {
 });
 
 describe("Overflow plain-text failures", () => {
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a plain-text 400 echoing the sent key %s across the 300-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () => new Response(straddling(form, 300), { status: 400 }));
@@ -291,7 +289,7 @@ describe("Overflow plain-text failures", () => {
 });
 
 describe("Cloudflare zone-ownership lookups", () => {
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a refused lookup echoing the sent token %s across the 500-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () =>
@@ -315,7 +313,7 @@ describe("Cloudflare zone-ownership lookups", () => {
 });
 
 describe("Cloudflare GraphQL errors", () => {
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a rejected query echoing the sent token %s across the 500-character cap leaks no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () => Response.json({ data: null, errors: [{ message: straddling(form, 500) }] }));
@@ -361,31 +359,10 @@ describe("open tails of bounded reads", () => {
       expect(secrets().redactOpenTail(text)).toBe("intro [redacted]");
     }
   });
-
-  it("INV-5: a read that stops inside a \\u escape still loses the form it began", () => {
-    const [, escaped] = echoForms(SECRET).find(([name]) => name.startsWith("\\u"))!;
-    for (let end = 60; end < 66; end++) {
-      expect(secrets().redactOpenTail(`intro ${escaped.slice(0, end)}`)).toBe("intro [redacted]");
-    }
-  });
-
-  it("INV-5: a long private value whose indexed prefix the read passed is still caught", () => {
-    const value = `${"v".repeat(300)}${SECRET}`;
-    const set = new SentSecrets();
-    set.add(value);
-    expect(set.redactOpenTail(`intro ${value.slice(0, 280)}`)).toBe("intro [redacted]");
-  });
-
-  it("INV-5: redacts short tails and whole forms, and keeps text that begins nothing", () => {
-    expect(secrets().redactOpenTail(`intro ${SECRET.slice(0, 7)}`)).toBe("intro [redacted]");
-    expect(secrets().redactOpenTail(`intro ${SECRET} done!`)).toBe("intro [redacted] done!");
-    expect(secrets().redactOpenTail("intro unrelated text!")).toBe("intro unrelated text!");
-    expect(new SentSecrets().redactOpenTail(`intro ${SECRET.slice(0, 20)}`)).toBe(`intro ${SECRET.slice(0, 20)}`);
-  });
 });
 
 describe("Notion properties cut short by Notion", () => {
-  it.each(echoForms(SECRET))(
+  it.each(PROVIDER_ECHO_FORMS)(
     "INV-5: a title Notion stopped listing inside the sent token %s shows no fragment of it",
     async (_name, form) => {
       vi.stubGlobal("fetch", async () =>

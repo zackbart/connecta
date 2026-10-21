@@ -43,7 +43,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it.each(["rpc-error", "http-400", "isError"])(
+it.each(["rpc-error", "http-400", "isError", "structuredContent", "paging", "server-discover"])(
   "INV-5: serialized %s output must cross the request redaction choke point",
   async (kind) => {
     let sent = false;
@@ -133,7 +133,15 @@ it.each(["rpc-error", "http-400", "isError"])(
   },
 );
 
-it.each(["origin-403", "pool-404", "overload-503"])("INV-5 INV-7: %s refusal must cross the request redaction choke point", async (kind) => {
+it.each([
+  "origin-403",
+  "pool-404",
+  "pool-refused-404",
+  "not-maintainer-404",
+  "overload-503",
+  "shutdown-503",
+  "deadline-504",
+])("INV-5 INV-7: %s refusal must cross the request redaction choke point", async (kind) => {
   const entered = deferred<void>();
   const blocked = deferred<void>();
   const capacity = kind === "overload-503" || kind === "deadline-504";
@@ -316,5 +324,36 @@ it("INV-4 INV-5: every registered meta-tool binds the envelope and redacts its r
     });
     await handler(args[name]!, { mcpReq: {} } as ServerContext);
     expect(client).toEqual({});
+  }
+});
+
+it("INV-5 INV-7: a stalled-listen deadline refusal redacts and cancels the request body", async () => {
+  let cancelled = false;
+  const request = new Request("https://connecta.test/mcp", {
+    method: "POST",
+    headers: modernRequest("subscriptions/listen").headers,
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"jsonrpc":"2.0"'));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }),
+    duplex: "half",
+  } as RequestInit);
+  sentSecretsForRequest(request).add("MCP request lifetime exceeded.");
+  const app = createTestConnecta({
+    connectors: [],
+    logger: silentLogger,
+    admission: { requests: { maxDurationMs: 100 } },
+  });
+  try {
+    const response = await app.fetch(request);
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({ jsonrpc: "2.0", error: { code: -33003, message: "[redacted]" } });
+    expect(cancelled).toBe(true);
+  } finally {
+    await app.close();
   }
 });
