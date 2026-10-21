@@ -2,8 +2,9 @@
 // get_charge, list_charges, and tithely_api_mutate on the Effect provider kit
 // (src/http/). Its suite compares the tools' catalog entries, outgoing
 // requests, and mapped results with index.ts, and names each deliberate
-// difference (A.2's write outcomes and sensitive fields, decision 0010's 401
-// rule). B.5 replaces index.ts with this shape.
+// difference (A.2's sensitive fields and decision 0010's 401 rule; every
+// other write verdict is the core's, decided at api()'s boundary). B.5
+// replaces index.ts with this shape.
 //
 // Sections marked "unchanged" are index.ts's projection and argument code,
 // copied verbatim because index.ts does not export them. B.5 moves them; it
@@ -12,7 +13,7 @@
 import { Effect, Schema } from "effect";
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { defined } from "../../connectors/api-connector.js";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { guardedClient } from "../../http/client.js";
 import { Refusal, type HttpFailure, type VendorErrors } from "../../http/errors.js";
 import { Integer, isMaxChars } from "../../http/json-schema.js";
@@ -20,7 +21,8 @@ import { Cursor, lookahead, PageInfo } from "../../http/paging.js";
 import { resultSafety } from "../../http/safety.js";
 import { Credentials } from "../../http/services.js";
 import { read, write } from "../../http/tools.js";
-import { connect, get, vendor, type Connection } from "../../http/vendor.js";
+import { connect, get, operations, vendor, type Connection } from "../../http/vendor.js";
+import type { ProviderKitFacts } from "../../provider.js";
 import type { ConnectorCredentialValues } from "../../types.js";
 
 // --- Vendor --------------------------------------------------------------------
@@ -54,6 +56,18 @@ export const TithelyApi = vendor("Tithe.ly", getCharge, listCharges);
 
 const TITHELY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGE_SIZE = 99;
+
+/**
+ * Decision 0011's `ProviderKitFacts`, as `defineApiProvider` will set them:
+ * the operations for `drift.json`'s `generated.operations` and the page size
+ * the generated Conventions state. No `hatch`: step 1 keeps
+ * `tithely_api_get`/`tithely_api_mutate`, and the standard hatch arrives with
+ * step 2.
+ */
+export const TITHELY_KIT_FACTS: ProviderKitFacts = {
+  operations: operations(TithelyApi),
+  pageSize: { default: 25, max: MAX_PAGE_SIZE },
+};
 
 /** A.2's privacy projection: an organization's payout bank and legal contact. */
 const TITHELY_SENSITIVE_FIELDS: readonly string[] = ["bank", "legal"];
@@ -108,8 +122,8 @@ const errors: VendorErrors = {
     429: ({ retryAfterMs }) => ({
       code: "rate_limited",
       retryAfterMs,
-      words: (detail) =>
-        `${detail} Tithe.ly publishes no rate limit; wait before retrying, and add a callAdmission budget if this recurs.`,
+      words: (detail) => `${detail} Tithe.ly publishes no rate limit. Add a callAdmission budget if this recurs.`,
+      advice: " Wait before retrying.",
     }),
     serverError: ({ retryAfterMs }) => ({
       code: "unavailable",
@@ -446,10 +460,13 @@ function detailFor(payload: unknown, status: number): string {
 function inBandFailure(payload: unknown): ConnectorCallError | undefined {
   const status = asRecord(payload)["status"];
   if (status === undefined || status === "success") return undefined;
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `${detailFor(payload, 200)} (status "${String(status)}"). Tithe.ly reports declined payments, unknown ids, and rejected arguments all this way, without a code; read the reason before retrying.`,
-    { retryable: false },
+  return resendAdvice(
+    new ConnectorCallError(
+      "connector_call_failed",
+      `${detailFor(payload, 200)} (status "${String(status)}"). Tithe.ly reports declined payments, unknown ids, and rejected arguments all this way, without a code.`,
+      { retryable: false },
+    ),
+    "; read the reason before retrying",
   );
 }
 

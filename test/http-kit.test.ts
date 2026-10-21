@@ -1,6 +1,7 @@
 // The Effect provider kit prototype (decision 0010, src/http/): the guarded
 // client's confinement and ceilings, the error contract and its bounded
-// vendor facts, the write-outcome rule over the dispatch ledger, the
+// vendor facts, the provenance it records for the core's write-outcome
+// decision (src/write-outcome.ts, which the kit never restates), the
 // value-safety boundary, the catalog JSON Schema dialect, the cursor codec,
 // call and operation services with explicit lifetimes, and the OAuth
 // refresh-once rule that reads the call's classification, not the method.
@@ -9,10 +10,11 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type { HttpClientResponse } from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { attachCallClassification } from "../src/call-classification.js";
 import { recoveryFor } from "../src/call-recovery.js";
 import { apiConnector, type ApiTool } from "../src/connectors/api-connector.js";
 import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
-import { ConnectorCallError } from "../src/errors.js";
+import { ConnectorCallError, resendAdviceOf } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { guardedClient, type GuardedOptions } from "../src/http/client.js";
 import {
@@ -24,7 +26,6 @@ import {
   StatusFailure,
   TransportFailure,
   toConnectorCallError,
-  writeOutcomeOf,
   type Classified,
   type HttpFailure,
   type OperationRef,
@@ -42,13 +43,14 @@ import {
   Classification,
   Credentials,
   Dispatches,
+  Ledger,
   Recovery,
+  RequestSecrets,
   Secrets,
   Signal,
   WriteCapacity,
   RequestFacts,
   writeRequestKey,
-  attachServedClassification,
   callView,
   chargeView,
   deriveView,
@@ -66,9 +68,19 @@ import { kitTools } from "../src/providers/tithely/kit-prototype.js";
 import { TITHELY_API_BASE_URLS } from "../src/providers/tithely/index.js";
 import { runEdge } from "../src/runtime/run.js";
 import { SentSecrets } from "../src/sent-secrets.js";
+import {
+  closeProviderCall,
+  dispatchProviderRequest,
+  providerCallContext,
+  providerRequest,
+  refusalRequest,
+  tracksEveryRequest,
+  type ProviderRequest,
+} from "../src/provider-call.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { validateToolInput } from "../src/validate.js";
+import { classifyWriteOutcome, providerCallFailure } from "../src/write-outcome.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.example";
@@ -102,11 +114,18 @@ function services(
   return Context.make(Caller, undefined).pipe(
     Context.add(Credentials, { values: Effect.succeed({ token: "sk_test_0123456789" }) }),
     Context.add(Secrets, secrets),
+    Context.add(RequestSecrets, secrets),
     Context.add(Budget, { charge: Effect.void }),
     Context.add(Recovery, { record: () => Effect.void }),
     Context.add(Signal, undefined),
     Context.add(Classification, classification),
     Context.add(Dispatches, dispatches),
+    Context.add(Ledger, {
+      open: (facts) => ({ dispatched: false, ...facts }),
+      dispatch: (request) => {
+        request.dispatched = true;
+      },
+    }),
     Context.add(WriteCapacity, new Map([["write", new Map([[undefined, undefined]])]])),
   );
 }
@@ -255,7 +274,7 @@ describe("guarded client (decision 0010, B.2)", () => {
     expect(cancelled).toBe(true);
   });
 
-  it("INV-6 INV-9: normalizes a network failure to its errno and host, and records that the request never connected", async () => {
+  it("INV-6 INV-9: normalizes a network failure to its errno and host, and records the request as lost", async () => {
     globalThis.fetch = vi.fn(async () => {
       throw Object.assign(new TypeError("connect ECONNREFUSED 10.0.0.1 Authorization: Bearer sk"), {
         cause: { code: "ECONNREFUSED" },
@@ -264,7 +283,8 @@ describe("guarded client (decision 0010, B.2)", () => {
     const dispatches: Dispatch[] = [];
     const result = await send(HttpClientRequest.get("/items"), services("write", new SentSecrets(), dispatches));
     expect(result._tag === "Failure" && result.failure).toBeInstanceOf(TransportFailure);
-    expect(dispatches).toMatchObject([{ write: true, state: "unconnected" }]);
+    // No rejection proves a request unsent: fetch can hide several attempts (#902 round 8).
+    expect(dispatches).toMatchObject([{ write: true, state: "lost", request: { dispatched: true } }]);
     const error = toConnectorCallError((result as { failure: HttpFailure }).failure, VENDOR, {
       classification: "read",
       dispatches,
@@ -306,6 +326,52 @@ const answered = (failure: HttpFailure, extra: Partial<Dispatch> = {}): Dispatch
     failure,
     ...extra,
   });
+
+/** A core ledger entry that left and was answered `status`. */
+const request = (code?: number): ProviderRequest => ({
+  dispatched: true,
+  auxiliary: false,
+  provider: "Acme",
+  method: "POST",
+  ...(code === undefined ? {} : { status: code }),
+});
+
+/**
+ * The core ledger `api()` hands a handler, holding each request in
+ * `dispatches` that left, as the transport records it before any answer is
+ * mapped. Closed, as the boundary closes it before deciding.
+ */
+function ledger(dispatches: Dispatch[], provider = "Acme"): ConnectorContext {
+  const ctx = providerCallContext(context());
+  for (const entry of dispatches) {
+    if (entry.state === "reserved" || entry.state === "preparing") continue;
+    const sent = providerRequest(ctx, !entry.write, provider, { method: "POST" });
+    dispatchProviderRequest(ctx, sent);
+    if (entry.status !== undefined) sent.status = entry.status;
+    entry.request = sent;
+  }
+  closeProviderCall(ctx);
+  return ctx;
+}
+
+/** What `api()`'s boundary decides from that ledger: the core's `providerCallFailure`, never the kit. */
+function finalized(ctx: ConnectorContext, mapped: ConnectorCallError, vendor: VendorErrors<any>): ConnectorCallError {
+  return providerCallFailure(ctx, { title: vendor.provider }, mapped, {
+    dispatched: true,
+    fallback: "write",
+    finalize: true,
+  }) as ConnectorCallError;
+}
+
+/** A direct write call's verdict: the kit maps the failure, and the core decides. */
+function decided(failure: HttpFailure, vendor: VendorErrors<any>, dispatches: Dispatch[]): ConnectorCallError {
+  const ctx = ledger(dispatches, vendor.provider);
+  return finalized(ctx, toConnectorCallError(failure, vendor, { classification: "write", dispatches }), vendor);
+}
+
+/** The core's accounting of a direct write's failure. */
+const outcomeOf = (error: ConnectorCallError) =>
+  classifyWriteOutcome({ ok: false, dispatched: true, error: error as never });
 
 describe("failure mapping (decision 0010, B.3)", () => {
   it("applies the vendor's 401/403/404 and the shared defaults for the rest", () => {
@@ -471,28 +537,42 @@ describe("failure mapping (decision 0010, B.3)", () => {
   });
 
   it("INV-9: never advertises a write that may have landed as retryable, whatever the vendor says", () => {
-    const write = (failure: HttpFailure, dispatches: Dispatch[]) =>
-      toConnectorCallError(failure, VENDOR, { classification: "write", dispatches });
     const outage = status(503);
-    const landed = write(outage, [answered(outage)]);
-    expect(landed).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(writeOutcomeOf(landed)).toBe("unknown");
-    // A.2's unknownOutcome words, so REST-family goldens hold on the kit.
+    const landed = decided(outage, VENDOR, [answered(outage)]);
+    expect(landed).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    // The core's words for an unknown write, so a provider moving onto the kit keeps its goldens.
     expect(landed.message).toBe(
-      "Acme returned HTTP 503. Whether the write took effect at Acme is unknown: it carried no idempotency key, so check the target before repeating it.",
+      "Acme returned HTTP 503. Whether the write took effect at Acme is unknown; check the target before repeating it.",
     );
     const reset = new TransportFailure({ failure: { cause: { code: "ECONNRESET" } }, host: "https://acme.example" });
-    expect(write(reset, [answered(reset)]).retryable).toBe(false);
-    // Definite own refusals keep the core's known-failure contract.
+    expect(decided(reset, VENDOR, [answered(reset)])).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    // A served refusal on the call's one request is the core's known failure.
     const refused = status(400);
-    expect(write(refused, [answered(refused)])).toMatchObject({ code: "invalid_args" });
-    expect(writeOutcomeOf(write(refused, [answered(refused)]))).toBeUndefined();
+    const known = decided(refused, VENDOR, [answered(refused)]);
+    expect(known).toMatchObject({ code: "invalid_args" });
+    expect(known.writeOutcome).toBeUndefined();
+    expect(outcomeOf(known)).toBe("failed");
     const redirect = new RedirectRefused({ status: 302 });
-    expect(writeOutcomeOf(write(redirect, [answered(redirect, { status: 302 })]))).toBe("unknown");
+    expect(decided(redirect, VENDOR, [answered(redirect, { status: 302 })]).writeOutcome).toBe("unknown");
+  });
+
+  it("INV-9: the kit records provenance and decides nothing: a write's mapping is the read's, marked with its own request", () => {
+    const failure = status(400);
+    const own = answered(failure, { request: request(400) });
+    const read = toConnectorCallError(failure, VENDOR, { classification: "read", dispatches: [] });
+    const write = toConnectorCallError(failure, VENDOR, { classification: "write", dispatches: [own] });
+    expect(write).toEqual(read);
+    expect(write.writeOutcome).toBeUndefined();
+    expect(refusalRequest(write)).toBe(own.request);
+    // A failure that is not its request's own answer carries no provenance.
+    const later = new Refusal({ error: new ConnectorCallError("invalid_args", "The reply failed a check.") });
+    expect(
+      refusalRequest(toConnectorCallError(later, VENDOR, { classification: "write", dispatches: [own] })),
+    ).toBeUndefined();
   });
 
   it.each([404, 409, "timeout"] as const)(
-    "INV-9: a write's own %s failure retains exactly the core fields, without extra writeOutcome",
+    "INV-9: a write's own %s failure keeps the read's fields; the core alone decides whether it is known",
     (kind) => {
       const failure =
         kind === "timeout"
@@ -506,33 +586,38 @@ describe("failure mapping (decision 0010, B.3)", () => {
         statuses: { ...VENDOR.statuses, 404: () => ({ code: "connector_call_failed" as const, retryable: false }) },
       };
       const read = toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] });
-      const own = kind === "timeout" ? dispatch("lost", { failure }) : answered(failure);
-      const write = toConnectorCallError(failure, vendor, { classification: "write", dispatches: [own] });
-      expect(write).toEqual(read);
-      expect(Object.keys(write).sort()).toEqual(Object.keys(read).sort());
-      expect(writeOutcomeOf(write)).toBeUndefined();
+      const result = decided(failure, vendor, [kind === "timeout" ? dispatch("lost", { failure }) : answered(failure)]);
+      if (kind === "timeout") {
+        // No answer arrived: the core keeps its diagnostics, unknown and never retryable.
+        expect(result).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      } else {
+        // A served 404 or 409 is a refusal by provenance, whatever code the vendor gives it.
+        expect(result).toEqual(read);
+        expect(result.writeOutcome).toBeUndefined();
+        expect(outcomeOf(result)).toBe("failed");
+      }
     },
   );
 
-  it("INV-9: decides from what each request did, not from how many were sent", () => {
-    const write = (failure: HttpFailure, dispatches: Dispatch[]) =>
-      toConnectorCallError(failure, VENDOR, { classification: "write", dispatches });
+  it("INV-9: decides from what each request did, never from an errno or a code", () => {
     const dns = new TransportFailure({ failure: { cause: { code: "ENOTFOUND" } }, host: "https://acme.example" });
-    // The write itself never connected: nothing was sent, and the outage stays retryable.
-    expect(write(dns, [dispatch("unconnected", { failure: dns })])).toMatchObject({
-      code: "unavailable",
-      retryable: true,
-    });
-    // An auxiliary read found no host after the write was answered: the write may have landed.
-    const aux: Dispatch = { write: false, state: "unconnected", failure: dns };
-    expect(write(dns, [dispatch("answered", { status: 200 }), aux])).toMatchObject({
-      code: "connector_call_failed",
+    // A write whose fetch rejected may have left behind the last attempt (#902 round 8).
+    expect(decided(dns, VENDOR, [dispatch("lost", { failure: dns })])).toMatchObject({
       retryable: false,
+      writeOutcome: "unknown",
     });
-    // A provider wrapping an outage in its own Refusal after the write left is held to the same rule.
+    // An auxiliary read failed after the write was answered: the write may have landed.
+    const aux: Dispatch = { write: false, state: "lost", failure: dns };
+    expect(decided(dns, VENDOR, [dispatch("answered", { status: 200 }), aux])).toMatchObject({
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    // A provider's own Refusal before anything left is the ledger's known failure (a)...
     const outage = new Refusal({ error: new ConnectorCallError("unavailable", "The upstream is down.") });
-    expect(write(outage, [])).toBe(outage.error);
-    expect(write(outage, [dispatch("lost")])).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(decided(outage, VENDOR, [])).toBe(outage.error);
+    expect(outcomeOf(decided(outage, VENDOR, []))).toBe("failed");
+    // ...and after the write left, unknown.
+    expect(decided(outage, VENDOR, [dispatch("lost")])).toMatchObject({ retryable: false, writeOutcome: "unknown" });
   });
 
   it.each([
@@ -542,8 +627,9 @@ describe("failure mapping (decision 0010, B.3)", () => {
     [504, "missing", "not_found"],
     [503, "expired", "auth_required"],
     [500, "failed", "connector_call_failed"],
+    [408, "slow", "conflict"],
   ] as const)(
-    "INV-9: raw dispatched HTTP %i with fact %s constrains the vendor's %s verdict",
+    "INV-9: a write answered HTTP %i with fact %s is unknown whatever its %s verdict",
     (code, reason, mapped) => {
       const failure = status(code, { "Retry-After": "2" }, { reason });
       const vendor: VendorErrors<{ reason: string }> = {
@@ -552,70 +638,68 @@ describe("failure mapping (decision 0010, B.3)", () => {
         classify: [() => ({ code: mapped, retryable: true, retryAfterMs: 2000 })],
       };
       expect(toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] }).code).toBe(mapped);
-      const result = toConnectorCallError(failure, vendor, {
-        classification: "write",
-        dispatches: [answered(failure)],
-      });
-      expect(result).toMatchObject({
-        code: "connector_call_failed",
-        retryable: false,
-        retryAfterMs: undefined,
-        writeOutcome: "unknown",
-      });
+      // A 5xx or a 408 is never refusal provenance; the code stays as a diagnostic.
+      const result = decided(failure, vendor, [answered(failure)]);
+      expect(result).toMatchObject({ code: mapped, retryable: false, writeOutcome: "unknown" });
+      expect(outcomeOf(result)).toBe("unknown");
     },
   );
 
-  it("INV-9: explicit raw-fact proof can establish non-execution for an otherwise ambiguous answer", () => {
-    const failure = status(503, {}, { code: "not_executed" });
-    const vendor: VendorErrors<{ code: string }> = {
-      ...VENDOR,
-      facts: (tokens) => (tokens ?? {}) as { code: string },
-      classify: [() => ({ code: "conflict", retryable: true, retryAfterMs: 1000 })],
-      nonExecution: [
-        {
-          evidence: "https://acme.example/docs/errors proves raw 503 + not_executed precedes execution.",
-          matches: ({ status, facts }) => status === 503 && facts.code === "not_executed",
-        },
-      ],
-    };
-    const map = (failure: StatusFailure) =>
-      toConnectorCallError(failure, vendor, {
-        classification: "write",
-        dispatches: [answered(failure)],
-      });
-    expect(map(failure)).toMatchObject({ code: "conflict", retryable: true });
-    expect(writeOutcomeOf(map(failure))).toBeUndefined();
-    // Neither a mapped conflict nor the same fact on a different raw status is proof.
-    expect(map(status(502, {}, { code: "not_executed" }))).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    expect(map(status(503, {}, { code: "other" }))).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    const inBand = status(503, {}, { code: "not_executed" });
-    expect(
-      toConnectorCallError(inBand, vendor, {
-        classification: "write",
-        dispatches: [answered(inBand, { status: 200 })],
-      }),
-    ).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-  });
-
   it.each([400, 403, 404, 409, 422, 429])(
-    "INV-9: a write's own definite HTTP %i refusal keeps its code and retry advice",
+    "INV-9: a write's own served HTTP %i refusal keeps its code and retry advice",
     (code) => {
       const failure = status(code, { "Retry-After": "2" });
       const vendor: VendorErrors = {
         ...VENDOR,
-        statuses: { ...VENDOR.statuses, 409: () => ({ code: "conflict", retryable: true }) },
+        statuses: {
+          ...VENDOR.statuses,
+          409: () => ({ code: "conflict", retryable: true }),
+          429: ({ retryAfterMs }) => ({ code: "rate_limited", retryAfterMs, advice: " Back off before retrying." }),
+        },
       };
       const read = toConnectorCallError(failure, vendor, { classification: "read", dispatches: [] });
-      const write = toConnectorCallError(failure, vendor, { classification: "write", dispatches: [answered(failure)] });
+      const write = decided(failure, vendor, [answered(failure)]);
       expect(write).toEqual(read);
-      expect(writeOutcomeOf(write)).toBeUndefined();
+      expect(resendAdviceOf(write)).toBe(resendAdviceOf(read));
+      expect(write.writeOutcome).toBeUndefined();
+      expect(outcomeOf(write)).toBe("failed");
     },
   );
 
-  it("INV-9 INV-11: non-execution declarations require evidence and narrow raw-fact predicates", () => {
+  it("INV-9: a served refusal holds only for a call that sent one request", () => {
+    const refused = status(400);
+    const result = decided(refused, VENDOR, [dispatch("answered", { status: 201, step: "first" }), answered(refused)]);
+    expect(result).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
+  });
+
+  it("INV-9: advice to send it again is a segment of its own, never part of the message", () => {
+    const vendor: VendorErrors = {
+      ...VENDOR,
+      statuses: {
+        ...VENDOR.statuses,
+        429: () => ({
+          code: "rate_limited",
+          words: (detail) => `${detail} Slow down.`,
+          advice: " Wait before retrying.",
+        }),
+      },
+    };
+    const read = toConnectorCallError(status(429), vendor, { classification: "read", dispatches: [] });
+    expect(read.message).toBe("Acme returned HTTP 429. Slow down.");
+    expect(resendAdviceOf(read)).toBe(" Wait before retrying.");
+    // A write the core cannot call refused never carries it.
+    const throttled = status(429);
+    const unknown = decided(throttled, vendor, [
+      dispatch("answered", { status: 201, step: "first" }),
+      answered(throttled),
+    ]);
+    expect(unknown.writeOutcome).toBe("unknown");
+    expect(resendAdviceOf(unknown)).toBeUndefined();
+  });
+
+  it("INV-9 INV-11: an authBeforeExecution declaration requires evidence and a narrow raw-fact predicate", () => {
     for (const proof of [{ evidence: " ", matches: () => true }, { evidence: "docs" }]) {
       expect(() => validateVendorErrors({ ...VENDOR, authBeforeExecution: proof as never })).toThrow(/evidence/);
-      expect(() => validateVendorErrors({ ...VENDOR, nonExecution: [proof as never] })).toThrow(/evidence/);
     }
     const failure = status(401);
     const vendor: VendorErrors = {
@@ -626,13 +710,15 @@ describe("failure mapping (decision 0010, B.3)", () => {
       },
       headers: ["x-auth-phase"],
     };
-    expect(
-      toConnectorCallError(failure, vendor, { classification: "write", dispatches: [answered(failure)] }),
-    ).toMatchObject({ writeOutcome: "unknown" });
+    expect(decided(failure, vendor, [answered(failure)])).toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
     const proven = status(401, { "x-auth-phase": "before" });
-    expect(
-      writeOutcomeOf(toConnectorCallError(proven, vendor, { classification: "write", dispatches: [answered(proven)] })),
-    ).toBeUndefined();
+    const refused = decided(proven, vendor, [answered(proven)]);
+    expect(refused.writeOutcome).toBeUndefined();
+    expect(outcomeOf(refused)).toBe("failed");
   });
 
   it("INV-9: an unreadable own 4xx body retains the core's verdict without an extra outcome", () => {
@@ -643,9 +729,9 @@ describe("failure mapping (decision 0010, B.3)", () => {
       unreadable: true,
       operation: OPERATION,
     });
-    expect(
-      toConnectorCallError(failure, VENDOR, { classification: "write", dispatches: [answered(failure)] }),
-    ).toMatchObject({ code: "invalid_args", retryable: false });
+    const result = decided(failure, VENDOR, [answered(failure)]);
+    expect(result).toMatchObject({ code: "invalid_args", retryable: false });
+    expect(outcomeOf(result)).toBe("failed");
   });
 
   it("INV-9: cancellation after an accepted step and a proven 401 considers the whole ledger", () => {
@@ -654,21 +740,17 @@ describe("failure mapping (decision 0010, B.3)", () => {
       ...VENDOR,
       authBeforeExecution: { evidence: "https://acme.example/docs/auth", matches: ({ status }) => status === 401 },
     };
-    expect(
-      departedVerdict(vendor, {
-        classification: "write",
-        dispatches: [dispatch("answered", { status: 201 }), answered(failure)],
-      }),
-    ).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-    expect(
-      writeOutcomeOf(departedVerdict(vendor, { classification: "write", dispatches: [answered(failure)] })),
-    ).toBeUndefined();
+    const both = [dispatch("answered", { status: 201, step: "first" }), answered(failure)];
+    const departed = (dispatches: Dispatch[]) =>
+      finalized(ledger(dispatches), departedVerdict(vendor, { classification: "write", dispatches })!, vendor);
+    expect(departed(both)).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+    expect(outcomeOf(departed([answered(status(401))]))).toBe("failed");
   });
 
   it("INV-9: a proven 401 refusal still owns auth recovery when another write step is uncertain", () => {
     const unauthorized = status(401);
     const throttled = status(429);
-    const result = toConnectorCallError(
+    const result = decided(
       throttled,
       {
         ...VENDOR,
@@ -677,7 +759,7 @@ describe("failure mapping (decision 0010, B.3)", () => {
           matches: ({ status }) => status === 401,
         },
       },
-      { classification: "write", dispatches: [answered(unauthorized), dispatch("answered", { status: 201 })] },
+      [answered(unauthorized), dispatch("answered", { status: 201, step: "second" })],
     );
     expect(result).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
   });
@@ -1094,7 +1176,7 @@ describe("call services (decision 0010, B.1)", () => {
         }),
     });
     // Read during the call (and redacted on the way out, as a sent secret).
-    expect(await apiConnector("acme", { tools: [tool] }).callTool("peek", {}, context())).toEqual({
+    expect(await tracksEveryRequest(apiConnector("acme", { tools: [tool] })).callTool("peek", {}, context())).toEqual({
       token: "[redacted]",
     });
     expect((await runEdge(Effect.result(kept!)))._tag).toBe("Failure");
@@ -1283,8 +1365,8 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
     signal?: AbortSignal,
   ): Promise<{ value?: unknown; error?: unknown }> {
     const ctx = context(signal);
-    attachServedClassification(ctx, served);
-    return apiConnector("acme", { tools: [apiTool] })
+    attachCallClassification(ctx, served);
+    return tracksEveryRequest(apiConnector("acme", { tools: [apiTool] }))
       .callTool("items", {}, ctx)
       .then(
         (value) => ({ value }),
@@ -1353,7 +1435,8 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
       () => new Response(null, { status: 401 }),
       () => new Response(null, { status: 401 }),
     );
-    expect(await call(tool("read", layer), "read")).toEqual({ error: REJECTED });
+    const { error } = await call(tool("read", layer), "read");
+    expect(error).toMatchObject({ code: REJECTED.code, message: REJECTED.message, retryable: REJECTED.retryable });
     expect(sent).toHaveLength(2);
     expect(state.latched).toBe(true);
   });
@@ -1366,7 +1449,7 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
   const unknownWrite = (outcome: { error?: unknown; value?: unknown }) => {
     expect(outcome.error).toBeInstanceOf(ConnectorCallError);
     expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
-    expect(writeOutcomeOf(outcome.error)).toBe("unknown");
+    expect((outcome.error as ConnectorCallError | undefined)?.writeOutcome).toBe("unknown");
     expect((outcome.error as Error).message).toBe(
       "Acme returned HTTP 401. Acme rejected the token. The write was sent before Acme rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
     );
@@ -1429,9 +1512,13 @@ describe("OAuth refresh-once (decision 0010, B.2)", () => {
   it("INV-9: a direct call reports a write answered 401 with the authorize_connector handoff, reconciliation, and no retry", async () => {
     const { layer } = grant(() => Effect.fail(new Refusal({ error: REJECTED })));
     answers.push(() => new Response(null, { status: 401 }));
-    const tools = createMetaTools(makeRegistry([apiConnector("acme", { tools: [tool("write", layer)] })]), BASE, {
-      readOnly: false,
-    });
+    const tools = createMetaTools(
+      makeRegistry([tracksEveryRequest(apiConnector("acme", { tools: [tool("write", layer)] }))]),
+      BASE,
+      {
+        readOnly: false,
+      },
+    );
     const result = await tools.callDestructiveTool({ address: "acme.items", resultMode: "value" });
     expect(result.structuredContent).toMatchObject({
       ok: false,
@@ -1518,6 +1605,16 @@ function over(
   ) as Connection;
 }
 
+/** A tool called as a kit connector serves it: inside a tracked api() boundary, which decides its outcome. */
+async function through(tool: ApiTool, args: Record<string, unknown>): Promise<{ value?: unknown; error?: unknown }> {
+  return tracksEveryRequest(apiConnector("acme", { tools: [tool] }))
+    .callTool(tool.name, args, context())
+    .then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+}
+
 /** A write tool whose program is `run`, called as the deployment serves it. */
 async function invoke(
   connection: Connection,
@@ -1535,8 +1632,8 @@ async function invoke(
     run: () => run(connection),
   });
   const ctx = context();
-  attachServedClassification(ctx, served);
-  return apiConnector("acme", { tools: [tool] })
+  attachCallClassification(ctx, served);
+  return tracksEveryRequest(apiConnector("acme", { tools: [tool] }))
     .callTool("items", {}, ctx)
     .then(
       (value) => ({ value }),
@@ -1545,7 +1642,8 @@ async function invoke(
 }
 
 const STOPPED = "A second attempt to send it was stopped before it left: connecta sends a write once.";
-const UNKNOWN = "Whether the write took effect at Acme is unknown: check the target before repeating it.";
+// The core's words for an unknown write (src/write-outcome.ts), on a retryable common failure.
+const UNKNOWN = "Whether the write took effect at Acme is unknown; check the target before repeating it.";
 
 const lost = (code: string) => () => {
   throw Object.assign(new TypeError("fetch failed"), { cause: { code } });
@@ -1597,7 +1695,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect(sent).toEqual([]);
     expect(auth).toBe(1);
     expect(outcome.error).toMatchObject({ code: "auth_required", retryable: false });
-    expect(writeOutcomeOf(outcome.error)).toBeUndefined();
+    expect((outcome.error as ConnectorCallError | undefined)?.writeOutcome).toBeUndefined();
   });
 
   it("INV-9: fresh step names under Effect.suspend/retry cannot mint write capacity", async () => {
@@ -1654,9 +1752,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     // Mutating the caller's declaration after construction cannot increase the bound.
     spec.writeSteps.rows.maxItems = 100;
     answers = [() => Response.json({ ok: true }), () => new Response(null, { status: 503 })];
-    const outcome = await Promise.resolve(
-      tool.handler!({ ids: ["alice", "bob"] }, { ...context(), fetch: globalThis.fetch }),
-    ).catch((error: unknown) => error);
+    const outcome = (await through(tool, { ids: ["alice", "bob"] })).error;
     expect(sent.map((request) => request.url).sort()).toEqual([
       "https://api.acme.example/v1/items/alice",
       "https://api.acme.example/v1/items/bob",
@@ -1690,17 +1786,13 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     ).toThrow(/maxItems/);
   });
 
-  it("INV-9: a blocked retry of a proven refusal cannot erase an earlier accepted write step", async () => {
+  it("INV-9: a blocked retry of a served refusal cannot erase an earlier accepted write step", async () => {
     const failure = status(429, { "Retry-After": "1" }, { code: "lock_timeout" });
     const errors: VendorErrors = {
       ...VENDOR,
       facts: (tokens) => (tokens ?? {}) as Record<string, string>,
-      classify: [() => ({ code: "conflict", retryable: true, retryAfterMs: 1000 })],
-      nonExecution: [
-        {
-          evidence: "https://docs.stripe.com/rate-limits#object-lock-timeouts",
-          matches: ({ status, facts }) => status === 429 && facts["code"] === "lock_timeout",
-        },
+      classify: [
+        () => ({ code: "conflict", retryable: true, retryAfterMs: 1000, advice: " Retry after it finishes." }),
       ],
     };
     const connection = { ...acme(), errors };
@@ -1718,13 +1810,11 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
           yield* connection.sendPath(POST_ITEMS, { step: "bytes" }).pipe(Effect.retry({ times: 1 }));
         }),
     });
-    const result = {
-      error: await Promise.resolve(tool.handler!({}, { ...context(), fetch: globalThis.fetch })).catch(
-        (error: unknown) => error,
-      ),
-    };
+    const result = await through(tool, {});
     expect(sent).toHaveLength(2);
-    expect(result.error).toMatchObject({ retryable: false, retryAfterMs: undefined, writeOutcome: "unknown" });
+    // The refusal was served to the bytes step alone; the accepted session makes the call unknown.
+    expect(result.error).toMatchObject({ code: "conflict", retryable: false, writeOutcome: "unknown" });
+    expect(resendAdviceOf(result.error)).toBeUndefined();
   });
 
   it("INV-9: bulk aliases and rotated ids cannot send identical request content twice", async () => {
@@ -1757,9 +1847,10 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
           connection.sendPath({ ...POST_ITEMS, form: { id: "a" } }, { step: "rows", item: args.ids[attempt++]! }),
         ).pipe(Effect.retry({ times: 1 })),
     });
-    await expect(
-      rotated.handler!({ ids: ["a", "b"] }, { ...context(), fetch: globalThis.fetch }),
-    ).rejects.toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect((await through(rotated, { ids: ["a", "b"] })).error).toMatchObject({
+      retryable: false,
+      writeOutcome: "unknown",
+    });
     expect(sent).toHaveLength(1);
   });
 
@@ -1817,9 +1908,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
           }).pipe(Effect.retry({ times: 1 })),
       });
       answers = [() => new Response(null, { status: 503 }), () => Response.json({ ok: true })];
-      await expect(tool.handler!({}, { ...context(), fetch: globalThis.fetch })).rejects.toMatchObject({
-        retryable: false,
-      });
+      expect((await through(tool, {})).error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
       expect(sent).toHaveLength(1);
       // A declaration itself is checked before any operation starts, too.
       const invalid = write(connection, {
@@ -1938,8 +2027,9 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
       );
       expect(sent).toHaveLength(1);
       expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      // A redirect is no refusal, and no retry is advertised, so the core adds no words.
       expect((outcome.error as Error).message).toBe(
-        `Acme answered HTTP ${code} with a redirect; this connector talks to exactly one origin and never forwards its credential to another. ${STOPPED} ${UNKNOWN}`,
+        `Acme answered HTTP ${code} with a redirect; this connector talks to exactly one origin and never forwards its credential to another. ${STOPPED}`,
       );
     },
   );
@@ -1992,7 +2082,7 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     );
   });
 
-  it("INV-9: a reconnect after the connection broke mid-write is stopped; one that never connected reports that attempt", async () => {
+  it("INV-9: a reconnect after the connection broke or was refused mid-write is stopped, and the write is unknown", async () => {
     const reconnecting = over((execute, request) =>
       execute(request).pipe(Effect.catchTag("TransportFailure", () => execute(request))),
     );
@@ -2006,9 +2096,8 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     answers = [lost("ECONNREFUSED")];
     const refused = await invoke(reconnecting, (connection) => connection.sendPath(POST_ITEMS));
     expect(sent).toHaveLength(1);
-    // Nothing left connecta, so nothing is uncertain: the outage stays retryable.
-    expect(refused.error).toMatchObject({ code: "unavailable", retryable: true });
-    expect(writeOutcomeOf(refused.error)).toBeUndefined();
+    // A refused connection proves nothing: fetch can hide earlier attempts (#902 round 8).
+    expect(refused.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
   });
 
   it("INV-9: a retry under a new request id is still the same logical write", async () => {
@@ -2034,8 +2123,10 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     );
     const outcome = await invoke(relisting, (connection) => connection.sendPath({ ...POST_ITEMS, form: { id: "1" } }));
     expect(sent).toHaveLength(1);
-    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    expect((outcome.error as Error).message).toBe(`Acme returned HTTP 409. ${STOPPED} ${UNKNOWN}`);
+    // The one request the call sent was served a refusal, and the retry never left: a known failure.
+    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect((outcome.error as ConnectorCallError).writeOutcome).toBeUndefined();
+    expect((outcome.error as Error).message).toBe(`Acme returned HTTP 409. ${STOPPED}`);
   });
 
   it("INV-9: each named step of a write is sent once; reads are replayed freely", async () => {
@@ -2147,16 +2238,14 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
 
   const writeThenLookup = (connection: Connection) =>
     connection.sendPath(POST_ITEMS).pipe(Effect.flatMap(() => connection.sendPath(LOOKUP, { effect: "read" })));
-  const ACCEPTED =
-    "Acme had already accepted this call's write (HTTP 201), so it has probably taken effect: check the target before repeating the call.";
 
   it.each([
     [401, "auth_required"],
-    [400, "connector_call_failed"],
-    [403, "connector_call_failed"],
-    [404, "connector_call_failed"],
+    [400, "invalid_args"],
+    [403, "provider_permission_denied"],
+    [404, "not_found"],
     [409, "connector_call_failed"],
-    [429, "connector_call_failed"],
+    [429, "rate_limited"],
     [503, "connector_call_failed"],
   ])(
     "INV-9: an auxiliary read answered %i after the vendor accepted the write reports the write unknown, never retryable",
@@ -2167,15 +2256,10 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
       );
       const outcome = await invoke(acme(), writeThenLookup);
       expect(sent.map((request) => request.method)).toEqual(["POST", "GET"]);
-      expect(outcome.error).toMatchObject({
-        code: expected,
-        retryable: false,
-        retryAfterMs: undefined,
-        writeOutcome: "unknown",
-      });
-      expect((outcome.error as Error).message).toMatch(
-        new RegExp(`^Acme returned HTTP ${code}\\..* ${ACCEPTED.replace(/[().]/g, "\\$&")}$`),
-      );
+      // The lookup's refusal is its own request's, not the write's: the core keeps its code as a diagnostic.
+      expect(outcome.error).toMatchObject({ code: expected, retryable: false, writeOutcome: "unknown" });
+      expect((outcome.error as Error).message).toMatch(new RegExp(`^Acme returned HTTP ${code}\\.`));
+      expect(resendAdviceOf(outcome.error)).toBeUndefined();
     },
   );
 
@@ -2187,7 +2271,7 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
       retryable: false,
       writeOutcome: "unknown",
     });
-    expect((unreachable.error as Error).message).toBe(`Could not reach the Acme API. ${ACCEPTED}`);
+    expect((unreachable.error as Error).message).toBe(`Could not reach the Acme API. ${UNKNOWN}`);
 
     sent = [];
     answers = [() => new Response(null, { status: 500 })];
@@ -2199,10 +2283,8 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
           Effect.catch(() => Effect.fail(new Refusal({ error: new ConnectorCallError("not_found", "No such item.") }))),
         ),
     );
-    expect(own.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-    expect((own.error as Error).message).toBe(
-      "No such item. This call had already sent its write to Acme, so whether the write took effect is unknown: check the target before repeating it.",
-    );
+    expect(own.error).toMatchObject({ code: "not_found", retryable: false, writeOutcome: "unknown" });
+    expect((own.error as Error).message).toBe("No such item.");
   });
 
   it("INV-9: a failure before the write left keeps its verdict, and the write's own refusal stands after a lookup", async () => {
@@ -2219,6 +2301,6 @@ describe("write outcomes after the write left (decision 0010, B.3)", () => {
       connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
     );
     expect(refused.error).toMatchObject({ code: "invalid_args", retryable: false });
-    expect(writeOutcomeOf(refused.error)).toBeUndefined();
+    expect((refused.error as ConnectorCallError | undefined)?.writeOutcome).toBeUndefined();
   });
 });

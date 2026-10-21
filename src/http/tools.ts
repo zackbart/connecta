@@ -10,16 +10,20 @@
 //
 // The result is an ordinary `ApiTool`, so a kit tool sits in `api()` beside
 // hand-written ones and keeps every guarantee `api()` already gives:
-// argument validation, sent-secret redaction, withheld handler text.
+// argument validation, sent-secret redaction, withheld handler text. Its
+// boundary also decides every write's outcome, from the core ledger the kit's
+// transport records into, so a kit connector declares `tracksEveryRequest`.
 
 import { Context, Effect, Schema } from "effect";
 import type { ApiTool } from "../connectors/api-connector.js";
 import { runEdge } from "../runtime/run.js";
-import { departedVerdict, toConnectorCallError, type HttpFailure } from "./errors.js";
+import { departedVerdict, RequestRefused, toConnectorCallError, type HttpFailure } from "./errors.js";
 import { catalogSchema } from "./json-schema.js";
 import {
   Classification,
   Dispatches,
+  IdempotencyKey,
+  Recovery,
   WriteCapacity,
   writeRequestKey,
   fromConnectorContext,
@@ -77,17 +81,34 @@ export function read<I extends Input, O extends Schema.Top>(
   return build(connection, spec, "read", { readOnlyHint: true });
 }
 
+/** An idempotency key the vendor honors, sent on a write's one request. */
+interface Idempotency<A> {
+  /** The header the vendor reads it from, such as `Idempotency-Key`. */
+  readonly header: string;
+  /** The key from validated arguments, such as an `idempotencyKey` argument; undefined sends none. */
+  readonly key: (args: A) => string | undefined;
+}
+
 /** A write: approval-gated, dispatched once, and its failures reported by the write-outcome rule. */
 export function write<I extends Input, O extends Schema.Top>(
   connection: Pick<Connection<unknown>, "errors" | "safety">,
-  spec: ToolSpec<I, O> & { readonly destructive: boolean },
+  spec: ToolSpec<I, O> & { readonly destructive: boolean; readonly idempotency?: Idempotency<I["Type"]> },
 ): ApiTool {
   return build(
     connection,
     spec,
     "write",
     spec.destructive ? { readOnlyHint: false, destructiveHint: true } : { readOnlyHint: false },
+    spec.idempotency,
   );
+}
+
+/**
+ * A key the transport may send: not blank, and only characters an HTTP
+ * header carries. The REST layer refuses the same keys before dispatch.
+ */
+function unsendableKey(key: string): boolean {
+  return key.trim() === "" || !/^[\t\x20-\x7e\x80-\xff]*$/.test(key);
 }
 
 function build<I extends Input, O extends Schema.Top>(
@@ -95,7 +116,13 @@ function build<I extends Input, O extends Schema.Top>(
   spec: ToolSpec<I, O>,
   verdict: "read" | "write",
   annotations: ApiTool["annotations"],
+  idempotency?: Idempotency<I["Type"]>,
 ): ApiTool {
+  // One key protects one request: a tool with several write steps cannot share it.
+  const declared = Object.entries(spec.writeSteps ?? { write: "once" });
+  if (idempotency && (declared.length !== 1 || declared[0]?.[1] !== "once" || !idempotency.header.trim())) {
+    throw new Error("An idempotency key needs a header name and a tool with one write step sent once.");
+  }
   // Snapshot the declaration now; mutations and retries cannot add step names or increase bounds.
   const steps = Object.entries(spec.writeSteps ?? { write: "once" }).map(([name, declaration]) => {
     if (
@@ -150,7 +177,26 @@ function build<I extends Input, O extends Schema.Top>(
           // Its message can quote the argument; as a defect, api() withholds it.
           Effect.orDie,
           Effect.flatMap((decoded) =>
-            Effect.suspend(() => spec.run(decoded)).pipe(Effect.provideService(WriteCapacity, capacity(decoded))),
+            Effect.gen(function* () {
+              const key = idempotency?.key(decoded);
+              if (key !== undefined && unsendableKey(key)) {
+                return yield* Effect.fail(
+                  new RequestRefused({
+                    message: "The idempotency key is blank or holds a character an HTTP header cannot carry.",
+                  }),
+                );
+              }
+              // Recorded before anything leaves: a deadline that interrupts
+              // the call still returns the key for reconciliation.
+              if (key !== undefined) yield* (yield* Recovery).record({ idempotencyKey: key });
+              return yield* Effect.suspend(() => spec.run(decoded)).pipe(
+                Effect.provideService(WriteCapacity, capacity(decoded)),
+                Effect.provideService(
+                  IdempotencyKey,
+                  key === undefined ? undefined : { header: idempotency!.header, key },
+                ),
+              );
+            }),
           ),
           Effect.mapError((failure) => toConnectorCallError(failure, connection.errors, map)),
           Effect.provideContext(lease.services),

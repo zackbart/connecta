@@ -3,17 +3,19 @@
 // indistinguishable from index.ts — the same catalog bytes, the same requests
 // on the wire, and the same mapped results and failures, sent-secret
 // redaction included — except where a recorded decision changes them: A.2's
-// write outcomes and sensitive fields, and decision 0010's 401 rule.
+// sensitive fields and decision 0010's 401 rule. Every other write verdict is
+// the core's on both sides, decided at api()'s boundary from the same ledger.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { attachCallClassification } from "../../call-classification.js";
 import { apiConnector } from "../../connectors/api-connector.js";
-import { ConnectorCallError } from "../../errors.js";
-import { attachServedClassification } from "../../http/services.js";
+import { ConnectorCallError, resendAdviceOf } from "../../errors.js";
 import { manifest } from "../../http/vendor.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 import { TITHELY_API_BASE_URLS, tithely } from "./index.js";
-import { kitTools, TithelyApi } from "./kit-prototype.js";
+import { kitTools, TITHELY_KIT_FACTS, TithelyApi } from "./kit-prototype.js";
 
 interface Stub {
   status?: number;
@@ -90,9 +92,10 @@ function context(values: Record<string, string> | null = KEYS, signal?: AbortSig
 }
 
 const current = (): Connector => tithely("giving", { purpose: "Weekly giving reports", environment: "live" });
-// index.ts predates A.2's sensitiveFields, so parity runs with the fields returned.
-const kit = (sensitiveFields: "drop" | "return" = "return"): Connector =>
-  apiConnector("giving", { tools: kitTools(TITHELY_API_BASE_URLS.live, 25, sensitiveFields) });
+// Both drop A.2's sensitive fields by default. Every kit request enters the
+// core ledger, so the connector declares it as index.ts does.
+const kit = (sensitiveFields: "drop" | "return" = "drop"): Connector =>
+  tracksEveryRequest(apiConnector("giving", { tools: kitTools(TITHELY_API_BASE_URLS.live, 25, sensitiveFields) }));
 
 /** Everything an agent or an operator record could observe about one call. */
 function observed(outcome: { value: unknown } | { error: unknown }): unknown {
@@ -106,8 +109,9 @@ function observed(outcome: { value: unknown } | { error: unknown }): unknown {
     retryable: error.retryable,
     retryAfterMs: error.retryAfterMs,
     details: error.details,
-    // #902's explicit outcome: index.ts on main never sets it.
-    writeOutcome: (error as { writeOutcome?: unknown }).writeOutcome,
+    writeOutcome: error.writeOutcome,
+    // Advice to send it again, a segment of its own that output composes only where the outcome allows.
+    advice: resendAdviceOf(error),
   };
 }
 
@@ -381,7 +385,7 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
       responses: [{ body: { status: "fail", reason: "There was a problem using that payment method." } }],
     },
     {
-      // fetch refused to connect: nothing left, so the outage stays retryable.
+      // No rejection proves a write unsent (#902 round 8): unknown on both sides.
       name: "a write whose connection was refused",
       tool: "tithely_api_mutate",
       args: MUTATE,
@@ -395,31 +399,11 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     },
   ];
 
-  it.each(cases)(
-    "INV-6 INV-9: preserves requests for $name and records each write-outcome difference",
-    async ({ tool, args, responses }) => {
-      const { before, after } = await both(tool, args, responses);
-      expect(after.sent).toEqual(before.sent);
-      const previous = before.result as { message: string; retryable: boolean };
-      if (tool === "tithely_api_mutate" && responses[0]?.status === 500) {
-        expect(after.result).toEqual({
-          ...(before.result as object),
-          code: "connector_call_failed",
-          retryable: false,
-          retryAfterMs: undefined,
-          writeOutcome: "unknown",
-          message: `${previous.message} Whether the write took effect at Tithe.ly is unknown: it carried no idempotency key, so check the target before repeating it.`,
-        });
-      } else if (
-        tool === "tithely_api_mutate" &&
-        (responses[0]?.body as { status?: string } | undefined)?.status === "fail" &&
-        !responses[0]?.status
-      ) {
-        // #902's helper also owns in-band failures after dispatch.
-        expect(after.result).toEqual({ ...(before.result as object), writeOutcome: "unknown" });
-      } else expect(after.result).toEqual(before.result);
-    },
-  );
+  it.each(cases)("INV-6 INV-9: preserves requests and results for $name", async ({ tool, args, responses }) => {
+    const { before, after } = await both(tool, args, responses);
+    expect(after.sent).toEqual(before.sent);
+    expect(after.result).toEqual(before.result);
+  });
 
   it("INV-5: refuses missing or swapped keys before any request, in the same words", async () => {
     for (const keys of [null, { publicKey: "pri_x", privateKey: "pub_y" }]) {
@@ -460,57 +444,50 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
       // Invocation classifies any failure after its signal aborts as the
       // caller's cancellation, so both are the same outcome on the wire.
       expect(controller.signal.aborted).toBe(true);
-      outcomes.push(error === reason ? "reason" : error instanceof ConnectorCallError ? error.cause === reason : error);
+      outcomes.push(
+        error === reason
+          ? "reason"
+          : error instanceof ConnectorCallError
+            ? (error.cause as Error | undefined)?.message === reason.message
+            : error,
+      );
     }
-    // Today's transport wraps the reason as an `unavailable` cause; the kit
-    // rethrows the reason itself, as runEdge does at every other edge.
+    // Today's transport wraps the reason as an `unavailable` cause (a
+    // redacted copy of it since #911); the kit rethrows the reason itself, as
+    // runEdge does at every other edge.
     expect(outcomes).toEqual([true, "reason"]);
   });
 
-  it("INV-9: reports a dispatched write's unknown outcome where index.ts advertised a retry or a refusal (A.2, decision 0010)", async () => {
-    const unknown = (message: string, code = "connector_call_failed") => ({
+  it("INV-9: a write answered 401 is the one deliberate difference (Q8); 5xx and a broken connection match the core", async () => {
+    // Q8: Tithe.ly documents no check of its keys before acting, so the code
+    // and its authorize_connector handoff stay and the outcome is unknown.
+    // index.ts on main still counts this 401 a served refusal; the separate
+    // 401 back-port gives index.ts this same result.
+    const { before, after } = await both("tithely_api_mutate", MUTATE, [
+      { status: 401, body: { status: "fail", reason: "Bad keys" } },
+    ]);
+    expect(after.sent).toEqual(before.sent);
+    expect(before.result).toMatchObject({ code: "auth_required", writeOutcome: undefined });
+    expect(after.result).toEqual({
       name: "ConnectorCallError",
-      code,
-      message,
+      code: "auth_required",
+      message:
+        "Tithe.ly: Bad keys Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection. The write was sent before Tithe.ly rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
       retryable: false,
       retryAfterMs: undefined,
       details: undefined,
       writeOutcome: "unknown",
+      advice: undefined,
     });
-    const deliberate: Array<{ responses: Stub[]; was: string; now: ReturnType<typeof unknown> }> = [
-      {
-        // Decision 0010 (Q8, #902): Tithe.ly documents no check of its keys before
-        // acting. The code and its authorize_connector handoff stay; the outcome is unknown.
-        responses: [{ status: 401, body: { status: "fail", reason: "Bad keys" } }],
-        was: "auth_required",
-        now: unknown(
-          "Tithe.ly: Bad keys Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection. The write was sent before Tithe.ly rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
-          "auth_required",
-        ),
-      },
-      {
-        // A.2: a 5xx after the write left.
-        responses: [{ status: 500, body: { reason: "Boom" } }],
-        was: "unavailable",
-        now: unknown(
-          "Tithe.ly: Boom Tithe.ly is failing upstream. Whether the write took effect at Tithe.ly is unknown: it carried no idempotency key, so check the target before repeating it.",
-        ),
-      },
-      {
-        // A.2: the connection broke after it was made.
-        responses: [{ reject: Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }) }],
-        was: "unavailable",
-        now: unknown(
-          "Could not reach the Tithe.ly API. Whether the write took effect at Tithe.ly is unknown: it carried no idempotency key, so check the target before repeating it.",
-        ),
-      },
-    ];
-    for (const { responses, was, now } of deliberate) {
+    // Everything else after dispatch is the core's verdict on both sides.
+    for (const responses of [
+      [{ status: 500, body: { reason: "Boom" } }],
+      [{ reject: Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }) }],
+    ] satisfies Stub[][]) {
       const { before, after } = await both("tithely_api_mutate", MUTATE, responses);
-      expect(after.sent).toEqual(before.sent);
       expect(after.sent).toHaveLength(1);
-      expect((before.result as { code: string }).code).toBe(was);
-      expect(after.result).toEqual(now);
+      expect(after.result).toEqual(before.result);
+      expect(after.result).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
     }
   });
 
@@ -531,12 +508,12 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
   it("INV-1 INV-9: obeys the classification the deployment serves, not the builder's", async () => {
     // get_charge is built as a read; served as a write, its 5xx is an unknown outcome.
     const asWrite = context();
-    attachServedClassification(asWrite, "write");
+    attachCallClassification(asWrite, "write");
     const read = await run(kit(), "get_charge", { chargeId: "ch_1" }, [{ status: 503, body: {} }], asWrite);
     expect(read.result).toMatchObject({ code: "connector_call_failed", retryable: false });
     // tithely_api_mutate is built as a write; served as a read, its 5xx stays retryable.
     const asRead = context();
-    attachServedClassification(asRead, "read");
+    attachCallClassification(asRead, "read");
     const write = await run(kit(), "tithely_api_mutate", MUTATE, [{ status: 503, body: {} }], asRead);
     expect(write.result).toMatchObject({ code: "unavailable", retryable: true });
   });
@@ -590,6 +567,22 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     expect(result.sent).toHaveLength(1);
     expect(result.result).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
     expect((result.result as { message: string }).message).toContain("Tithe.ly rejected the key pair.");
+  });
+
+  it("declares decision 0011's ProviderKitFacts from the same vendor and the catalog's page size", async () => {
+    // drift.json v2's generated.operations: "METHOD /path", sorted, from manifest(vendor).
+    expect(TITHELY_KIT_FACTS.operations).toEqual(["GET /charges-list", "GET /charges/{chargeId}"]);
+    for (const operation of TITHELY_KIT_FACTS.operations) {
+      expect(operation).toMatch(/^(GET|HEAD|POST|PUT|PATCH|DELETE) \/\S*$/);
+    }
+    // The Conventions' page size is the one the catalog advertises.
+    const limit = (await kit().listTools(context())).find((tool) => tool.name === "list_charges")!.inputSchema![
+      "properties"
+    ] as Record<string, { maximum?: number; description?: string }>;
+    expect(TITHELY_KIT_FACTS.pageSize).toEqual({ default: 25, max: limit["limit"]!.maximum });
+    expect(limit["limit"]!.description).toContain("Defaults to 25.");
+    // Step 1 keeps the old hatch names, so no standard hatch is declared yet.
+    expect(TITHELY_KIT_FACTS.hatch).toBeUndefined();
   });
 
   it("derives the endpoint manifest drift checks read from the same declaration", () => {

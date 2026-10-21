@@ -2,8 +2,12 @@
 // expressed as bounded facts, an allowlist of headers, a cross-status rule,
 // and a status table, must say exactly what rest.ts says today.
 import { describe, expect, it } from "vitest";
-import { ConnectorCallError } from "../../errors.js";
-import { StatusFailure, toConnectorCallError, writeOutcomeOf } from "../../http/errors.js";
+import { ConnectorCallError, resendAdviceOf } from "../../errors.js";
+import { StatusFailure, toConnectorCallError } from "../../http/errors.js";
+import { refusalRequest, type ProviderRequest } from "../../provider-call.js";
+import { memoryStorage } from "../../storage/memory.js";
+import { classifyWriteOutcome, providerCallFailure } from "../../write-outcome.js";
+import { silentLogger } from "../../../test/helpers.js";
 import { restCall } from "../_shared/rest/tools.js";
 import { stripeErrors } from "./kit-prototype.js";
 import { stripeRest } from "./rest.js";
@@ -15,7 +19,13 @@ const open = restCall(vendor, "GET", "/v1/charges");
 const withheld = restCall(vendor, "POST", "/v1/account_links");
 
 function observed(error: ConnectorCallError) {
-  return { code: error.code, message: error.message, retryable: error.retryable, retryAfterMs: error.retryAfterMs };
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    retryAfterMs: error.retryAfterMs,
+    advice: resendAdviceOf(error),
+  };
 }
 
 const bodies: Record<string, unknown> = {
@@ -90,12 +100,18 @@ describe("Stripe's failure mapper on the kit's error contract (decision 0010)", 
     expect(vendor.failure(400, new Headers(), body, open).message).toContain("(param a param with spaces)");
   });
 
-  it("INV-9: a definite own refusal adopts the core contract; raw 5xx still needs non-execution proof", () => {
-    for (const [status, body, proved] of [
+  it("INV-9: the kit marks only its own answer's provenance, and the core alone decides the write", () => {
+    // Stripe's lock-timeout 429 is a refusal because it is a served 4xx other
+    // than 408 on the one request the write sent (#902's provenance (b)), not
+    // because of any declaration. The same token on a 503 is no refusal, and
+    // Stripe's 424 reads as unavailable, which the core takes as unproven.
+    const ctx = { storage: memoryStorage(), logger: silentLogger, baseUrl: "https://connecta.example" };
+    for (const [status, body, known] of [
       [429, bodies["lock timeout"], true],
       [503, bodies["lock timeout"], false],
-      [409, bodies["nested param"], false],
-      [429, bodies["card decline"], false],
+      [409, bodies["nested param"], true],
+      [429, bodies["card decline"], true],
+      [424, bodies["no body"], false],
     ] as const) {
       const failure = new StatusFailure({
         status,
@@ -103,22 +119,30 @@ describe("Stripe's failure mapper on the kit's error contract (decision 0010)", 
         body,
         operation: { method: "POST", template: "/v1/charges" },
       });
-      const map = (errors: typeof stripeErrors) =>
-        toConnectorCallError(failure, errors, {
-          classification: "write",
-          dispatches: [{ write: true, state: "answered", status, failure }],
-        });
-      const result = map(stripeErrors);
-      if (status === 503)
-        expect(result).toMatchObject({ retryable: false, retryAfterMs: undefined, writeOutcome: "unknown" });
-      else {
-        expect(observed(result)).toEqual(observed(vendor.failure(status, new Headers(), body, open)));
-        expect(writeOutcomeOf(result)).toBeUndefined();
-        if (proved) expect(result).toMatchObject({ code: "conflict", retryable: true, retryAfterMs: 1000 });
-      }
-      const { nonExecution: _proof, ...withoutProof } = stripeErrors;
-      expect(observed(map(withoutProof))).toEqual(observed(result));
-      expect(writeOutcomeOf(map(withoutProof))).toBe(writeOutcomeOf(result));
+      const request: ProviderRequest = {
+        dispatched: true,
+        status,
+        auxiliary: false,
+        provider: "Stripe",
+        method: "POST",
+      };
+      const mapped = toConnectorCallError(failure, stripeErrors, {
+        classification: "write",
+        dispatches: [{ write: true, state: "answered", status, failure, request }],
+      });
+      // The kit adds no outcome of its own: rest.ts's fields, advice included.
+      expect(observed(mapped), `${status}`).toEqual(observed(vendor.failure(status, new Headers(), body, open)));
+      expect(mapped.writeOutcome).toBeUndefined();
+      expect(refusalRequest(mapped) === request, `${status}`).toBe(status !== 503);
+      // The core's decision for a transport outside a ledger, as guarded-fetch hands it the same facts.
+      const decided = providerCallFailure(ctx, { title: "Stripe" }, mapped, {
+        dispatched: true,
+        status,
+        fallback: "write",
+      });
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: decided as never }), `${status}`).toBe(
+        known ? "failed" : "unknown",
+      );
     }
   });
 });

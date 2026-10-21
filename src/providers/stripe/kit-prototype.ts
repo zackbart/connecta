@@ -7,9 +7,11 @@
 // machine-readable `code` and never by its prose (rules return a verdict, and
 // the message is rendered from the detail line afterwards); the `request-id`
 // and `stripe-rate-limited-reason` headers, read only because they are on
-// the reviewed allowlist; and the value-safety verdict, known before any
-// detail is built, so a withheld operation's message never reaches the
-// wording.
+// the reviewed allowlist; the value-safety verdict, known before any detail
+// is built, so a withheld operation's message never reaches the wording; and
+// advice to retry kept apart from the message (`advice`), so output composes
+// it only where the outcome allows. Whether a write's 429 is a refusal is the
+// core's provenance rule, not a declaration here: a served 4xx other than 408.
 
 import type { VendorErrors } from "../../http/errors.js";
 import { withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
@@ -45,13 +47,6 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
     };
   },
   headers: ["request-id", "stripe-rate-limited-reason"],
-  nonExecution: [
-    {
-      evidence:
-        "https://docs.stripe.com/rate-limits#object-lock-timeouts documents that Stripe did not process this request.",
-      matches: ({ status, facts }) => status === 429 && facts.code === "lock_timeout",
-    },
-  ],
   detail: ({ status, facts, headers, withheld, body }) => {
     const kind = [facts.type, facts.code, facts.declineCode].filter(Boolean).join(" ");
     const message = withheld
@@ -73,7 +68,8 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
             retryable: true,
             retryAfterMs: 1_000,
             words: (detail) =>
-              `${detail} Another request is changing this object and Stripe did not process this one; retry after it finishes. This is a lock conflict, not a rate limit.`,
+              `${detail} Another request is changing this object and Stripe did not process this one. This is a lock conflict, not a rate limit.`,
+            advice: " Retry after it finishes.",
           }
         : undefined,
   ],
@@ -83,7 +79,8 @@ export const stripeErrors: VendorErrors<StripeFacts> = {
       return {
         code: "rate_limited",
         retryAfterMs: retryAfterMs ?? 1_000,
-        words: (detail) => `${detail}${reason ? ` Limited by ${reason}.` : ""} Back off before retrying.`,
+        words: (detail) => `${detail}${reason ? ` Limited by ${reason}.` : ""}`,
+        advice: " Back off before retrying.",
       };
     },
     401: () => ({

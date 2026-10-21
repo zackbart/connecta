@@ -11,9 +11,11 @@
 // `Answer`, never a response. HttpApiClient's own decoding would read the
 // whole body without a ceiling, quote the body in a SchemaError, and fail an
 // empty 200. Every answer, from a declared operation or a hatch's path, takes
-// one route: bounded read, status (with its operation, so value safety
-// decides what a failure may quote), JSON, the vendor's `result` hook, then
-// the connection's ResultSafety. A provider cannot reach a body earlier.
+// one route: bounded read, JSON, the request's sent secrets redacted from the
+// whole body before anything can cut or extract from it (#911), status (with
+// its operation, so value safety decides what a failure may quote), the
+// vendor's `result` hook, then the connection's ResultSafety. A provider
+// cannot reach a body earlier.
 
 import { Effect, type Schema } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -40,6 +42,7 @@ import {
   Classification,
   Dispatches,
   RequestFacts,
+  RequestSecrets,
   WriteCapacity,
   reserveWrite,
   type WriteRequest,
@@ -170,7 +173,9 @@ export function connect<R>(
           sent.reservation = slot;
         }
         const reply = yield* Effect.flatMap(response, guarded.read);
-        const parsed = parse(reply.text);
+        // Whole, before a detail line trims it or a projection extracts from it.
+        const secrets = yield* RequestSecrets;
+        const parsed = parse(reply.text, (value) => secrets.redact(value));
         if (reply.status < 200 || reply.status > 299) {
           return yield* Effect.fail(
             new StatusFailure({
@@ -268,14 +273,16 @@ export function connect<R>(
   return connection;
 }
 
-function parse(text: string | undefined): { value: unknown } | undefined {
+function parse(text: string | undefined, redact: (value: unknown) => unknown): { value: unknown } | undefined {
   if (text === undefined) return undefined;
   if (text.trim() === "") return { value: undefined };
+  let value: unknown;
   try {
-    return { value: JSON.parse(text) };
+    value = JSON.parse(text);
   } catch {
     return undefined;
   }
+  return { value: redact(value) };
 }
 
 const TAGS = new Set([
@@ -296,4 +303,21 @@ function isHttpFailure(error: unknown): error is HttpFailure {
 /** The endpoint manifest drift checks compare against the vendor's published contract. */
 export function manifest(vendor: Vendor): OpenApi.OpenAPISpec {
   return OpenApi.fromApi(vendor.api);
+}
+
+const METHODS = ["get", "head", "post", "put", "patch", "delete"] as const;
+
+/**
+ * Every operation of `manifest(vendor)` as `"METHOD /path"`, sorted: the
+ * `operations` of decision 0011's `ProviderKitFacts`, which
+ * `providers:generate` writes into `drift.json`'s `generated.operations`.
+ */
+export function operations(vendor: Vendor): string[] {
+  return Object.entries(manifest(vendor).paths)
+    .flatMap(([path, item]) =>
+      METHODS.filter((method) => (item as Record<string, unknown>)[method] !== undefined).map(
+        (method) => `${method.toUpperCase()} ${path}`,
+      ),
+    )
+    .sort();
 }

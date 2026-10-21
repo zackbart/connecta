@@ -9,6 +9,9 @@
 // connecta is exactly what this file assembles. It is also the one place a
 // request reaches `fetch`, so it keeps the call's dispatch ledger and refuses
 // a second dispatch of any logical write, whatever above it asked for one.
+// Each request enters the core's ledger (src/provider-call.ts) synchronously
+// before `fetch`, with its method, any idempotency key it carries, and its
+// status once answered: the facts `api()`'s boundary decides a write from.
 //
 // effect/http is annotated unstable in 4.0.5. This file and src/http/vendor.ts
 // are the only kit modules that import it; providers never do.
@@ -19,19 +22,22 @@ import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Url from "effect/http/Url";
+import { ConnectorCallError } from "../errors.js";
 import { fromSignal } from "../runtime/run.js";
 import {
   RedirectRefused,
+  Refusal,
   RequestRefused,
   ResendRefused,
   ResponseTooLarge,
   TransportFailure,
-  neverConnected,
   type HttpFailure,
 } from "./errors.js";
 import {
   Classification,
   Dispatches,
+  IdempotencyKey,
+  Ledger,
   RequestFacts,
   Secrets,
   Signal,
@@ -229,38 +235,71 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           return yield* refuse("This write item's request differs from its declared identifying content.");
       }
       const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== "content-length"));
+      // A genuine key the vendor honors rides only on the tool's own request,
+      // added after sent-secret registration like guarded-fetch's visible
+      // headers. Only a key sent here is recorded, so only it can make the
+      // write repeatable or earn key-reuse advice (`keyProtectsLogicalCall`).
+      const idempotency = facts.effect === "call" ? yield* IdempotencyKey : undefined;
+      if (idempotency) {
+        const name = idempotency.header.toLowerCase();
+        if (Object.keys(headers).some((header) => header.toLowerCase() === name)) {
+          return yield* refuse(`A ${provider} request sets the ${name} header twice.`);
+        }
+        headers[idempotency.header] = idempotency.key;
+      }
       const body = bodyInit(request);
       // A reservation is never released, including preparation failures and
-      // proven pre-connect failures. Only a new deliberate call gets capacity.
+      // failures to connect. Only a new deliberate call gets capacity.
       const dispatch: Dispatch = slot ?? {
         write: false,
         ...(facts.operation ? { operation: facts.operation } : {}),
         state: "pending",
       };
       if (!slot) ledger.push(dispatch);
-      dispatch.state = "pending";
+      const core = yield* Ledger;
+      const entry = core.open({
+        auxiliary: facts.effect === "read",
+        provider,
+        method: request.method,
+        ...(idempotency ? { key: idempotency.key } : {}),
+      });
+      dispatch.request = entry;
       if (facts.sent) facts.sent.dispatch = dispatch;
       const refused = (failure: HttpFailure) => {
         dispatch.failure = failure;
         return Effect.fail(failure);
       };
       const response = yield* Effect.tryPromise({
-        try: (interrupted) =>
-          globalThis.fetch(url, {
+        try: (interrupted) => {
+          // Synchronous with the send: from here the core counts it as left,
+          // and it refuses a request whose call has already ended.
+          core.dispatch(entry);
+          dispatch.state = "pending";
+          return globalThis.fetch(url, {
             method: request.method,
             headers,
             ...body,
             // A redirect re-sends the credential wherever `Location` points.
             redirect: "manual",
             signal: callSignal ? AbortSignal.any([interrupted, callSignal]) : interrupted,
-          }),
-        catch: (failure) => {
-          dispatch.state = neverConnected(failure) ? "unconnected" : "lost";
+          });
+        },
+        catch: (failure): HttpFailure => {
+          if (!entry.dispatched) {
+            return failure instanceof ConnectorCallError
+              ? new Refusal({ error: failure })
+              : new RequestRefused({ message: "This call has ended; no transport work may continue." });
+          }
+          // No rejection proves a write unsent: one fetch can hide several
+          // attempts (a 421 or HTTP/2 refused-stream resend, a retrying
+          // dispatcher), whatever the last one reports (#902 round 8).
+          dispatch.state = "lost";
           return (dispatch.failure = new TransportFailure({ failure, host: url.href }));
         },
       });
       dispatch.state = "answered";
       dispatch.status = response.status;
+      entry.status = response.status;
       dispatch.headers = response.headers;
       if (REDIRECT_STATUSES.has(response.status)) {
         yield* cancel(response);

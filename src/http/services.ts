@@ -26,11 +26,13 @@
 
 import { Context, Effect } from "effect";
 import { chargeConnectorCall } from "../call-admission-context.js";
+import { callClassification } from "../call-classification.js";
 import { recordRecovery } from "../call-recovery.js";
 import { callerOf, type ConnectorCaller } from "../connector-caller.js";
 import { ConnectorCallError } from "../errors.js";
+import { dispatchProviderRequest, providerRequest, type ProviderRequest } from "../provider-call.js";
 import { fromSignal, runEdge } from "../runtime/run.js";
-import { sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
+import { requestSentSecrets, sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import type { ConnectorContext, ConnectorCredentialValues } from "../types.js";
 import { RequestRefused, ResendRefused, type HttpFailure, type OperationRef } from "./errors.js";
 
@@ -46,8 +48,15 @@ export class Credentials extends Context.Service<
   { readonly values: Effect.Effect<ConnectorCredentialValues | null, ConnectorCallError> }
 >()("connecta/http/Credentials") {}
 
-/** The request's sent-secret set; every credential header and query value is registered here. */
+/** The call's sent-secret set; every credential header and query value is registered here. */
 export class Secrets extends Context.Service<Secrets, SentSecrets>()("connecta/http/Secrets") {}
+
+/**
+ * Everything the request sent, every connector's credentials included: the
+ * set that redacts downstream text whole before anything cuts, trims, or
+ * extracts from it (#911's `redactBeforeCut`).
+ */
+export class RequestSecrets extends Context.Service<RequestSecrets, SentSecrets>()("connecta/http/RequestSecrets") {}
 
 /**
  * The enclosing invocation's admission permit, as the one thing a provider
@@ -75,7 +84,12 @@ export class Classification extends Context.Service<Classification, "read" | "wr
   "connecta/http/Classification",
 ) {}
 
-/** How one resource request of this call ended, recorded as it happened. */
+/**
+ * How one resource request of this call ended, recorded as it happened. The
+ * kit's own record of reservations and answers: the one-dispatch guard, the
+ * 401 handoff, and a blocked resend read it. The write's verdict is read from
+ * the core ledger entry (`request`), never from here.
+ */
 export interface Dispatch {
   /** It counts as the call's write: every request of a write call except one sent with `{ effect: "read" }`. */
   readonly write: boolean;
@@ -83,18 +97,68 @@ export interface Dispatch {
   readonly step?: string;
   readonly item?: string;
   readonly operation?: OperationRef;
-  /** `unconnected` only when `fetch` rejected with an errno proving no connection; `lost` for any other rejection. */
-  state: "reserved" | "preparing" | "pending" | "unconnected" | "lost" | "answered";
+  /**
+   * `lost` when `fetch` rejected: no rejection proves a request unsent, since
+   * one fetch can hide several attempts (#902 round 8).
+   */
+  state: "reserved" | "preparing" | "pending" | "lost" | "answered";
   status?: number;
   headers?: Headers;
   /** The failure this request's own answer settled into, so the mapping can tell it from a later one. */
   failure?: HttpFailure;
   /** Its 401 earned a renewal that succeeded: the next call has a fresh credential. */
   renewed?: true;
+  /** Its entry in the core ledger, recorded synchronously before `fetch`. */
+  request?: ProviderRequest;
 }
 
-/** Permanent write reservations plus resource dispatches, in reservation order. The outcome rule reads their states. */
+/** Permanent write reservations plus resource dispatches, in reservation order. */
 export class Dispatches extends Context.Service<Dispatches, Dispatch[]>()("connecta/http/Dispatches") {}
+
+/**
+ * The core's request ledger for this call (src/provider-call.ts), which the
+ * `api()` boundary reads to decide every write verdict (INV-9). The transport
+ * opens an entry for each resource request with its method and any genuine
+ * idempotency key it carries, dispatches it synchronously before `fetch`
+ * (which refuses a request whose call has ended), and records its status
+ * when answered. A dispatch also joins the request to the invocation's
+ * logical call, so identities are captured when the request leaves.
+ */
+export class Ledger extends Context.Service<
+  Ledger,
+  {
+    readonly open: (facts: {
+      readonly auxiliary: boolean;
+      readonly provider: string;
+      readonly method: string;
+      readonly key?: string;
+    }) => ProviderRequest;
+    readonly dispatch: (request: ProviderRequest) => void;
+  }
+>()("connecta/http/Ledger") {}
+
+/**
+ * A ledger no `api()` boundary reads: what a lease built without a context
+ * (a unit test) records into. It still marks each request dispatched.
+ */
+const detachedLedger: Context.Service.Shape<typeof Ledger> = {
+  open: ({ auxiliary, provider, method, key }) => ({
+    dispatched: false,
+    auxiliary,
+    provider,
+    method,
+    ...(key === undefined ? {} : { key }),
+  }),
+  dispatch: (request) => {
+    request.dispatched = true;
+  },
+};
+
+/** A genuine idempotency key the vendor honors, and the header that carries it, for the call's one write. */
+export const IdempotencyKey = Context.Reference<{ readonly header: string; readonly key: string } | undefined>(
+  "connecta/http/IdempotencyKey",
+  { defaultValue: () => undefined },
+);
 
 /** Closed capacity and the requests bound to bulk items, snapshotted before the program runs. */
 export class WriteCapacity extends Context.Service<
@@ -145,11 +209,13 @@ export type CallServices =
   | OperationServices
   | Credentials
   | Secrets
+  | RequestSecrets
   | Budget
   | Recovery
   | Signal
   | Classification
   | Dispatches
+  | Ledger
   | WriteCapacity;
 
 function ended(): ConnectorCallError {
@@ -186,7 +252,11 @@ export interface CallInputs {
   readonly charge: (signal: AbortSignal) => Promise<void>;
   readonly record: (facts: Readonly<Record<string, string>>) => void;
   readonly secrets: SentSecrets;
+  /** The request's whole set; defaults to `secrets`. */
+  readonly requestSecrets?: SentSecrets;
   readonly signal: AbortSignal | undefined;
+  /** The core ledger the boundary reads; a detached one when no context is behind the call. */
+  readonly ledger?: Context.Service.Shape<typeof Ledger>;
 }
 
 /** Build one call's services. Invocation calls this in the scoped attempt that owns the permit (B.1). */
@@ -225,6 +295,7 @@ export function openCall(inputs: CallInputs): CallLease {
       ) as Effect.Effect<ConnectorCredentialValues | null, ConnectorCallError>,
     }),
     Context.add(Secrets, inputs.secrets),
+    Context.add(RequestSecrets, inputs.requestSecrets ?? inputs.secrets),
     Context.add(Budget, { charge: live(inputs.charge, (error) => error) }),
     Context.add(Recovery, {
       // Late facts are dropped: invocation has already read the record.
@@ -233,6 +304,7 @@ export function openCall(inputs: CallInputs): CallLease {
     Context.add(Signal, controller.signal),
     Context.add(Classification, inputs.classification),
     Context.add(Dispatches, []),
+    Context.add(Ledger, inputs.ledger ?? detachedLedger),
     Context.add(WriteCapacity, new Map([["write", new Map([[undefined, undefined]])]])),
   );
   return {
@@ -398,21 +470,13 @@ export function openRequest(scope: object): {
 
 // --- The strangler bridge ---------------------------------------------------------------
 
-const served = new WeakMap<object, "read" | "write">();
-
-/**
- * A.2's `attachCallClassification` (#902), which invocation sets from the
- * served definition. The prototype carries this copy until #902 merges; B.1
- * replaces both with the Classification service.
- */
-export function attachServedClassification(ctx: ConnectorContext, classification: "read" | "write"): void {
-  served.set(ctx, classification);
-}
-
 /**
  * Read a context's call state once, at the edge. Kit code below this line
- * never sees the context object. `fallback` is the tool's own verdict, for a
- * context no invocation dispatched (a probe).
+ * never sees the context object. The classification is the one invocation
+ * served (A.2's `callClassification`); `fallback` is the tool's own verdict,
+ * for a context no invocation dispatched (a probe). The ledger is the core's,
+ * on the context `api()` hands its handler. B.1 replaces both readers with
+ * the services invocation provides.
  */
 export function fromConnectorContext(ctx: ConnectorContext, fallback: "read" | "write"): CallLease {
   trackCredentialReads(ctx);
@@ -420,12 +484,18 @@ export function fromConnectorContext(ctx: ConnectorContext, fallback: "read" | "
   const request = ctx.requestScope ? openRequest(ctx.requestScope) : undefined;
   const lease = openCall({
     caller: callerOf(ctx),
-    classification: served.get(ctx) ?? fallback,
+    classification: callClassification(ctx) ?? fallback,
     credentials: async () => (credential ? await credential.getAll() : null),
     charge: () => chargeConnectorCall(ctx),
     record: (facts) => recordRecovery(ctx, facts),
     secrets: sentSecretsFor(ctx),
+    requestSecrets: requestSentSecrets(ctx),
     signal: request ? (ctx.signal ? AbortSignal.any([ctx.signal, request.signal]) : request.signal) : ctx.signal,
+    ledger: {
+      open: ({ auxiliary, provider, method, key }) =>
+        providerRequest(ctx, auxiliary, provider, { method, ...(key === undefined ? {} : { key }) }),
+      dispatch: (entry) => dispatchProviderRequest(ctx, entry),
+    },
   });
   request?.own(lease.close);
   return lease;
