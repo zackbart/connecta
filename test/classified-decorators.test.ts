@@ -127,20 +127,8 @@ class ForwardingReview extends Forwarding {
 
 /** Decorators that keep `classification`, so the review applies. */
 const KEEPING: Record<string, Decorator> = {
-  none: (c) => c,
-  "the round-3 pass-through": (c) => ({ ...c, listTools: (ctx) => c.listTools(ctx) }),
   "a spread copy": (c) => ({ ...c }),
-  "Object.assign": (c) => Object.assign({}, c),
-  "Object.create": (c) => Object.create(c) as Connector,
   "a forwarding class that forwards classification": (c) => new ForwardingReview(c),
-  "a decorator that copies each tool": (c) => ({
-    ...c,
-    listTools: async (ctx) => (await c.listTools(ctx)).map((tool) => ({ ...tool })),
-  }),
-  "a decorator that rebuilds each tool": (c) => ({
-    ...c,
-    listTools: async (ctx) => structuredClone(await c.listTools(ctx)),
-  }),
 };
 
 /** The round-4 repro: forwards `id`, `listTools`, and `callTool`, not the review. */

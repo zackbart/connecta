@@ -15,7 +15,6 @@ import {
   LINEAR_LIST_ISSUES,
   LINEAR_SAVE_ISSUE,
   PATHOLOGICAL_CORPUS,
-  PROVIDER_CORPUS,
   STRIPE_IMPLEMENTATION_PLANNER,
   STRIPE_LIST_ACCOUNTS_INPUT,
   STRIPE_LIST_ACCOUNTS_OUTPUT,
@@ -32,47 +31,6 @@ const search = (input: JsonSchema, output?: JsonSchema, observed = false) =>
   typescriptSignature(input, output, { observed, description: false });
 const describeSignature = (input: JsonSchema, output?: JsonSchema) =>
   typescriptSignature(input, output, { observed: false, description: true });
-
-/**
- * The text a TypeScript parser sees as code: comments and string literals
- * removed. Anything downstream prose could smuggle past a comment boundary
- * would survive here, so bracket balance proves no prose escaped.
- */
-function codeOf(text: string): string {
-  let code = "";
-  for (let index = 0; index < text.length; index += 1) {
-    if (text.startsWith("/*", index)) {
-      const end = text.indexOf("*/", index + 2);
-      expect(end, `unterminated comment in ${text}`).toBeGreaterThan(index);
-      index = end + 1;
-      continue;
-    }
-    if (text[index] === '"') {
-      for (index += 1; text[index] !== '"'; index += 1) {
-        expect(index, `unterminated string in ${text}`).toBeLessThan(text.length);
-        if (text[index] === "\\") index += 1;
-      }
-      code += '""';
-      continue;
-    }
-    code += text[index];
-  }
-  return code;
-}
-
-function expectBalanced(text: string): void {
-  const code = codeOf(text);
-  const pairs: Record<string, string> = { "}": "{", "]": "[", ")": "(", ">": "<" };
-  const stack: string[] = [];
-  for (let index = 0; index < code.length; index += 1) {
-    const char = code[index]!;
-    // The arrow is the one `>` that closes nothing.
-    if (char === ">" && code[index - 1] === "=") continue;
-    if ("{[(<".includes(char)) stack.push(char);
-    else if (char in pairs) expect(stack.pop(), `${char} in ${text}`).toBe(pairs[char]);
-  }
-  expect(stack, text).toEqual([]);
-}
 
 describe("TypeScript signatures over real provider schemas", () => {
   it("renders the smallest real shape exactly, with and without prose", () => {
@@ -106,15 +64,6 @@ describe("TypeScript signatures over real provider schemas", () => {
     expect(signature.inputTruncated).toBe(true);
     expect(bytes(signature.text)).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES);
   });
-
-  it("stays structurally valid for every provider shape in both modes", () => {
-    for (const { address, input, output } of PROVIDER_CORPUS) {
-      for (const signature of [search(input, output), describeSignature(input, output)]) {
-        expect(signature.text, address).toMatch(/^\(args\??: .*\) => Promise<.*>$/s);
-        expectBalanced(signature.text);
-      }
-    }
-  });
 });
 
 describe("TypeScript signatures over pathological schemas", () => {
@@ -126,10 +75,8 @@ describe("TypeScript signatures over pathological schemas", () => {
       expect(bytes(found.text), name).toBeLessThanOrEqual(
         2 * MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES,
       );
-      expectBalanced(found.text);
       const described = describeSignature(schema, schema);
       expect(bytes(described.text), name).toBeLessThanOrEqual(2 * MAX_DESCRIPTION_SHAPE_BYTES + SIGNATURE_FRAME_BYTES);
-      expectBalanced(described.text);
     }
   });
 
@@ -171,7 +118,6 @@ describe("TypeScript signatures over pathological schemas", () => {
     expect(described).toContain('/** closes *\\/ the comment } ) ] and opens /* another */ "*/ evil"?: string;');
     // A stray `)` in prose must not hide the real union from grouping.
     expect(described).toContain("union?: ({ /** b) c) */ x?: string } | number)[];");
-    expectBalanced(described);
   });
 
   it("reads OpenAPI nullable, index signatures, and boolean schemas as TypeScript", () => {

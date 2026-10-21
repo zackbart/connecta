@@ -156,6 +156,37 @@ describe("QuickJS pool crash backoff", () => {
     await executor.close?.();
   });
 
+  it("INV-7: cancels a caller waiting out the backoff without spawning", async () => {
+    scriptChildren();
+    const executor = quickJsExecutor();
+    behaviour = "crash";
+    await expect(executor.execute("async () => 1", [])).rejects.toThrow("exited unexpectedly");
+
+    const controller = new AbortController();
+    const lease = await executor.acquire({ signal: controller.signal });
+    const pending = lease.execute("async () => 1", []);
+    await settle();
+    await vi.advanceTimersByTimeAsync(50);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({
+      code: "executor_cancelled",
+      message: "Execution was cancelled while the sandbox was restarting.",
+    });
+    lease.release();
+    expect(children).toHaveLength(1);
+
+    // The crash was charged once: the remaining 50 ms still stand.
+    behaviour = "succeed";
+    const next = executor.execute("async () => 1", []);
+    await settle();
+    await vi.advanceTimersByTimeAsync(49);
+    expect(children).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(next).resolves.toMatchObject({ result: expect.any(Number) });
+    expect(children).toHaveLength(2);
+    await executor.close?.();
+  });
+
   it("counts a child that never reports ready as a crash", async () => {
     scriptChildren({ ready: false });
     const executor = quickJsExecutor();

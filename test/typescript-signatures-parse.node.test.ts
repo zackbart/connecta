@@ -1,7 +1,7 @@
 // Node-only: loads the CommonJS TypeScript compiler to parse every rendered signature.
 // A signature an agent is told is TypeScript has to be TypeScript. The portable
-// suite (typescript-signatures.test.ts) checks brackets by hand; this one asks
-// the compiler, over every corpus shape, in both search and describe modes,
+// suite (typescript-signatures.test.ts) checks semantics and budgets; this one
+// asks the compiler over every corpus shape, in both search and describe modes,
 // including the degraded renderings the budgets produce.
 import ts from "typescript";
 import { describe, expect, it } from "vitest";

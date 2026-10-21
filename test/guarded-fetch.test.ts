@@ -168,6 +168,14 @@ describe("guardedFetch() confinement", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("refuses a sibling path that merely shares the base's prefix", async () => {
+    stubFetch(() => json({}));
+    await expect(
+      transport({ baseUrl: "https://api.example.com/v2" })({ method: "GET", path: "/../v20/zones" }, context(), asJson),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(0);
+  });
+
   it("refuses a request header wearing an authentication header's name", async () => {
     stubFetch(() => json({}));
     await expect(
