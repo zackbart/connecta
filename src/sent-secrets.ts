@@ -1852,7 +1852,7 @@ export class SentSecrets {
     type Holder = Record<PropertyKey, unknown>;
     /** Where values are written: `target` itself when this walk made it, or for a caller's
      * container (`shared`) a copy made on its first write and put in place of it in `parent`.
-     * `children` are the caller's containers walked in its slots. */
+     * `children` are the toJSON results walked in its slots. */
     interface Frame {
       target: object;
       shared: boolean;
@@ -1939,10 +1939,13 @@ export class SentSecrets {
       }
       return redactedCopyOf(item, out);
     };
-    /** A caller's container walked in a slot, so a copy it gets replaces it there. */
+    // toJSON results, which replace their container in its slot and may be copied after.
+    const serialized = new Set<object>();
+    /** A caller's container walked in a slot. A toJSON result is remembered there, so a copy it
+     * gets replaces it in that slot. */
     const walked = (frame: Frame, item: object, slot: PropertyKey, owned: boolean): Frame => {
       const own: Frame = { target: item, shared: !owned, parent: frame, slot };
-      if (!owned) (frame.children ??= new Map()).set(slot, own);
+      if (!owned && serialized.has(item)) (frame.children ??= new Map()).set(slot, own);
       return own;
     };
     const writable = (frame: Frame): Holder => {
@@ -2077,8 +2080,11 @@ export class SentSecrets {
         // What serialization would read: a toJSON result, checked in place of the container.
         const toJSON = inherited(item, "toJSON", WITHHELD_ACCESSOR);
         if (toJSON === WITHHELD_ACCESSOR) return withheld(owner);
-        if (typeof toJSON === "function")
-          return visit(toJSON.call(item, String(slot)), frame, slot, depth + 1, level, owner, false);
+        if (typeof toJSON === "function") {
+          const result: unknown = toJSON.call(item, String(slot));
+          if (result !== null && typeof result === "object") serialized.add(result);
+          return visit(result, frame, slot, depth + 1, level, owner, false);
+        }
       }
       return Array.isArray(item)
         ? list(item as unknown[], frame, slot, depth, level, owner, owned)
@@ -2235,8 +2241,8 @@ export class SentSecrets {
     const safe = this.checked(parts, kinds, scan);
     // Structure first, then the leaves inside it and typed binary, then nested JSON from the
     // innermost out.
-    // A slot replaced by a caller's container walked there, such as a toJSON result, takes the
-    // copy that container already got, never the original.
+    // A slot replaced by a toJSON result walked there takes the copy that result already got,
+    // never the original.
     for (const [frame, slot, next] of replaced) {
       const child = frame.children?.get(slot);
       put(writable(frame), slot, child && child.target === next && child.copy ? child.copy : next);
