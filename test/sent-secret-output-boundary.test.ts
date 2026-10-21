@@ -946,6 +946,47 @@ describe("review round 4", () => {
     }
   });
 
+  it.each(["pin4", "pin42", "pin427", "pin4279", "Q8!wZ2?A", "Q8!wZ2?A7@vR4#", "秘密Abc🌈", "éééé"])(
+    "INV-5: the review's encoding matrix leaves no base64 of %s undecoded, at three alignments and seven shapes",
+    (value) => {
+      const secrets = set(value);
+      for (let prefix = 0; prefix < 3; prefix++) {
+        const run = encoded(`${"x".repeat(prefix)}${value}z`);
+        const shapes: Record<string, string> = {
+          whole: run,
+          inline: `echo: ${run}`,
+          percentPadding: encodeURIComponent(run),
+          percentAll: percentAll(run),
+          jsonAll: escapeAll(run),
+          jsonInline: `echo: ${escapeAll(run)}`,
+          base64OfPercent: encoded(`x${encodeURIComponent(value)}z`),
+        };
+        for (const [name, input] of Object.entries(shapes)) {
+          const out = shown(secrets.redact({ v: input }));
+          expect(out, `${prefix} ${name}`).not.toBe(shown({ v: input }));
+          expect(holdsValue(out, value), `${prefix} ${name}`).toBe(false);
+        }
+      }
+    },
+  );
+
+  it("INV-5: a direct call's short private echo in short base64 never reaches the agent", async () => {
+    const registry = makeRegistry([
+      {
+        id: "notes",
+        kind: "api",
+        listTools: async () => [{ name: "read", annotations: { readOnlyHint: true }, inputSchema: schema }],
+        callTool: async () => ({ echo: `echo: ${btoa("xpin42z")}` }),
+      } as Connector,
+    ]);
+    const result = await createMetaTools(registry, "https://connecta.test").callTool({
+      address: "notes.read",
+      args: { value: "pin42" },
+    });
+    expect(holdsValue(shown(result), "pin42")).toBe(false);
+    expect(shown(result)).toContain(MARK);
+  });
+
   it("INV-5: Slides cursors carry a slide's and its notes page's ids only redacted", async () => {
     const long = "Ordinary public content ".repeat(30);
     const shape = (objectId: string) => ({
@@ -1049,6 +1090,7 @@ describe("review round 4", () => {
       row: new Row("r1"),
       inherited: Object.assign(Object.create({ v: TOKEN }) as object, { public: "okay" }),
       map: new Map([["v", TOKEN]]),
+      set: new Set([TOKEN]),
       bytes: new TextEncoder().encode(`x${TOKEN}z`),
       clean: new TextEncoder().encode("Ordinary public bytes."),
     };
@@ -1058,6 +1100,7 @@ describe("review round 4", () => {
     expect(out.row).toEqual({ id: "r1" });
     expect((out.inherited as { v?: string }).v).toBeUndefined();
     expect(Object.entries(out.map)).toEqual([]);
+    expect(Object.entries(out.set)).toEqual([]);
     expect(out.bytes).toBe(MARK);
     expect(out.clean).not.toBe(input.clean);
     expect(out.clean).toEqual(input.clean);
