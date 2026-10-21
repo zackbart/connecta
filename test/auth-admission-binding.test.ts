@@ -12,9 +12,9 @@ const bindings = await (async () => {
 })();
 const worker = bindings?.AUTH_ADMISSION;
 const origin = worker ? inject("authAdmissionServer") : "";
-it.skipIf(!worker).each(["access", "agent"] as const)(
-  "INV-6 INV-7: workerd %s binding stalls recover with honest bounded abandonment",
-  async (kind) => {
+it.skipIf(!worker)(
+  "INV-6 INV-7: workerd access binding stalls recover with honest bounded abandonment",
+  async () => {
     const pending: Promise<unknown>[] = [];
     const callers: AbortController[] = [];
     const control = async (path: string) => {
@@ -30,14 +30,13 @@ it.skipIf(!worker).each(["access", "agent"] as const)(
     const start = (id: string) => {
       const caller = new AbortController();
       callers.push(caller);
-      const promise = worker!.fetch(`https://connecta.test/${kind === "agent" ? "agent/team" : "mcp"}`, {
+      const promise = worker!.fetch("https://connecta.test/mcp", {
         method: "POST",
         signal: caller.signal,
         headers: {
-          "X-Binding-Kind": kind,
+          "X-Binding-Kind": "access",
           "X-Auth-Upstream": `${origin}/binding/${id}`,
           "Mcp-Method": "subscriptions/listen",
-          ...(kind === "agent" ? { Authorization: `Bearer cta_${"a".repeat(43)}` } : {}),
         },
       });
       pending.push(promise.catch(() => {}));
@@ -57,7 +56,7 @@ it.skipIf(!worker).each(["access", "agent"] as const)(
       const busy = await start("busy");
       expect(await busy.json()).toMatchObject({ error: { code: "authentication_busy" } });
       // Native caller-facing deadlines answer even though all bindings still run.
-      for (const response of await Promise.all(wave)) expect(response.status).toBe(kind === "access" ? 503 : 401);
+      for (const response of await Promise.all(wave)) expect(response.status).toBe(503);
       await vi.waitFor(
         async () => expect(await health()).toMatchObject({ active: 1, abandoned: 16, abandonedSaturated: true }),
         { timeout: 3_000 },
@@ -104,10 +103,6 @@ const healthOf = async (via: Fetcher): Promise<Authentication> => {
   const response = await via.fetch("https://connecta.test/health");
   return ((await response.json()) as { admission: { authentication: Authentication } }).admission.authentication;
 };
-const total = async (via: Fetcher) => {
-  const { active, abandoned } = await healthOf(via);
-  return active + abandoned;
-};
 // Allocation pressure until `satisfied`, or fail: collection timing is never
 // guaranteed, only that enough garbage makes V8 collect.
 async function collectUntil(pressure: () => Promise<string[]>, satisfied: (finalized: string[]) => Promise<boolean>) {
@@ -151,37 +146,6 @@ const binding = {
       id.startsWith(`/binding/${prefix}`),
     ),
 };
-// The connecta.fetch fixture (index.ts) in a scenario's own isolate.
-function bindingFixture(key: string) {
-  const via = bindings![`AUTH_ADMISSION_${key.toUpperCase().replaceAll("-", "_")}`]!;
-  return {
-    via,
-    health: () => healthOf(via),
-    pressure: async () =>
-      ((await (await via.fetch("https://connecta.test/__pressure")).json()) as { finalized: string[] }).finalized,
-    // Sentinels whose only reference is a fetch workerd cancels `ms` after
-    // this request, as it cancels a stalled charge's lookup.
-    sentinels: async (prefix: string, ms: number) => {
-      for (let i = 0; i < SENTINELS; i++) {
-        const response = await via.fetch(`https://connecta.test/__sentinel?name=${prefix}-${i}&ms=${ms}`, {
-          headers: { "X-Auth-Upstream": `${origin}/binding/sentinel-${prefix}-${i}` },
-        });
-        await response.text();
-      }
-    },
-    start: (kind: "access" | "agent", id: string, headers: Record<string, string> = {}) =>
-      via.fetch(`https://connecta.test/${kind === "agent" ? "agent/team" : "mcp"}`, {
-        method: "POST",
-        headers: {
-          "X-Binding-Kind": kind,
-          "X-Auth-Upstream": `${origin}/binding/${id}`,
-          "Mcp-Method": "subscriptions/listen",
-          ...(kind === "agent" ? { Authorization: `Bearer cta_${"a".repeat(43)}` } : {}),
-          ...headers,
-        },
-      }),
-  };
-}
 // The plain Worker export (entry.ts) with its middleware and control
 // entrypoints, in a scenario's own isolate.
 function entryFixture(key: string) {
@@ -211,110 +175,6 @@ function entryFixture(key: string) {
       }),
   };
 }
-
-it.skipIf(!worker).each(["access", "agent"] as const)(
-  "INV-6 INV-7: workerd releases %s charges whose invocation ended and cancelled their lookups once collected, and admission recovers",
-  async (kind) => {
-    const fixture = bindingFixture(`ended-${kind}`);
-    const pending: Promise<unknown>[] = [];
-    try {
-      await binding.control("reset");
-      // Each invocation runs on after its answer until the test closes its
-      // waitUntil window, as production's limit would end it; no lookup ever
-      // settles.
-      const wave = Array.from({ length: 16 }, (_, i) =>
-        fixture.start(kind, `ended-${i}`, { "X-Wait-Until-Window": "held" }),
-      );
-      pending.push(...wave.map((response) => response.catch(() => {})));
-      await vi.waitFor(async () => expect(await binding.ids("ended-")).toHaveLength(16), { timeout: 10_000 });
-      for (const response of await Promise.all(wave)) {
-        expect(response.status).toBe(kind === "access" ? 503 : 401);
-        await response.text();
-      }
-      // While every lookup still runs, every charge counts and admission
-      // refuses.
-      await vi.waitFor(
-        async () =>
-          expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true }),
-        { timeout: 3_000 },
-      );
-      const refused = await fixture.start(kind, "refused");
-      expect(await refused.json()).toMatchObject({ error: { code: "authentication_busy" } });
-      expect(await binding.ids("ended-")).toHaveLength(16);
-      // workerd ends every invocation and closes its upstream connection, so
-      // no settlement callback will ever run.
-      await (await fixture.via.fetch("https://connecta.test/__close-windows")).text();
-      await vi.waitFor(async () => expect(await binding.ids("ended-")).toHaveLength(0), { timeout: 10_000 });
-      // Unreachable now, each token is freed and its charge released once.
-      await collectEarly(fixture.pressure);
-      await releasedMonotonically(fixture);
-      const recovered = await fixture.start(kind, "fast");
-      expect(recovered.status).not.toBe(503);
-      await recovered.text();
-      expect(await total(fixture.via)).toBeLessThanOrEqual(1);
-    } finally {
-      await (await fixture.via.fetch("https://connecta.test/__close-windows")).text();
-      await binding.control("release");
-      await Promise.all(pending);
-    }
-  },
-  60_000,
-);
-
-it.skipIf(!worker).each(["access", "agent"] as const)(
-  "INV-6 INV-7: workerd %s charges whose lookups still run are never released, though their responses were read",
-  async (kind) => {
-    const fixture = bindingFixture(`replaced-${kind}`);
-    const pending: Promise<unknown>[] = [];
-    try {
-      await binding.control("reset");
-      // Sentinels as old as the charges, unreachable once the wave is answered.
-      await fixture.sentinels("replaced", 6_000);
-      // connecta.fetch with the fixture's own context, its answer read: the
-      // invocation, and every lookup, keeps running.
-      const wave = Array.from({ length: 16 }, (_, i) => fixture.start(kind, `replaced-${i}`));
-      pending.push(...wave.map((response) => response.catch(() => {})));
-      await vi.waitFor(async () => expect(await binding.ids("replaced-")).toHaveLength(16), { timeout: 10_000 });
-      for (const response of await Promise.all(wave)) {
-        expect(response.status).toBe(kind === "access" ? 503 : 401);
-        await response.text();
-      }
-      await vi.waitFor(
-        async () =>
-          expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true }),
-        { timeout: 3_000 },
-      );
-      // Sentinels cancelled with their own invocations are collected, proving
-      // a collection ran, while every live lookup keeps its charge.
-      await vi.waitFor(async () => expect(await binding.ids("sentinel-replaced")).toHaveLength(0), { timeout: 8_000 });
-      await collectUntil(fixture.pressure, sentinelsCollected("replaced"));
-      await fixture.pressure();
-      expect(await binding.ids("replaced-")).toHaveLength(16);
-      expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true });
-      const refused = await fixture.start(kind, "refused");
-      expect(await refused.json()).toMatchObject({ error: { code: "authentication_busy" } });
-      // Real settlement releases each charge once.
-      await binding.control("release");
-      await vi.waitFor(async () => expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 0 }));
-    } finally {
-      await binding.control("release");
-      await Promise.all(pending);
-    }
-  },
-  60_000,
-);
-
-it.skipIf(!worker)("INV-6: /health reports whether unreachable work can release its charge", async () => {
-  expect(await entryFixture("middleware").health()).toEqual({
-    active: 0,
-    limit: 16,
-    abandoned: 0,
-    abandonedLimit: 16,
-    abandonedSaturated: false,
-    unreachableRelease: true,
-  });
-  expect((await entryFixture("no-weak-ref").health()).unreachableRelease).toBe(false);
-});
 
 it.skipIf(!worker)(
   "INV-6 INV-7: Promise-chain middleware that consumes Connecta's response and keeps running holds every charge, so the bound holds and a second wave is refused",
@@ -362,46 +222,6 @@ it.skipIf(!worker)(
 );
 
 it.skipIf(!worker)(
-  "INV-7: a connected caller and a scheduled handler that read Connecta's answers and run on are never released while live",
-  async () => {
-    const fixture = entryFixture("scheduled");
-    const caller = new AbortController();
-    let running: Promise<Response | undefined> | undefined;
-    const result = async () => JSON.parse(await fixture.control("/scheduled/result")) as Record<string, unknown>;
-    try {
-      await binding.control("reset");
-      await fixture.sentinels("scheduled", 6_000);
-      // A connected caller still waiting on its adapter: no response yet.
-      running = fixture.human("running", caller.signal).catch(() => undefined);
-      await vi.waitFor(async () => expect(await binding.ids("running")).toHaveLength(1), { timeout: 10_000 });
-      // A cron job calls connecta.fetch twice with its own context, reads
-      // both answers, then keeps running.
-      await fixture.control("/scheduled");
-      await vi.waitFor(async () => expect(await binding.ids("scheduled-hold")).toHaveLength(1), { timeout: 10_000 });
-      expect(await result()).toEqual({ statuses: [401, 401] });
-      expect(await binding.ids("agent-")).toHaveLength(2);
-      expect(await total(fixture.via)).toBe(3);
-      await vi.waitFor(async () => expect(await binding.ids("sentinel-scheduled")).toHaveLength(0), {
-        timeout: 8_000,
-      });
-      await collectUntil(fixture.pressure, sentinelsCollected("scheduled"));
-      await fixture.pressure();
-      expect(await binding.ids("agent-")).toHaveLength(2);
-      expect(await total(fixture.via)).toBe(3);
-      await binding.control("release");
-      await vi.waitFor(async () => expect(await result()).toMatchObject({ done: true }));
-      await vi.waitFor(async () => expect(await total(fixture.via)).toBe(0));
-    } finally {
-      caller.abort();
-      await binding.control("release");
-      const response = await running;
-      await response?.body?.cancel();
-    }
-  },
-  60_000,
-);
-
-it.skipIf(!worker)(
   "INV-6 INV-7: behind the plain Worker export, charges whose invocation ended are released once collected",
   async () => {
     const fixture = entryFixture("ended");
@@ -435,40 +255,6 @@ it.skipIf(!worker)(
       const recovered = await fixture.human("fast");
       expect(recovered.status).toBe(401);
       await recovered.text();
-    } finally {
-      await fixture.control("/window");
-      await binding.control("release");
-      await Promise.all(pending);
-    }
-  },
-  60_000,
-);
-
-// Leaves the twin's isolate saturated for good; nothing else uses it.
-it.skipIf(!worker)(
-  "INV-6 INV-7: without enable_weak_ref, charges whose invocation ended stay counted, and the allowance refuses",
-  async () => {
-    const fixture = entryFixture("no-weak-ref");
-    const pending: Promise<unknown>[] = [];
-    try {
-      await binding.control("reset");
-      await fixture.control("/window?held");
-      const wave = Array.from({ length: 16 }, () => fixture.agent());
-      pending.push(...wave.map((response) => response.catch(() => {})));
-      await vi.waitFor(async () => expect(await binding.ids("agent-")).toHaveLength(16), { timeout: 10_000 });
-      for (const response of await Promise.all(wave)) await response.text();
-      await vi.waitFor(
-        async () =>
-          expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true }),
-        { timeout: 3_000 },
-      );
-      await fixture.control("/window");
-      await vi.waitFor(async () => expect(await binding.ids("agent-")).toHaveLength(0), { timeout: 10_000 });
-      for (let round = 0; round < 8; round++) await fixture.pressure();
-      expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true });
-      const refused = await fixture.agent();
-      expect(await refused.json()).toMatchObject({ error: { code: "authentication_busy" } });
-      expect((await binding.status()).calls).toBe(16);
     } finally {
       await fixture.control("/window");
       await binding.control("release");

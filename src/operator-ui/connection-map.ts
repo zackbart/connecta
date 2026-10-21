@@ -113,12 +113,12 @@ function plural(count: number, one: string, many = `${one}s`): string {
 }
 
 /** Cut a name to `limit` characters, ending in an ellipsis when it was longer. */
-export function truncate(text: string, limit: number): string {
+function truncate(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`;
 }
 
 /** Where an endpoint's row opens on the Endpoints page. */
-export function endpointHref(path: string): string {
+function endpointHref(path: string): string {
   return `/endpoints#${path.replace(/^\//, "")}`;
 }
 

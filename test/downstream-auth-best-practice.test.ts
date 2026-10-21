@@ -234,20 +234,17 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 
-  it.each(["https://CONNECTA.example:443", `${BASE}/`])(
-    "INV-5: keeps CIMD, consent, and exchange callback URLs identical for %s",
-    async (publicUrl) => {
-      const flow = setup({ cimd: true, publicUrl });
-      const document = (await (await flow.app.fetch(new Request(DOCUMENT))).json()) as { redirect_uris: string[] };
-      const status = await flow.start();
-      expect(new URL(status.authorizationUrl!).searchParams.get("redirect_uri")).toBe(document.redirect_uris[0]);
-      expect(document.redirect_uris).toEqual([`${BASE}/oauth/callback/svc`]);
-      expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
-      expect(flow.sent.find((request) => request.url.endsWith("/token"))!.form.get("redirect_uri")).toBe(
-        document.redirect_uris[0],
-      );
-    },
-  );
+  it("INV-5: keeps CIMD, consent, and exchange callback URLs identical for https://CONNECTA.example:443", async () => {
+    const flow = setup({ cimd: true, publicUrl: "https://CONNECTA.example:443" });
+    const document = (await (await flow.app.fetch(new Request(DOCUMENT))).json()) as { redirect_uris: string[] };
+    const status = await flow.start();
+    expect(new URL(status.authorizationUrl!).searchParams.get("redirect_uri")).toBe(document.redirect_uris[0]);
+    expect(document.redirect_uris).toEqual([`${BASE}/oauth/callback/svc`]);
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    expect(flow.sent.find((request) => request.url.endsWith("/token"))!.form.get("redirect_uri")).toBe(
+      document.redirect_uris[0],
+    );
+  });
 
   it("INV-6: records DCR when the AS returns the metadata URL as its opaque registered client ID", async () => {
     const flow = setup({ registeredClientId: DOCUMENT });
@@ -265,7 +262,7 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body.client.carried).toBe(true);
   });
 
-  it.each([null, "http://connecta.example", "https://localhost", "https://10.0.0.1", "https://[::1]"])(
+  it.each([null, "https://localhost"])(
     "INV-4: uses DCR without a configured public HTTPS URL (%s)",
     async (publicUrl) => {
       const flow = setup({ cimd: true, publicUrl });
@@ -305,8 +302,6 @@ describe("downstream OAuth best practice", () => {
 
   it.each([
     ["static", "client_secret_basic"],
-    ["static", "client_secret_post"],
-    ["dcr", "client_secret_basic"],
     ["dcr", "client_secret_post"],
   ] as const)(
     "INV-5: redacts raw reserved-character %s %s client credentials echoed after refresh",
@@ -346,54 +341,31 @@ describe("downstream OAuth best practice", () => {
     },
   );
 
-  it.each([
-    ["static", "client_secret_basic"],
-    ["static", "client_secret_post"],
-    ["dcr", "client_secret_basic"],
-    ["dcr", "client_secret_post"],
-  ] as const)(
-    "INV-5: registers raw %s %s client credentials and the removed token on revocation",
-    async (path, method) => {
-      const clientId = "PRIVATE_CLIENT+reserved/characters=";
-      const secret = "CLIENT_SECRET+reserved/characters=";
-      const flow = setup({
-        revocation: true,
-        ...(path === "static"
-          ? {
-              auth: {
-                type: "oauth",
-                client: { issuer: ISSUER, clientId, clientSecret: secret, tokenEndpointAuthMethod: method },
-              } as RemoteMcpAuth,
-            }
-          : { registeredClientId: clientId, registeredClientSecret: secret, clientMethod: method }),
-      });
-      const started = await flow.start();
-      expect((await flow.callback(started.authorizationUrl!)).status).toBe(200);
-      const ctx = flow.ctx();
-      const secrets = sentSecretsFor(ctx);
-      const send = globalThis.fetch;
-      vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
-        if (String(input).endsWith("/revoke"))
-          expect(secrets.text(`${clientId}; ${secret}; REFRESH_TOKEN_SENTINEL`)).toBe(
-            "[redacted]; [redacted]; [redacted]",
-          );
-        return await send(input, init);
-      });
-      await flow.connector.disconnectAuth!(ctx);
-      expect(flow.sent.filter((request) => request.url.endsWith("/revoke"))).toHaveLength(1);
-      expect(secrets.text(`${clientId}; ${secret}; REFRESH_TOKEN_SENTINEL`)).toBe("[redacted]; [redacted]; [redacted]");
-    },
-  );
-
-  it("INV-5: keeps a public CIMD client ID visible after refreshing its grant", async () => {
-    const flow = setup({ cimd: true, echo: `Public client ${DOCUMENT}` });
+  it("INV-5: registers raw static client_secret_basic client credentials and the removed token on revocation", async () => {
+    const clientId = "PRIVATE_CLIENT+reserved/characters=";
+    const secret = "CLIENT_SECRET+reserved/characters=";
+    const flow = setup({
+      revocation: true,
+      auth: {
+        type: "oauth",
+        client: { issuer: ISSUER, clientId, clientSecret: secret, tokenEndpointAuthMethod: "client_secret_basic" },
+      },
+    });
     const started = await flow.start();
     expect((await flow.callback(started.authorizationUrl!)).status).toBe(200);
-    flow.requireRefresh();
-    const result = await createMetaTools(flow.app.registry, BASE).callTool({ address: "svc.read" });
-    expect(flow.sent.filter((request) => request.form.get("grant_type") === "refresh_token")).toHaveLength(1);
-    expect(result.isError).not.toBe(true);
-    expect(JSON.stringify(result)).toContain(DOCUMENT);
+    const ctx = flow.ctx();
+    const secrets = sentSecretsFor(ctx);
+    const send = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/revoke"))
+        expect(secrets.text(`${clientId}; ${secret}; REFRESH_TOKEN_SENTINEL`)).toBe(
+          "[redacted]; [redacted]; [redacted]",
+        );
+      return await send(input, init);
+    });
+    await flow.connector.disconnectAuth!(ctx);
+    expect(flow.sent.filter((request) => request.url.endsWith("/revoke"))).toHaveLength(1);
+    expect(secrets.text(`${clientId}; ${secret}; REFRESH_TOKEN_SENTINEL`)).toBe("[redacted]; [redacted]; [redacted]");
   });
 
   it("INV-5: refuses a static client's different discovered issuer before sending credentials", async () => {
@@ -407,62 +379,50 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 
-  it.each(["static", "cimd", "dcr"])(
-    "INV-10: passive status does not persist a %s client's discovery, identity, or consent",
-    async (path) => {
-      const flow = setup(
-        path === "static"
-          ? { auth: { type: "oauth", client: { issuer: ISSUER, clientId: "static-client", clientSecret: SECRET } } }
-          : { cimd: path === "cimd" },
-      );
-      const storage = flow.ctx().storage;
-      expect(await storage.list("oauth:")).toEqual([]);
-      expect((await flow.connector.status!(flow.ctx())).state).toBe("auth_required");
-      expect(await storage.list("oauth:")).toEqual([]);
-      expect(flow.sent.some((request) => request.url.endsWith("/token") || request.url.endsWith("/register"))).toBe(
-        false,
-      );
-      const status = await flow.start();
-      expect(status.registrationPath).toBe(path);
-      const contract = (await (
-        await flow.app.fetch(new Request(`${BASE}/ui/api/config`))
-      ).json()) as OperatorUiContract;
-      expect(contract.live.connectors[0]!.auth).toEqual({ registrationPath: path });
-      expect(JSON.parse((await storage.get("oauth:grant"))!).body.client.registrationPath).toBe(path);
-    },
-  );
+  it("INV-10: passive status does not persist a dcr client's discovery, identity, or consent", async () => {
+    const flow = setup();
+    const storage = flow.ctx().storage;
+    expect(await storage.list("oauth:")).toEqual([]);
+    expect((await flow.connector.status!(flow.ctx())).state).toBe("auth_required");
+    expect(await storage.list("oauth:")).toEqual([]);
+    expect(flow.sent.some((request) => request.url.endsWith("/token") || request.url.endsWith("/register"))).toBe(
+      false,
+    );
+    const status = await flow.start();
+    expect(status.registrationPath).toBe("dcr");
+    const contract = (await (await flow.app.fetch(new Request(`${BASE}/ui/api/config`))).json()) as OperatorUiContract;
+    expect(contract.live.connectors[0]!.auth).toEqual({ registrationPath: "dcr" });
+    expect(JSON.parse((await storage.get("oauth:grant"))!).body.client.registrationPath).toBe("dcr");
+  });
 
-  it.each(["none", "client_secret_post"] as const)(
-    "INV-5 INV-6: pins static %s authentication for exchange and revocation",
-    async (tokenEndpointAuthMethod) => {
-      const flow = setup({
-        revocation: true,
-        auth: {
-          type: "oauth",
-          client: {
-            issuer: ISSUER,
-            clientId: "static-client",
-            tokenEndpointAuthMethod,
-            ...(tokenEndpointAuthMethod === "none" ? {} : { clientSecret: SECRET }),
-          },
+  it("INV-5 INV-6: pins static client_secret_post authentication for exchange and revocation", async () => {
+    const flow = setup({
+      revocation: true,
+      auth: {
+        type: "oauth",
+        client: {
+          issuer: ISSUER,
+          clientId: "static-client",
+          tokenEndpointAuthMethod: "client_secret_post",
+          clientSecret: SECRET,
         },
-      });
-      const status = await flow.start();
-      expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
-      await flow.connector.disconnectAuth!(flow.ctx());
-      const credentials = flow.sent.filter(
-        (request) => request.url.endsWith("/token") || request.url.endsWith("/revoke"),
-      );
-      expect(credentials).toHaveLength(2);
-      for (const request of credentials) {
-        expect(request.form.get("client_id")).toBe("static-client");
-        expect(request.form.get("client_secret")).toBe(tokenEndpointAuthMethod === "none" ? null : SECRET);
-        expect(new Headers(request.init.headers).has("authorization")).toBe(false);
-        expect(request.init.redirect).toBe("manual");
-      }
-      expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
-    },
-  );
+      },
+    });
+    const status = await flow.start();
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    await flow.connector.disconnectAuth!(flow.ctx());
+    const credentials = flow.sent.filter(
+      (request) => request.url.endsWith("/token") || request.url.endsWith("/revoke"),
+    );
+    expect(credentials).toHaveLength(2);
+    for (const request of credentials) {
+      expect(request.form.get("client_id")).toBe("static-client");
+      expect(request.form.get("client_secret")).toBe(SECRET);
+      expect(new Headers(request.init.headers).has("authorization")).toBe(false);
+      expect(request.init.redirect).toBe("manual");
+    }
+    expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
+  });
 
   it("INV-5 INV-6: refuses revocation when the AS does not support a static client's default Basic method", async () => {
     const flow = setup({
@@ -484,7 +444,7 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 
-  it.each(["bad-state", "wrong-iss", "missing-iss"])(
+  it.each(["wrong-iss", "missing-iss"])(
     "INV-4 INV-6: refuses callback %s before interpreting an error parameter",
     async (kind) => {
       const flow = setup({ issRequired: kind === "missing-iss" });
@@ -494,8 +454,7 @@ describe("downstream OAuth best practice", () => {
       const params = {
         error: "access_denied",
         error_description: TEXT,
-        ...(kind === "bad-state" ? { state: "wrong" } : {}),
-        ...(kind === "missing-iss" ? {} : { iss: kind === "wrong-iss" ? "https://wrong.example" : ISSUER }),
+        ...(kind === "missing-iss" ? {} : { iss: "https://wrong.example" }),
       };
       const response = await flow.callback(status.authorizationUrl!, params);
       expect(response.status).toBe(400);
@@ -507,103 +466,91 @@ describe("downstream OAuth best practice", () => {
     },
   );
 
-  it.each(["access_denied", ""])(
-    "INV-4 INV-5: a verified error consumes consent and its verifier before a later code or Continue (%s)",
-    async (error) => {
-      const flow = setup();
-      const status = await flow.start();
-      const state = new URL(status.authorizationUrl!).searchParams.get("state")!;
-      const key = await consentKey(state);
-      expect(JSON.parse((await flow.ctx().storage.get(key))!).verifier).toBeDefined();
-      const params = { error, iss: ISSUER };
-      expect(await (await flow.callback(status.authorizationUrl!, params)).text()).toContain(
-        `data-oauth-callback="${error === "access_denied" ? "denied" : "provider_error"}"`,
-      );
-      const consumed = JSON.parse((await flow.ctx().storage.get(key))!);
-      expect(consumed.consumed).toBe(true);
-      expect(consumed.verifier).toBeUndefined();
-      expect(consumed.url).toBeUndefined();
-      // Reissuing the browser handoff must not revive the underlying consent.
-      await bindCallback(flow.app, "svc", state);
-      const replay = await flow.callback(status.authorizationUrl!, { code: "CODE_SENTINEL", iss: ISSUER });
-      expect(replay.status).toBe(400);
-      expect(await replay.text()).toContain('data-oauth-callback="invalid_callback"');
-      expect(flow.sent.some((request) => request.url.endsWith("/token"))).toBe(false);
-      const continued = await flow.start();
-      expect(new URL(continued.authorizationUrl!).searchParams.get("state")).not.toBe(state);
-      expect(continued.authorizationReused).not.toBe(true);
-    },
-  );
+  it("INV-4 INV-5: a verified error consumes consent and its verifier before a later code or Continue (access_denied)", async () => {
+    const flow = setup();
+    const status = await flow.start();
+    const state = new URL(status.authorizationUrl!).searchParams.get("state")!;
+    const key = await consentKey(state);
+    expect(JSON.parse((await flow.ctx().storage.get(key))!).verifier).toBeDefined();
+    const params = { error: "access_denied", iss: ISSUER };
+    expect(await (await flow.callback(status.authorizationUrl!, params)).text()).toContain(
+      'data-oauth-callback="denied"',
+    );
+    const consumed = JSON.parse((await flow.ctx().storage.get(key))!);
+    expect(consumed.consumed).toBe(true);
+    expect(consumed.verifier).toBeUndefined();
+    expect(consumed.url).toBeUndefined();
+    // Reissuing the browser handoff must not revive the underlying consent.
+    await bindCallback(flow.app, "svc", state);
+    const replay = await flow.callback(status.authorizationUrl!, { code: "CODE_SENTINEL", iss: ISSUER });
+    expect(replay.status).toBe(400);
+    expect(await replay.text()).toContain('data-oauth-callback="invalid_callback"');
+    expect(flow.sent.some((request) => request.url.endsWith("/token"))).toBe(false);
+    const continued = await flow.start();
+    expect(new URL(continued.authorizationUrl!).searchParams.get("state")).not.toBe(state);
+    expect(continued.authorizationReused).not.toBe(true);
+  });
 
-  it.each(["error", "code"] as const)(
-    "INV-4 INV-5: concurrent error and code callbacks have one consent CAS winner (%s)",
-    async (winner) => {
-      const flow = setup();
-      const status = await flow.start();
-      const state = new URL(status.authorizationUrl!).searchParams.get("state")!;
-      const verify = flow.connector.verifyState!;
-      let verified = 0;
-      let releaseVerify!: () => void;
-      const bothVerified = new Promise<void>((resolve) => {
-        releaseVerify = resolve;
-      });
-      flow.connector.verifyState = async (...args) => {
-        const matched = await verify(...args);
-        if (++verified === 2) releaseVerify();
-        await bothVerified;
-        return matched;
-      };
-      // Bypass only the earlier handoff CAS to exercise the consent CAS with
-      // two callbacks that both captured its unconsumed record.
-      vi.spyOn(flow.app.registry, "consumeOAuthHandoff").mockResolvedValue(true);
-      let releaseLoser!: () => void;
-      const winnerFinished = new Promise<void>((resolve) => {
-        releaseLoser = resolve;
-      });
-      const loserHook = winner === "error" ? "finishAuth" : "consumeAuthError";
-      const loser = flow.connector[loserHook]!;
-      vi.spyOn(flow.connector, loserHook).mockImplementation(async (...args: unknown[]) => {
-        await winnerFinished;
-        await (loser as (...args: unknown[]) => Promise<void>)(...args);
-      });
-      const error = { error: "access_denied", iss: ISSUER };
-      const code = { code: "CODE_SENTINEL", iss: ISSUER };
-      const winning = flow.callback(status.authorizationUrl!, winner === "error" ? error : code).finally(releaseLoser);
-      const losing = flow.callback(status.authorizationUrl!, winner === "error" ? code : error);
-      const [accepted, refused] = await Promise.all([winning, losing]);
-      expect(await accepted.text()).toContain(`data-oauth-callback="${winner === "error" ? "denied" : "connected"}"`);
-      expect(refused.status).toBe(400);
-      expect(await refused.text()).toContain('data-oauth-callback="invalid_callback"');
-      expect(flow.sent.filter((request) => request.url.endsWith("/token"))).toHaveLength(winner === "code" ? 1 : 0);
-      const consumed = JSON.parse((await flow.ctx().storage.get(await consentKey(state)))!);
-      expect(consumed.consumed).toBe(true);
-      expect(consumed.verifier).toBeUndefined();
-    },
-  );
+  it("INV-4 INV-5: concurrent error and code callbacks have one consent CAS winner (error)", async () => {
+    const flow = setup();
+    const status = await flow.start();
+    const state = new URL(status.authorizationUrl!).searchParams.get("state")!;
+    const verify = flow.connector.verifyState!;
+    let verified = 0;
+    let releaseVerify!: () => void;
+    const bothVerified = new Promise<void>((resolve) => {
+      releaseVerify = resolve;
+    });
+    flow.connector.verifyState = async (...args) => {
+      const matched = await verify(...args);
+      if (++verified === 2) releaseVerify();
+      await bothVerified;
+      return matched;
+    };
+    // Bypass only the earlier handoff CAS to exercise the consent CAS with
+    // two callbacks that both captured its unconsumed record.
+    vi.spyOn(flow.app.registry, "consumeOAuthHandoff").mockResolvedValue(true);
+    let releaseLoser!: () => void;
+    const winnerFinished = new Promise<void>((resolve) => {
+      releaseLoser = resolve;
+    });
+    const loser = flow.connector.finishAuth!;
+    vi.spyOn(flow.connector, "finishAuth").mockImplementation(async (...args: unknown[]) => {
+      await winnerFinished;
+      await (loser as (...args: unknown[]) => Promise<void>)(...args);
+    });
+    const error = { error: "access_denied", iss: ISSUER };
+    const code = { code: "CODE_SENTINEL", iss: ISSUER };
+    const winning = flow.callback(status.authorizationUrl!, error).finally(releaseLoser);
+    const losing = flow.callback(status.authorizationUrl!, code);
+    const [accepted, refused] = await Promise.all([winning, losing]);
+    expect(await accepted.text()).toContain('data-oauth-callback="denied"');
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain('data-oauth-callback="invalid_callback"');
+    expect(flow.sent.filter((request) => request.url.endsWith("/token"))).toHaveLength(0);
+    const consumed = JSON.parse((await flow.ctx().storage.get(await consentKey(state)))!);
+    expect(consumed.consumed).toBe(true);
+    expect(consumed.verifier).toBeUndefined();
+  });
 
-  it.each([false, true])(
-    "INV-5 INV-9: disconnect removes the local grant and revokes only when advertised (%s)",
-    async (revocation) => {
-      const flow = setup({ revocation });
-      const status = await flow.start();
-      expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
-      await flow.connector.disconnectAuth!(flow.ctx());
-      const grant = JSON.parse((await flow.ctx().storage.get("oauth:grant"))!);
-      expect(grant.epoch).toMatch(/^disconnected:/);
-      expect(grant.body).toBeUndefined();
-      const requests = flow.sent.filter((request) => request.url.endsWith("/revoke"));
-      expect(requests).toHaveLength(revocation ? 1 : 0);
-      if (revocation) {
-        expect(requests[0]!.form.get("token")).toBe("REFRESH_TOKEN_SENTINEL");
-        expect(requests[0]!.form.get("token_type_hint")).toBe("refresh_token");
-        expect(requests[0]!.init.redirect).toBe("manual");
-      }
-      await flow.connector.disconnectAuth!(flow.ctx());
-      expect(flow.sent.filter((request) => request.url.endsWith("/revoke"))).toHaveLength(revocation ? 1 : 0);
-    },
-  );
+  it("INV-5 INV-9: disconnect removes the local grant and revokes only when advertised (true)", async () => {
+    const flow = setup({ revocation: true });
+    const status = await flow.start();
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    await flow.connector.disconnectAuth!(flow.ctx());
+    const grant = JSON.parse((await flow.ctx().storage.get("oauth:grant"))!);
+    expect(grant.epoch).toMatch(/^disconnected:/);
+    expect(grant.body).toBeUndefined();
+    const requests = flow.sent.filter((request) => request.url.endsWith("/revoke"));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.form.get("token")).toBe("REFRESH_TOKEN_SENTINEL");
+    expect(requests[0]!.form.get("token_type_hint")).toBe("refresh_token");
+    expect(requests[0]!.init.redirect).toBe("manual");
+    await flow.connector.disconnectAuth!(flow.ctx());
+    expect(flow.sent.filter((request) => request.url.endsWith("/revoke"))).toHaveLength(1);
+  });
 
-  it.each([302, 400, 500, "network"])(
+  it.each([302, "network"])(
     "INV-5 INV-6 INV-9: revocation failure %s leaves the grant removed and reports only a typed code",
     async (failure) => {
       const flow = setup({

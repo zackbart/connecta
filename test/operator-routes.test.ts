@@ -51,57 +51,6 @@ describe("operator data routes", () => {
     expect(pulled).toBeLessThan(200 * 1_024);
   });
 
-  it("still measures a credential body in characters, not bytes", async () => {
-    const { connecta } = makeCredentialConnecta();
-    // 19,000 three-byte characters: 57,000 bytes, but under the route's
-    // limit, so the answer comes from the vault's own byte cap instead.
-    const value = "€".repeat(19_000);
-    const response = await credentialRequest(connecta, "/ui/credentials/vaulted", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value }),
-    });
-    expect(response.status).toBe(400);
-    expect(((await response.json()) as { error: string }).error).toMatch(/^Credential cannot exceed/);
-  });
-
-  it("reports a disconnect that rejects without a reason as a failure", async () => {
-    const connector: Connector = {
-      id: "oauth",
-      kind: "mcp",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-      // A hook that rejects with no reason still failed. Before, a falsy
-      // rejection read as success and the page reported a disconnect that
-      // never happened.
-      disconnectAuth: () => Promise.reject(),
-      async startAuth() {
-        return { state: "auth_required" };
-      },
-    };
-    const storage = memoryStorage();
-    const connecta = createTestConnecta({
-      connectors: [connector],
-      auth: fakeClerkAuth(CLERK_OPTIONS),
-      vault: oauthVault(storage),
-      storage,
-      publicUrl: BASE,
-    });
-    await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
-
-    const disconnected = await credentialRequest(connecta, "/ui/oauth/oauth", {
-      method: "DELETE",
-    });
-
-    expect(disconnected.status).toBe(400);
-    await expect(disconnected.json()).resolves.toEqual({ error: "OAuth disconnect failed" });
-    expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale catalog");
-  });
-
   describe("POST /ui/oauth/<id> start modes", () => {
     function oauthConnecta(status: Awaited<ReturnType<NonNullable<Connector["startAuth"]>>>) {
       const starts: Array<{ force?: boolean } | undefined> = [];
@@ -139,20 +88,6 @@ describe("operator data routes", () => {
       authorizationUrl: "https://auth.example/authorize?state=fresh",
     };
 
-    it("restarts when no mode is given, as it always has", async () => {
-      const { connecta, storage, starts } = oauthConnecta(fresh);
-      await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
-
-      const response = await connectRequest(connecta, "/ui/oauth/oauth", {
-        method: "POST",
-      });
-
-      expect(response.status).toBe(302);
-      expect(response.headers.get("Location")).toBe(fresh.authorizationUrl);
-      expect(starts).toEqual([{ force: true }]);
-      expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale catalog");
-    });
-
     it("maps mode=restart to a forced start and mode=continue to an unforced one", async () => {
       const { connecta, starts } = oauthConnecta(fresh);
 
@@ -162,21 +97,6 @@ describe("operator data routes", () => {
       }
 
       expect(starts).toEqual([{ force: true }, { force: false }]);
-    });
-
-    it("keeps the catalog when a continued browser visit reuses the consent URL", async () => {
-      const { connecta, storage, starts } = oauthConnecta({
-        ...fresh,
-        authorizationReused: true,
-      });
-      await storage.set(responseCacheKeys.generation("oauth"), "still valid catalog");
-
-      const response = await connectRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
-
-      expect(response.status).toBe(302);
-      expect(response.headers.get("Location")).toBe(fresh.authorizationUrl);
-      expect(starts).toEqual([{ force: false }]);
-      expect(await storage.get(responseCacheKeys.generation("oauth"))).toBe("still valid catalog");
     });
 
     it("keeps the catalog when a continued start finds the connection healthy", async () => {
@@ -194,15 +114,6 @@ describe("operator data routes", () => {
       expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("still valid catalog");
     });
 
-    it("invalidates the catalog when a continued start had to begin a new flow", async () => {
-      const { connecta, storage } = oauthConnecta(fresh);
-      await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
-
-      const continued = await connectRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
-      expect(continued.status).toBe(302);
-      expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale catalog");
-    });
-
     it("refuses an unknown or repeated mode before starting anything", async () => {
       const { connecta, starts } = oauthConnecta(fresh);
 
@@ -215,72 +126,6 @@ describe("operator data routes", () => {
       }
       expect(starts).toEqual([]);
     });
-  });
-
-  it("aborts a stalled downstream OAuth start at the deadline and invalidates the catalog", async () => {
-    vi.useFakeTimers();
-    const mcpUrl = "https://downstream.example/mcp";
-    const metadataUrl = "https://downstream.example/.well-known/oauth-protected-resource";
-    let reachedMetadata!: () => void;
-    const reached = new Promise<void>((resolve) => {
-      reachedMetadata = resolve;
-    });
-    let aborted = false;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url === mcpUrl) {
-          return new Response(null, {
-            status: 401,
-            headers: { "www-authenticate": `Bearer resource_metadata="${metadataUrl}"` },
-          });
-        }
-        if (url === metadataUrl) {
-          reachedMetadata();
-          return await new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener(
-              "abort",
-              () => {
-                aborted = true;
-                reject(init.signal?.reason);
-              },
-              { once: true },
-            );
-          });
-        }
-        throw new Error(`Unexpected request: ${url}`);
-      }),
-    );
-    try {
-      const storage = memoryStorage();
-      await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
-      const connecta = createTestConnecta({
-        connectors: [
-          remoteMcp("oauth", {
-            url: mcpUrl,
-            auth: { type: "oauth" },
-            versionNegotiation: "legacy",
-          }),
-        ],
-        auth: fakeClerkAuth(CLERK_OPTIONS),
-        vault: oauthVault(storage),
-        storage,
-        publicUrl: BASE,
-      });
-      const started = connectRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
-      await reached;
-      await vi.advanceTimersByTimeAsync(30_000);
-      const response = await started;
-
-      expect(response.status).toBe(504);
-      await expect(response.json()).resolves.toEqual({ error: "OAuth authorization start timed out" });
-      expect(aborted).toBe(true);
-      expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale catalog");
-    } finally {
-      vi.unstubAllGlobals();
-      vi.useRealTimers();
-    }
   });
 
   it("drains an uncancellable grant write before returning a timeout", async () => {

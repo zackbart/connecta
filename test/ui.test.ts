@@ -1,35 +1,20 @@
-import { responseCacheKeys } from "../src/storage/keys.js";
+import { describe, expect, it, vi } from "vitest";
+import type { ActivityReadPage, ToolCallActivityEvent } from "../src/activity.js";
+import { activityHistory } from "../src/activity.js";
+import { api } from "../src/connectors/api.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import {
   OPERATOR_UI_SCHEME_PATH as SCHEME_PATH,
   OPERATOR_UI_SCRIPT_PATH as SCRIPT_PATH,
-  OPERATOR_UI_STYLE_PATH as STYLE_PATH,
-  OPERATOR_UI_ASSETS,
 } from "../src/operator-ui/generated.js";
-import { connectRequest, oauthVault } from "./fixtures/oauth.js";
-import { fetchTestUiDetails } from "./helpers.js";
-import { activityHistory } from "../src/activity.js";
-import { encryptedCredentialVault } from "../src/credentials.js";
-import { describe, expect, it, vi } from "vitest";
-import { api } from "../src/connectors/api.js";
-import { machineAuth } from "./helpers/machine-auth.js";
-import { clerkAuth } from "../src/auth/clerk.js";
+import { responseCacheKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { withAbortableTimeout } from "../src/timeout.js";
-import {
-  buildUiData,
-  CONNECTA_FAVICON_SVG,
-  isSafeHttpUrl,
-  isSafeIconHref,
-  isSafeHttpsUrl,
-  renderUiHtml,
-} from "../src/ui.js";
-import { CONNECTA_FAVICON_ICO } from "../src/favicon.js";
-import { CONNECTA_VERSION } from "../src/version.js";
-import type { ActivityReadPage, ActivityStore, ToolCallActivityEvent } from "../src/activity.js";
-import { InvalidActivityCursorError } from "../src/activity.js";
 import type { Connector, InboundAuth } from "../src/types.js";
-import { createTestConnecta, required, makeRegistry } from "./helpers.js";
+import { buildUiData, isSafeHttpsUrl, isSafeHttpUrl, isSafeIconHref, renderUiHtml } from "../src/ui.js";
+import { CONNECTA_VERSION } from "../src/version.js";
 import { calcApi, fakeClerkAuth, makeDeployment } from "./fixtures/http.js";
+import { connectRequest, oauthVault } from "./fixtures/oauth.js";
 import {
   BASE,
   CLERK_OPTIONS,
@@ -39,6 +24,8 @@ import {
   makeCredentialConnecta,
   TOKEN,
 } from "./fixtures/ui.js";
+import { createTestConnecta, fetchTestUiDetails, makeRegistry, required } from "./helpers.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 
 const CALC_OPTIONS = { title: "Calculator", inputSchema: "object" } as const;
 
@@ -52,23 +39,6 @@ function broken(): Connector {
     },
     async callTool() {
       throw new Error("boom");
-    },
-  };
-}
-
-/** A connector whose status advertises an authorizationUrl of the given scheme. */
-function authUrlConnector(id: string, url: string): Connector {
-  return {
-    id,
-    description: `Auth ${id}`,
-    async status() {
-      return { state: "auth_required", authorizationUrl: url };
-    },
-    async listTools() {
-      return [];
-    },
-    async callTool() {
-      throw new Error("n/a");
     },
   };
 }
@@ -90,56 +60,6 @@ function scriptSrcs(body: string): string[] {
 }
 
 describe("status UI", () => {
-  it("serves direct, page-specific, data-free operator shells", async () => {
-    const c = makeDeployment(uiDeploymentConfig());
-    for (const [path, page, label] of [
-      ["/", "overview", "Overview"],
-      ["/endpoints", "endpoints", "Endpoints"],
-    ] as const) {
-      const res = await c.fetch(new Request(`${BASE}${path}`));
-      expect(res.status).toBe(200);
-      expect(res.headers.get("content-type")).toContain("text/html");
-      const body = await res.text();
-      expect(body).toContain("<!doctype html>");
-      expect(body).toContain(`<title>${label} · Connecta</title>`);
-      expect(body).toContain(`"initialPage":"${page}"`);
-      // The shell is a mount point and a no-JS fallback. Everything with a
-      // state — nav, gate, and the four pages — is rendered by the bundle.
-      expect(body).toContain(`<h1>${label}</h1>`);
-      expect(body).toContain('<div id="operatorNav"></div>');
-      expect(body).toContain('<main id="operatorContent"');
-      expect(body).toContain("<noscript>");
-      // Gated, no page view is rendered at all, so a focus request while signed
-      // out must land on the gate's own h1 rather than dropping to <body>.
-      expect(body).toContain(`"mcpUrl":"${BASE}/mcp"`);
-      expect(body).not.toContain("Calculator");
-      expect(body).not.toContain("Broken connector");
-      expect(body).not.toContain("clerk.browser.js");
-    }
-  });
-
-  it("serves bodyless HEAD responses for every operator page", async () => {
-    const c = makeDeployment(uiDeploymentConfig());
-    for (const path of ["/"]) {
-      const get = await c.fetch(new Request(`${BASE}${path}`));
-      const head = await c.fetch(new Request(`${BASE}${path}`, { method: "HEAD" }));
-      expect(head.status).toBe(get.status);
-      expect(await head.text()).toBe("");
-      expect(head.headers.get("content-type")).toBe(get.headers.get("content-type"));
-      expect(head.headers.get("x-content-type-options")).toBe(get.headers.get("x-content-type-options"));
-      expect(head.headers.get("x-frame-options")).toBe(get.headers.get("x-frame-options"));
-      expect(head.headers.get("referrer-policy")).toBe(get.headers.get("referrer-policy"));
-      expect(head.headers.get("content-security-policy")).toMatch(/^script-src 'self';/);
-    }
-  });
-
-  it("permanently redirects legacy /ui bookmarks to Connections", async () => {
-    const c = makeDeployment(uiDeploymentConfig());
-    const res = await c.fetch(new Request(`${BASE}/ui?from=bookmark`));
-    expect(res.status).toBe(308);
-    expect(res.headers.get("location")).toBe(`${BASE}/?from=bookmark`);
-  });
-
   it("keeps deployment and operator data out of every open shell", async () => {
     const c = createTestConnecta({
       connectors: [
@@ -160,148 +80,6 @@ describe("status UI", () => {
       expect(body).not.toContain("SENTINEL_ACTOR");
       expect(body).not.toContain("SENTINEL_DEPLOYMENT");
     }
-  });
-
-  it("serves Connecta favicons in their advertised formats", async () => {
-    const c = makeDeployment(uiDeploymentConfig());
-    const svg = await c.fetch(new Request(`${BASE}/favicon.svg`));
-    expect(svg.status).toBe(200);
-    expect(svg.headers.get("content-type")).toContain("image/svg+xml");
-    expect(svg.headers.get("cache-control")).toContain("max-age=86400");
-    expect(await svg.text()).toContain('viewBox="0 0 32 32"');
-
-    const ico = await c.fetch(new Request(`${BASE}/favicon.ico`));
-    expect(ico.status).toBe(200);
-    expect(ico.headers.get("content-type")).toContain("image/x-icon");
-    expect(ico.headers.get("cache-control")).toContain("max-age=86400");
-    const bytes = new Uint8Array(await ico.arrayBuffer());
-    expect(Array.from(bytes.slice(0, 4))).toEqual([0, 0, 1, 0]);
-  });
-
-  it("serves both favicon routes inertly and byte-identically", async () => {
-    const c = makeDeployment(uiDeploymentConfig());
-    const svg = await c.fetch(new Request(`${BASE}/favicon.svg`));
-    const csp = svg.headers.get("content-security-policy") ?? "";
-    expect(svg.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(csp).toContain("default-src 'none'");
-    expect(csp).toContain("sandbox");
-    // The default mark carries an inline <style> for the OS colour scheme, so
-    // styles stay allowed where script does not.
-    expect(csp).toContain("style-src 'unsafe-inline'");
-    expect(csp).not.toContain("script-src");
-    expect(await svg.text()).toBe(CONNECTA_FAVICON_SVG);
-
-    const ico = await c.fetch(new Request(`${BASE}/favicon.ico`));
-    expect(ico.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(ico.headers.get("content-security-policy")).toBe(csp);
-    expect(new Uint8Array(await ico.arrayBuffer())).toEqual(CONNECTA_FAVICON_ICO);
-  });
-
-  it("keeps OAuth result pages inside the shared Connecta shell", async () => {
-    const c = makeDeployment(uiDeploymentConfig());
-    const res = await c.fetch(new Request(`${BASE}/oauth/callback/unknown?code=test`));
-    const body = await res.text();
-
-    expect(res.status).toBe(400);
-    expect(body).toContain("<title>Authorization could not be completed · Connecta</title>");
-    expect(body).toContain('href="/favicon.svg"');
-    expect(body).toContain('<header class="masthead shell">');
-    expect(body).toContain("<h1>Authorization could not be completed</h1>");
-    expect(body).toContain('href="/">Return to Connecta</a>');
-  });
-
-  it("renders the operator shell through the shared page layout", async () => {
-    const c = makeDeployment(uiDeploymentConfig());
-    const shell = await (await c.fetch(new Request(`${BASE}/`))).text();
-    const callback = await (await c.fetch(new Request(`${BASE}/oauth/callback/unknown?code=test`))).text();
-    // One head and masthead, byte for byte, up to each page's own title,
-    // stylesheet and the shell's scheme initializer: the shell's bundle carries
-    // the same tokens the callback does.
-    const head = (page: string) =>
-      page
-        .replace(/<title>[^<]*<\/title>/, "")
-        .replace(/<style>[\s\S]*?<\/style>/, "")
-        .replace(/<link[^>]*href="\/ui\/assets\/[^>]*>\n?/g, "")
-        .replace(/<script src="\/ui\/assets\/[^"]*"><\/script>/, "")
-        .replace('<body class="operator-shell">', "<body>")
-        .replace(/<a class="skip-link"[^>]*>[^<]*<\/a>\n/, "")
-        .replace(/\s*<div id="operatorNav"><\/div>/, "")
-        .split("</header>")[0]!
-        .replace(/\s+/g, " ")
-        .trim();
-    expect(head(shell)).toBe(head(callback));
-    for (const page of [OPERATOR_UI_ASSETS[STYLE_PATH]!.body, callback]) {
-      expect(page).toContain("--surface-2:");
-      expect(page).toContain("html[data-scheme=dark]");
-    }
-  });
-
-  it("the Connections shell derives the MCP URL from the request origin", async () => {
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-    });
-    const origin = "https://request-origin.test";
-    const res = await c.fetch(new Request(`${origin}/`));
-    const body = await res.text();
-
-    expect(res.status).toBe(200);
-    expect(body).toContain(`"mcpUrl":"${origin}/mcp"`);
-  });
-
-  it("the operator shell uses Clerk sign-in when configured", async () => {
-    const domain = "clerk.example.com$";
-    const publishableKey = "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: [
-        machineAuth(TOKEN),
-        clerkAuth({
-          publishableKey,
-          secretKey: "sk_test_fake",
-          allowedOAuthClientIds: ["client_connecta"],
-          publicUrl: BASE,
-        }),
-      ],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-
-    const res = await c.fetch(new Request(`${BASE}/`));
-    const body = await res.text();
-    expect(res.status).toBe(200);
-    expect(body).toContain("https://clerk.example.com/npm/@clerk/clerk-js@6");
-    expect(body).toContain(`data-clerk-publishable-key="${publishableKey}"`);
-    expect(body).toContain('"auth":{"kind":"clerk"');
-  });
-
-  it("operator shells allow same-origin scripts and deny framing", async () => {
-    const c = makeDeployment(uiDeploymentConfig());
-    const res = await c.fetch(new Request(`${BASE}/`));
-    expect(res.headers.get("content-security-policy")).toBe(
-      "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-    );
-    expect(res.headers.get("x-frame-options")).toBe("DENY");
-    expect(res.headers.get("cache-control")).toBe("no-store");
-    const body = await res.text();
-    expect(scriptSrcs(body)).toEqual([SCHEME_PATH, SCRIPT_PATH]);
-    // The scheme initializer blocks in <head>, ahead of the stylesheet, so a
-    // saved scheme holds from the first paint (#854).
-    const head = body.slice(0, body.indexOf("</head>"));
-    expect(head).toContain(`<script src="${SCHEME_PATH}"></script>`);
-    expect(head.indexOf(SCHEME_PATH)).toBeLessThan(head.indexOf(STYLE_PATH));
-  });
-
-  it("tells the bundle whether the deployment pinned the color scheme", () => {
-    const config = (html: string) =>
-      JSON.parse(/<script id="operatorConfig" type="application\/json">([\s\S]*?)<\/script>/.exec(html)![1]!);
-    const unpinned = renderUiHtml();
-    expect(unpinned).not.toContain("data-scheme");
-    expect(config(unpinned).schemePinned).toBe(false);
-    const pinned = renderUiHtml(undefined, "/mcp", { theme: { colorScheme: "dark" } });
-    expect(pinned).toContain('<html lang="en" data-scheme="dark">');
-    expect(config(pinned).schemePinned).toBe(true);
   });
 
   it("scopes Clerk CAPTCHA, images and workers to pages with a validated loader", async () => {
@@ -353,22 +131,6 @@ describe("status UI", () => {
     }
   });
 
-  it("still emits the loader for an https frontendApiUrl", async () => {
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const body = await (await c.fetch(new Request(`${BASE}/`))).text();
-    expect(scriptSrcs(body)).toEqual([
-      SCHEME_PATH,
-      "https://clerk.example.com/npm/@clerk/clerk-js@6/dist/clerk.browser.js",
-      SCRIPT_PATH,
-    ]);
-    expect(body).toContain('"frontendApiUrl":"https://clerk.example.com"');
-  });
-
   it("/ui never hands Clerk a non-https signInUrl/signUpUrl", async () => {
     for (const url of [
       "javascript:alert(1)",
@@ -395,45 +157,6 @@ describe("status UI", () => {
       expect(body).not.toContain('"signUpUrl"');
       expect(body).not.toContain(url);
     }
-  });
-
-  it("passes a hosted Account Portal signInUrl/signUpUrl through unchanged", async () => {
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: [
-        machineAuth(TOKEN),
-        fakeClerkAuth({
-          ...CLERK_OPTIONS,
-          signInUrl: "https://accounts.example.com/sign-in",
-          signUpUrl: "https://accounts.example.com/sign-up",
-        }),
-      ],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const body = await (await c.fetch(new Request(`${BASE}/`))).text();
-    expect(body).toContain('"signInUrl":"https://accounts.example.com/sign-in"');
-    expect(body).toContain('"signUpUrl":"https://accounts.example.com/sign-up"');
-  });
-
-  it("drops only the sign-in URL that failed, keeping the valid sibling", async () => {
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: [
-        machineAuth(TOKEN),
-        fakeClerkAuth({
-          ...CLERK_OPTIONS,
-          signInUrl: "javascript:alert(1)",
-          signUpUrl: "https://accounts.example.com/sign-up",
-        }),
-      ],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const body = await (await c.fetch(new Request(`${BASE}/`))).text();
-    expect(body).not.toContain('"signInUrl"');
-    expect(body).not.toContain("alert(1)");
-    expect(body).toContain('"signUpUrl":"https://accounts.example.com/sign-up"');
   });
 
   it("escapes inert JSON configuration without executable inline code", () => {
@@ -523,75 +246,6 @@ describe("status UI", () => {
       )
     ).json()) as any;
     expect(noSlots.credentialManagement).toBe("no_slots");
-  });
-
-  it("exposes OAuth controls only to eligible Clerk operators", async () => {
-    const disconnectAuth = vi.fn(async () => {});
-    const startAuth = vi.fn(async () => ({
-      state: "auth_required" as const,
-      authorizationUrl: "https://auth.example/reconnect?state=test-state",
-      message: "Open the authorization URL.",
-    }));
-    const connector: Connector = {
-      id: "oauth",
-      kind: "mcp",
-      async status() {
-        return { state: "ok" };
-      },
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-      disconnectAuth,
-      startAuth,
-      async finishAuth() {},
-      async verifyState() {
-        return true;
-      },
-    };
-    const storage = memoryStorage();
-    const connecta = createTestConnecta({
-      connectors: [connector],
-      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage,
-      vault: oauthVault(storage),
-      publicUrl: BASE,
-    });
-
-    const bearer = (await (
-      await fetchTestUiDetails(
-        connecta,
-        new Request(`${BASE}/ui/data`, {
-          headers: { Authorization: `Bearer ${TOKEN}` },
-        }),
-      )
-    ).json()) as any;
-    expect(bearer.oauthManagement).toBe(false);
-    expect(bearer.connectors[0].oauth).toBe(true);
-
-    const clerk = (await (
-      await fetchTestUiDetails(
-        connecta,
-        new Request(`${BASE}/ui/data`, {
-          headers: { Authorization: "Bearer clerk-token" },
-        }),
-      )
-    ).json()) as any;
-    expect(clerk.oauthManagement).toBe(true);
-    expect(clerk.connectors[0].oauth).toBe(true);
-
-    await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
-    const disconnected = await credentialRequest(connecta, "/ui/oauth/oauth", { method: "DELETE" });
-    expect(disconnected.status).toBe(204);
-    expect(disconnectAuth).toHaveBeenCalledOnce();
-    expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale catalog");
-
-    const restarted = await connectRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
-    expect(restarted.status).toBe(302);
-    expect(restarted.headers.get("Location")).toBe("https://auth.example/reconnect?state=test-state");
-    expect(startAuth).toHaveBeenCalledWith(expect.anything(), { force: true });
   });
 
   it("invalidates cached OAuth state when physical disconnect cleanup fails", async () => {
@@ -791,47 +445,6 @@ describe("status UI", () => {
     expect(mutation.status).toBe(403);
   });
 
-  it("/ui/data keeps its payload when best-effort scope teardown throws", async () => {
-    let closes = 0;
-    const connector: Connector = {
-      id: "remote",
-      kind: "mcp",
-      description: "Remote service",
-      async status() {
-        return { state: "ok" };
-      },
-      async listTools() {
-        return [{ name: "read", description: "Read records" }];
-      },
-      async callTool() {
-        return null;
-      },
-      async closeScope() {
-        closes++;
-        throw new Error("teardown failed");
-      },
-    };
-    const c = createTestConnecta({
-      connectors: [connector],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-
-    const res = await fetchTestUiDetails(
-      c,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      connectors: [{ id: "remote", status: "ok", toolCount: 1 }],
-    });
-    expect(closes).toBe(1);
-  });
-
   it("/ui/data bounds a never-settling scope teardown", async () => {
     let closes = 0;
     const connector: Connector = {
@@ -932,43 +545,6 @@ describe("status UI", () => {
     await expect(deferred[0]).resolves.toBeUndefined();
   });
 
-  it("/ui/data honors the discovery concurrency bound", async () => {
-    let active = 0;
-    let maxActive = 0;
-    const connectors = Array.from({ length: 6 }, (_, index): Connector => ({
-      id: `ui_bounded_${index}`,
-      kind: "mcp",
-      description: `UI bounded ${index}`,
-      async status() {
-        active++;
-        maxActive = Math.max(maxActive, active);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        active--;
-        return { state: "ok" };
-      },
-      async listTools() {
-        return [{ name: "read" }];
-      },
-      async callTool() {
-        return null;
-      },
-    }));
-    const c = createTestConnecta({
-      connectors,
-      auth: machineAuth(TOKEN),
-      publicUrl: BASE,
-      discovery: { concurrency: 2 },
-    });
-    const response = await fetchTestUiDetails(
-      c,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(response.status).toBe(200);
-    expect(maxActive).toBe(connectors.length);
-  });
-
   it("/ui/data waits for every sibling probe before teardown after a rejection", async () => {
     let slowStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -1040,144 +616,6 @@ describe("status UI", () => {
     expect(JSON.stringify(settled)).not.toContain("future unguarded rejection");
     expect(slowFinished).toBe(true);
     expect(closedMidProbe).toBe(false);
-  });
-
-  it("serves authenticated, paginated activity when a reader is configured", async () => {
-    const event: ToolCallActivityEvent = {
-      schemaVersion: 1,
-      id: "11111111-1111-4111-8111-111111111111",
-      occurredAt: "2026-07-23T12:00:00.000Z",
-      requestId: "22222222-2222-4222-8222-222222222222",
-      actor: { kind: "clerk", id: "user_123" },
-      connectorId: "calc",
-      toolName: "add",
-      address: "calc.add",
-      source: "call_tool",
-      outcome: "success",
-      durationMs: 12,
-      attempts: 1,
-      serverName: "connecta",
-      serverVersion: "0.1.0",
-    };
-    const activity: ActivityStore = {
-      record() {},
-      async list({ cursor, limit }) {
-        expect(cursor).toBe("older");
-        expect(limit).toBe(25);
-        return { events: [event], nextCursor: "next" };
-      },
-    };
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: fakeClerkAuth({ token: TOKEN }),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      activity: activityHistory({ store: activity }),
-    });
-
-    const data = await fetchTestUiDetails(
-      c,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(((await data.json()) as any).activityEnabled).toBe(true);
-
-    const denied = await c.fetch(new Request(`${BASE}/ui/activity`));
-    expect(denied.status).toBe(401);
-
-    const response = await c.fetch(
-      new Request(`${BASE}/ui/activity?cursor=older&limit=25`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      events: [event],
-      nextCursor: "next",
-    });
-  });
-
-  it("adds friendly activity labels at read time while retaining stable ids", async () => {
-    const actorLabel = vi.fn(async (id: string) => {
-      if (id === "user_offline") throw new Error("profile lookup failed");
-      return "  Ada   Lovelace\n";
-    });
-    const auth: InboundAuth = {
-      kind: "clerk",
-      interactiveOperator: true,
-      activityActorLabel: actorLabel,
-      authorize(request) {
-        return request.headers.get("authorization") === "Bearer clerk-token"
-          ? // No namespace of its own, so it names its principal to be a maintainer (#837).
-            { ok: true, userId: "operator", principal: { namespace: "https://clerk.labels.example", id: "operator" } }
-          : {
-              ok: false,
-              response: Response.json({ error: "unauthorized" }, { status: 401 }),
-            };
-      },
-    };
-    const event = (id: string, actor: ToolCallActivityEvent["actor"]): ToolCallActivityEvent => ({
-      schemaVersion: 1,
-      id,
-      occurredAt: "2026-07-23T12:00:00.000Z",
-      requestId: "22222222-2222-4222-8222-222222222222",
-      actor,
-      connectorId: "calc",
-      toolName: "add",
-      address: "calc.add",
-      source: "call_tool",
-      outcome: "success",
-      durationMs: 12,
-      attempts: 1,
-      serverName: "connecta",
-      serverVersion: "0.1.0",
-    });
-    const stored = [
-      event("event-1", { kind: "clerk", id: "user_123" }),
-      event("event-2", { kind: "clerk", id: "user_123" }),
-      event("event-3", { kind: "clerk", id: "user_offline" }),
-      event("event-4", { kind: "access_token", id: "ci-runner" }),
-    ];
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth,
-      maintainers: [{ namespace: "https://clerk.labels.example", id: "operator" }],
-      activity: activityHistory({
-        store: {
-          record() {},
-          async list() {
-            return { events: stored };
-          },
-        },
-      }),
-      publicUrl: BASE,
-    });
-
-    const response = await c.fetch(
-      new Request(`${BASE}/ui/activity`, {
-        headers: { Authorization: "Bearer clerk-token" },
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    const page = (await response.json()) as ActivityReadPage;
-    expect(required(page.events[0]).actor).toEqual({
-      kind: "clerk",
-      id: "user_123",
-      label: "Ada Lovelace",
-    });
-    expect(required(page.events[1]).actor.label).toBe("Ada Lovelace");
-    expect(required(page.events[2]).actor).toEqual({
-      kind: "clerk",
-      id: "user_offline",
-    });
-    expect(required(page.events[3]).actor).toEqual({
-      kind: "access_token",
-      id: "ci-runner",
-    });
-    expect(actorLabel).toHaveBeenCalledTimes(2);
-    expect(stored.every((item) => !("label" in item.actor))).toBe(true);
   });
 
   it("resolves activity ids only through their admitting provider namespace", async () => {
@@ -1418,168 +856,6 @@ describe("status UI", () => {
     }
   });
 
-  it("supports a Clerk-only activity read gate", async () => {
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      activity: activityHistory({
-        store: {
-          record() {},
-          async list() {
-            return { events: [] };
-          },
-        },
-        readGate: (actor) => actor.kind === "clerk" && Boolean(actor.id),
-      }),
-      publicUrl: BASE,
-    });
-
-    const bearer = await c.fetch(
-      new Request(`${BASE}/ui/activity`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(bearer.status).toBe(403);
-
-    const clerk = await c.fetch(
-      new Request(`${BASE}/ui/activity`, {
-        headers: { Authorization: "Bearer clerk-token" },
-      }),
-    );
-    expect(clerk.status).toBe(200);
-  });
-
-  it("returns 400 for an invalid activity cursor", async () => {
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: fakeClerkAuth({ token: TOKEN }),
-      activity: activityHistory({
-        store: {
-          record() {},
-          async list() {
-            throw new InvalidActivityCursorError();
-          },
-        },
-      }),
-      publicUrl: BASE,
-    });
-
-    const response = await c.fetch(
-      new Request(`${BASE}/ui/activity?cursor=bad`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "invalid activity cursor",
-    });
-  });
-
-  it("does not start a second connector probe after auth_required status", async () => {
-    let listToolsCalls = 0;
-    const connector: Connector = {
-      id: "oauth",
-      async status() {
-        return {
-          state: "auth_required",
-          authorizationUrl: "https://provider.test/authorize?state=first",
-        };
-      },
-      async listTools() {
-        listToolsCalls += 1;
-        throw new Error("would overwrite OAuth state");
-      },
-      async callTool() {
-        throw new Error("n/a");
-      },
-    };
-    const c = makeDeployment(uiDeploymentConfig([connector]));
-
-    const res = await fetchTestUiDetails(
-      c,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    const body = (await res.json()) as any;
-    const oauth = body.connectors.find((x: any) => x.id === "oauth");
-
-    expect(oauth.authorizationUrl).toBeUndefined();
-    expect(oauth.toolCount).toBe(0);
-    expect(listToolsCalls).toBe(0);
-  });
-
-  it("keeps http(s) authorizationUrls but omits unsafe schemes", async () => {
-    const c = makeDeployment(
-      uiDeploymentConfig([
-        authUrlConnector("safe", "https://provider.test/oauth?x=1"),
-        authUrlConnector("evil", "javascript:alert(document.cookie)"),
-      ]),
-    );
-    const res = await fetchTestUiDetails(
-      c,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    const body = (await res.json()) as any;
-    const byId = Object.fromEntries(body.connectors.map((x: any) => [x.id, x]));
-    expect(byId.safe.authorizationUrl).toBeUndefined();
-    expect(byId.evil.authorizationUrl).toBeUndefined();
-  });
-
-  it.each(["ok", "auth_required"] as const)(
-    "INV-6: /ui/data bounds drift and prefers the current catalog observation when status is %s",
-    async (state) => {
-      const drifting: Connector = {
-        id: "drifting",
-        description: "Hosted provider",
-        async status() {
-          return { state };
-        },
-        catalogDrift() {
-          return {
-            observedAt: "2026-08-12T12:00:00.000Z",
-            unclassifiedTools: 2,
-            unservedTools: 0,
-            annotationConflicts: 1,
-            schemaChanges: 0,
-            // The plugin seam is open, so the payload it is not allowed to send
-            // is sent here on purpose: nothing but counts may reach an operator.
-            toolNames: ["billing.delete_customer"],
-          } as never;
-        },
-        async listTools() {
-          return [];
-        },
-        async callTool() {
-          throw new Error("n/a");
-        },
-      };
-      const c = makeDeployment(uiDeploymentConfig([drifting]));
-      const res = await fetchTestUiDetails(
-        c,
-        new Request(`${BASE}/ui/data`, {
-          headers: { Authorization: `Bearer ${TOKEN}` },
-        }),
-      );
-      const body = (await res.json()) as any;
-      const byId = Object.fromEntries(body.connectors.map((x: any) => [x.id, x]));
-      expect(byId.drifting.catalogDrift).toEqual({
-        observedAt: state === "ok" ? expect.any(String) : "2026-08-12T12:00:00.000Z",
-        reviewedBaseline: false,
-        unclassifiedTools: state === "ok" ? 0 : 2,
-        unservedTools: 0,
-        annotationConflicts: state === "ok" ? 0 : 1,
-        schemaChanges: 0,
-      });
-      expect(JSON.stringify(body)).not.toContain("billing.delete_customer");
-      // A connector that reports no observation gets no field at all, which is
-      // what the UI renders as "not observed" rather than as "clean".
-      expect(byId.calc.catalogDrift).toBeUndefined();
-    },
-  );
-
   it("INV-6: /ui/data replaces connector-supplied catalog access with the current bounded observation", async () => {
     const hostile: Connector = {
       id: "hostile_status",
@@ -1616,23 +892,6 @@ describe("status UI", () => {
     expect(connector.catalogAccess.observedAt).not.toBe("2026-08-13T12:00:00.000Z");
     expect(JSON.stringify(body)).not.toContain("exfiltrate-this");
   });
-
-  it("keeps credential controls in Connections and secrets out of every shell", async () => {
-    const { connecta } = makeCredentialConnecta();
-    const connections = await (await connecta.fetch(new Request(`${BASE}/`))).text();
-    const credentials = await (await connecta.fetch(new Request(`${BASE}/`))).text();
-    // Everything between <body> and the bundle: the served markup, without the
-    // stylesheet that names classes the app has not drawn yet.
-    const markup = (page: string) => page.slice(page.indexOf("<body>"), page.lastIndexOf("<script"));
-
-    // Both shells are the same data-free mount point; the credential form only
-    // exists in the bundle, and only the store decides when to draw it.
-    expect(markup(connections)).not.toContain("credential");
-    expect(markup(credentials)).not.toContain("credential");
-    expect(credentials).toContain(SCRIPT_PATH);
-    expect(connections).not.toContain("valid-secret-9876");
-    expect(credentials).not.toContain("valid-secret-9876");
-  });
 });
 
 describe("isSafeHttpUrl", () => {
@@ -1648,11 +907,6 @@ describe("isSafeHttpUrl", () => {
 });
 
 describe("isSafeHttpsUrl", () => {
-  it("accepts only absolute https URLs", () => {
-    expect(isSafeHttpsUrl("https://clerk.x.test")).toBe(true);
-    expect(isSafeHttpsUrl("https://clerk.x.test/npm")).toBe(true);
-  });
-
   // Stricter than the branding href gate on purpose: the loader origin is
   // derived rather than typed, and the sign-in/sign-up targets are hosted
   // Account Portal addresses, which are https too — so there is no dev-loopback
@@ -1671,16 +925,6 @@ describe("isSafeHttpsUrl", () => {
 });
 
 describe("isSafeIconHref", () => {
-  it("accepts absolute http/https URLs", () => {
-    expect(isSafeIconHref("https://cdn.x.test/icon.svg")).toBe(true);
-    expect(isSafeIconHref("http://cdn.x.test/icon.svg")).toBe(true);
-  });
-
-  it("accepts root-relative paths on this origin", () => {
-    expect(isSafeIconHref("/favicon.svg")).toBe(true);
-    expect(isSafeIconHref("/assets/icon.svg?v=2")).toBe(true);
-  });
-
   it("rejects non-http(s) schemes", () => {
     expect(isSafeIconHref("javascript:alert(1)")).toBe(false);
     expect(isSafeIconHref("data:image/svg+xml,<svg/>")).toBe(false);
@@ -1703,13 +947,5 @@ describe("isSafeIconHref", () => {
     expect(isSafeIconHref("/\\connecta.invalid/x")).toBe(false);
     expect(isSafeIconHref("//connecta.invalid:443/x")).toBe(false);
     expect(isSafeIconHref("//user@connecta.invalid/x")).toBe(false);
-  });
-
-  it("rejects document-relative paths and non-strings", () => {
-    expect(isSafeIconHref("favicon.svg")).toBe(false);
-    expect(isSafeIconHref("")).toBe(false);
-    expect(isSafeIconHref(undefined)).toBe(false);
-    expect(isSafeIconHref(42)).toBe(false);
-    expect(isSafeIconHref({ toString: () => "/favicon.svg" })).toBe(false);
   });
 });

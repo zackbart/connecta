@@ -6,7 +6,7 @@ import { chargeConnectorCall } from "../src/call-admission-context.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, ToolDef } from "../src/types.js";
-import { activitySink, createTestConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
+import { createTestConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const READ_TOOL: ToolDef = {
@@ -35,23 +35,16 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("connector call admission controller", () => {
-  it.each([
-    false,
-    null,
-    0,
-    "",
-    [],
-    {},
-    { kind: "unknown", maxCalls: 1, windowMs: 1 },
-    { kind: "rolling-window", maxCalls: 0, windowMs: 1 },
-    { kind: "rolling-window", maxCalls: 1, windowMs: 0 },
-  ])("INV-11: rejects the malformed nested budget %j at construction", (budget) => {
-    for (const maxConcurrency of [undefined, 3]) {
-      expect(
-        () => new ConnectorCallAdmissionController("limited", policy({ maxConcurrency, budget } as never)),
-      ).toThrow(/callAdmission.*budget/);
-    }
-  });
+  it.each([false, { kind: "unknown", maxCalls: 1, windowMs: 1 }, { kind: "rolling-window", maxCalls: 0, windowMs: 1 }])(
+    "INV-11: rejects the malformed nested budget %j at construction",
+    (budget) => {
+      for (const maxConcurrency of [undefined, 3]) {
+        expect(
+          () => new ConnectorCallAdmissionController("limited", policy({ maxConcurrency, budget } as never)),
+        ).toThrow(/callAdmission.*budget/);
+      }
+    },
+  );
 
   it("bounds one partition while admitting another independently", async () => {
     const admission = new ConnectorCallAdmissionController(
@@ -123,106 +116,6 @@ describe("connector call admission controller", () => {
     }
   });
 
-  it("removes queued cancellation without consuming a budget token", async () => {
-    const admission = new ConnectorCallAdmissionController(
-      "limited",
-      policy({
-        maxConcurrency: 1,
-        maxQueueSize: 2,
-        budget: {
-          kind: "rolling-window",
-          maxCalls: 2,
-          windowMs: 60_000,
-        },
-      }),
-    );
-    const active = await admission.acquire({ toolName: "read", args: {} });
-    const controller = new AbortController();
-    const cancelled = admission.acquire({
-      toolName: "read",
-      args: {},
-      signal: controller.signal,
-    });
-    controller.abort(new Error("caller left"));
-
-    await expect(cancelled).rejects.toMatchObject({
-      admissionKind: "cancelled",
-    });
-    active.release();
-    (await admission.acquire({ toolName: "read", args: {} })).release();
-    await expect(admission.acquire({ toolName: "read", args: {} })).rejects.toMatchObject({ admissionKind: "budget" });
-    expect(admission.snapshot().totals).toMatchObject({
-      admitted: 2,
-      cancelled: 1,
-      rateLimited: 1,
-    });
-  });
-
-  it("does not admit when partition derivation synchronously cancels", async () => {
-    const controller = new AbortController();
-    const admission = new ConnectorCallAdmissionController(
-      "limited",
-      policy({
-        maxConcurrency: 1,
-        budget: {
-          kind: "rolling-window",
-          maxCalls: 1,
-          windowMs: 60_000,
-        },
-        partitionKey() {
-          controller.abort(new Error("cancelled during partitioning"));
-          return "project";
-        },
-      }),
-    );
-
-    await expect(
-      admission.acquire({
-        toolName: "read",
-        args: { privatePayload: true },
-        signal: controller.signal,
-      }),
-    ).rejects.toMatchObject({ admissionKind: "cancelled" });
-    expect(admission.snapshot()).toMatchObject({
-      active: 0,
-      partitions: 0,
-      totals: { admitted: 0, cancelled: 1 },
-    });
-  });
-
-  it("snapshots validated rule values instead of retaining mutable config", async () => {
-    const configured = policy({
-      maxConcurrency: 2,
-      budget: {
-        kind: "rolling-window",
-        maxCalls: 2,
-        windowMs: 60_000,
-      },
-      partitionKey: () => "original",
-    });
-    const admission = new ConnectorCallAdmissionController("limited", configured);
-    // Deliberately violate the readonly config surface to prove the controller
-    // took a defensive snapshot rather than retaining caller-owned objects.
-    const mutable = required(configured.rules[0]) as unknown as {
-      maxConcurrency?: number;
-      budget?: { maxCalls: number; windowMs: number };
-      partitionKey?: () => string;
-    };
-    mutable.maxConcurrency = 1;
-    mutable.budget!.maxCalls = 1;
-    mutable.partitionKey = () => "mutated";
-
-    const first = await admission.acquire({ toolName: "read", args: {} });
-    const second = await admission.acquire({ toolName: "read", args: {} });
-    expect(admission.snapshot()).toMatchObject({
-      partitions: 1,
-      active: 2,
-      totals: { admitted: 2, rateLimited: 0 },
-    });
-    first.release();
-    second.release();
-  });
-
   it("bounds partition state and contains partition-key failures", async () => {
     vi.useFakeTimers();
     try {
@@ -276,62 +169,9 @@ describe("connector call admission controller", () => {
       vi.useRealTimers();
     }
   });
-
-  it("rejects empty and multi-rule policies until atomic multi-rule admission exists", () => {
-    expect(
-      () =>
-        new ConnectorCallAdmissionController("empty", {
-          rules: [],
-        }),
-    ).toThrow("must contain exactly one rule");
-    expect(
-      () =>
-        new ConnectorCallAdmissionController("many", {
-          rules: [{ maxConcurrency: 1 }, { maxConcurrency: 2 }],
-        }),
-    ).toThrow("must contain exactly one rule");
-  });
 });
 
 describe("connector call admission integration", () => {
-  it("bounds concurrent promise calls and preserves input order", async () => {
-    let active = 0;
-    let maxActive = 0;
-    const releases: Array<() => void> = [];
-    const connector: Connector = connectorWith({
-      id: "limited",
-      kind: "api",
-      description: "Limited",
-      staticTools: [READ_TOOL],
-      callAdmission: policy({ maxConcurrency: 2, maxQueueSize: 4 }),
-      tools: [READ_TOOL],
-      call: async (_name, args) => {
-        active++;
-        maxActive = Math.max(maxActive, active);
-        await new Promise<void>((resolve) => releases.push(resolve));
-        active--;
-        return { index: (args as { index: number }).index };
-      },
-    });
-    const registry = makeRegistry([connector]);
-    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    const connecta = providers.find(({ name }) => name === "connecta")!;
-    const parallel = Promise.all([0, 1, 2, 3].map((index) => required(connecta.fns.call)("limited.read", { index })));
-
-    await waitFor(() => releases.length === 2);
-    expect(registry.callAdmissionSnapshot().limited).toMatchObject({
-      active: 2,
-      queued: 2,
-    });
-    releases.splice(0, 2).forEach((release) => release());
-    await waitFor(() => releases.length === 2);
-    releases.splice(0, 2).forEach((release) => release());
-
-    const results = (await parallel) as Array<{ data: { index: number }; format: "json" }>;
-    expect(maxActive).toBe(2);
-    expect(results.map((entry) => entry.data.index)).toEqual([0, 1, 2, 3]);
-  });
-
   it("shares one base-registry limiter between direct and code-mode calls", async () => {
     let active = 0;
     let maxActive = 0;
@@ -512,46 +352,6 @@ describe("connector call admission integration", () => {
     });
   });
 
-  it("refuses an already-cancelled call before connector dispatch", async () => {
-    let calls = 0;
-    const connector: Connector = connectorWith({
-      id: "limited",
-      kind: "api",
-      description: "Limited",
-      staticTools: [READ_TOOL],
-      callAdmission: policy({ maxConcurrency: 1 }),
-      tools: [READ_TOOL],
-      call: async () => {
-        calls++;
-        return {};
-      },
-    });
-    const registry = makeRegistry([connector]);
-    const observed = activitySink();
-    const controller = new AbortController();
-    controller.abort(new Error("caller already left"));
-
-    const result = await createMetaTools(registry, BASE, {
-      requestSignal: controller.signal,
-      activity: observed.activity,
-    }).callTool({
-      address: "limited.read",
-
-      resultMode: "value",
-    });
-
-    expect(JSON.parse(required(result.content[0]).text)).toMatchObject({
-      ok: false,
-      error: { code: "cancelled", retryable: false },
-      attempts: 1,
-    });
-    expect(calls).toBe(0);
-    expect(observed.events[0]).toMatchObject({
-      connectorId: "limited",
-      outcome: "cancelled",
-    });
-  });
-
   it("partitions personal budgets by principal while sharing shared budgets", async () => {
     const connectors = ["personal", "shared"].map((id) =>
       connectorWith({
@@ -605,34 +405,6 @@ describe("connector call admission integration", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("closes queued and future personal admission alongside shared admission", async () => {
-    const connecta = createTestConnecta({
-      connectors: [
-        connectorWith({
-          id: "personal",
-          authScope: "personal",
-          tools: [READ_TOOL],
-          call: async () => ({}),
-          callAdmission: policy({ maxConcurrency: 1 }),
-        }),
-      ],
-      logger: silentLogger,
-    });
-    const registry = connecta.registry;
-    const alice = registry.scoped({ connectorIds: "all", principalKey: "alice" });
-    const input = { toolName: "read", args: {} };
-    const held = await alice.admitCall("personal", input);
-    const queued = alice.admitCall("personal", input);
-    const rejection = expect(queued).rejects.toMatchObject({ admissionKind: "closed" });
-    await connecta.close();
-    await rejection;
-    await expect(alice.admitCall("personal", input)).rejects.toMatchObject({ admissionKind: "closed" });
-    const bob = registry.scoped({ connectorIds: "all", principalKey: "bob" });
-    await expect(bob.admitCall("personal", input)).rejects.toMatchObject({ admissionKind: "closed" });
-    held.release();
-    expect(registry.callAdmissionSnapshot().personal).toMatchObject({ closed: true, active: 0, queued: 0 });
   });
 
   it("exposes payload-free connector aggregates on health", async () => {

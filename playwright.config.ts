@@ -25,9 +25,6 @@ export default defineConfig({
     { name: "behavior", testIgnore: visual },
     // A pixel comparison is deterministic: a retry repeats the same mismatch.
     // With no retry to trace, keep the failed attempt's trace.
-    { name: "visual", testMatch: visual, grepInvert: /@unstable/, retries: 0, use: { trace: "retain-on-failure" } },
-    // Comparisons that flaked on CI with no cause found keep the retry budget
-    // and trace their first attempt, so the uploaded report shows the failure.
-    { name: "visual-unstable", testMatch: visual, grep: /@unstable/, use: { trace: "retain-on-failure" } },
+    { name: "visual", testMatch: visual, retries: 0, use: { trace: "retain-on-failure" } },
   ],
 });

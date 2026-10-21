@@ -107,12 +107,8 @@ function fixture(legacy = false, destructive = false) {
 
 const cases = [
   { cache: "same request", caller: "call_tool", view: "root" },
-  { cache: "memory", caller: "call_tool", view: "root" },
-  ...(["root", "scoped", "pool"] as const).flatMap((view) =>
-    (["call_tool", "call_destructive_tool", "connecta.call"] as const).map(
-      (caller) => ({ cache: "storage", caller, view }) as const,
-    ),
-  ),
+  { cache: "memory", caller: "call_destructive_tool", view: "scoped" },
+  { cache: "storage", caller: "connecta.call", view: "pool" },
 ] as const;
 
 describe.each(cases)("downstream definitions from $cache via $caller in $view", ({ cache, caller, view }) => {

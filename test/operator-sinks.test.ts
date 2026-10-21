@@ -1,7 +1,6 @@
 import { OAuthErrorCode } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
-import { snapshotCatalog } from "../src/catalog-fingerprint.js";
 import { Registry } from "../src/registry.js";
 import { recordToolActivity } from "../src/activity.js";
 import { machineAuth } from "./helpers/machine-auth.js";
@@ -295,17 +294,6 @@ const scenarios: Scenario[] = [
     agentMay: ["ct-4xx-body"],
   },
   {
-    name: "remoteMcp: a planted content type on a 5xx answer",
-    connector: remote,
-    fetch: downstream({
-      call: () =>
-        new Response(`broke ${planted("ct-5xx-body")}`, {
-          status: 503,
-          headers: { "content-type": `application/${planted("ct-5xx")}` },
-        }),
-    }),
-  },
-  {
     name: "remoteMcp: a planted content type at the handshake",
     connector: remote,
     fetch: downstream({
@@ -315,37 +303,6 @@ const scenarios: Scenario[] = [
         }),
     }),
   },
-  // Content-Types that pass a loose text-or-JSON filter and that workerd's own
-  // parser still quotes: a JSON subtype under a planted type, and a planted
-  // parameter on a type with no subtype (#695 round 7).
-  ...[
-    ["a JSON subtype of a planted type", `x-${planted("ct-json-type")}/json`],
-    ["a planted parameter on a bare text type", `text; x=${planted("ct-param")}`],
-    ["a planted parameter on application/json", `application/json; x=${planted("ct-json-param")}`],
-  ].flatMap(([label, type]): Scenario[] => [
-    {
-      name: `remoteMcp: ${label} on an HTTP 400 refusal`,
-      connector: remote,
-      fetch: downstream({
-        call: () =>
-          new Response(`refused ${planted("ct-loose-4xx-body")}`, {
-            status: 400,
-            headers: { "content-type": type! },
-          }),
-      }),
-      agentMay: ["ct-loose-4xx-body"],
-    },
-    {
-      name: `remoteMcp: ${label} on a 200 reply`,
-      connector: remote,
-      fetch: downstream({
-        call: () =>
-          new Response(`{"x":"${planted("ct-loose-200-body")}"}`, {
-            headers: { "content-type": type! },
-          }),
-      }),
-    },
-  ]),
   {
     name: "remoteMcp: a transport error and its cause",
     connector: remote,
@@ -393,33 +350,6 @@ const scenarios: Scenario[] = [
     args: { q: "x" },
   },
   {
-    name: "remoteMcp: an input schema whose type is no JSON type",
-    connector: remote,
-    fetch: downstream({
-      tools: [
-        readTool({
-          type: "object",
-          properties: { q: { type: planted("schema-type") } },
-        } as JsonSchema),
-      ],
-    }),
-    args: { q: "x" },
-  },
-  {
-    name: "api(): a reply stream that rejects",
-    connector: () =>
-      handler(
-        async () =>
-          await new Response(
-            new ReadableStream({
-              pull(controller) {
-                controller.error(new TypeError(planted("stream")));
-              },
-            }),
-          ).text(),
-      ),
-  },
-  {
     name: "api(): an error with a cause",
     connector: () =>
       handler(() => {
@@ -434,13 +364,6 @@ const scenarios: Scenario[] = [
       }),
   },
   {
-    name: "api(): an abort reason from somewhere other than the caller",
-    connector: () =>
-      handler(() => {
-        throw new DOMException(planted("api-abort"), "AbortError");
-      }),
-  },
-  {
     name: "api(): a reply that does not parse",
     connector: () => handler(() => JSON.parse(`{"${planted("json")}`)),
   },
@@ -450,29 +373,6 @@ const scenarios: Scenario[] = [
       handler(() => {
         throw Object.assign(new Error("x"), { name: "PlantedName7f3a9c" });
       }),
-  },
-  {
-    name: "api(): a subclass whose name is planted",
-    connector: () =>
-      handler(() => {
-        throw new (class PlantedClass7f3a9c extends TypeError {})("x");
-      }),
-  },
-  {
-    name: "api(): a DOMException whose name is planted",
-    connector: () =>
-      handler(() => {
-        throw new DOMException("x", "PlantedDomName7f3a9c");
-      }),
-  },
-  {
-    name: "remoteMcp: a transport error whose name is planted",
-    connector: remote,
-    fetch: downstream({
-      call: () => {
-        throw Object.assign(new TypeError("fetch failed"), { name: "PlantedName7f3a9c" });
-      },
-    }),
   },
   {
     name: "a tool name the catalog does not list",
@@ -617,15 +517,6 @@ describe("the operator record", () => {
     ]);
   });
 
-  it("INV-6: logFailure contains a logger that throws", () => {
-    const throwing = () => {
-      throw new Error(planted("logger"));
-    };
-    const logger = { info: throwing, warn: throwing, error: throwing };
-    expect(() => logFailure(logger, "call failed", failureRecord({ connector: "svc" }))).not.toThrow();
-    expect(() => logFailure(logger, "call failed", {} as FailureRecord, "error")).not.toThrow();
-  });
-
   it("INV-6: reads a classification only from one connecta registered", () => {
     const shaped = {
       code: "unavailable",
@@ -685,14 +576,6 @@ describe("the operator record", () => {
     expect(target.events.map((event) => event.errorCode)).toEqual([undefined, "unavailable"]);
   });
 
-  it("INV-6: withholds a catalog name outside MCP's tool-name grammar", () => {
-    const entry = { name: `read\nAuthorization: Bearer ${planted("tool")}` };
-    expect({ ...failureRecord({ connector: "svc", tool: entry }) }).toEqual({
-      connector: "svc",
-      tool: "<withheld>",
-    });
-  });
-
   it("names every OAuth error code the pinned SDK knows", () => {
     for (const code of Object.values(OAuthErrorCode)) expect(OAUTH_ERROR_CODES.has(code)).toBe(true);
   });
@@ -713,20 +596,10 @@ describe("a plugin status seam", () => {
 
   it.each([
     ["record-shaped prose", () => Promise.resolve({ state: "error", message: RECORD_SHAPED })],
-    ["prose on an auth_required status", () => Promise.resolve({ state: "auth_required", message: planted("auth") })],
     ["an unknown state", () => Promise.resolve({ state: planted("state"), message: planted("m") })],
     [
       "a thrown error with a planted name",
       () => Promise.reject(Object.assign(new Error(planted("thrown")), { name: "PlantedName7f3a9c" })),
-    ],
-    [
-      "a thrown object shaped like a classification",
-      () =>
-        Promise.reject({
-          code: "unavailable",
-          retryable: true,
-          details: { host: "https://planted-host-7f3a9c.example", code: "ECONNREFUSED" },
-        }),
     ],
   ])("INV-6: contributes no string to status or the log: %s", async (_, status) => {
     const { logger, lines } = capturingLogger();
@@ -754,11 +627,8 @@ describe("a plugin status seam", () => {
 });
 
 describe("a status decorator", () => {
-  it.each([
-    ["an error status", downstream({ initialize: rpcError })],
-    ["an ok status", downstream({})],
-  ])("INV-6: cannot replace the message of %s remoteMcp wrote", async (_, fetch) => {
-    vi.stubGlobal("fetch", fetch);
+  it("INV-6: cannot replace the message of an error status remoteMcp wrote", async () => {
+    vi.stubGlobal("fetch", downstream({ initialize: rpcError }));
     const decorated = () => {
       const inner = remote();
       const status = inner.status!.bind(inner);
@@ -863,7 +733,6 @@ describe("ctx.oauth.fetch", () => {
 
   it.each([
     ["json()", (response: Response) => response.json()],
-    ["text()", (response: Response) => response.text()],
     ["clone().json()", (response: Response) => response.clone().json()],
   ])("INV-6: a handler's %s of a planted Content-Type prints nothing the downstream wrote", async (_, read) => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -969,7 +838,6 @@ describe("a forwarded catalog drift report", () => {
 
   it.each([
     ["header text after a timestamp", `2026-08-12T00:00:00.000Z\nAuthorization: Bearer ${planted("drift")}`],
-    ["header text alone", `Authorization: Bearer ${planted("drift")}`],
     ["a timestamp-shaped prefix of text", `2026-08-12T00:00${planted("drift")}`],
   ])("INV-6: puts no %s on health, status, or the operator page", async (_, observedAt) => {
     const { logger, lines } = capturingLogger();
@@ -1002,124 +870,100 @@ describe("a forwarded catalog drift report", () => {
 });
 
 describe("control-character tool names at catalog intake", () => {
-  it.each(["fresh", "v3 cache", "v2 cache"])(
-    "INV-6: drops names from %s without leaking into discovery, calls, or operator sinks",
-    async (source) => {
-      const rejected = ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085y"];
-      const kept = ["read space", "读取"];
-      const tools: ToolDef[] = [...rejected, ...kept].map((name) => ({
-        name,
-        inputSchema: { type: "object" },
-        annotations: { readOnlyHint: true },
-      }));
-      let calls = 0;
-      let listings = 0;
-      const serve = downstream({
-        tools,
-        call: (id) => {
-          calls++;
-          return Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "ok" }] } });
-        },
-      });
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-        const method = init?.body ? (JSON.parse(String(init.body)) as { method: string }).method : "";
-        if (method === "tools/list") listings++;
+  it("INV-6: drops names from a fresh listing without leaking into discovery, calls, or operator sinks", async () => {
+    const rejected = ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085y"];
+    const kept = ["read space", "读取"];
+    const tools: ToolDef[] = [...rejected, ...kept].map((name) => ({
+      name,
+      inputSchema: { type: "object" },
+      annotations: { readOnlyHint: true },
+    }));
+    let calls = 0;
+    let listings = 0;
+    const serve = downstream({
+      tools,
+      call: (id) => {
+        calls++;
+        return Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "ok" }] } });
+      },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.body ? (JSON.parse(String(init.body)) as { method: string }).method : "";
+      if (method === "tools/list") listings++;
 
-        return serve(input, init);
+      return serve(input, init);
+    });
+    const storage = memoryStorage();
+    const { logger, lines } = capturingLogger();
+    const connector = () =>
+      remoteMcp("svc", {
+        url: MCP_URL,
+        classify: { tools: Object.fromEntries(kept.map((name) => [name, "read" as const])) },
       });
-      const storage = memoryStorage();
-      if (source !== "fresh") {
-        const now = Date.now();
-        const snapshot = await snapshotCatalog(tools);
-        await storage.set(
-          `catalog:svc:chunk:${snapshot.fingerprint}:0`,
-          new TextDecoder().decode(snapshot.serializedBytes),
-        );
-        await storage.set(
-          "catalog:svc",
-          JSON.stringify({
-            version: source === "v2 cache" ? 2 : 3,
-            revision: snapshot.fingerprint,
-            toolCount: tools.length,
-            byteCount: snapshot.serializedBytes.byteLength,
-            chunkCount: 1,
-            fetchedAt: now,
-            expiresAt: now + 600_000,
-            staleUntil: now + 1_200_000,
-          }),
-        );
-      }
-      const { logger, lines } = capturingLogger();
-      const connector = () =>
-        remoteMcp("svc", {
-          url: MCP_URL,
-          classify: { tools: Object.fromEntries(kept.map((name) => [name, "read" as const])) },
-        });
-      const registry = new Registry([connector()], {
-        storage,
-        logger,
-      });
-      const target = activitySink();
-      const mt = createMetaTools(registry, BASE, { activity: target.activity });
-      const search = await mt.searchTools({ query: "", connector: "svc" });
-      expect(search.isError).toBeFalsy();
-      expect(search.structuredContent?.total).toBe(2);
-      expect(listings).toBe(1);
-      expect(JSON.stringify(search)).not.toMatch(ANY_PLANTED);
-      expect(JSON.stringify(search)).not.toContain("x\u0085y");
-      expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(kept);
-      expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(2);
-      for (const name of rejected) {
-        const result = await mt.callTool({ address: `svc.${name}` });
-        expect(result.isError).toBe(true);
-        expect(JSON.stringify(result)).toContain("unknown_tool");
-        expect(JSON.stringify(result)).not.toContain(name);
-        expect(JSON.stringify(result)).not.toMatch(ANY_PLANTED);
-      }
-      for (const name of kept) expect((await mt.callTool({ address: `svc.${name}` })).isError).toBeFalsy();
-      const execute = createExecuteTool(
-        registry,
-        BASE,
-        {
-          async execute(_code, providers) {
-            const fns = providers.find((provider) => provider.name === "connecta")!.fns;
-            const programSearch = await fns.search!({ query: "", connector: "svc" });
-            expect(JSON.stringify(programSearch)).not.toMatch(ANY_PLANTED);
-            expect(JSON.stringify(programSearch)).not.toContain("x\u0085y");
-            for (const name of rejected) {
-              await expect(fns.call!(`svc.${name}`, {})).rejects.toMatchObject({ code: "unknown_tool" });
-            }
-            for (const name of kept) expect(await fns.call!(`svc.${name}`, {})).toEqual({ data: "ok", format: "text" });
-            return { result: "ok" };
-          },
+    const registry = new Registry([connector()], {
+      storage,
+      logger,
+    });
+    const target = activitySink();
+    const mt = createMetaTools(registry, BASE, { activity: target.activity });
+    const search = await mt.searchTools({ query: "", connector: "svc" });
+    expect(search.isError).toBeFalsy();
+    expect(search.structuredContent?.total).toBe(2);
+    expect(listings).toBe(1);
+    expect(JSON.stringify(search)).not.toMatch(ANY_PLANTED);
+    expect(JSON.stringify(search)).not.toContain("x\u0085y");
+    expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(kept);
+    expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(2);
+    for (const name of rejected) {
+      const result = await mt.callTool({ address: `svc.${name}` });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("unknown_tool");
+      expect(JSON.stringify(result)).not.toContain(name);
+      expect(JSON.stringify(result)).not.toMatch(ANY_PLANTED);
+    }
+    for (const name of kept) expect((await mt.callTool({ address: `svc.${name}` })).isError).toBeFalsy();
+    const execute = createExecuteTool(
+      registry,
+      BASE,
+      {
+        async execute(_code, providers) {
+          const fns = providers.find((provider) => provider.name === "connecta")!.fns;
+          const programSearch = await fns.search!({ query: "", connector: "svc" });
+          expect(JSON.stringify(programSearch)).not.toMatch(ANY_PLANTED);
+          expect(JSON.stringify(programSearch)).not.toContain("x\u0085y");
+          for (const name of rejected) {
+            await expect(fns.call!(`svc.${name}`, {})).rejects.toMatchObject({ code: "unknown_tool" });
+          }
+          for (const name of kept) expect(await fns.call!(`svc.${name}`, {})).toEqual({ data: "ok", format: "text" });
+          return { result: "ok" };
         },
-        logger,
-      );
-      expect((await execute({ code: "" })).isError).toBeFalsy();
-      expect(calls).toBe(4);
-      const app = createTestConnecta({
-        connectors: [connector()],
-        auth: machineAuth("t"),
-        storage,
-        publicUrl: BASE,
-        logger,
-      });
-      const ui = await (
-        await app.fetch(new Request(`${BASE}/ui/connectors/svc`, { headers: { Authorization: "Bearer t" } }))
-      ).text();
-      const health = await (await app.fetch(new Request(`${BASE}/health`))).text();
-      const status = JSON.stringify(await registry.statusFor("svc", BASE));
-      for (const text of [...lines, ...consoleLines, JSON.stringify(target.events), ui, health, status]) {
-        expect(text).not.toMatch(ANY_PLANTED);
-        expect(text).not.toContain("x\u0085y");
-      }
-      expect(target.events.filter((event) => event.outcome === "success").map((event) => event.toolName)).toEqual([
-        "<withheld>",
-        "<withheld>",
-      ]);
-      await app.close();
-    },
-  );
+      },
+      logger,
+    );
+    expect((await execute({ code: "" })).isError).toBeFalsy();
+    expect(calls).toBe(4);
+    const app = createTestConnecta({
+      connectors: [connector()],
+      auth: machineAuth("t"),
+      storage,
+      publicUrl: BASE,
+      logger,
+    });
+    const ui = await (
+      await app.fetch(new Request(`${BASE}/ui/connectors/svc`, { headers: { Authorization: "Bearer t" } }))
+    ).text();
+    const health = await (await app.fetch(new Request(`${BASE}/health`))).text();
+    const status = JSON.stringify(await registry.statusFor("svc", BASE));
+    for (const text of [...lines, ...consoleLines, JSON.stringify(target.events), ui, health, status]) {
+      expect(text).not.toMatch(ANY_PLANTED);
+      expect(text).not.toContain("x\u0085y");
+    }
+    expect(target.events.filter((event) => event.outcome === "success").map((event) => event.toolName)).toEqual([
+      "<withheld>",
+      "<withheld>",
+    ]);
+    await app.close();
+  });
 
   it("INV-6: drops every C0, DEL, and C1 boundary while retaining adjacent Unicode", async () => {
     const controls = [

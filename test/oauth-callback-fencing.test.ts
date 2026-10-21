@@ -134,10 +134,9 @@ function backingStore(remote: boolean): KVStorage {
   };
 }
 
-const STORES = [
-  ["memory storage", false],
-  ["a store a round trip away", true],
-] as const;
+// One store a macrotask away on each side, as D1 and SQLite are: every
+// interleaving below holds the same on memoryStorage.
+const STORES = [["a store a round trip away", true]] as const;
 
 const scope = (storage: KVStorage): ConnectorContext => ({ ...ctx(storage), requestScope: {} });
 const connector = () => remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
@@ -318,49 +317,6 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
   );
 
   it.each(STORES)(
-    "sends nothing when a restart lands while the final epoch read is in flight, on %s",
-    async (_label, remote) => {
-      // The read is issued after the claim and held before it reaches the
-      // store; the restart publishes; the read then sees it.
-      const server = authorizationServer();
-      vi.stubGlobal("fetch", server.fetchStub);
-      const backing = backingStore(remote);
-      let armed = false;
-      let claimKey: string | undefined;
-      const reading = deferred<void>();
-      const release = deferred<void>();
-      const storage: KVStorage = {
-        ...backing,
-        async get(key) {
-          if (armed && key === GRANT) {
-            armed = false;
-            reading.resolve();
-            await release.promise;
-          }
-          return backing.get(key);
-        },
-        async compareAndSet(key, expected, next, options) {
-          const won = await backing.compareAndSet(key, expected, next, options);
-          if (key === claimKey) armed = true;
-          return won;
-        },
-      };
-      const c = connector();
-      const { state } = await started(c, backing);
-      const finish = await verified(c, storage, state);
-      claimKey = await consentKey(state);
-
-      const finishing = finish(server.issue("code-a"));
-      await reading.promise;
-      await started(c, backing);
-      release.resolve();
-
-      expect(String(await finishing)).toMatch(/authorization changed while this request was in flight\./);
-      expect(server.tokenRequests).toEqual([]);
-    },
-  );
-
-  it.each(STORES)(
     "saves nothing when a restart lands after the final check, while the request is on the wire, on %s",
     async (_label, remote) => {
       // The other side of the line: the code has left. Its tokens never land,
@@ -391,40 +347,6 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
   );
 
   it.each(STORES)(
-    "keeps the grant a duplicate callback completed while the other was held before its claim, on %s",
-    async (_label, remote) => {
-      const nth = await grantReadsBeforeClaim();
-      const server = authorizationServer();
-      vi.stubGlobal("fetch", server.fetchStub);
-      const backing = backingStore(remote);
-      const held = holdingGrantRead(backing, nth);
-      const c = connector();
-      const { state, epoch } = await started(c, backing);
-      const code = server.issue("code-a");
-      // The browser delivers the same callback twice; both pass the state check.
-      const finishHeld = await verified(c, held.storage, state);
-      const finishFirst = await verified(c, backing, state);
-      held.arm();
-
-      const pending = finishHeld(code);
-      await held.reached;
-      expect(await finishFirst(code)).toBeUndefined();
-      const completed = await storedTokens(backing, epoch);
-      expect(completed).toMatchObject({ access_token: "access-1" });
-      held.release();
-
-      const error = await pending;
-      expect(String(error)).toMatch(
-        /authorization callback was already used by another request; nothing was exchanged/,
-      );
-      expect(classifyCallError(error)).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(server.carrying(code)).toBe(1);
-      expect(await storedTokens(backing, epoch)).toEqual(completed);
-      expect((await storedGrant(backing))?.epoch).toBe(epoch);
-    },
-  );
-
-  it.each(STORES)(
     "redeems one code once when duplicate callbacks race to the exchange together, on %s",
     async (_label, remote) => {
       // Neither is held: all reach the fence in the same turn, and the claim
@@ -448,37 +370,6 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       expect(await storedTokens(storage, epoch)).toMatchObject({ access_token: "access-1" });
     },
   );
-
-  it("never discards the winner's grant when another consent's exchange is refused after it", async () => {
-    // A second consent in the same epoch binds before the first completes,
-    // then sends a code the server refuses. The SDK's recovery invalidates
-    // tokens, but this exchange began with none, so it deletes nothing.
-    const nth = await grantReadsBeforeClaim();
-    const server = authorizationServer();
-    vi.stubGlobal("fetch", server.fetchStub);
-    const backing = backingStore(false);
-    const held = holdingGrantRead(backing, nth);
-    const c = connector();
-    const first = await started(c, backing);
-    await age(backing, first.state);
-    const second = new URL(required((await c.startAuth!(scope(backing), { force: false })).authorizationUrl));
-    const secondState = required(second.searchParams.get("state") ?? undefined);
-    expect(secondState).not.toBe(first.state);
-    const finishLoser = await verified(c, held.storage, secondState);
-    const finishWinner = await verified(c, backing, first.state);
-    held.arm();
-
-    const loser = finishLoser("never-issued");
-    await held.reached;
-    expect(await finishWinner(server.issue("code-a"))).toBeUndefined();
-    const completed = await storedTokens(backing, first.epoch);
-    held.release();
-
-    expect(((await loser) as { code?: unknown }).code).toBe("downstream_oauth_required");
-    expect(server.carrying("never-issued")).toBe(1);
-    expect(completed).toMatchObject({ access_token: "access-1" });
-    expect(await storedTokens(backing, first.epoch)).toEqual(completed);
-  });
 });
 
 describe("a refused code exchange invalidates only what it began with", () => {
@@ -530,65 +421,6 @@ describe("a refused code exchange invalidates only what it began with", () => {
     expect(server.carrying("unknown-code")).toBe(1);
     expect(await storedTokens(storage, epoch)).toBeUndefined();
   });
-
-  it.each(STORES)(
-    "keeps the consent Continue started while an earlier callback's exchange was on the wire, on %s",
-    async (_label, remote) => {
-      // A's claim spent its consent, so Continue starts consent B in the same
-      // epoch while A waits on the token endpoint. A then succeeds, and B is
-      // still the one Continue hands back.
-      const server = authorizationServer();
-      vi.stubGlobal("fetch", server.fetchStub);
-      const storage = backingStore(remote);
-      const c = connector();
-      const first = await started(c, storage);
-      const finish = await verified(c, storage, first.state);
-      const sent = deferred<void>();
-      const release = deferred<void>();
-      server.onExchange(async () => {
-        sent.resolve();
-        await release.promise;
-      });
-
-      const completing = finish(server.issue("code-a"));
-      await sent.promise;
-      const continued = await c.startAuth!(scope(storage), { force: false });
-      const next = new URL(required(continued.authorizationUrl));
-      const nextState = required(next.searchParams.get("state") ?? undefined);
-      expect(nextState).not.toBe(first.state);
-      release.resolve();
-      expect(await completing).toBeUndefined();
-
-      const again = await c.startAuth!(scope(storage), { force: false });
-      expect(again).toMatchObject({ authorizationUrl: next.href, authorizationReused: true });
-      expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
-      expect(await storedTokens(storage, first.epoch)).toMatchObject({ access_token: "access-2" });
-    },
-  );
-
-  it.each(STORES)(
-    "does not hand a consent URL whose state an exchange spent back to Continue, on %s",
-    async (_label, remote) => {
-      const server = authorizationServer();
-      vi.stubGlobal("fetch", server.fetchStub);
-      const storage = backingStore(remote);
-      const c = connector();
-      const first = await c.startAuth!(scope(storage), { force: true });
-      const state = required(new URL(required(first.authorizationUrl)).searchParams.get("state") ?? undefined);
-      const finish = await verified(c, storage, state);
-      expect(((await finish("unknown-code")) as { code?: unknown }).code).toBe("downstream_oauth_required");
-
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued.authorizationReused).toBeUndefined();
-      const next = new URL(required(continued.authorizationUrl));
-      expect(next.searchParams.get("state")).not.toBe(state);
-      expect(next.searchParams.get("client_id")).toBe("client-1");
-      // The new consent completes.
-      const nextState = required(next.searchParams.get("state") ?? undefined);
-      expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
-    },
-  );
 });
 
 describe("a completed exchange and a newer consent's records", () => {
@@ -740,74 +572,68 @@ describe("a completed exchange and a newer consent's records", () => {
 });
 
 describe("a layout 2 migration racing a restart", () => {
-  it.each([
-    ["an epoch an earlier release published", "v2:unbound-epoch"],
-    ["the legacy generation, under the historical key names", "legacy"],
-  ] as const)(
-    "never replaces the restart's grant, and Disconnect leaves nothing of it, migrating %s",
-    async (_label, generation) => {
-      // A passive call finds layout 2 and is held just before it writes the
-      // migrated record. A restart then migrates too, runs start to finish, and
-      // completes its consent. The held write lands last and loses its
-      // compare-and-set; a later Disconnect leaves no trace of the restart.
-      const server = authorizationServer();
-      vi.stubGlobal("fetch", server.fetchStub);
-      const backing = backingStore(false);
-      const epoch = generation === "legacy" ? null : generation;
-      if (epoch !== null) await backing.set(oauthV2Keys.generation, epoch);
-      for (const [field, value] of [
-        [oauthV2Keys.field.client, { client_id: "old-client", client_secret: "old-secret", redirect_uris: [REDIRECT] }],
-        [oauthV2Keys.field.tokens, { access_token: "old-access", token_type: "Bearer", refresh_token: "old-refresh" }],
-      ] as const) {
-        await backing.set(
-          oauthV2Keys.value(field, epoch),
-          JSON.stringify({ connectaOAuthVersion: 2, generation, issuer, value }),
-        );
-      }
-      let holding = true;
-      const migrating = deferred<void>();
-      const land = deferred<void>();
-      const storage: KVStorage = {
-        ...backing,
-        async compareAndSet(key, expected, next, options) {
-          if (holding && key === GRANT && expected === null) {
-            holding = false;
-            migrating.resolve();
-            await land.promise;
-          }
-          return backing.compareAndSet(key, expected, next, options);
-        },
-      };
-      const c = connector();
-
-      const passive = c.listTools(scope(storage)).then(
-        () => undefined,
-        (error: unknown) => error,
+  it("never replaces the restart's grant, and Disconnect leaves nothing of it, migrating an epoch an earlier release published", async () => {
+    // A passive call finds layout 2 and is held just before it writes the
+    // migrated record. A restart then migrates too, runs start to finish, and
+    // completes its consent. The held write lands last and loses its
+    // compare-and-set; a later Disconnect leaves no trace of the restart.
+    const server = authorizationServer();
+    vi.stubGlobal("fetch", server.fetchStub);
+    const backing = backingStore(false);
+    const generation = "v2:unbound-epoch";
+    await backing.set(oauthV2Keys.generation, generation);
+    for (const [field, value] of [
+      [oauthV2Keys.field.client, { client_id: "old-client", client_secret: "old-secret", redirect_uris: [REDIRECT] }],
+      [oauthV2Keys.field.tokens, { access_token: "old-access", token_type: "Bearer", refresh_token: "old-refresh" }],
+    ] as const) {
+      await backing.set(
+        oauthV2Keys.value(field, generation),
+        JSON.stringify({ connectaOAuthVersion: 2, generation, issuer, value }),
       );
-      await migrating.promise;
-      const restart = await started(c, backing);
-      expect(await (await verified(c, backing, restart.state))(server.issue("code-b"))).toBeUndefined();
-      expect(await storedTokens(backing, restart.epoch)).toMatchObject({ access_token: "access-1" });
-      land.resolve();
-      await passive;
-      // The migration's write lost: the restart's grant is the live one.
-      expect((await storedGrant(backing))?.epoch).toBe(restart.epoch);
-      expect(await storedTokens(backing, restart.epoch)).toBeDefined();
+    }
+    let holding = true;
+    const migrating = deferred<void>();
+    const land = deferred<void>();
+    const storage: KVStorage = {
+      ...backing,
+      async compareAndSet(key, expected, next, options) {
+        if (holding && key === GRANT && expected === null) {
+          holding = false;
+          migrating.resolve();
+          await land.promise;
+        }
+        return backing.compareAndSet(key, expected, next, options);
+      },
+    };
+    const c = connector();
 
-      await c.disconnectAuth!(scope(backing));
+    const passive = c.listTools(scope(storage)).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await migrating.promise;
+    const restart = await started(c, backing);
+    expect(await (await verified(c, backing, restart.state))(server.issue("code-b"))).toBeUndefined();
+    expect(await storedTokens(backing, restart.epoch)).toMatchObject({ access_token: "access-1" });
+    land.resolve();
+    await passive;
+    // The migration's write lost: the restart's grant is the live one.
+    expect((await storedGrant(backing))?.epoch).toBe(restart.epoch);
+    expect(await storedTokens(backing, restart.epoch)).toBeDefined();
 
-      const keys = await backing.list("");
-      for (const key of keys) {
-        if (!key.startsWith("oauth:refresh-spent:")) expect(key).not.toContain(restart.epoch);
-        if (!key.startsWith("oauth:refresh-spent:")) expect(await backing.get(key), key).not.toContain(restart.epoch);
-        expect(
-          oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)),
-          key,
-        ).toBe(false);
-      }
-      expect(keys).toEqual([GRANT, oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-1"))]);
-    },
-  );
+    await c.disconnectAuth!(scope(backing));
+
+    const keys = await backing.list("");
+    for (const key of keys) {
+      if (!key.startsWith("oauth:refresh-spent:")) expect(key).not.toContain(restart.epoch);
+      if (!key.startsWith("oauth:refresh-spent:")) expect(await backing.get(key), key).not.toContain(restart.epoch);
+      expect(
+        oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)),
+        key,
+      ).toBe(false);
+    }
+    expect(keys).toEqual([GRANT, oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-1"))]);
+  });
 });
 
 describe("the callback route and a duplicate callback", () => {

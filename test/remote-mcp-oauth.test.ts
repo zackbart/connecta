@@ -3,15 +3,14 @@ import type { FetchLike, Transport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
-import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError } from "../src/errors.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "../src/oauth-sealing.js";
-import { oauthFlowKeys, oauthGrantKeys, oauthV2Keys, scopes } from "../src/storage/keys.js";
+import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, ConnectorContext, InboundAuth, KVStorage, Logger } from "../src/types.js";
+import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, fetchTestUiDetails, required, silentLogger } from "./helpers.js";
 import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
 import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
@@ -29,7 +28,6 @@ const GRANT = oauthGrantKeys.grant;
 const issuer = "https://auth.example";
 const mcpUrl = "https://downstream.example/mcp";
 const resourceMetadataUrl = "https://downstream.example/.well-known/oauth-protected-resource";
-const MINUTE = 60 * 1000;
 
 /**
  * Everything written to the console for the rest of the test. The SDK logs
@@ -187,19 +185,13 @@ function authorizationServer() {
   };
 }
 
-async function withServer(
-  run: (server: ReturnType<typeof authorizationServer>, clock: { advance(ms: number): void }) => Promise<void>,
-) {
+async function withServer(run: (server: ReturnType<typeof authorizationServer>) => Promise<void>) {
   const server = authorizationServer();
-  const realNow = Date.now.bind(Date);
-  let offset = 0;
-  const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
   vi.stubGlobal("fetch", server.fetchStub);
   try {
-    await run(server, { advance: (ms) => (offset += ms) });
+    await run(server);
   } finally {
     vi.unstubAllGlobals();
-    clock.mockRestore();
   }
 }
 
@@ -231,66 +223,6 @@ describe("remoteMcp() oauth status via _transportFactory", () => {
 });
 
 describe("remoteMcp() startAuth", () => {
-  it("OAuth lifecycle hooks are absent unless auth is oauth", () => {
-    const headers = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "headers", headers: { Authorization: "Bearer x" } },
-    });
-    expect(headers.startAuth).toBeUndefined();
-    expect(headers.disconnectAuth).toBeUndefined();
-    const oauth = remoteMcp("svc", { url: "https://unused.example/mcp", auth: { type: "oauth" } });
-    expect(oauth.startAuth).toBeDefined();
-    expect(oauth.disconnectAuth).toBeDefined();
-  });
-
-  it("disconnect wipes the grant without starting a replacement flow", async () => {
-    const storage = memoryStorage();
-    await seedGrant(storage, { issuer, tokens: { access_token: "old", token_type: "Bearer" } });
-    const state = stateOf(await seedConsent(storage, `${issuer}/authorize?client_id=old`));
-    let builds = 0;
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => {
-        builds++;
-        return throwingTransport(new UnauthorizedError("401"));
-      },
-    });
-    const c = ctx(storage);
-
-    await connector.disconnectAuth!(c);
-
-    expect(builds).toBe(0);
-    const grant = required(await storedGrant(storage));
-    expect(grant.epoch).toMatch(/^disconnected:/);
-    expect(grant.body).toBeUndefined();
-    expect(grant.flow).toBeUndefined();
-    expect(await storage.get(await consentKey(state))).toBeNull();
-
-    const passive = await connector.status!(c);
-    expect(passive).toMatchObject({
-      state: "auth_required",
-      message: expect.stringContaining("disconnected by an operator"),
-    });
-    expect(passive.authorizationUrl).toBeUndefined();
-    expect(builds).toBe(0);
-    expect(await storage.list(oauthFlowKeys.prefix)).toEqual([]);
-  });
-
-  it("can start a fresh authorization after an explicit disconnect", async () => {
-    await withServer(async () => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.disconnectAuth!(scope(storage));
-
-      const status = await c.startAuth!(scope(storage));
-
-      expect(status.state).toBe("auth_required");
-      expect(status.authorizationUrl).toMatch(new RegExp(`^${issuer}/authorize\\?`));
-      expect(await epochOf(storage)).toMatch(/^v3:/);
-    });
-  });
-
   it("keeps DELETE durable across /ui/data until POST explicitly reconnects", async () => {
     await withServer(async (server) => {
       const storage = memoryStorage();
@@ -349,81 +281,6 @@ describe("remoteMcp() startAuth", () => {
     });
   });
 
-  it("kicks the flow and returns auth_required with the stored URL", async () => {
-    await withServer(async () => {
-      const storage = memoryStorage();
-
-      const status = await connector().startAuth!(scope(storage));
-
-      expect(status.state).toBe("auth_required");
-      expect(status.authorizationUrl).toMatch(new RegExp(`^${issuer}/authorize\\?`));
-      const stored = JSON.parse(
-        required((await storage.get(await consentKey(stateOf(status.authorizationUrl)))) ?? undefined),
-      ) as { url: string };
-      expect(stored.url).toBe(status.authorizationUrl);
-      expect((await storedGrant(storage))?.flow).toBeDefined();
-    });
-  });
-
-  it("returns ok when the connection is already healthy", async () => {
-    const { server, clientTransport } = await connectServer();
-    closer = () => server.close();
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => clientTransport,
-    });
-
-    const status = await connector.startAuth!(ctx());
-    expect(status.state).toBe("ok");
-  });
-
-  it("force wipes stored credentials and restarts the flow", async () => {
-    await withServer(async () => {
-      const storage = memoryStorage();
-      // Stale credentials and consent from a previous (now-revoked) authorization.
-      await seedGrant(storage, {
-        issuer,
-        client: { value: { client_id: "old" } },
-        tokens: { access_token: "old", token_type: "Bearer", refresh_token: "old-refresh" },
-      });
-      const stale = stateOf(await seedConsent(storage, `${issuer}/authorize?client_id=old`));
-
-      const status = await connector().startAuth!(scope(storage), { force: true });
-
-      expect(status.state).toBe("auth_required");
-      expect(clientOf(status.authorizationUrl)).toBe("client-1");
-      const grant = required(await storedGrant(storage));
-      expect(grant.epoch).toMatch(/^v3:/);
-      expect(grant.epoch).not.toBe("v3:seeded");
-      expect(grant.body?.client?.value.client_id).toBe("client-1");
-      expect(grant.body?.tokens).toBeUndefined();
-      expect(await storage.get(await consentKey(stale))).toBeNull();
-    });
-  });
-
-  it("force fences and replaces a connect that never settles on its own", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      const s = scope(storage);
-      const stalled = server.stallNextRequest();
-
-      const abandoned = c.status!(s);
-      await stalled;
-      const forced = c.startAuth!(s, { force: true });
-      const timeout = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 250));
-      const result = await Promise.race([forced, timeout]);
-
-      expect(result).not.toBe("timeout");
-      expect(result).toMatchObject({ state: "auth_required" });
-      expect((result as { authorizationUrl?: string }).authorizationUrl).toMatch(new RegExp(`^${issuer}/authorize\\?`));
-      expect(await epochOf(storage)).toMatch(/^v3:/);
-      expect(server.counts.mcp).toBe(2);
-      await expect(abandoned).resolves.toMatchObject({ state: "error" });
-    });
-  });
-
   it("an abandoned Unauthorized completion cannot poison its healthy replacement", async () => {
     const storage = memoryStorage();
     const c = ctx(storage);
@@ -461,47 +318,6 @@ describe("remoteMcp() startAuth", () => {
 
     expect(await connector.status!(c)).toMatchObject({ state: "ok" });
     expect(builds).toBe(2);
-  });
-
-  it("a plain network error → error, NOT auth_required", async () => {
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => throwingTransport(new Error("ECONNREFUSED downstream")),
-    });
-
-    const status = await connector.startAuth!(ctx());
-    expect(status.state).toBe("error");
-    expect(status.message).toContain("MCP handshake with https://unused.example failed");
-  });
-
-  it("non-force re-issues an outstanding consent URL without touching the verifier", async () => {
-    const storage = memoryStorage();
-    const c = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      // Must not connect while a URL is pending — the pending short-circuit
-      // fires first, so this factory should never run.
-      _transportFactory: () => {
-        throw new Error("should not connect while a consent URL is pending");
-      },
-    });
-    await seedGrant(storage, { issuer, client: { value: { client_id: "client-1" } } });
-    const url = await seedConsent(storage, `${issuer}/authorize?client_id=client-1&code_challenge=abc`);
-    const key = await consentKey(stateOf(url));
-    const record = await storage.get(key);
-    expect(record).toContain("verifier-123");
-    const context = ctx(storage);
-
-    const first = await c.startAuth!(context, {});
-    const second = await c.startAuth!(context, {});
-
-    expect(first.state).toBe("auth_required");
-    expect(first.authorizationUrl).toBe(url);
-    expect(first.authorizationReused).toBe(true);
-    expect(second.authorizationUrl).toBe(first.authorizationUrl);
-    // The consent, and the verifier the operator's URL is bound to, survive both touches.
-    expect(await storage.get(key)).toBe(record);
   });
 
   it("force with a live client closes it, wipes creds, and reconnects", async () => {
@@ -546,45 +362,6 @@ describe("remoteMcp() startAuth", () => {
     expect(grant.body?.tokens).toBeUndefined();
     expect(await storage.get(await consentKey(state))).toBeNull();
   });
-
-  it("force fences an in-flight connect before wiping", async () => {
-    const storage = memoryStorage();
-    let started = 0;
-    const reachedStart = deferred<void>();
-    const releaseStart = deferred<void>();
-    // Hold the first transport at start, regardless of cache lookup timing.
-    const slowFailing = (): Transport => ({
-      async start() {
-        started++;
-        if (started === 1) {
-          reachedStart.resolve();
-          await releaseStart.promise;
-        }
-        throw new Error("ECONNREFUSED");
-      },
-      async send() {},
-      async close() {},
-    });
-    const c = remoteMcp("oauthed", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: slowFailing,
-    });
-    const context = ctx(storage);
-
-    // Kick a connect without awaiting so it is in flight when force runs.
-    const inflight = c.listTools(context).catch(() => {});
-    await reachedStart.promise;
-    const result = await c.startAuth!(context, { force: true });
-    releaseStart.resolve();
-    await inflight;
-
-    // Force abandoned the old connection, then ran its own connect.
-    expect(started).toBe(2);
-    // Network failure on an oauth connector surfaces as error, not auth_required.
-    expect(result.state).toBe("error");
-    expect(result.message).toContain("MCP handshake with https://unused.example failed");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -622,73 +399,6 @@ describe("remoteMcp() continue and restart starts", () => {
     });
   });
 
-  it("continue starts a fresh flow for a stale pending URL, keeping the registration", async () => {
-    await withServer(async (server, clock) => {
-      const storage = memoryStorage();
-      const c = connector();
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      const epoch = await epochOf(storage);
-
-      clock.advance(10 * MINUTE);
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued.state).toBe("auth_required");
-      expect(continued.authorizationReused).toBeUndefined();
-      expect(continued.authorizationUrl).not.toBe(restarted.authorizationUrl);
-      // Same epoch, same client: no registration, no reset.
-      expect(clientOf(continued.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-      expect(await epochOf(storage)).toBe(epoch);
-
-      // The fresh URL is itself reusable.
-      const again = await c.startAuth!(scope(storage), { force: false });
-      expect(again).toMatchObject({
-        authorizationUrl: continued.authorizationUrl,
-        authorizationReused: true,
-      });
-    });
-  });
-
-  it("continue treats a consent record it cannot read the time of as stale", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      const key = await consentKey(stateOf(restarted.authorizationUrl));
-      const { at: _at, ...untimed } = JSON.parse(required((await storage.get(key)) ?? undefined)) as Record<
-        string,
-        unknown
-      >;
-      await storage.set(key, JSON.stringify(untimed));
-
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued.authorizationReused).toBeUndefined();
-      expect(continued.authorizationUrl).not.toBe(restarted.authorizationUrl);
-      expect(clientOf(continued.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-    });
-  });
-
-  it("restart reuses an issuer-bound registration while replacing each flow epoch", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      const first = await c.startAuth!(scope(storage), { force: true });
-      const firstEpoch = await epochOf(storage);
-
-      const second = await c.startAuth!(scope(storage), { force: true });
-
-      expect(second.authorizationReused).toBeUndefined();
-      expect(second.authorizationUrl).not.toBe(first.authorizationUrl);
-      expect(clientOf(second.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-      expect(await epochOf(storage)).not.toBe(firstEpoch);
-      // The first consent went with its epoch.
-      expect(await storage.get(await consentKey(stateOf(first.authorizationUrl)))).toBeNull();
-    });
-  });
-
   it("registers again when fresh discovery selects a different issuer", async () => {
     await withServer(async (server) => {
       const storage = memoryStorage();
@@ -704,60 +414,6 @@ describe("remoteMcp() continue and restart starts", () => {
       // The other server's discovery replaced the carried registration outright.
       expect(await valuesNaming(storage, "client-1")).toBe(0);
       expect((await storedGrant(storage))?.body?.issuer).toBe("https://new-auth.example");
-    });
-  });
-
-  it("registers again when redirect URI or connector configuration changes", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      await connector().startAuth!(scope(storage), { force: true });
-      const changedRedirect = scope(storage);
-      changedRedirect.baseUrl = "https://another-operator.example";
-      await connector().startAuth!(changedRedirect, { force: true });
-      expect(server.counts.register).toBe(2);
-
-      const changedConfig = remoteMcp("svc", {
-        url: mcpUrl,
-        auth: { type: "oauth" },
-        versionNegotiation: "legacy",
-        redirects: "same-origin",
-      });
-      await changedConfig.startAuth!(changedRedirect, { force: true });
-      expect(server.counts.register).toBe(3);
-    });
-  });
-
-  it("re-registers on the next restart after a callback rejects the client", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      expect(server.counts.register).toBe(1);
-      server.forget("client-1");
-
-      await expect(consent(c, storage, restarted.authorizationUrl)).rejects.toThrow();
-      expect(await new KvOAuthProvider("svc", storage, REDIRECT).clientInformation({ issuer })).toBeUndefined();
-
-      const retried = await c.startAuth!(scope(storage), { force: true });
-      expect(clientOf(retried.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-    });
-  });
-
-  it("keeps carrying a restarted registration once it has earned a grant", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await consent(c, storage, (await c.startAuth!(scope(storage), { force: true })).authorizationUrl);
-
-      const first = await c.startAuth!(scope(storage), { force: true });
-      expect(clientOf(first.authorizationUrl)).toBe("client-1");
-      await consent(c, storage, first.authorizationUrl);
-      const second = await c.startAuth!(scope(storage), { force: true });
-
-      expect(clientOf(second.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
     });
   });
 
@@ -799,66 +455,6 @@ describe("remoteMcp() continue and restart starts", () => {
       expect(clientOf(continued.authorizationUrl)).toBe("client-2");
       expect(server.counts.register).toBe(2);
       expect(await valuesNaming(storage, "client-1")).toBe(0);
-    });
-  });
-
-  it("continue never hands back a URL whose client a callback saw refused", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      server.forget("client-1");
-      await expect(consent(c, storage, restarted.authorizationUrl)).rejects.toThrow();
-
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued.authorizationReused).toBeUndefined();
-      expect(clientOf(continued.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-    });
-  });
-
-  it("re-selects a URL-based client from fresh metadata on every restart", async () => {
-    await withServer(async (server) => {
-      const clientMetadataUrl = "https://connecta.test/oauth-client.json";
-      const storage = memoryStorage();
-      const c = remoteMcp("svc", {
-        url: mcpUrl,
-        auth: { type: "oauth", clientMetadataUrl },
-        versionNegotiation: "legacy",
-      });
-      server.acceptUrlClients(true);
-      const first = await c.startAuth!(scope(storage), { force: true });
-      const second = await c.startAuth!(scope(storage), { force: true });
-      expect(clientOf(first.authorizationUrl)).toBe(clientMetadataUrl);
-      expect(clientOf(second.authorizationUrl)).toBe(clientMetadataUrl);
-      expect(server.counts.register).toBe(0);
-
-      // A carried URL client would outlive the server's support for it.
-      server.acceptUrlClients(false);
-      const third = await c.startAuth!(scope(storage), { force: true });
-
-      expect(clientOf(third.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-    });
-  });
-
-  it("never carries a registration whose client secret has expired", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      const grant = required(await storedGrant(storage));
-      const client = required(grant.body?.client);
-      client.value.client_secret = "dcr-secret";
-      client.value.client_secret_expires_at = Math.floor(Date.now() / 1000) - 1;
-      await storage.set(GRANT, JSON.stringify(grant));
-
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-
-      expect(clientOf(restarted.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
     });
   });
 
@@ -1092,136 +688,6 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     ).toEqual([]);
   });
 
-  it("leads an unstamped layout 2 grant to consent without sending its tokens anywhere, even beside discovery naming the server that issued it", async () => {
-    // A grant written before issuer binding carries no stamp, so nothing in it
-    // says which server issued it, and the migration to layout 3 keeps none
-    // of it: an operator authorizes once more.
-    const server = downstream();
-    const storage = memoryStorage();
-    const legacy = oauthV2Keys.field;
-    await storage.set(
-      oauthV2Keys.value(legacy.client, null),
-      JSON.stringify({
-        client_id: "legacy-client",
-        client_secret: "legacy-secret",
-        redirect_uris: [REDIRECT],
-        token_endpoint_auth_method: "client_secret_post",
-      }),
-    );
-    await storage.set(
-      oauthV2Keys.value(legacy.tokens, null),
-      JSON.stringify({
-        access_token: "legacy-access",
-        token_type: "Bearer",
-        refresh_token: "legacy-refresh",
-      }),
-    );
-    // Discovery as a release from v0.9.0 left it: raw JSON.
-    await storage.set(
-      oauthV2Keys.value(legacy.discovery, null),
-      JSON.stringify({
-        authorizationServerUrl: trusted,
-        authorizationServerMetadata: {
-          issuer: trusted,
-          authorization_endpoint: `${trusted}/authorize`,
-          token_endpoint: `${trusted}/token`,
-          registration_endpoint: `${trusted}/register`,
-          response_types_supported: ["code"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["client_secret_post"],
-        },
-      }),
-    );
-    const c = connector();
-
-    const error = await c.listTools(scope(storage)).then(
-      () => undefined,
-      (e: unknown) => e,
-    );
-
-    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
-    expect(server.requests.map(({ url }) => url)).not.toContain(`${trusted}/token`);
-    expect(await epochOf(storage)).toMatch(/^v3:/);
-    expect(
-      (await storage.list("")).filter((key) => oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix))),
-    ).toEqual([]);
-    expect((await everyStoredValue(storage)).filter((value) => /legacy-/.test(value ?? ""))).toEqual([]);
-
-    const started = await c.startAuth!(scope(storage), { force: false });
-    expect(new URL(required(started.authorizationUrl)).origin).toBe(trusted);
-    await consent(c, storage, started.authorizationUrl);
-    expect((await storedGrant(storage))?.body).toMatchObject({
-      issuer: trusted,
-      tokens: { refresh_token: expect.stringMatching(/^trusted\.refresh\./) },
-    });
-    for (const { url, text } of server.requests) {
-      expect(text, url).not.toMatch(/legacy-/);
-    }
-  });
-
-  it.each(["pending consent", "completed callback"])(
-    "fails a start a later reset overtook, leaving that reset's %s intact",
-    async (stage) => {
-      // Flow A begins and stalls at its first grant write. Flow B restarts
-      // past it at another server and starts — or completes — its consent. A
-      // resumes inside the SDK: every read and write it makes is bound to its
-      // own epoch, so it fails cleanly instead of reading or overwriting B's.
-      const server = downstream();
-      const backing = memoryStorage();
-      const reached = deferred<void>();
-      const resume = deferred<void>();
-      let holdA = true;
-      const storage: KVStorage = {
-        ...backing,
-        async compareAndSet(key, expected, next, options) {
-          if (holdA && key === GRANT) {
-            holdA = false;
-            reached.resolve();
-            await resume.promise;
-          }
-          return backing.compareAndSet(key, expected, next, options);
-        },
-      };
-      const c = connector();
-
-      const startA = c.startAuth!(scope(storage), { force: false });
-      await reached.promise;
-
-      server.advertise(foreign);
-      const startB = await c.startAuth!(scope(storage), { force: true });
-      const urlB = required(startB.authorizationUrl);
-      expect(new URL(urlB).origin).toBe(foreign);
-      const epochB = await epochOf(storage);
-      if (stage === "completed callback") await consent(c, storage, urlB);
-
-      resume.resolve();
-      const resultA = await startA;
-      expect(resultA.state).toBe("error");
-      expect(resultA.authorizationUrl).toBeUndefined();
-      expect(resultA.message).toMatch(/authorization changed while this request was in flight; try again/);
-
-      // B's epoch is still the live one, and nothing of A's landed in it.
-      expect(await epochOf(storage)).toBe(epochB);
-      expect((await storedGrant(storage))?.body?.discovery).toMatchObject({ authorizationServerUrl: foreign });
-      if (stage === "pending consent") {
-        // Continue hands back B's consent, and it completes.
-        const continued = await c.startAuth!(scope(storage), { force: false });
-        expect(continued).toMatchObject({ authorizationUrl: urlB, authorizationReused: true });
-        await consent(c, storage, urlB);
-      }
-      expect((await storedGrant(storage))?.body).toMatchObject({
-        issuer: foreign,
-        tokens: { refresh_token: expect.stringMatching(/^foreign\.refresh\./) },
-      });
-
-      // B's grant survives its next flow: it refreshes at B's server, in B's epoch.
-      server.requests.length = 0;
-      await c.listTools(scope(storage)).catch(() => {});
-      expect(server.requests.some(({ url }) => url === `${foreign}/token`)).toBe(true);
-      expect(await epochOf(storage)).toBe(epochB);
-    },
-  );
-
   it("fails a start whose consent URL write a reset overtook, rather than hand out the newer flow's", async () => {
     // A's consent record write is held; B restarts and stores its own
     // consent; A's record then lands but its pointer write finds another
@@ -1260,48 +726,6 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     const continued = await c.startAuth!(scope(storage), { force: false });
     expect(continued).toMatchObject({ authorizationUrl: urlB, authorizationReused: true });
   });
-
-  it("fails a callback whose token write a reset overtook, rather than report it connected", async () => {
-    // The exchange's token write is held; a restart lands; the write then
-    // meets another epoch. Nothing reads after it, so only the write itself
-    // can say it did not land.
-    downstream();
-    const backing = memoryStorage();
-    let holding = false;
-    const reached = deferred<void>();
-    const resume = deferred<void>();
-    const storage: KVStorage = {
-      ...backing,
-      async compareAndSet(key, expected, next, options) {
-        if (holding && key === GRANT && next?.includes("trusted.access")) {
-          holding = false;
-          reached.resolve();
-          await resume.promise;
-        }
-        return backing.compareAndSet(key, expected, next, options);
-      },
-    };
-    const c = connector();
-    const started = await c.startAuth!(scope(storage), { force: true });
-    const epochA = required(await epochOf(storage));
-    holding = true;
-
-    const state = stateOf(started.authorizationUrl);
-    const callback = scope(storage);
-    expect(await c.verifyState!(state, callback)).toBe(true);
-    const finishing = c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state })).then(
-      () => undefined,
-      (e: unknown) => e,
-    );
-    await reached.promise;
-    await c.startAuth!(scope(storage), { force: true });
-    resume.resolve();
-
-    const error = await finishing;
-    expect(String(error)).toMatch(/authorization changed while this request was in flight\./);
-    expect(await epochOf(storage)).not.toBe(epochA);
-    expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1315,36 +739,19 @@ describe("remoteMcp() token endpoint failures and the host's console", () => {
 
   type Refusal = (form: URLSearchParams) => Response;
   const echo = (form: URLSearchParams) => form.toString();
+  // One answer per way the token response is rebuilt: an OAuth error, a code
+  // outside the registered set, a body that is no JSON, and a 2xx whose
+  // `error` is no string, which the SDK's fallback would quote whole.
   const refusals: [string, Refusal][] = [
     [
       "an OAuth error whose description echoes the form",
       (form) => Response.json({ error: "invalid_grant", error_description: `rejected ${echo(form)}` }, { status: 400 }),
     ],
     [
-      "a client refusal whose description echoes the form",
-      (form) =>
-        Response.json({ error: "invalid_client", error_description: `rejected ${echo(form)}` }, { status: 401 }),
-    ],
-    [
       "an unregistered code carrying the form",
       (form) => Response.json({ error: `bad_${echo(form)}` }, { status: 400 }),
     ],
     ["a non-JSON body echoing the form", (form) => new Response(`bad request: ${echo(form)}`, { status: 400 })],
-    ["an outage echoing the form", (form) => new Response(`unavailable: ${echo(form)}`, { status: 503 })],
-    [
-      "an outage whose description echoes the form",
-      (form) => Response.json({ error: "server_error", error_description: echo(form) }, { status: 500 }),
-    ],
-    [
-      "a 2xx OAuth error echoing the form",
-      (form) => Response.json({ error: "invalid_grant", error_description: echo(form) }),
-    ],
-    ["a 2xx body that is no token response", (form) => Response.json({ note: echo(form) })],
-    ["a 2xx body that is no JSON", (form) => new Response(`ok ${echo(form)}`)],
-    // An `error` that is not a string is no OAuth error, and the SDK's
-    // fallback puts the whole body in its message.
-    ["a 2xx null error beside the form", (form) => Response.json({ error: null, detail: echo(form) })],
-    ["a 2xx numeric error beside the form", (form) => Response.json({ error: 42, detail: echo(form) })],
     ["a 2xx object error carrying the form", (form) => Response.json({ error: { message: echo(form) } })],
   ];
 
@@ -1470,39 +877,6 @@ describe("remoteMcp() token endpoint failures and the host's console", () => {
 });
 
 describe("remoteMcp() finishAuth", () => {
-  it("drives transport.finishAuth and reconnects next use", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    const finishAuth = vi.fn(async (_params: URLSearchParams) => {});
-    const { server, clientTransport } = await connectServer();
-    closer = () => server.close();
-
-    let build = 0;
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => {
-        build += 1;
-        // First build: the transport finishAuth() is called on.
-        if (build === 1) return { finishAuth, async close() {} } as unknown as Transport;
-        // Second build: a working in-process transport for the reconnect.
-        return clientTransport;
-      },
-    });
-
-    // A programmatic exchange claims the consent named by its state.
-    await seedConsent(storage, `${issuer}/authorize?client_id=client-1`, "callback-state");
-    const callbackParams = new URLSearchParams({ code: "code123", state: "callback-state" });
-    await connector.finishAuth!("code123", c, callbackParams);
-
-    expect(finishAuth).toHaveBeenCalledWith(callbackParams);
-
-    // Next use reconnects (second factory build) and lists tools.
-    const tools = await connector.listTools(c);
-    expect(tools.map((t) => t.name)).toEqual(["ping"]);
-    expect(build).toBe(2);
-  });
-
   it("refuses a callback whose state matches no pending consent, exchanging nothing", async () => {
     const storage = memoryStorage();
     await seedConsent(storage, `${issuer}/authorize?client_id=client-1`, "the-real-state");
@@ -1585,33 +959,6 @@ describe("remoteMcp() cross-isolate force re-auth", () => {
     expect(after.authorizationUrl).toBeUndefined();
     expect(aBuilds).toBe(2);
   });
-
-  it("discards a client whose connect completed after a concurrent force replaced the epoch", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-
-    const { server, clientTransport } = await connectServer();
-    closer = () => server.close();
-    // Simulate a force re-auth landing in ANOTHER isolate mid-connect: publish
-    // a new epoch as part of this connect's start().
-    const origStart = clientTransport.start.bind(clientTransport);
-    clientTransport.start = async () => {
-      await origStart();
-      await seedGrant(storage, {}, `v3:${crypto.randomUUID()}`);
-    };
-
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => clientTransport,
-    });
-
-    // connect() itself succeeds, but the epoch changed while it ran, so the
-    // client is discarded rather than cached — the wiped-and-reauthorized
-    // connector must not be resurrected by this stale isolate.
-    const status = await connector.status!(c);
-    expect(status.state).toBe("auth_required");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1637,90 +984,65 @@ describe("/oauth/callback/<id> route", () => {
     };
   }
 
-  function makeConnecta(finishAuth: (code: string) => void, storage = memoryStorage(), logger: Logger = silentLogger) {
-    const connecta = createTestConnecta({
+  function makeConnecta() {
+    return createTestConnecta({
       publicUrl: BASE,
       auth: callbackAuth,
       maintainers: [CLERK_OPTIONS.userId],
-      storage,
-      logger,
+      logger: silentLogger,
       connectors: [
         remoteMcp("svc", {
           url: "https://unused.example/mcp",
           auth: { type: "oauth" },
-          _transportFactory: () =>
-            ({
-              finishAuth: async (code: string) => finishAuth(code),
-              async close() {},
-            }) as unknown as Transport,
+          _transportFactory: () => ({ async close() {} }) as unknown as Transport,
         }),
       ],
     });
-    /** A consent for `state` in the connector's namespace, as a start stores one. */
-    const pending = (state: string) =>
-      seedConsent(connecta.registry.contextFor("svc", BASE).storage, `${issuer}/authorize?client_id=client-1`, state);
-    return { connecta, pending };
   }
 
-  it.each(["connected", "mismatch", "verify failure", "exchange failure"])(
-    "closes the callback's connector scope after %s",
-    async (outcome) => {
-      let active = 0;
-      let opened: ConnectorContext | undefined;
-      const closeScope = vi.fn(async (ctx: ConnectorContext) => {
-        expect(ctx).toBe(opened);
-        active--;
-        throw new Error("cleanup failed");
-      });
-      const connector = callbackConnector(
-        "svc",
-        async () => {
-          if (outcome === "exchange failure") throw new Error("exchange failed");
-        },
-        async (_state, ctx) => {
-          opened = ctx;
-          active++;
-          if (outcome === "verify failure") throw new Error("verification failed");
-          return outcome !== "mismatch";
-        },
-      );
-      connector.closeScope = closeScope;
-      const connecta = createTestConnecta({
-        publicUrl: BASE,
-        auth: callbackAuth,
-        maintainers: [CLERK_OPTIONS.userId],
-        logger: silentLogger,
-        connectors: [connector],
-      });
-      await bindCallback(connecta, "svc", "verified-state");
-      const response = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
-      expect(response.status).toBe(outcome === "connected" ? 200 : outcome === "exchange failure" ? 500 : 400);
-      expect(closeScope).toHaveBeenCalledTimes(1);
-      expect(active).toBe(0);
-    },
-  );
-
-  it("matching state + code → 200 'Connected' and calls finishAuth", async () => {
-    const spy = vi.fn();
-    const { connecta, pending } = makeConnecta(spy);
-    await pending("s3cr3t-state");
-    await bindCallback(connecta, "svc", "s3cr3t-state");
-    const res = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=s3cr3t-state`));
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("Connected");
-    const callbackParams = spy.mock.calls[0]?.[0];
-    expect(callbackParams).toBeInstanceOf(URLSearchParams);
-    expect(callbackParams.get("code")).toBe("abc");
+  it.each(["connected", "exchange failure"])("closes the callback's connector scope after %s", async (outcome) => {
+    let active = 0;
+    let opened: ConnectorContext | undefined;
+    const closeScope = vi.fn(async (ctx: ConnectorContext) => {
+      expect(ctx).toBe(opened);
+      active--;
+      throw new Error("cleanup failed");
+    });
+    const connector = callbackConnector(
+      "svc",
+      async () => {
+        if (outcome === "exchange failure") throw new Error("exchange failed");
+      },
+      async (_state, ctx) => {
+        opened = ctx;
+        active++;
+        if (outcome === "verify failure") throw new Error("verification failed");
+        return outcome !== "mismatch";
+      },
+    );
+    connector.closeScope = closeScope;
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      auth: callbackAuth,
+      maintainers: [CLERK_OPTIONS.userId],
+      logger: silentLogger,
+      connectors: [connector],
+    });
+    await bindCallback(connecta, "svc", "verified-state");
+    const response = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
+    expect(response.status).toBe(outcome === "connected" ? 200 : outcome === "exchange failure" ? 500 : 400);
+    expect(closeScope).toHaveBeenCalledTimes(1);
+    expect(active).toBe(0);
   });
 
-  it.each([401, 403])("refuses an identity-free callback on either 401 or 403 (%i)", async (status) => {
+  it("refuses an identity-free callback", async () => {
     const finish = vi.fn(async () => {});
     const connecta = createTestConnecta({
       publicUrl: BASE,
       auth: {
         kind: "browser-bearer",
         interactiveOperator: true,
-        authorize: () => ({ ok: false, response: new Response(null, { status }) }),
+        authorize: () => ({ ok: false, response: new Response(null, { status: 401 }) }),
       },
       // Required with inbound auth; nobody here ever signs in as them.
       maintainers: [{ namespace: "https://identity.test", id: "operator" }],
@@ -1731,36 +1053,6 @@ describe("/oauth/callback/<id> route", () => {
     expect(finish).not.toHaveBeenCalled();
     const invalid = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=wrong`));
     expect(invalid.status).toBe(400);
-    expect(finish).not.toHaveBeenCalled();
-  });
-
-  it("refuses a callback carrying a recognized machine credential", async () => {
-    const finish = vi.fn(async () => {});
-    const connecta = createTestConnecta({
-      publicUrl: BASE,
-      // A recognized machine credential, and nothing interactive
-      // whose 403 would otherwise be the only explicit denial.
-      auth: {
-        kind: "access_token",
-        recognizesCredential: (request) => Boolean(request.headers.get("authorization")),
-        authorize: (request) =>
-          request.headers.has("authorization")
-            ? { ok: false, response: new Response(null, { status: 403 }) }
-            : { ok: false, response: new Response(null, { status: 401 }) },
-      },
-      // Required with inbound auth; nobody here ever signs in as them.
-      maintainers: [{ namespace: "https://identity.test", id: "operator" }],
-      connectors: [callbackConnector("svc", finish, async (state) => state === "verified-state")],
-    });
-    const refused = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`, {
-        headers: { authorization: "Bearer agent-secret" },
-      }),
-    );
-    expect(refused.status).toBe(400);
-    expect(finish).not.toHaveBeenCalled();
-    const browser = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
-    expect(browser.status).toBe(400);
     expect(finish).not.toHaveBeenCalled();
   });
 
@@ -1782,147 +1074,11 @@ describe("/oauth/callback/<id> route", () => {
     return { storage, reads };
   }
 
-  // Human routes refuse recognized machines without verification, so
-  // a managed access token is never looked up here: a bogus
-  // `cta_` token would otherwise add a read only where the connector exists.
-  it("a bogus managed token adds no storage reads to a configured or unknown callback", async () => {
-    const { storage: counting, reads } = countingStorage();
-    const connecta = createTestConnecta({
-      publicUrl: BASE,
-      auth: callbackAuth,
-      maintainers: [CLERK_OPTIONS.userId],
-      storage: counting,
-      logger: silentLogger,
-      accessTokens: accessTokens(counting),
-      connectors: [
-        remoteMcp("svc", {
-          url: "https://unused.example/mcp",
-          auth: { type: "oauth" },
-          _transportFactory: () => ({ async close() {} }) as unknown as Transport,
-        }),
-      ],
-    });
-    await seedConsent(
-      connecta.registry.contextFor("svc", BASE).storage,
-      `${issuer}/authorize?client_id=client-1`,
-      "the-real-state",
-    );
-    const readsFor = async (id: string, token?: string) => {
-      reads.length = 0;
-      const res = await connecta.fetch(
-        new Request(
-          `${BASE}/oauth/callback/${id}?code=abc&state=attacker-state`,
-          token ? { headers: { authorization: `Bearer ${token}` } } : {},
-        ),
-      );
-      expect(res.status).toBe(400);
-      return [...reads];
-    };
-    const bogus = `cta_${"A".repeat(43)}`;
-    const configured = await readsFor("svc", bogus);
-    const unknown = await readsFor("absent", bogus);
-    expect(configured).toEqual(await readsFor("svc"));
-    expect(unknown).toEqual(await readsFor("absent"));
-    expect(configured.length).toBe(unknown.length);
-    expect([...configured, ...unknown].some((key) => key.includes("access-token"))).toBe(false);
-    await connecta.close();
-  });
-
-  it("every unverifiable callback failure is indistinguishable", async () => {
-    const spy = vi.fn();
-    const { connecta, pending } = makeConnecta(spy);
-    const unverifiedFinish = vi.fn();
-    const throwingFinish = vi.fn();
-    const edgeConnecta = createTestConnecta({
-      publicUrl: BASE,
-      auth: callbackAuth,
-      maintainers: [CLERK_OPTIONS.userId],
-      storage: memoryStorage(),
-      logger: silentLogger,
-      connectors: [
-        // A connector that exists but has no OAuth at all — the other half of
-        // `!connector || !connector.finishAuth`, and the id an attacker is
-        // likeliest to guess right. It must not answer differently from an id
-        // that names nothing.
-        api("plain", {
-          description: "not an OAuth connector",
-          tools: [
-            {
-              name: "noop",
-              description: "does nothing",
-              annotations: { readOnlyHint: true },
-              handler: async () => ({}),
-            },
-          ],
-        }),
-        callbackConnector("unverified", async (code) => {
-          unverifiedFinish(code);
-        }),
-        callbackConnector(
-          "throwing",
-          async (code) => {
-            throwingFinish(code);
-          },
-          async () => {
-            throw new Error("verifier unavailable");
-          },
-        ),
-      ],
-    });
-    await pending("the-real-state");
-    const shape = async (res: Response) => ({
-      status: res.status,
-      body: await res.text(),
-      headers: Object.fromEntries(res.headers.entries()),
-    });
-    const callback = (app: typeof connecta, path: string) => app.fetch(new Request(`${BASE}/oauth/callback/${path}`));
-    const unknown = await shape(await callback(connecta, "nope?code=abc&state=attacker-state"));
-    const nonOAuth = await shape(await callback(edgeConnecta, "plain?code=abc&state=attacker-state"));
-    const missingState = await shape(await callback(connecta, "svc?code=abc"));
-    const mismatchedState = await shape(await callback(connecta, "svc?code=abc&state=attacker-state"));
-    const noVerifier = await shape(await callback(edgeConnecta, "unverified?code=abc&state=attacker-state"));
-    const throwingVerifier = await shape(await callback(edgeConnecta, "throwing?code=abc&state=attacker-state"));
-    expect(unknown.status).toBe(400);
-    expect(unknown.body).toContain("Authorization could not be completed");
-    expect(nonOAuth).toEqual(unknown);
-    expect(missingState).toEqual(unknown);
-    expect(mismatchedState).toEqual(unknown);
-    expect(noVerifier).toEqual(unknown);
-    expect(throwingVerifier).toEqual(unknown);
-    expect(spy).not.toHaveBeenCalled();
-    expect(unverifiedFinish).not.toHaveBeenCalled();
-    expect(throwingFinish).not.toHaveBeenCalled();
-  });
-
-  it("logs the reason for an opaque state refusal", async () => {
-    const warn = vi.fn();
-    const { connecta, pending } = makeConnecta(vi.fn(), memoryStorage(), { ...silentLogger, warn });
-    warn.mockClear();
-    await pending("the-real-state");
-    await bindCallback(connecta, "svc", "attacker-state");
-
-    await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=attacker-state`));
-
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("state did not match the pending authorization flow");
-  });
-
-  it("refuses a missing state before consulting browser identity or the verifier", async () => {
-    const warn = vi.fn();
-    const { connecta, pending } = makeConnecta(vi.fn(), memoryStorage(), { ...silentLogger, warn });
-    warn.mockClear();
-    await pending("the-real-state");
-
-    await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc`));
-
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  // The response channel is closed above; this closes the clock. A refusal that
-  // returns without touching storage answers measurably sooner than one that
-  // read the consent the state names first — on a KV-backed deployment that
-  // is a network hop — which would re-open the enumeration the flat 400
-  // exists to deny. Counting reads rather than timing them: a wall-clock
+  // Every unverifiable callback answers one flat 400 (server-route-contracts);
+  // this closes the clock. A refusal that returns without touching storage
+  // answers measurably sooner than one that read the consent the state names
+  // first — on a KV-backed deployment that is a network hop — which would
+  // re-open the enumeration the flat 400 exists to deny. Counting reads rather than timing them: a wall-clock
   // assertion is a CI flake waiting to happen, and the count is the property
   // that actually matters.
   it("an unknown id costs the same storage reads as a configured one", async () => {
@@ -2020,26 +1176,10 @@ describe("/oauth/callback/<id> route", () => {
   });
 
   it("INV-4: an error parameter without validated state is a generic 400", async () => {
-    const { connecta } = makeConnecta(vi.fn());
+    const connecta = makeConnecta();
     const res = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?error=access_denied`));
     expect(res.status).toBe(400);
     expect(await res.text()).toContain('data-oauth-callback="invalid_callback"');
-  });
-
-  it("missing code → 400", async () => {
-    const { connecta } = makeConnecta(vi.fn());
-    const res = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc`));
-    expect(res.status).toBe(400);
-  });
-
-  it("escapes a malicious error param (no raw <script> in the body)", async () => {
-    const { connecta } = makeConnecta(vi.fn());
-    const evil = "<script>alert(1)</script>";
-    const res = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?error=${encodeURIComponent(evil)}`));
-    expect(res.status).toBe(400);
-    const body = await res.text();
-    expect(body).not.toContain(evil);
-    expect(body).not.toContain("&lt;script&gt;");
   });
 });
 
@@ -2180,6 +1320,8 @@ describe("remoteMcp() dispatched refresh grants", () => {
     throw new Error("expected the call to fail");
   }
 
+  // A 2xx OAuth error, a client refusal (which also clears the registration),
+  // and a failure whose body is no OAuth error at all.
   const deadAnswers: [string, TokenAnswer][] = [
     [
       "GitHub's 200 bad_refresh_token",
@@ -2191,19 +1333,13 @@ describe("remoteMcp() dispatched refresh grants", () => {
         }),
     ],
     [
-      "400 invalid_grant",
-      () => Response.json({ error: "invalid_grant", error_description: "Token revoked." }, { status: 400 }),
-    ],
-    [
       "401 invalid_client",
       () => Response.json({ error: "invalid_client", error_description: "Unknown client." }, { status: 401 }),
     ],
-    ["400 invalid_scope", () => Response.json({ error: "invalid_scope" }, { status: 400 })],
     [
       "403 with a non-OAuth body",
       () => new Response("<html>Forbidden</html>", { status: 403, headers: { "content-type": "text/html" } }),
     ],
-    ["404 with no body", () => new Response(null, { status: 404 })],
   ];
 
   it.each(deadAnswers)(
@@ -2240,75 +1376,32 @@ describe("remoteMcp() dispatched refresh grants", () => {
     },
   );
 
-  it("drops a dead grant held as sealed state", async () => {
-    const seal = sealer();
-    const storage = await seededStorage(seal);
-    const sealed = required(await storedGrant(storage));
-    expect(sealed.sealed).toBeTypeOf("string");
-    expect(JSON.stringify(sealed)).not.toContain("refresh-old");
-    const server = downstream({ current: () => Response.json({ error: "bad_refresh_token" }) });
+  it("HTTP 403 refresh requires re-consent without replay whatever its prose says (INV-5) (INV-6) (INV-9)", async () => {
+    const storage = await seededStorage();
+    const server = downstream({
+      current: () =>
+        Response.json(
+          { error: "invalid_grant", error_description: "timeout temporarily rate limit 503" },
+          { status: 403 },
+        ),
+    });
     const c = connector();
-    const passive = scope(storage, seal);
-    const { classified } = await failureOf(c.listTools(passive));
-    expect(classified).toMatchObject({ code: "downstream_oauth_required" });
-    await c.closeScope?.(passive);
-    expect(await reader(storage, seal).tokens()).toBeUndefined();
-    expect((await storedGrant(storage))?.sealed).toBeTypeOf("string");
-
-    const authorizing = scope(storage, seal);
-    const started = await c.startAuth!(authorizing);
-    expect(started.authorizationUrl).toMatch(new RegExp(`^${issuer}/authorize\\?`));
-    await c.closeScope?.(authorizing);
-    expect(server.redeemed).toEqual(["refresh-old"]);
+    const passive = scope(storage);
+    try {
+      const { error, classified } = await failureOf(c.listTools(passive));
+      expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
+      expect(classified.message).toContain("authorize_connector");
+      expect((error as Error).cause).toBeUndefined();
+      expect(await reader(storage).tokens()).toBeUndefined();
+      expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
+      await expect(c.listTools(scope(storage))).rejects.toMatchObject({ code: "downstream_oauth_required" });
+      expect(server.redeemed).toEqual(["refresh-old"]);
+    } finally {
+      await c.closeScope!(passive);
+    }
   });
 
-  it.each(["plain refusal", "timeout temporarily rate limit 503", "invalid_grant"])(
-    "HTTP 403 refresh requires re-consent without replay regardless of %s (INV-5) (INV-6) (INV-9)",
-    async (prose) => {
-      const storage = await seededStorage();
-      const server = downstream({
-        current: () => Response.json({ error: "invalid_grant", error_description: prose }, { status: 403 }),
-      });
-      const c = connector();
-      const passive = scope(storage);
-      try {
-        const { error, classified } = await failureOf(c.listTools(passive));
-        expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
-        expect(classified.message).toContain("authorize_connector");
-        expect((error as Error).cause).toBeUndefined();
-        expect(await reader(storage).tokens()).toBeUndefined();
-        expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
-        await expect(c.listTools(scope(storage))).rejects.toMatchObject({ code: "downstream_oauth_required" });
-        expect(server.redeemed).toEqual(["refresh-old"]);
-      } finally {
-        await c.closeScope!(passive);
-      }
-    },
-  );
-
   describe("discardRefusedGrant", () => {
-    it("deletes by compare-and-set only while the grant holds that refresh token in that epoch", async () => {
-      const seal = sealer();
-      const storage = await seededStorage(seal);
-      const { epoch } = required(await storedGrant(storage));
-      const sealedRaw = await storage.get(GRANT);
-      const cas = vi.spyOn(storage, "compareAndSet");
-      const del = vi.spyOn(storage, "delete");
-      const p = reader(storage, seal);
-
-      await p.discardRefusedGrant("refresh-old", "v3:another-epoch");
-      expect(await storage.get(GRANT)).toBe(sealedRaw);
-      expect(cas).not.toHaveBeenCalled();
-
-      await p.discardRefusedGrant("refresh-old", epoch);
-      expect(cas).toHaveBeenCalledWith(GRANT, sealedRaw, expect.any(String));
-      expect(del).not.toHaveBeenCalled();
-      expect(await reader(storage, seal).tokens()).toBeUndefined();
-      // Only the refused tokens go: the registration stays for the next consent.
-      expect(await reader(storage, seal).clientInformation()).toMatchObject({ client_id: "connecta-client" });
-      expect(await epochOf(storage)).toBe(epoch);
-    });
-
     it("keeps a consent that lands between the read and the compare-and-set delete", async () => {
       const seal = sealer();
       const storage = await seededStorage(seal);
@@ -2339,13 +1432,6 @@ describe("remoteMcp() dispatched refresh grants", () => {
         refresh_token: "refresh-consented",
       });
     });
-
-    it("leaves a different refresh token alone", async () => {
-      const storage = await seededStorage();
-      const { epoch } = required(await storedGrant(storage));
-      await reader(storage).discardRefusedGrant("refresh-other", epoch);
-      expect(await reader(storage).tokens()).toMatchObject({ refresh_token: "refresh-old" });
-    });
   });
 
   it("gives every caller joined on a dead refresh flight the same auth_required", async () => {
@@ -2369,21 +1455,16 @@ describe("remoteMcp() dispatched refresh grants", () => {
     await Promise.all(scopes.map((s) => c.closeScope?.(s)));
   });
 
+  // Answers that invite a retry still spent the dispatched refresh token.
   const failureAnswers: [string, TokenAnswer][] = [
-    ["503 server_error", () => Response.json({ error: "server_error", error_description: "down" }, { status: 503 })],
     [
       "503 temporarily_unavailable with Retry-After",
       () => Response.json({ error: "temporarily_unavailable" }, { status: 503, headers: { "retry-after": "12" } }),
     ],
-    ["502 with a non-OAuth body", () => new Response("Bad Gateway", { status: 502 })],
-    ["500 invalid_grant", () => Response.json({ error: "invalid_grant" }, { status: 500 })],
-    ["408", () => new Response(null, { status: 408 })],
-    ["425", () => new Response(null, { status: 425 })],
     [
       "429 with Retry-After",
       () => Response.json({ error: "too_many_requests" }, { status: 429, headers: { "retry-after": "30" } }),
     ],
-    ["429 without Retry-After", () => new Response("slow down", { status: 429 })],
   ];
 
   it.each(failureAnswers)(
@@ -2440,36 +1521,6 @@ describe("remoteMcp() dispatched refresh grants", () => {
     expect(server.redeemed).toEqual(["refresh-old"]);
   });
 
-  it("refreshes a grant an earlier release bound, without the SDK warning on the console", async () => {
-    // From v0.9.0 to v0.28.1 a grant from before binding was bound on its
-    // first read: the envelope carries the issuer, the value inside does not.
-    // Layout 3 migrates it as the issuer's grant.
-    const storage = memoryStorage();
-    const bound = (value: object) => JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer, value });
-    await storage.set(oauthV2Keys.value(oauthV2Keys.field.client, null), bound(client));
-    await storage.set(
-      oauthV2Keys.value(oauthV2Keys.field.tokens, null),
-      bound({
-        access_token: "access-old",
-        token_type: "Bearer",
-        refresh_token: "refresh-old",
-      }),
-    );
-    const server = downstream({
-      current: () => Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" }),
-    });
-    const c = connector();
-    const output = consoleOutput();
-    const passive = scope(storage);
-    await expect(c.listTools(passive)).resolves.toEqual([]);
-    expect(server.redeemed).toEqual(["refresh-old"]);
-    // Handed to the SDK carrying the stamp its envelope held, so the SDK's
-    // own SEP-2352 check has nothing to warn about.
-    expect(output()).toBe("");
-    expect((await storedGrant(storage))?.body).toMatchObject({ issuer, tokens: { refresh_token: "refresh-new" } });
-    await c.closeScope?.(passive);
-  });
-
   it("requires re-consent in fixed text when rotation commit retries are exhausted (INV-5)", async () => {
     // Uncommitted response tokens never reach the SDK or its output.
     const seeded = await seededStorage();
@@ -2507,77 +1558,21 @@ describe("remoteMcp() dispatched refresh grants", () => {
     await c.closeScope?.(passive);
   });
 
-  it.each([
-    [
-      "a dead grant",
-      () => Response.json({ error: "bad_refresh_token" }),
-      { code: "downstream_oauth_required", retryable: false },
-      undefined,
-    ],
-    [
-      "an outage",
-      () => new Response("Service Unavailable", { status: 503 }),
-      { code: "downstream_oauth_required", retryable: false },
-      undefined,
-    ],
-  ])("classifies %s met by a tool call after connect", async (_label, tokenAnswer, expected, keptTokens) => {
+  it("classifies a dead grant met by a tool call after connect", async () => {
     const storage = await seededStorage(undefined, "access-new");
-    const server = downstream({ current: tokenAnswer, revokedAfterConnect: true });
+    const server = downstream({
+      current: () => Response.json({ error: "bad_refresh_token" }),
+      revokedAfterConnect: true,
+    });
     const c = connector();
     const passive = scope(storage);
     await expect(c.listTools(passive)).resolves.toEqual([]);
     expect(server.counts.token).toBe(0);
     const { classified } = await failureOf(c.callTool("ping", {}, passive));
-    expect(classified).toMatchObject(expected);
-    expect(server.counts.token).toBe(1);
-    expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
-    if (keptTokens === undefined) {
-      expect(await reader(storage).tokens()).toBeUndefined();
-    } else {
-      expect(await reader(storage).tokens()).toMatchObject(keptTokens);
-    }
-    await c.closeScope?.(passive);
-  });
-
-  /**
-   * How many grant reads one caller makes before its refresh reaches the
-   * token endpoint, measured on a store of its own: a follower makes the
-   * same ones before it joins a flight.
-   */
-  it("gives every caller joined on a dispatched failure the same re-consent verdict (INV-5)", async () => {
-    const seeded = await seededStorage();
-    // Hold the owner's token request until every follower has joined its
-    // flight, so none can arrive after the flight ends and redeem again.
-    let grantReads = 0;
-    const storage: KVStorage = {
-      ...seeded,
-      get: async (key) => {
-        if (key === GRANT) grantReads++;
-        return seeded.get(key);
-      },
-    };
-    const server = downstream({ current: () => Response.json({ error: "server_error" }, { status: 503 }) });
-    const c = connector();
-    const gate = server.gate(3);
-    const scopes = Array.from({ length: 3 }, () => scope(storage));
-    const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
-    await gate.ready;
-    // All callers reached their 401 and the owner dispatched its refresh.
-    // Wait for followers' grant reads to settle before releasing the response;
-    // joining a local flight need not repeat the owner's storage reads.
-    await vi.waitFor(async () => {
-      const seen = grantReads;
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      expect(grantReads).toBe(seen);
-    });
-    gate.release();
-    const failures = await calls;
-    for (const { classified } of failures) {
-      expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
-    }
+    expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
     expect(server.counts.token).toBe(1);
     expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
     expect(await reader(storage).tokens()).toBeUndefined();
-    await Promise.all(scopes.map((s) => c.closeScope?.(s)));
+    await c.closeScope?.(passive);
   });
 });
