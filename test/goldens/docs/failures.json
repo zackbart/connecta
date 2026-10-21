@@ -1014,7 +1014,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
+            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "docs",
@@ -1516,7 +1516,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
+            "message": "The outcome of this edit is unknown: Google Docs answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1597,7 +1597,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure: rejected [redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
+            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure: rejected [redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "docs",
@@ -1690,7 +1690,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
+            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }
@@ -1771,7 +1771,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
+            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
             "retryable": false,
             "writeOutcome": "unknown"
           }

@@ -71,7 +71,7 @@ import type {
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
-import { tracksEveryRequest } from "../../provider-call.js";
+import { resendAdvice, tracksEveryRequest } from "../../provider-call.js";
 
 /** Tithe.ly's two published v1 endpoints, one per environment. */
 export const TITHELY_API_BASE_URLS = {
@@ -258,10 +258,13 @@ function tithelyFailure(status: number, headers: Headers, payload: unknown): Con
   const detail = detailFor(payload, status);
   if (status === 429) {
     const wait = retryAfterMs(headers);
-    return new ConnectorCallError(
-      "rate_limited",
-      `${detail} Tithe.ly publishes no rate limit; wait before retrying, and add a callAdmission budget if this recurs.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${detail} Tithe.ly publishes no rate limit; wait before retrying, and add a callAdmission budget if this recurs.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      "wait before retrying, and ",
     );
   }
   if (status === 401) {
@@ -312,10 +315,13 @@ function tithelyFailure(status: number, headers: Headers, payload: unknown): Con
 function inBandFailure(payload: unknown): ConnectorCallError | undefined {
   const status = asRecord(payload)["status"];
   if (status === undefined || status === "success") return undefined;
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `${detailFor(payload, 200)} (status "${String(status)}"). Tithe.ly reports declined payments, unknown ids, and rejected arguments all this way, without a code; read the reason before retrying.`,
-    { retryable: false },
+  return resendAdvice(
+    new ConnectorCallError(
+      "connector_call_failed",
+      `${detailFor(payload, 200)} (status "${String(status)}"). Tithe.ly reports declined payments, unknown ids, and rejected arguments all this way, without a code; read the reason before retrying.`,
+      { retryable: false },
+    ),
+    "; read the reason before retrying",
   );
 }
 

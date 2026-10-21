@@ -10,7 +10,7 @@ import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
 import { providerFailureMessage, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { skill } from "./skill.generated.js";
-import { tracksEveryRequest } from "../../provider-call.js";
+import { resendAdvice, tracksEveryRequest } from "../../provider-call.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
 /** Connecta's response ceiling, before JSON parsing; not an Infisical limit. */
@@ -32,7 +32,11 @@ function failure(status: number, headers: Headers, login = false): ConnectorCall
   const detail = `Infisical returned HTTP ${status}.`;
   const wait = retryAfterMs(headers);
   const retry = wait === undefined ? {} : { retryAfterMs: wait };
-  if (status === 429) return new ConnectorCallError("rate_limited", `${detail} Wait before retrying.`, retry);
+  if (status === 429)
+    return resendAdvice(
+      new ConnectorCallError("rate_limited", `${detail} Wait before retrying.`, retry),
+      " Wait before retrying.",
+    );
   if (login && status >= 400 && status < 500)
     return new ConnectorCallError(
       "auth_required",

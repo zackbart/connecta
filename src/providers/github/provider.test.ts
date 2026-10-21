@@ -616,6 +616,15 @@ describe("GitHub App provider", () => {
       expect(fixture.tokens).toHaveLength(0);
       // Ledger provenance: nothing left, so the write is a known failure.
       expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("failed");
+      // Served, GitHub delegates each call, so its own refusal still stands
+      // for the whole logical call (round 13).
+      const registry = makeRegistry([connection()]);
+      const served = await new InvocationService(
+        registry,
+        new CatalogService(registry, "https://connecta.test"),
+      ).invoke(`github.${name}`, args, { source: "call_destructive_tool" });
+      expect(served).toMatchObject({ ok: false, dispatched: true, answered: true, error: { code: "invalid_args" } });
+      expect(classifyWriteOutcome(served)).toBe("failed");
     },
   );
 

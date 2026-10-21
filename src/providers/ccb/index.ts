@@ -44,7 +44,7 @@ import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSch
 import { keys, optionsOf } from "../../config-schema.js";
 import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
-import { tracksEveryRequest } from "../../provider-call.js";
+import { resendAdvice, tracksEveryRequest } from "../../provider-call.js";
 
 /** CCB's v2 media type. The API and its token endpoint both require it. */
 export const CCB_MEDIA_TYPE = "application/vnd.ccbchurch.v2+json";
@@ -380,10 +380,13 @@ function ccbFailure(status: number, headers: Headers, payload: unknown): Connect
   const detail = errorDetail(payload, status);
   if (status === 429) {
     const wait = rateLimitWaitMs(headers, payload);
-    return new ConnectorCallError(
-      "rate_limited",
-      `${detail} CCB limits each endpoint per API client; wait before calling this endpoint again.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${detail} CCB limits each endpoint per API client; wait before calling this endpoint again.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      "; wait before calling this endpoint again",
     );
   }
   if (status === 401) {

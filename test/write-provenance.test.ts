@@ -7,7 +7,8 @@
 // operation hint: only an idempotency key the vendor honors makes a direct
 // write repeatable. Round 12: a custom connector, an input_required
 // suspension, and a provider that reads a refusing status as `unavailable`
-// prove nothing either.
+// prove nothing either. Round 13: refusal evidence holds only for its whole
+// logical call, and a write's MCP isError is no evidence at all.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
 import { api } from "../src/connectors/api.js";
@@ -18,9 +19,12 @@ import { InvocationService } from "../src/invocation.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { createExecuteTool } from "../src/execute.js";
 import { sheets } from "../src/providers/sheets/index.js";
+import { stripe } from "../src/providers/stripe/index.js";
+import { CredentialVault } from "../src/credentials.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
-import type { Executor } from "../src/types.js";
+import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { googleOptions } from "./fixtures/provider-options.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
@@ -525,5 +529,169 @@ describe("a write's input_required suspension is no proof the handler never ran 
     });
     expect(served.error.writeOutcome).toBeUndefined();
     await connector.closeScope?.(ctx);
+  });
+});
+
+describe("refusal evidence holds only for its whole logical call (round 13)", () => {
+  const stripeWrite = (id: string) => ({ method: "DELETE", path: `/v1/customers/${id}` });
+
+  /** A Stripe connection whose odd-numbered requests delete and even-numbered ones are refused 429. */
+  async function billing() {
+    const state = { sent: 0, applied: 0 };
+    vi.stubGlobal("fetch", async () => {
+      state.sent++;
+      if (state.sent % 2 === 1) {
+        state.applied++;
+        return Response.json({ id: "cus_1", deleted: true });
+      }
+      return Response.json({ error: { type: "rate_limit_error", message: "Rate limit" } }, { status: 429 });
+    });
+    const connector = stripe("billing", { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.set("billing", "sk_test_fixture", "fixture");
+    return { state, connector, storage, vault };
+  }
+
+  /** A custom connector whose one tool composes `run` over the Stripe connection. */
+  function composite(inner: Connector, run: (inner: Connector, ctx: ConnectorContext) => Promise<unknown>): Connector {
+    return {
+      id: "billing",
+      kind: "api",
+      ...(inner.credential ? { credential: inner.credential } : {}),
+      description: "Composite operation",
+      async listTools() {
+        return [
+          { name: "delete_pair", description: "Delete two", annotations: { readOnlyHint: false }, inputSchema: {} },
+        ];
+      },
+      callTool: (_name, _args, ctx) => run(inner, ctx),
+    };
+  }
+
+  it("INV-9: a composite's second Stripe DELETE refused 429 after its first applied is unknown, served and in a program", async () => {
+    const { state, connector, storage, vault } = await billing();
+    const wrapper = composite(connector, async (inner, ctx) => {
+      await inner.callTool("stripe_api_write", stripeWrite("cus_1"), ctx);
+      return await inner.callTool("stripe_api_write", stripeWrite("cus_2"), ctx);
+    });
+    const registry = makeRegistry([wrapper], { storage, credentialVault: vault });
+    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "billing.delete_pair",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    expect(state).toEqual({ sent: 2, applied: 1 });
+    if (served.ok) throw new Error("expected the served write to fail");
+    expect(served.answered).toBe(false);
+    expect(served.error).toMatchObject({ code: "rate_limited", retryable: false, writeOutcome: "unknown" });
+    // Stripe's own back-off advice held only for the refused request.
+    expect(served.error.message).toBe("Stripe rate_limit_error: Rate limit");
+    expect(served.error.retry).toBeUndefined();
+    expect(classifyWriteOutcome(served)).toBe("unknown");
+
+    const program = await catchingProgram(registry, "billing.delete_pair");
+    expect(state).toEqual({ sent: 4, applied: 2 });
+    expect(program.isError).toBe(true);
+    expect(program.structuredContent).toMatchObject({
+      error: { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } },
+    });
+  });
+
+  it("INV-9: an untracked wrapper that sends on its own before one refused Stripe call never inherits the refusal", async () => {
+    const { state, connector, storage, vault } = await billing();
+    const wrapper = composite(connector, async (inner, ctx) => {
+      await fetch("https://side.example/apply", { method: "POST" });
+      return await inner.callTool("stripe_api_write", stripeWrite("cus_2"), ctx);
+    });
+    const registry = makeRegistry([wrapper], { storage, credentialVault: vault });
+    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "billing.delete_pair",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    expect(state).toEqual({ sent: 2, applied: 1 });
+    if (served.ok) throw new Error("expected the served write to fail");
+    expect(served.error).toMatchObject({ code: "rate_limited", retryable: false, writeOutcome: "unknown" });
+    expect(classifyWriteOutcome(served)).toBe("unknown");
+  });
+
+  it("INV-9: control: Stripe's own single DELETE refused 429 stays a known failure with its advice", async () => {
+    const { state, connector, storage, vault } = await billing();
+    state.sent = 1; // The next request is refused.
+    const registry = makeRegistry([connector], { storage, credentialVault: vault });
+    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "billing.stripe_api_write",
+      stripeWrite("cus_2"),
+      { source: "call_destructive_tool" },
+    );
+    expect(state).toEqual({ sent: 2, applied: 0 });
+    if (served.ok) throw new Error("expected the refusal");
+    expect(served.answered).toBe(true);
+    expect(served.error).toMatchObject({ code: "rate_limited", retryable: true });
+    expect(served.error.writeOutcome).toBeUndefined();
+    expect(served.error.message).toMatch(/Back off before retrying\.$/);
+    expect(classifyWriteOutcome(served)).toBe("failed");
+    state.sent++; // The direct request is refused too.
+    const direct = classifyCallError(
+      await failure(connector.callTool("stripe_api_write", stripeWrite("cus_4"), registry.contextFor("billing", BASE))),
+    );
+    expect(direct).toMatchObject({ code: "rate_limited", retryable: true });
+    expect(direct.message).toMatch(/Back off before retrying\.$/);
+  });
+});
+
+describe("a write's MCP isError is a 2xx reply, never a known failure (round 13)", () => {
+  /** A real SDK server whose write applies, then answers isError over HTTP 200. */
+  function erroring() {
+    const state = { applied: 0, statuses: [] as number[] };
+    const downstream = httpDownstream((server) => {
+      server.registerTool("create_item", { annotations: { readOnlyHint: false } }, async () => {
+        state.applied++;
+        return { isError: true, content: [{ type: "text", text: "Follow-up quota check failed." }] };
+      });
+      server.registerTool("list_items", { annotations: { readOnlyHint: true } }, async () => {
+        return { isError: true, content: [{ type: "text", text: "No such list." }] };
+      });
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await downstream.fetch(String(input), init);
+      if (typeof init?.body === "string" && JSON.parse(init.body).method === "tools/call")
+        state.statuses.push(response.status);
+      return response;
+    });
+    const registry = makeRegistry([remoteMcp("tickets", { url: downstream.url })]);
+    return { state, registry, invoke: new InvocationService(registry, new CatalogService(registry, BASE)) };
+  }
+
+  it("INV-9: a served write answered isError over HTTP 200 is unknown, keeps its text, and a program reports it", async () => {
+    const { state, registry, invoke } = erroring();
+    const served = await invoke.invoke("tickets.create_item", {}, { source: "call_destructive_tool" });
+    expect(state.applied).toBe(1);
+    expect(state.statuses).toEqual([200]);
+    if (served.ok) throw new Error("expected the served write to fail");
+    expect(served.answered).toBe(false);
+    expect(served.error).toMatchObject({
+      code: "connector_call_failed",
+      message: "Follow-up quota check failed.",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(classifyWriteOutcome(served)).toBe("unknown");
+
+    const program = await catchingProgram(registry, "tickets.create_item");
+    expect(state.applied).toBe(2);
+    expect(program.structuredContent).toMatchObject({
+      error: { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } },
+    });
+  });
+
+  it("INV-9: control: a read's isError is still the downstream's answer", async () => {
+    const { invoke } = erroring();
+    const served = await invoke.invoke("tickets.list_items", {}, { source: "call_tool" });
+    if (served.ok) throw new Error("expected the served read to fail");
+    expect(served.answered).toBe(true);
+    expect(served.error).toMatchObject({ code: "connector_call_failed", message: "No such list.", retryable: false });
+    expect(served.error.writeOutcome).toBeUndefined();
   });
 });

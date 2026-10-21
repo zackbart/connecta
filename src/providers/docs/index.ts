@@ -729,12 +729,10 @@ async function batchUpdate(
     },
     requiredRevisionId !== undefined,
     {
+      // A requiredRevisionId is a precondition, not an idempotency key the
+      // vendor honors, so it grants no repeat (INV-9).
       unknown: (detail) =>
-        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.${
-          requiredRevisionId
-            ? " Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat."
-            : ""
-        }`,
+        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.`,
       applied:
         "Google Docs accepted this edit (HTTP 2xx), so it was applied, but its reply could not be read, so the new revisionId and any counts are unknown. Do not repeat it; re-read the document with get_document.",
     },

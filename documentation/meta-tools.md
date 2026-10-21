@@ -1018,7 +1018,17 @@ failure. A custom connector can show no such provenance: a served write whose
 `callTool` throws after it was entered is `retryable: false` with
 `writeOutcome: "unknown"` whatever its code, and gets no retry advice
 (neither "grant the permission, then retry" nor "correct the arguments and
-retry"). A failure during a composite
+retry"). That includes a refusal it rethrows from a call it made to another
+connector: refusal evidence holds only for the whole call, so a custom
+connector that deletes one Stripe customer and is then refused 429 on a
+second reports the unknown outcome. A served write whose downstream MCP tool
+answers `isError` came back over a 2xx after the tool ran, so it is unknown
+too, with its text kept; a read's `isError` stays a known answer. No text on
+an unknown write says to retry it: a rate limit's or overload's wait-and-retry
+wording is dropped from its message, and an authorization or credential
+handoff (`instructions`) says to re-read the target before any fresh call
+instead of to retry the original call. A read, and a write with a known
+outcome, keep that advice. A failure during a composite
 call's later request leaves earlier requests' outcomes unknown, and once the
 call's outcome is decided, a request that had not left is never sent. A
 write the downstream answered with HTTP 401 is not resent: the credential is

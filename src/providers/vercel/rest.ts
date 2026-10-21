@@ -7,6 +7,7 @@ import type { ApiTool } from "../../connectors/api-connector.js";
 import { guardedFetch, retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
+import { resendAdvice } from "../../provider-call.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
 import {
@@ -126,10 +127,13 @@ function vercelFailure(status: number, headers: Headers, payload: unknown, famil
     : (code ? `Vercel ${code}: ${message}` : message).slice(0, 1_000);
   if (status === 429) {
     const wait = resetAfterMs(headers);
-    return new ConnectorCallError(
-      "rate_limited",
-      `${detail} Vercel meters endpoints separately; wait for the reported reset before retrying this operation.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${detail} Vercel meters endpoints separately; wait for the reported reset before retrying this operation.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      "; wait for the reported reset before retrying this operation",
     );
   }
   if (status === 401) {

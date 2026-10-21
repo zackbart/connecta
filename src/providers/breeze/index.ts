@@ -66,7 +66,7 @@ import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSch
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
-import { tracksEveryRequest } from "../../provider-call.js";
+import { resendAdvice, tracksEveryRequest } from "../../provider-call.js";
 
 /** Every church's API lives at `https://<subdomain>.breezechms.com/api`. */
 export const BREEZE_HOST_SUFFIX = ".breezechms.com";
@@ -194,10 +194,13 @@ function breezeFailure(status: number, headers: Headers, text: string): Connecto
   const detail = bodyDetail(text);
   if (status === 429) {
     const wait = retryAfterMs(headers);
-    return new ConnectorCallError(
-      "rate_limited",
-      `Breeze is throttling requests (HTTP 429).${detail} Breeze publishes no limit; slow the fan-out before retrying.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `Breeze is throttling requests (HTTP 429).${detail} Breeze publishes no limit; slow the fan-out before retrying.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      "; slow the fan-out before retrying",
     );
   }
   // Breeze keys are account-wide with no scopes, so a 401/403 is the key
@@ -266,10 +269,13 @@ function reportedFailure(payload: unknown): ConnectorCallError | undefined {
     "no detail";
   // Breeze uses the same envelope for a rejected argument and a missing
   // record, so the code stays the honest generic one and the message says so.
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `Breeze reported a failure: ${message}. Breeze does not say whether an argument or a record is at fault; re-check ids with the list tools before retrying.`,
-    { retryable: false },
+  return resendAdvice(
+    new ConnectorCallError(
+      "connector_call_failed",
+      `Breeze reported a failure: ${message}. Breeze does not say whether an argument or a record is at fault; re-check ids with the list tools before retrying.`,
+      { retryable: false },
+    ),
+    "; re-check ids with the list tools before retrying",
   );
 }
 
@@ -307,7 +313,7 @@ function requireTrue(payload: unknown, action: string): void {
   if (payload === false) {
     throw new ConnectorCallError(
       "connector_call_failed",
-      `Breeze answered false to ${action}. Breeze gives no reason; confirm the ids with their list tools before retrying.`,
+      `Breeze answered false to ${action}. Breeze gives no reason; check the target and confirm the ids with their list tools before any fresh call.`,
       { retryable: false },
     );
   }

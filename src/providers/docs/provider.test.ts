@@ -824,16 +824,18 @@ describe("failures, mapped to what the caller does next (H11)", () => {
       expect(failure.message, name).not.toMatch(/nothing was applied/i);
     }
 
-    // A revision makes the repeat safe to offer; without one there is none.
+    // A revision is a precondition, not an idempotency key: no repeat is
+    // offered with one or without one (INV-9, round 13).
     const guarded = await call(connection(), "append_text", {
       documentId: "d",
       text: "x",
       requiredRevisionId: "r",
     }).catch((error) => error);
-    expect(guarded.message).toContain("same requiredRevisionId is safe");
     const bare = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
-    expect(bare.message).toContain("can duplicate it");
-    expect(bare.message).not.toContain("is safe");
+    for (const failure of [guarded, bare]) {
+      expect(failure.message).toContain("can duplicate it");
+      expect(failure.message).not.toContain("is safe");
+    }
   });
 
   it("keeps a 4xx refusal as mapped: nothing applied, nothing uncertain", async () => {

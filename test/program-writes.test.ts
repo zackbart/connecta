@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { knownProviderFailure } from "../src/provider-call.js";
+import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
 import { createExecuteTool } from "../src/execute.js";
 import { classifyWriteOutcome } from "../src/program-writes.js";
 import { api } from "../src/connectors/api.js";
@@ -62,6 +62,8 @@ interface WorldOptions {
   inputSchema?: JsonSchema;
   readOnly?: boolean;
   maxWrites?: number;
+  /** The tracker stands for a boundary, so its own refusal marks hold (round 13). */
+  provesRefusals?: boolean;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
   read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
 }
@@ -106,6 +108,7 @@ function world(options: WorldOptions = {}) {
       return { ok: true };
     },
   };
+  if (options.provesRefusals) delegatesEachCall(tracker);
   const registry = makeRegistry([reader, tracker], { storage: memoryStorage() });
   const activity: ActivityRequestContext = {
     recordTool: recordToolActivity,
@@ -388,6 +391,7 @@ describe("writable-endpoint programs (#706, #820)", () => {
     async (state) => {
       const w = world({
         readOnly: false,
+        provesRefusals: true,
         read: () => {
           throw new ConnectorCallError("not_found", "Read refused");
         },

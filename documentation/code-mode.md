@@ -1071,8 +1071,11 @@ write makes the run fail `write_outcome_unknown` with
 `writes: { succeeded, failed, unknown }`, regardless of its return value.
 A failed program that already wrote carries those counts on its error. No
 write is automatically retried, including an ambiguous timeout. A downstream
-refusal or a tool's `isError` can establish failure; a timeout or an unanswered
-transport failure leaves the outcome unknown.
+refusal can establish failure only when it covers the whole call: a request
+connecta never sent, or an HTTP 4xx refusal (not 408) of the only request the
+call dispatched. A write's `isError`, a timeout, an unanswered transport
+failure, and a custom connector that composed several calls leave the outcome
+unknown.
 
 **W10.** `execute.maxWrites`, default 10, bounds a program's writes in
 addition to the host-call budget. It is checked after argument validation and

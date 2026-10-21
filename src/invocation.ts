@@ -31,7 +31,14 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 import { recoveryFor } from "./call-recovery.js";
-import { isKnownProviderFailure, knownProviderFailure } from "./provider-call.js";
+import {
+  forgetProviderFailure,
+  isKnownProviderFailure,
+  knownForLogicalCall,
+  knownProviderFailure,
+  openLogicalCall,
+  withoutResendAdvice,
+} from "./provider-call.js";
 import { classifyWriteOutcome } from "./write-outcome.js";
 import {
   classificationDigest,
@@ -142,8 +149,8 @@ function isCallerCancellation(error: unknown, signal: AbortSignal | undefined): 
 
 /**
  * A downstream MCP tool answered with `isError`. Classified exactly as the
- * plain `Error`: untyped, non-retryable, and marked so
- * a write's outcome can tell "the service said no" from "nobody answered".
+ * plain `Error`: untyped and non-retryable. It is a read's answer; for a
+ * write it is a 2xx reply after which the handler may have applied it.
  */
 class DownstreamToolError extends Error {}
 
@@ -174,13 +181,17 @@ function assertRawMcpSuccess(kind: ResolvedCatalogTool["connector"]["kind"], res
 }
 
 /**
- * Whether a failed attempt is the downstream tool's own answer: an MCP
- * `isError`, or an API ledger's known refusal/unsent failure. A typed error
- * alone is not proof: a body ceiling, refused redirect, or handler error may
- * follow execution. The API boundary supplies provenance, never wording.
+ * Whether a failed attempt is the downstream tool's own answer. For a read:
+ * an MCP `isError`, or a boundary's known refusal/unsent failure. For a
+ * write, only refusal provenance that holds for the whole logical call
+ * (`knownForLogicalCall`); an `isError` arrives over a 2xx after the handler
+ * ran. A typed error alone is not proof: a body ceiling, refused redirect, or
+ * handler error may follow execution. Boundaries supply provenance, never
+ * wording.
  */
-function answeredFailure(error: unknown): boolean {
-  return error instanceof DownstreamToolError || isKnownProviderFailure(error);
+function answeredFailure(error: unknown, write: boolean, ctx: object | undefined): boolean {
+  if (!write) return error instanceof DownstreamToolError || isKnownProviderFailure(error);
+  return ctx !== undefined && knownForLogicalCall(ctx, error);
 }
 
 export interface InvocationTiming {
@@ -423,7 +434,14 @@ export class InvocationService {
         // retryable, and no advice below may tell the agent to retry it.
         const unknownWrite =
           enteredWrite && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
-        if (unknownWrite) error = { ...error, retryable: false, writeOutcome: "unknown" };
+        // Nor may its message keep advice to send it again.
+        if (unknownWrite)
+          error = {
+            ...error,
+            message: withoutResendAdvice(error.message, error),
+            retryable: false,
+            writeOutcome: "unknown",
+          };
         // Any other dispatched write whose outcome is unknown (a lost response
         // body, a 5xx, an unreadable reply) keeps the facts its connector
         // recorded before dispatch, here and through program write accounting.
@@ -724,6 +742,7 @@ export class InvocationService {
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
             dispatchContext = connectorContext;
+            openLogicalCall(connectorContext, target.connector);
             try {
               if (target.connector.credential) {
                 if (!connectorContext.credential) {
@@ -829,10 +848,12 @@ export class InvocationService {
             if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
             if (!dispatchedToConnector && admissionSignal?.aborted) return callerCancelledDetails();
             const attemptError = Cause.squash(attempt.cause);
-            answered = answeredFailure(attemptError);
-            return isCallerCancellation(attemptError, context.requestSignal)
-              ? callerCancelledDetails()
-              : carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
+            answered = answeredFailure(attemptError, write, dispatchContext);
+            if (isCallerCancellation(attemptError, context.requestSignal)) return callerCancelledDetails();
+            const details = carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
+            // An inner call's verdict that does not hold for this one is withdrawn.
+            if (write && !answered) forgetProviderFailure(details);
+            return details;
           }
           if ("inputRequired" in attempt.value) {
             inputRequiredValue = { value: attempt.value.value as T };

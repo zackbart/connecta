@@ -2,6 +2,7 @@ import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
+import { resendAdvice } from "../../provider-call.js";
 import type { ConnectorContext, ConnectorCallAdmissionPolicy, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
 import { callRest, restCall, restTools, restTransport, type RestVendor, type RestCall } from "../_shared/rest/tools.js";
@@ -138,9 +139,12 @@ function failure(status: number, headers: Headers): ConnectorCallError {
       { retryable: false },
     );
   if (status === 429)
-    return new ConnectorCallError("rate_limited", "Mixpanel's project API budget is spent; respect the retry window.", {
-      retryAfterMs: retryAfterMs(headers) ?? 60_000,
-    });
+    return resendAdvice(
+      new ConnectorCallError("rate_limited", "Mixpanel's project API budget is spent; respect the retry window.", {
+        retryAfterMs: retryAfterMs(headers) ?? 60_000,
+      }),
+      "; respect the retry window",
+    );
   const wait = retryAfterMs(headers);
   if (status >= 500)
     return new ConnectorCallError(

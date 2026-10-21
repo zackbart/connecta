@@ -1,7 +1,7 @@
 import { remoteMcp } from "../../connectors/remote-mcp.js";
 import { array, keys, optionsOf } from "../../config-schema.js";
 import { ConnectorCallError } from "../../errors.js";
-import { knownProviderFailure } from "../../provider-call.js";
+import { delegatesEachCall, knownProviderFailure } from "../../provider-call.js";
 import { redactSentSecrets } from "../../sent-secrets.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
 import type { Connector, ConnectorContext, ToolClassification } from "../../types.js";
@@ -102,7 +102,8 @@ export const github = defineProvider<GitHubOptions>({
             fields: [{ name: "privateKey", label: "Private key PEM", inputType: "password" as const }],
           }
         : undefined;
-    return {
+    // Each call goes to one hosted or REST boundary, whose verdict stands.
+    return delegatesEachCall({
       id,
       title: options.title ?? "GitHub",
       kind: "mcp",
@@ -166,6 +167,6 @@ export const github = defineProvider<GitHubOptions>({
       async status() {
         return { state: "ok", message: "GitHub App configured; installation access is resolved lazily on use." };
       },
-    };
+    });
   },
 });

@@ -1,5 +1,6 @@
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
+import { resendAdvice } from "../../provider-call.js";
 import { attachFailureFacts } from "../../operator-record.js";
 import type { ConnectorContext } from "../../types.js";
 import { appJwt, privateKeyDer } from "./key.js";
@@ -139,18 +140,21 @@ export class AppAuth {
                 ? "unavailable"
                 : "connector_call_failed";
         throw attachFailureFacts(
-          new ConnectorCallError(
-            code,
-            rate
-              ? "GitHub rate limit reached. Honor the retry timing before trying again."
-              : code === "auth_required"
-                ? "Verify the GitHub App key, installation, repository selection and required permissions."
-                : code === "conflict"
-                  ? "GitHub rejected a stale version. Read the current state before resubmitting."
-                  : status === 404
-                    ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
-                    : "The GitHub API request failed; downstream error text is withheld.",
-            { retryable: rate || status >= 500, ...(rate && wait !== undefined ? { retryAfterMs: wait } : {}) },
+          resendAdvice(
+            new ConnectorCallError(
+              code,
+              rate
+                ? "GitHub rate limit reached. Honor the retry timing before trying again."
+                : code === "auth_required"
+                  ? "Verify the GitHub App key, installation, repository selection and required permissions."
+                  : code === "conflict"
+                    ? "GitHub rejected a stale version. Read the current state before resubmitting."
+                    : status === 404
+                      ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
+                      : "The GitHub API request failed; downstream error text is withheld.",
+              { retryable: rate || status >= 500, ...(rate && wait !== undefined ? { retryAfterMs: wait } : {}) },
+            ),
+            " Honor the retry timing before trying again.",
           ),
           { httpStatus: status },
         );

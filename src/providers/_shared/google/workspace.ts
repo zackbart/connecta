@@ -56,7 +56,7 @@ import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connec
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
 import { callClassification } from "../../../call-classification.js";
-import { providerRequests } from "../../../provider-call.js";
+import { providerRequests, resendAdvice } from "../../../provider-call.js";
 import { providerCallFailure, providerFailureMessage, unsentAfterUnauthorized } from "../../../write-outcome.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../../errors.js";
@@ -428,10 +428,13 @@ function classifyApiFailure(
     reasons.has("RATE_LIMIT_EXCEEDED")
   ) {
     const wait = retryAfterMs(headers);
-    return new ConnectorCallError(
-      "rate_limited",
-      `${detail} Google meters this API per user and per project; wait before retrying.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${detail} Google meters this API per user and per project; wait before retrying.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      "; wait before retrying",
     );
   }
   if (reasons.has("insufficientPermissions") || reasons.has("ACCESS_TOKEN_SCOPE_INSUFFICIENT")) {
@@ -470,9 +473,12 @@ function classifyApiFailure(
     (status === 400 || status === 409) &&
     (precondition || ABORTED_REASONS.some((reason) => reasons.has(reason)))
   ) {
-    return new ConnectorCallError(
-      "conflict",
-      `${provider} refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.`,
+    return resendAdvice(
+      new ConnectorCallError(
+        "conflict",
+        `${provider} refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.`,
+      ),
+      " Re-read it for the current revision, reapply the change, and retry.",
     );
   }
   if (status === 403) {

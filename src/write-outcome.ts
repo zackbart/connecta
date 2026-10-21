@@ -18,6 +18,7 @@ import {
   providerRequests,
   refusalRequest,
   refusedStatus,
+  withoutResendAdvice,
 } from "./provider-call.js";
 import { carryFailureFacts, errorLabel } from "./operator-record.js";
 
@@ -77,7 +78,7 @@ function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
   }
   return new ConnectorCallError(
     "connector_call_failed",
-    `${error.message} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
+    `${withoutResendAdvice(error.message, error)} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
       "so check the target before repeating it.",
     { retryable: false, writeOutcome: "unknown" },
   );
@@ -178,7 +179,7 @@ export function providerCallFailure(
       error,
       new ConnectorCallError(
         "connector_call_failed",
-        `${error.message} Whether the write took effect at ${vendor.title} is unknown; check the target before repeating it.`,
+        `${withoutResendAdvice(error.message, error)} Whether the write took effect at ${vendor.title} is unknown; check the target before repeating it.`,
         { retryable: false, writeOutcome: "unknown" },
       ),
     );
@@ -187,10 +188,14 @@ export function providerCallFailure(
   if (converted instanceof ConnectorCallError && converted !== error) return carryFailureFacts(error, converted);
   return carryFailureFacts(
     error,
-    new ConnectorCallError(serverError ? "connector_call_failed" : error.code, error.message, {
-      retryable: false,
-      writeOutcome: "unknown",
-    }),
+    new ConnectorCallError(
+      serverError ? "connector_call_failed" : error.code,
+      withoutResendAdvice(error.message, error),
+      {
+        retryable: false,
+        writeOutcome: "unknown",
+      },
+    ),
   );
 }
 
@@ -269,6 +274,7 @@ function uncertainProviderFailure(
   const abort = callerAbort(ctx);
   if (abort) return callerAborted(vendor, error, abort.reason);
   const details = classifyCallError(error);
+  details.message = withoutResendAdvice(details.message, error);
   const timeout =
     details.code === "timeout" || (details.code === "unavailable" && isTimeoutCode(details.details?.code));
   const common =

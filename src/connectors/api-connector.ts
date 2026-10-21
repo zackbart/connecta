@@ -11,6 +11,7 @@ import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
 import {
   closeProviderCall,
+  enterProviderBoundary,
   knownProviderFailure,
   providerCallContext,
   providerFetch,
@@ -370,6 +371,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
     },
     async callTool(name, args, ctx) {
       trackCredentialReads(ctx);
+      enterProviderBoundary(ctx, connector);
       const tool = byName.get(name);
       // Refusals before the handler runs are known failures: nothing was sent.
       if (!tool) {

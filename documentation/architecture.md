@@ -1941,8 +1941,23 @@ compiling and configuring the real thing.
   timeout, and a 2xx followed by a mapper, parser, or output-validation
   failure may have applied. `classifyWriteOutcome` counts a
   dispatched write `failed` only with that provenance (`answered`, or the
-  error's private known-failure mark) or a downstream tool's `isError`; a
-  bare `rate_limited`, `invalid_args`, or `conflict` code is `unknown`.
+  error's private known-failure mark); a bare `rate_limited`,
+  `invalid_args`, or `conflict` code is `unknown`. A downstream tool's
+  `isError` is a read's answer only: for a write it arrives over a 2xx after
+  the handler ran, so it is unknown and non-retryable, and its text stays.
+  Refusal evidence holds only for its whole logical call. The invocation
+  opens one per dispatch (`openLogicalCall` in `src/provider-call.ts`), and
+  every `api()` and `remoteMcp()` `callTool` entered beneath it joins it
+  (`enterProviderBoundary`). A served write's mark stands
+  (`knownForLogicalCall`) only when at most one boundary was entered and the
+  invocation entered that boundary's own `callTool`, or that of a maintained
+  connector declared to delegate each call to one boundary
+  (`delegatesEachCall`, GitHub). A boundary marks a write known only when
+  every request it dispatched is proven unapplied, so the rule reads: known
+  only if every request the logical call dispatched is proven unapplied and
+  the failing request carries the refusal. A custom connector that composes
+  calls, or that could send around them, never inherits an inner verdict; the
+  invocation withdraws the mark and the write is unknown.
   Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
   validation, `remoteMcp()`'s allowlist, connect, and any failure before its
   `tools/call` is sent, and GitHub's hosted target check and token mint.
@@ -1956,7 +1971,13 @@ compiling and configuring the real thing.
   The invocation finalizes every served write `classifyWriteOutcome` calls
   unknown before it adds advice: `retryable: false`, `writeOutcome:
   "unknown"`, and no grant-then-retry or correct-and-retry text, so a custom
-  connector's code cannot advertise a retry. Owning transport attempts is planned for decision 0009's B.2
+  connector's code cannot advertise a retry. Advice to send again inside a
+  provider's message (a rate limit's "back off before retrying") is named
+  with `resendAdvice` where it is written; every verdict that makes a write
+  unknown removes it (`withoutResendAdvice`), direct and served, while a read
+  and a known refusal keep it. An authorization or credential handoff on an
+  unknown write says to re-read the target before any fresh call instead of
+  "retry the original call" (`src/authorization-handoff.ts`). Owning transport attempts is planned for decision 0009's B.2
   guarded `HttpClient`. Reads keep their retry advice. Every maintained
   provider declares (`tracksEveryRequest`) that its handlers send only through
   channels the ledger records; for an undeclared `api()` handler an empty

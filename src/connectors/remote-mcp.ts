@@ -112,7 +112,7 @@ import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./res
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
-import { knownProviderFailure } from "../provider-call.js";
+import { enterProviderBoundary, knownProviderFailure } from "../provider-call.js";
 import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
@@ -3219,6 +3219,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async callTool(name, args, ctx, options) {
+      enterProviderBoundary(ctx, connector);
       // Refusals before this call's dispatch record exists: no tools/call of
       // its can have left, so they are known failures (ledger provenance).
       if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {

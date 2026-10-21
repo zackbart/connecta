@@ -135,14 +135,14 @@ it.each(["mcp", "api"] as const)(
       const args = { config: { password: value } };
       for (const failed of [false, true]) {
         source.fail(failed);
-        const check = (result: unknown) => {
+        const check = (result: unknown, echoed = true) => {
           const text = JSON.stringify(result);
           if (value === SECRET) for (const form of forms(value)) expect(text).not.toContain(form);
           else if (failed || kind === "mcp") {
             expect(text).not.toContain("Downstream quoted");
             expect(text).not.toContain(btoa(value));
           }
-          expect(text).toContain("[redacted]");
+          if (echoed) expect(text).toContain("[redacted]");
         };
         for (const resultMode of ["mcp", "value"] as const) {
           const read = await meta.callTool({ address: "echo.read", args, resultMode });
@@ -189,7 +189,12 @@ it.each(["mcp", "api"] as const)(
           );
           const result = await run({ code: "async () => {}" });
           expect(result.isError === true).toBe(failed);
-          check(result);
+          // A write's isError is an unknown outcome (round 13), which replaces
+          // the program's result: no echo is left to redact.
+          const unknownWrite = failed && kind === "mcp" && tool === "write";
+          if (unknownWrite)
+            expect(result.structuredContent).toMatchObject({ error: { code: "write_outcome_unknown" } });
+          check(result, !unknownWrite);
         }
       }
     }

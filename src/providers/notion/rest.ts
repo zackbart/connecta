@@ -7,6 +7,7 @@ import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
+import { resendAdvice } from "../../provider-call.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
 import {
@@ -202,17 +203,24 @@ function notionFailure(
       reason === "public_api_space_request_rate_limit"
         ? " The workspace's shared budget across all its connections is spent, and its window can exceed a minute."
         : " Notion allows each integration 180 requests a minute (600 on Business and Enterprise), and a separate budget shared by the whole workspace.";
-    return new ConnectorCallError(
-      "rate_limited",
-      `${labelled}${typeof reason === "string" ? ` (limit: ${reason})` : ""}${scope} Wait out the retry window.`,
-      { retryAfterMs: retryAfter ?? 1_000 },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${labelled}${typeof reason === "string" ? ` (limit: ${reason})` : ""}${scope} Wait out the retry window.`,
+        { retryAfterMs: retryAfter ?? 1_000 },
+      ),
+      " Wait out the retry window.",
     );
   }
   if (status === 529) {
     // Notion documents 529 alongside 429: back off and respect Retry-After.
-    return new ConnectorCallError("unavailable", `${labelled} Notion is overloaded; retry after the reported window.`, {
-      retryAfterMs: retryAfter ?? 5_000,
-    });
+    // A write it may have saved loses the advice (INV-9).
+    return resendAdvice(
+      new ConnectorCallError("unavailable", `${labelled} Notion is overloaded; retry after the reported window.`, {
+        retryAfterMs: retryAfter ?? 5_000,
+      }),
+      "; retry after the reported window",
+    );
   }
   if (status === 401) {
     return new ConnectorCallError(
