@@ -32,8 +32,8 @@ the newest head's run.
   (HTML report plus `test-results/` actual, expected and diff images, and traces).
 
 [Provider drift](../../../.github/workflows/provider-drift.yml) is advisory and
-outside `check`. It scans every provider weekly, on manual dispatch, and on PRs
-that touch `src/providers/` or the drift scripts. Its summary separates new or
+outside `check`. It scans every provider on every PR, weekly, and on manual
+dispatch. Its summary separates new or
 changed findings from standing `manual-required` reviews. Drift parser and
 contract tests run in the `node` job.
 

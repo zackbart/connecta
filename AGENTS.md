@@ -105,8 +105,8 @@ Playwright's visual comparisons never retry; behavior and `@unstable`
 comparisons keep two CI retries. Any failed attempt uploads the HTML report,
 diffs, and traces as `playwright-report`. The nightly Security workflow audits
 main even without new commits, and publishing audits again. Provider drift is
-advisory, outside `check`: it scans every provider weekly, on demand, and on
-PRs touching providers or drift tooling. Operator snapshots remain an on-demand
+advisory, outside `check`: it scans every provider on every PR, weekly, and
+on demand. Operator snapshots remain an on-demand
 artifact workflow; publishing remains release/tag driven.
 
 ## Source map

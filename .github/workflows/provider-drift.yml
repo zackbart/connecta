@@ -2,18 +2,9 @@ name: Provider drift
 
 # Public vendor contracts only. This workflow reports evidence and never
 # participates in CI's check gate or accepts a new baseline. Every run scans
-# every public provider: weekly, on demand, and
-# for pull requests that touch providers or the drift tooling.
+# every public provider: on every pull request, weekly, and on demand.
 on:
   pull_request:
-    paths:
-      - "src/providers/**"
-      - "scripts/drift-*.mjs"
-      - "scripts/generate-openapi.mjs"
-      - "scripts/providers.mjs"
-      - "scripts/value-safety.mjs"
-      - "scripts/vercel-inventory.mjs"
-      - ".github/workflows/provider-drift.yml"
   schedule:
     - cron: "23 10 * * 1"
   workflow_dispatch:
