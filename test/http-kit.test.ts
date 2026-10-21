@@ -2129,6 +2129,39 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect((outcome.error as Error).message).toBe(`Acme returned HTTP 409. ${STOPPED}`);
   });
 
+  it("INV-9: a declared idempotency key rides only on the write's own request, and an unsendable one never leaves", async () => {
+    const connection = acme();
+    const spec = {
+      name: "create",
+      description: "Create an item.",
+      destructive: false,
+      input: Schema.Struct({ key: Schema.optionalKey(Schema.String) }),
+      output: Schema.Unknown,
+      idempotency: { header: "Idempotency-Key", key: (args: { readonly key?: string }) => args.key },
+      run: () =>
+        connection.sendPath(LOOKUP, { effect: "read" }).pipe(
+          Effect.flatMap(() => connection.sendPath(POST_ITEMS)),
+          Effect.map(({ data }) => data),
+        ),
+    };
+    const tool = write(connection, spec);
+    answers = [() => Response.json({ id: 1 }), () => Response.json({ ok: true })];
+    expect(await through(tool, { key: "item-1" })).toEqual({ value: { ok: true } });
+    // The auxiliary lookup carries no key; the write does, after its credential.
+    expect(sent.map((request) => [request.method, request.headers["idempotency-key"]])).toEqual([
+      ["GET", undefined],
+      ["POST", "item-1"],
+    ]);
+    sent = [];
+    // A blank key protects nothing, so the write is refused before anything leaves.
+    expect((await through(tool, { key: "  " })).error).toMatchObject({ code: "invalid_args" });
+    expect(sent).toEqual([]);
+    // One key protects one request: a tool with several write steps cannot declare one.
+    expect(() => write(connection, { ...spec, writeSteps: { session: "once", bytes: "once" } })).toThrow(
+      /one write step/,
+    );
+  });
+
   it("INV-9: each named step of a write is sent once; reads are replayed freely", async () => {
     answers.push(
       () => Response.json({ session: "s_1" }),
@@ -2175,6 +2208,69 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     );
     expect(read).toEqual({ value: { ok: true } });
     expect(sent).toHaveLength(2);
+  });
+});
+
+describe("idempotency keys (decision 0010, B.4)", () => {
+  const keyed = (connection: Connection, run?: (connection: Connection) => ReturnType<Connection["sendPath"]>) =>
+    write(connection, {
+      name: "create",
+      description: "Creates an item.",
+      destructive: false,
+      input: Schema.Struct({ key: Schema.optionalKey(Schema.String) }),
+      output: Schema.Unknown,
+      idempotency: { header: "Idempotency-Key", key: (args) => args.key },
+      run: () =>
+        (run ?? ((connection) => connection.sendPath(POST_ITEMS)))(connection).pipe(Effect.map(({ data }) => data)),
+    });
+
+  it("INV-9 INV-11: refuses a key for a tool that writes more than once", () => {
+    expect(() =>
+      write(acme(), {
+        name: "upload",
+        description: "Upload.",
+        destructive: false,
+        input: Schema.Struct({}),
+        output: Schema.Unknown,
+        writeSteps: { session: "once", bytes: "once" },
+        idempotency: { header: "Idempotency-Key", key: () => "k" },
+        run: () => Effect.succeed(null),
+      }),
+    ).toThrow(/one write step/);
+  });
+
+  it("INV-9: sends the key on the write's own request only, after registration, and the core counts it", async () => {
+    answers.push(
+      () => Response.json({ id: 1 }),
+      () => new Response(null, { status: 500 }),
+    );
+    const outcome = await through(
+      keyed(acme(), (connection) =>
+        connection.sendPath(LOOKUP, { effect: "read" }).pipe(Effect.flatMap(() => connection.sendPath(POST_ITEMS))),
+      ),
+      { key: "create-1" },
+    );
+    expect(sent.map((request) => [request.method, request.headers["idempotency-key"]])).toEqual([
+      ["GET", undefined],
+      ["POST", "create-1"],
+    ]);
+    // A direct caller whose one write carried a genuine key may repeat it (the core's rule).
+    expect(outcome.error).toMatchObject({ code: "unavailable", retryable: true });
+    expect((outcome.error as ConnectorCallError).writeOutcome).toBeUndefined();
+  });
+
+  it.each(["", "  ", "line\nbreak"])("INV-9: refuses an unsendable key %j before anything leaves", async (key) => {
+    const outcome = await through(keyed(acme()), { key });
+    expect(sent).toEqual([]);
+    expect(outcome.error).toMatchObject({ code: "invalid_args" });
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: outcome.error as never })).toBe("failed");
+  });
+
+  it("INV-9: a keyless write answered 500 stays unknown", async () => {
+    answers.push(() => new Response(null, { status: 500 }));
+    const outcome = await through(keyed(acme()), {});
+    expect(sent[0]?.headers["idempotency-key"]).toBeUndefined();
+    expect(outcome.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
   });
 });
 
