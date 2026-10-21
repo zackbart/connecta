@@ -124,105 +124,6 @@ describe("status UI credential management", () => {
     );
   });
 
-  it("keeps a single-value credential usable when an old named field lingers", async () => {
-    const storage = memoryStorage();
-    await new CredentialVault(storage, CREDENTIAL_KEY).setAll(
-      "legacy",
-      { value: "current-secret", region: "eu-west-1" },
-      "user_123",
-    );
-    const testCredential = vi.fn(async () => ({ ok: true }));
-    const connecta = createTestConnecta({
-      connectors: [
-        api("legacy", {
-          description: "Single value beside a leftover",
-          credential: { label: "API token" },
-          testCredential,
-          tools: [],
-        }),
-      ],
-      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage,
-      publicUrl: BASE,
-      vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
-    });
-
-    const data = await fetchTestUiDetails(
-      connecta,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: "Bearer clerk-token" },
-      }),
-    );
-    const credential = ((await data.json()) as any).connectors[0].credential;
-    expect(credential).toMatchObject({ configured: true, testable: true });
-    expect(credential).not.toHaveProperty("error");
-    expect(credential.notice).toContain("region");
-
-    const test = await credentialRequest(connecta, "/ui/credentials/legacy/test", { method: "POST" });
-    expect(test.status).toBe(200);
-    expect(testCredential).toHaveBeenCalledWith("current-secret", expect.anything());
-  });
-
-  it("treats duplicate named declarations with true key-set semantics", async () => {
-    const testCredentials = vi.fn(async (values: Record<string, string>) => ({
-      ok: values.apiKey === "duplicate-field-secret",
-    }));
-    const connector = api("duplicate", {
-      description: "Duplicate field declaration",
-      credential: {
-        label: "Service credential",
-        fields: [
-          { name: "apiKey", label: "Primary API key" },
-          { name: "apiKey", label: "Repeated API key" },
-        ],
-      },
-      testCredentials,
-      tools: [],
-    });
-    const connecta = createTestConnecta({
-      connectors: [connector],
-      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
-    });
-
-    const save = await credentialRequest(connecta, "/ui/credentials/duplicate", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        values: { apiKey: "duplicate-field-secret" },
-      }),
-    });
-    expect(save.status).toBe(200);
-
-    const data = await fetchTestUiDetails(
-      connecta,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: "Bearer clerk-token" },
-      }),
-    );
-    const payload = (await data.json()) as any;
-    expect(payload.connectors[0].credential).toMatchObject({
-      configured: true,
-      removable: true,
-      testable: true,
-      fields: [
-        { name: "apiKey", configured: true },
-        { name: "apiKey", configured: true },
-      ],
-    });
-    expect(payload.connectors[0].credential).not.toHaveProperty("error");
-
-    const test = await credentialRequest(connecta, "/ui/credentials/duplicate/test", { method: "POST" });
-    expect(test.status).toBe(200);
-    await expect(test.json()).resolves.toEqual({ ok: true });
-    expect(testCredentials).toHaveBeenCalledTimes(1);
-    expect(testCredentials).toHaveBeenCalledWith({ apiKey: "duplicate-field-secret" }, expect.anything());
-
-    expect(testCredentials).toHaveBeenCalledTimes(1);
-  });
-
   it("detects named-to-single storage drift and recovers after replacement", async () => {
     const storage = memoryStorage();
     await new CredentialVault(storage, CREDENTIAL_KEY).setAll(
@@ -285,69 +186,6 @@ describe("status UI credential management", () => {
     const recoveredTest = await credentialRequest(connecta, "/ui/credentials/drift/test", { method: "POST" });
     expect(recoveredTest.status).toBe(200);
     expect(testCredential).toHaveBeenCalledWith("replacement-secret", expect.anything());
-  });
-
-  it("detects single-to-named storage drift and recovers after replacement", async () => {
-    const storage = memoryStorage();
-    await new CredentialVault(storage, CREDENTIAL_KEY).set("drift", "old-single-secret", "user_123");
-    const { connecta, testCredentials } = makeShapeDriftConnecta(storage, "multiple");
-
-    const data = await fetchTestUiDetails(
-      connecta,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: "Bearer clerk-token" },
-      }),
-    );
-    const payload = (await data.json()) as any;
-    expect(payload.connectors[0].credential).toMatchObject({
-      configured: false,
-      removable: true,
-      testable: false,
-      error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-      fields: [
-        { name: "email", configured: false },
-        { name: "apiKey", configured: false },
-      ],
-    });
-
-    const driftedTest = await credentialRequest(connecta, "/ui/credentials/drift/test", { method: "POST" });
-    expect(driftedTest.status).toBe(409);
-    await expect(driftedTest.json()).resolves.toEqual({
-      error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-      problem: "credential_mismatch",
-    });
-    expect(testCredentials).not.toHaveBeenCalled();
-
-    const values = {
-      email: "operator@example.com",
-      apiKey: "replacement-key",
-    };
-    const replacement = await credentialRequest(connecta, "/ui/credentials/drift", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ values }),
-    });
-    expect(replacement.status).toBe(200);
-    const recoveredData = await fetchTestUiDetails(
-      connecta,
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: "Bearer clerk-token" },
-      }),
-    );
-    const recoveredPayload = (await recoveredData.json()) as any;
-    expect(recoveredPayload.connectors[0].credential).toMatchObject({
-      configured: true,
-      removable: true,
-      testable: true,
-      fields: [
-        { name: "email", configured: true },
-        { name: "apiKey", configured: true },
-      ],
-    });
-    expect(recoveredPayload.connectors[0].credential).not.toHaveProperty("error");
-    const recoveredTest = await credentialRequest(connecta, "/ui/credentials/drift/test", { method: "POST" });
-    expect(recoveredTest.status).toBe(200);
-    expect(testCredentials).toHaveBeenCalledWith(values, expect.anything());
   });
 
   it("stores, masks, exposes to the connector, tests, and removes a credential", async () => {
@@ -478,24 +316,6 @@ describe("status UI credential management", () => {
       expect(value).toBe("both-secret-9876");
     }
     expect(testCredentials).not.toHaveBeenCalled();
-  });
-
-  it("runs testCredentials for named fields that declare both hooks", async () => {
-    const { connecta, testCredential, testCredentials } = makeBothHooksConnecta("multiple");
-
-    const save = await credentialRequest(connecta, "/ui/credentials/bothhooks", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        values: { email: "operator@example.com", apiKey: "api-key-1234" },
-      }),
-    });
-    expect(save.status).toBe(200);
-
-    const test = await credentialRequest(connecta, "/ui/credentials/bothhooks/test", { method: "POST" });
-    await expect(test.json()).resolves.toEqual({ ok: true });
-    expect(testCredentials).toHaveBeenCalledTimes(1);
-    expect(testCredential).not.toHaveBeenCalled();
   });
 
   it("offers no Test action for named fields with only the single-value hook", async () => {

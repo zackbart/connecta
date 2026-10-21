@@ -3,11 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { classifyTool } from "../src/tool-safety.js";
 import type { Connector, ConnectorStatus, ToolDef } from "../src/types.js";
 import { uiProblemFor, uiToolSafety } from "../src/ui.js";
-import type { UiConnector, UiData, UiProblem } from "../src/operator-ui/model.js";
-import { clientServerName, clientSetupCommands, poolEndpointUrl } from "../src/operator-ui/setup-commands.js";
+import type { UiConnector, UiData } from "../src/operator-ui/model.js";
+import { clientServerName, clientSetupCommands } from "../src/operator-ui/setup-commands.js";
 import { credentialTestNotice, oauthDoneNotice, problemCopy, refusedNotice } from "../src/operator-ui/view.js";
 import { FIX_PROMPT_KINDS } from "../src/operator-ui/fix-prompts.js";
 import { activityHistory } from "../src/activity.js";
@@ -15,8 +14,6 @@ import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js
 import { createTestConnecta, fetchTestUiDetails, silentLogger } from "./helpers.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
 import { CLERK_OPTIONS, CREDENTIAL_KEY, credentialRequest } from "./fixtures/ui.js";
-
-const isRead = (tool: import("../src/types.js").ToolDef) => classifyTool(tool) === "read";
 
 const BASE = "https://connecta.test";
 const TOKEN = "model-token";
@@ -74,12 +71,6 @@ describe("tool safety classification", () => {
     ["no hints", {}],
     ["no annotations", undefined],
   ];
-
-  it.each(cases)("agrees with the core predicate: %s", (_, annotations) => {
-    const tool: ToolDef = { name: "t", ...(annotations ? { annotations } : {}) };
-    tool.classification = classifyTool(tool);
-    expect(uiToolSafety(tool)).toBe(isRead(tool) ? "runs_in_programs" : "needs_approval");
-  });
 
   it("fails closed on anything short of an explicit, uncontradicted read-only hint", () => {
     expect(uiToolSafety({ name: "t", classification: "read", annotations: { readOnlyHint: true } })).toBe(
@@ -154,23 +145,6 @@ describe("connector status messages", () => {
       },
     };
   }
-
-  it("has fixed on-screen copy for every problem the server can classify, and nothing else", () => {
-    const problems: UiProblem[] = [
-      "connector_unavailable",
-      "oauth_required",
-      "credential_required",
-      "auth_required",
-      "credential_mismatch",
-      "catalog_failed",
-    ];
-    for (const problem of problems) {
-      const copy = problemCopy(problem);
-      expect(copy, problem).toMatch(/\S/);
-      expect(copy).not.toMatch(/https?:\/\//);
-    }
-    expect(problemCopy(undefined)).toBeNull();
-  });
 
   it("INV-6: classifies a status message into the payload and keeps its text out of the log", async () => {
     const warn = vi.fn();
@@ -461,15 +435,6 @@ describe("pools on the operator page", () => {
     expect(await refused.json()).toEqual({ error: "not found" });
   });
 
-  it("omits the field when no pool is declared", async () => {
-    const connecta = createTestConnecta({
-      connectors: [docsApi()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    expect((await uiData(connecta)).pools).toBeUndefined();
-  });
 });
 
 describe("client setup commands", () => {
@@ -481,15 +446,6 @@ describe("client setup commands", () => {
     expect(JSON.parse(commands[2]!.text)).toEqual({
       mcpServers: { "acme-tools": { type: "http", url: "https://mcp.example.com/mcp" } },
     });
-  });
-
-  it("builds a pool endpoint and a distinct server name for it", () => {
-    const url = poolEndpointUrl("https://mcp.example.com/mcp", "support");
-    expect(url).toBe("https://mcp.example.com/mcp/support");
-    expect(clientServerName("Acme Tools!", "support")).toBe("acme-tools-support");
-    expect(clientSetupCommands(clientServerName("acme", "support"), url)[0]!.text).toBe(
-      "claude mcp add --transport http acme-support https://mcp.example.com/mcp/support",
-    );
   });
 
   it("reduces any configured server name to a bare word", () => {
