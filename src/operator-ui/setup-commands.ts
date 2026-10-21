@@ -31,11 +31,6 @@ export function clientServerName(serverName: string | undefined, pool?: string):
   return pool ? `${base}-${pool}` : base;
 }
 
-/** The URL for a pool: `/mcp` plus its name, which config limits to `[a-z0-9_-]`. */
-export function poolEndpointUrl(mcpUrl: string, pool: string): string {
-  return `${mcpUrl.replace(/\/+$/, "")}/${encodeURIComponent(pool)}`;
-}
-
 /** POSIX single-quoting, only when the value needs it. */
 function shellWord(value: string): string {
   return /^[A-Za-z0-9_./:@%+=,~-]+$/.test(value) ? value : `'${value.replace(/'/g, `'"'"'`)}'`;
