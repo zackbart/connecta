@@ -147,8 +147,8 @@ describe("the output boundary's projection", () => {
   it("INV-5: the envelope pass leaves Connecta's identifiers and counts to the payload pass", () => {
     const secrets = set("5");
     const envelope = { jsonrpc: "2.0", id: 5, result: { resultId: "r-5", totalChars: 1500, hasMore: true } };
-    expect(redactAgentOutput(secrets, envelope)).toEqual(envelope);
-    expect(secrets.redact(envelope)).not.toEqual(envelope);
+    expect(redactAgentOutput(secrets, envelope)).toBe(envelope);
+    expect(secrets.redact(envelope)).not.toBe(envelope);
   });
 
   it.each(["drive", "resource", "image", "audio"])(
@@ -172,7 +172,7 @@ describe("the output boundary's projection", () => {
         }
       }
       const publicFile = { format: "base64", content: btoa("Ordinary public file.") };
-      expect(redactAgentOutput(set(), publicFile)).toEqual(publicFile);
+      expect(redactAgentOutput(set(), publicFile)).toBe(publicFile);
     },
   );
 
@@ -255,8 +255,8 @@ describe("the output boundary's projection", () => {
     const secrets = set("qL8!mP2#vX6$kN4?rS9@tW3+eZ7=F5/u");
     secrets.add(TOKEN);
     secrets.add("ghp_R4nd0mT0k3nV4lu3XyZ12345678901234");
-    expect(redactAgentOutput(secrets, corpus)).toEqual(corpus);
-    expect(secrets.redact(corpus)).toEqual(corpus);
+    expect(redactAgentOutput(secrets, corpus)).toBe(corpus);
+    expect(secrets.redact(corpus)).toBe(corpus);
     expect(shown(corpus).length).toBeGreaterThan(200_000);
   });
 
@@ -310,7 +310,7 @@ describe("the output boundary's projection", () => {
     rows[123_456]!.name = `echo ${TOKEN}`;
     const result = redactAgentOutput(secrets, rows);
     expect(result[123_456]!.name).toBe(`echo ${MARK}`);
-    expect(result[199_999]).toEqual(rows[199_999]);
+    expect(result[199_999]).toBe(rows[199_999]);
   });
 });
 
