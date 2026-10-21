@@ -26,12 +26,13 @@
 // the message, so output composes it only where the outcome allows. The one
 // policy composed here is Q8's: a write answered 401 keeps its auth code and
 // handoff and is an unknown outcome, unless the vendor documents that it
-// authenticates first. The 401 back-port moves that rule into the core.
+// authenticates first. The core applies the same rule (#917) from the ledger
+// entries this kit forwards its matched proof and renewals to.
 
 import { Data } from "effect";
 import { retryAfterMs } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError, resendAdvice, unavailableCallError, type ConnectorCallErrorCode } from "../errors.js";
-import { vendorRefusal } from "../provider-call.js";
+import { vendorRefusal, type ProviderRequest } from "../provider-call.js";
 import { providerFailureMessage, unsentAfterUnauthorized } from "../write-outcome.js";
 import type { Dispatch } from "./services.js";
 
@@ -375,7 +376,7 @@ function unauthorized(
     proof.evidence.trim().length > 0 &&
     proof.matches(classificationInput(recorded, vendor, options.withholds?.(recorded.operation) === true))
       ? answer.request
-        ? vendorRefusal(error, answer.request)
+        ? vendorRefusal(error, provenAuthenticatedFirst(answer.request))
         : error
       : answer.renewed
         ? unsentAfterUnauthorized(vendor.provider)
@@ -386,6 +387,16 @@ function unauthorized(
             { retryable: false, writeOutcome: "unknown" },
           );
   return failure?._tag === "ResendRefused" ? providerFailureMessage(decided, `${decided.message} ${RESEND}`) : decided;
+}
+
+/**
+ * The core counts a write's 401 a refusal only when its ledger entry carries
+ * the vendor's matched proof (`ProviderRequest.authBeforeExecution`); the
+ * kit's own match is that proof.
+ */
+function provenAuthenticatedFirst(request: ProviderRequest): ProviderRequest {
+  request.authBeforeExecution = true;
+  return request;
 }
 
 /**

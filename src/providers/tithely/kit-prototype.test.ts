@@ -458,16 +458,15 @@ describe("Tithe.ly on the provider kit (decision 0010)", () => {
     expect(outcomes).toEqual([true, "reason"]);
   });
 
-  it("INV-9: a write answered 401 is the one deliberate difference (Q8); 5xx and a broken connection match the core", async () => {
+  it("INV-9: a write answered 401 (Q8), a 5xx and a broken connection match the core", async () => {
     // Q8: Tithe.ly documents no check of its keys before acting, so the code
-    // and its authorize_connector handoff stay and the outcome is unknown.
-    // index.ts on main still counts this 401 a served refusal; the separate
-    // 401 back-port gives index.ts this same result.
+    // and its authorize_connector handoff stay and the outcome is unknown, on
+    // index.ts and on the kit alike.
     const { before, after } = await both("tithely_api_mutate", MUTATE, [
       { status: 401, body: { status: "fail", reason: "Bad keys" } },
     ]);
     expect(after.sent).toEqual(before.sent);
-    expect(before.result).toMatchObject({ code: "auth_required", writeOutcome: undefined });
+    expect(after.result).toEqual(before.result);
     expect(after.result).toEqual({
       name: "ConnectorCallError",
       code: "auth_required",

@@ -6,11 +6,9 @@
 // ledger and the api() boundary decides, so there is one verdict table: the
 // core's (src/write-outcome.ts).
 //
-// Rows marked Q8 are the one deliberate difference, a write answered 401. The
-// kit already reports it unknown, keeping its auth code and handoff, unless
-// the vendor declares `authBeforeExecution`. Today's providers still count it
-// a served refusal; the separate 401 back-port gives them the kit's verdict,
-// and these rows then assert the same verdict on both sides.
+// The row marked Q8, a write answered 401, holds both sides to the same
+// verdict as every other: unknown, keeping its auth code and handoff, unless
+// the vendor declares `authBeforeExecution` (#917 made it the core's rule).
 import { Effect, Schema } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
@@ -289,12 +287,10 @@ interface Row {
   readonly args: Record<string, unknown>;
   readonly write: boolean;
   readonly replies: readonly Reply[];
-  /** The served verdict both sides reach (for a Q8 row, the kit's and the 401 back-port's). */
+  /** The served verdict both sides reach. */
   readonly served: Pick<Verdict, "outcome" | "code" | "retryable" | "advice">;
   /** The direct verdict, where it differs from the served one. */
   readonly direct?: Pick<Verdict, "outcome" | "code" | "retryable" | "advice">;
-  /** Q8: today's core verdict until the 401 back-port lands. */
-  readonly q8?: { readonly served: Pick<Verdict, "outcome" | "code" | "retryable"> };
   /** The served failure carries the call's reconciliation facts (`uncertainCall`). */
   readonly recovery?: true;
   /** Direct only: the caller's own signal aborts while the request is in flight. */
@@ -403,10 +399,8 @@ const ROWS: readonly Row[] = [
   ),
   // A served 4xx other than 408 on the call's one request: provenance (b).
   tithelyWrite("400", [fail(400)], known("invalid_args", false)),
-  tithelyWrite("401 (Q8)", [fail(401)], unknown("auth_required"), {
-    // Today's core on main: a served refusal. The 401 back-port makes it the kit's verdict.
-    q8: { served: { outcome: "failed", code: "auth_required", retryable: false } },
-  }),
+  // Q8: Tithe.ly documents no check of its keys before acting, so a 401 is no refusal.
+  tithelyWrite("401 (Q8)", [fail(401)], unknown("auth_required")),
   tithelyWrite("403", [fail(403)], known("provider_permission_denied", false)),
   // Tithe.ly cannot tell absence from reach, so its code is connector_call_failed; the refusal is the status's.
   tithelyWrite("404", [fail(404)], known("connector_call_failed", false)),
@@ -542,13 +536,6 @@ describe("the kit and today's api() core reach one verdict (decision 0010)", () 
       }
       // The same requests leave on both sides.
       expect(seen.kit.sent, "requests").toEqual(seen.core.sent);
-      if (row.q8) {
-        // Q8: the kit's verdict is the 401 back-port's; today's core still reports a refusal.
-        expect(seen.kit.served).toMatchObject(row.served);
-        expect(seen.core.served).toMatchObject(row.q8.served);
-        expect(seen.kit.direct).toMatchObject(row.served);
-        return;
-      }
       expect(seen.kit.direct, "direct").toEqual(seen.core.direct);
       expect(seen.kit.served, "served").toEqual(seen.core.served);
       expect(seen.kit.direct).toMatchObject(row.direct ?? row.served);
