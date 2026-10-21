@@ -82,6 +82,10 @@ canonical capture per runtime, compared byte for byte with the stored
 canonical observation. Golden updates retain both observation orders in the
 fixture format. Source controls and harness mutation checks remain on Node,
 with one schedule; repeated captures and the jitter matrix no longer run.
+Small golden native-source probes also run on workerd. Mixed boundary suites
+use Vitest tags: `workers` marks native cases, while the Workers project skips
+`node` cases. Node runs both tags. The brace-glob selection tolerates deleted
+files; portable filenames alone do not enroll a new suite in workerd.
 
 `check` is the single required status, with `needs: [static, node, workers]`
 and `if: always()`. It passes only if every dependency's result is `success`:

@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { describe, expect, it } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { classifyCallError } from "../src/errors.js";
@@ -15,6 +16,7 @@ describe.each([
   describe.each(["remoteMcp", "api"] as const)("%s", (kind) => {
     it.each([307, 308])(
       "requires re-consent after HTTP %s refresh with one send and no follow (INV-5) (INV-9)",
+      delayed ? NODE : WORKERS,
       async (status) => {
         const endpoint = await server(status);
         const storage = store(delayed);
@@ -52,6 +54,7 @@ describe.each([
 
     it.each([307, 308])(
       "refuses HTTP %s code exchange without following or retrying the form (INV-5) (INV-9)",
+      delayed ? NODE : WORKERS,
       async (status) => {
         const endpoint = await server(status);
         const storage = store(delayed);
@@ -66,6 +69,7 @@ describe.each([
 
     it.each([307, 308])(
       "allows an identical refresh token after new-epoch re-consent following HTTP %s (INV-5)",
+      NODE,
       async (status) => {
         const endpoint = await server(status);
         const storage = store(delayed);
@@ -102,6 +106,7 @@ describe.each([
 
 it.each([307, 308])(
   "never follows HTTP %s for client credentials or token revocation (INV-5) (INV-9)",
+  WORKERS,
   async (status) => {
     for (const body of [
       new URLSearchParams({ grant_type: "client_credentials", client_secret: "client-secret" }),

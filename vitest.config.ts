@@ -45,6 +45,9 @@ const WORKERS_SUITES = [
   "test/credentials.test.ts",
   // Every provider's characterized requests, built by workerd.
   "test/goldens.test.ts",
+  // Mixed suites use Vitest tags: only their native boundary cases rerun here.
+  // A brace glob also tolerates a file disappearing in the pruning PRs.
+  "test/{oauth-token-redirect,downstream-revocation-http,oauth-refresh-resolution,mcp-body-bounds,mcp-subscriptions,request-admission,request-pipeline,clerk-transport,clerk-policy-cancellation,google-workspace-delegation,runtime,goldens-harness}.test.ts",
 ];
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
@@ -212,6 +215,7 @@ export default defineConfig({
         },
         test: {
           name: "node",
+          tags: [{ name: "node" }, { name: "workers" }],
           setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
@@ -285,6 +289,7 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
+          tags: [{ name: "node", skip: true }, { name: "workers" }],
           setupFiles: ["./test/goldens/setup.ts"],
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",

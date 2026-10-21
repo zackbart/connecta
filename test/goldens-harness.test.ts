@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 // The characterization harness's own tests: each provider-side mutation the
 // goldens exist to catch must change a golden or fail the capture, and no
 // schedule may. A seam stands in for a provider that calls fetch differently
@@ -9,7 +10,6 @@ import { runEdge } from "../src/runtime/run.js";
 import {
   captureCall as captureCallBoth,
   captureGoldens as captureGoldensBoth,
-  goldenFiles,
   GOLDEN_NOW,
   type Replies,
   LEAK_RUN_UNITS,
@@ -22,21 +22,20 @@ import {
 import infisical from "./goldens/infisical/spec.js";
 import planningCenter from "./goldens/planning-center/spec.js";
 
-import { bothOrders, canonicalGolden, captureOrders, fullTier, tierSeeds } from "./goldens/tier.js";
+import { canonicalGolden } from "./goldens/canonical.js";
 import { PRIVATE_KEY, PUBLIC_KEY } from "./goldens/rsa-fixture.js";
 
 // Tests use the same tier/order policy as the provider byte comparison.
 const captureCall: typeof captureCallBoth = (spec, label, options) =>
-  captureCallBoth(spec, label, { orders: captureOrders, ...options });
+  captureCallBoth(spec, label, { orders: "canonical", ...options });
 const captureGoldens: typeof captureGoldensBoth = (spec, options) =>
-  captureGoldensBoth(spec, { orders: captureOrders, ...options });
-const expectedGolden = (bytes: string) => (bothOrders ? bytes : canonicalGolden(bytes));
+  captureGoldensBoth(spec, { orders: "canonical", ...options });
 
 const specs = Object.values(import.meta.glob<GoldenSpec>("./goldens/*/spec.ts", { import: "default", eager: true }))
   .slice()
   .sort((a, b) => a.provider.localeCompare(b.provider));
 const stored = import.meta.glob<string>("./goldens/*/*.json", { query: "?raw", import: "default", eager: true });
-const storedInfisicalCalls = expectedGolden(stored["./goldens/infisical/calls.json"]!);
+const storedInfisicalCalls = canonicalGolden(stored["./goldens/infisical/calls.json"]!);
 
 interface Row {
   label: string;
@@ -231,7 +230,7 @@ async function echoesThatPass(baselines?: Map<string, string>): Promise<string[]
   return passed;
 }
 
-const suiteName = `characterization golden harness (${fullTier ? "full" : "always"}, ${captureOrders})`;
+const suiteName = "characterization golden harness";
 describe(suiteName, { timeout: 120_000 }, () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -240,15 +239,19 @@ describe(suiteName, { timeout: 120_000 }, () => {
 
   // Each mutation is compared with an unmutated capture from the same
   // harness, so a harness that stopped recording the field fails here too.
-  it("INV-5: records init.headers replacing a Request's headers, so a dropped Authorization changes the goldens", async () => {
-    const baseline = (await captureGoldens(infisical)).calls!;
-    const { calls } = await captureGoldens(infisical, { seam: authorizationOnRequestOnly });
-    expect(baseline).toContain('"authorization": "Bearer <secret:accessToken>"');
-    expect(calls).not.toContain('"authorization": "Bearer <secret:accessToken>"');
-    expect(calls).not.toBe(baseline);
-  });
+  it(
+    "INV-5: records init.headers replacing a Request's headers, so a dropped Authorization changes the goldens",
+    NODE,
+    async () => {
+      const baseline = (await captureGoldens(infisical)).calls!;
+      const { calls } = await captureGoldens(infisical, { seam: authorizationOnRequestOnly });
+      expect(baseline).toContain('"authorization": "Bearer <secret:accessToken>"');
+      expect(calls).not.toContain('"authorization": "Bearer <secret:accessToken>"');
+      expect(calls).not.toBe(baseline);
+    },
+  );
 
-  it("INV-5: records auxiliary request bodies, so an emptied Infisical login changes the goldens", async () => {
+  it("INV-5: records auxiliary request bodies, so an emptied Infisical login changes the goldens", NODE, async () => {
     const baseline = (await captureGoldens(infisical)).calls!;
     const { calls } = await captureGoldens(infisical, { seam: emptyLoginBody });
     expect(baseline).toContain('"clientSecret": "<secret:clientSecret>"');
@@ -256,35 +259,43 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect(calls).not.toBe(baseline);
   });
 
-  it("records a JSON body's exact bytes, so respacing or reordering the Infisical login changes the goldens", async () => {
-    const baseline = (await captureGoldens(infisical)).calls!;
-    expect(baseline).not.toContain('"text": "{');
-    const spaced = (
-      await captureGoldens(infisical, { seam: reshapedLogin((fields) => JSON.stringify(fields, null, 1)) })
-    ).calls!;
-    expect(spaced).toContain('"text": "{\\n \\"clientId\\": \\"<secret:clientId>\\"');
-    expect(spaced).not.toBe(baseline);
-    const reordered = (
-      await captureGoldens(infisical, {
-        seam: reshapedLogin((fields) => JSON.stringify(Object.fromEntries(Object.entries(fields).reverse()))),
-      })
-    ).calls!;
-    expect(reordered).not.toBe(baseline);
-    expect(reordered).not.toBe(spaced);
-  });
+  it(
+    "records a JSON body's exact bytes, so respacing or reordering the Infisical login changes the goldens",
+    NODE,
+    async () => {
+      const baseline = (await captureGoldens(infisical)).calls!;
+      expect(baseline).not.toContain('"text": "{');
+      const spaced = (
+        await captureGoldens(infisical, { seam: reshapedLogin((fields) => JSON.stringify(fields, null, 1)) })
+      ).calls!;
+      expect(spaced).toContain('"text": "{\\n \\"clientId\\": \\"<secret:clientId>\\"');
+      expect(spaced).not.toBe(baseline);
+      const reordered = (
+        await captureGoldens(infisical, {
+          seam: reshapedLogin((fields) => JSON.stringify(Object.fromEntries(Object.entries(fields).reverse()))),
+        })
+      ).calls!;
+      expect(reordered).not.toBe(baseline);
+      expect(reordered).not.toBe(spaced);
+    },
+  );
 
   // Canonical order puts the login first in either case, so only the step
   // boundary tells the two apart.
-  it("records causal steps, so a write sent before the Infisical login is answered changes the goldens", async () => {
-    const baseline = await captureCall(infisical, "create_secret");
-    const early = await captureCall(infisical, "create_secret", { seam: writeBeforeLoginAnswer });
-    expect(early).not.toBe(baseline);
-    expect(stepSizes(JSON.parse(baseline) as Row)).toEqual([1, 1]);
-    expect(stepSizes(JSON.parse(early) as Row)).toEqual([2]);
-    expect(requestsOnly(JSON.parse(early) as Row)).toEqual(requestsOnly(JSON.parse(baseline) as Row));
-  });
+  it(
+    "records causal steps, so a write sent before the Infisical login is answered changes the goldens",
+    NODE,
+    async () => {
+      const baseline = await captureCall(infisical, "create_secret");
+      const early = await captureCall(infisical, "create_secret", { seam: writeBeforeLoginAnswer });
+      expect(early).not.toBe(baseline);
+      expect(stepSizes(JSON.parse(baseline) as Row)).toEqual([1, 1]);
+      expect(stepSizes(JSON.parse(early) as Row)).toEqual([2]);
+      expect(requestsOnly(JSON.parse(early) as Row)).toEqual(requestsOnly(JSON.parse(baseline) as Row));
+    },
+  );
 
-  it("records a duplicated write, and whether its copies were sent together or in turn", async () => {
+  it("records a duplicated write, and whether its copies were sent together or in turn", NODE, async () => {
     // A duplicate must receive the same answer: distinct replies for identical
     // concurrent requests are an authoring error, tested separately below.
     const call = infisical.calls.find((candidate) => candidate.tool === "create_secret")!;
@@ -300,7 +311,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect(stepSizes(JSON.parse(inTurn) as Row)).toEqual([1, 1, 1]);
   });
 
-  it("records partial dependencies: C awaiting A differs from C awaiting B, including a 0 ms timer", async () => {
+  it("records partial dependencies: C awaiting A differs from C awaiting B, including a 0 ms timer", NODE, async () => {
     for (const timer of [false, true]) {
       const captures = new Map<string, string>();
       for (const dependency of ["a", "b"]) {
@@ -314,8 +325,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
           return "done";
         });
         const rows = new Set<string>();
-        for (const jitter of tierSeeds([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
-          rows.add(await captureCall(spec, "probe", { jitter }));
+        for (const jitter of [1]) rows.add(await captureCall(spec, "probe", { jitter }));
         expect(rows.size).toBe(1);
         const capture = [...rows][0]!;
         const row = JSON.parse(capture) as Row;
@@ -327,7 +337,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     }
   });
 
-  it("rejects distinct queued replies for indistinguishable concurrent requests", async () => {
+  it("rejects distinct queued replies for indistinguishable concurrent requests", NODE, async () => {
     const work = async () =>
       Promise.all(
         [fetch("https://probe.example/same"), fetch("https://probe.example/same")].map(async (response) =>
@@ -340,7 +350,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
       [{ status: 201 }, { status: 202 }],
       [{ headers: { "x-probe": "first" } }, { headers: { "x-probe": "second" } }],
     ]) {
-      for (const jitter of tierSeeds([1, 2, 3, 4, 5, 6])) {
+      for (const jitter of [1]) {
         await expect(captureCall(probeSpec(work, replies), "probe", { jitter })).rejects.toThrow(
           /fixture authoring error: indistinguishable concurrent requests.*distinct queued replies/,
         );
@@ -353,24 +363,28 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect((JSON.parse(a) as Row).result).toMatchObject({ ok: true, value: ["same", "same"] });
   });
 
-  it("fails loudly for native CompressionStream async iteration before a Planning Center request", async () => {
-    const compressedItems: FetchSeam = (send) => async (input, init) => {
-      if (new URL(urlOf(input)).pathname.endsWith("/items")) {
-        const stream = new Blob(["probe"]).stream().pipeThrough(new CompressionStream("gzip"));
-        for await (const _chunk of stream) {
-          /* native work bypasses reader.read() */
+  it(
+    "fails loudly for native CompressionStream async iteration before a Planning Center request",
+    WORKERS,
+    async () => {
+      const compressedItems: FetchSeam = (send) => async (input, init) => {
+        if (new URL(urlOf(input)).pathname.endsWith("/items")) {
+          const stream = new Blob(["probe"]).stream().pipeThrough(new CompressionStream("gzip"));
+          for await (const _chunk of stream) {
+            /* native work bypasses reader.read() */
+          }
         }
+        return send(input, init);
+      };
+      for (const jitter of [1]) {
+        await expect(captureCall(planningCenter, "get_plan", { seam: compressedItems, jitter })).rejects.toThrow(
+          /Unsupported asynchronous source: CompressionStream/,
+        );
       }
-      return send(input, init);
-    };
-    for (const jitter of tierSeeds([1, 2, 3, 4, 5, 6])) {
-      await expect(captureCall(planningCenter, "get_plan", { seam: compressedItems, jitter })).rejects.toThrow(
-        /Unsupported asynchronous source: CompressionStream/,
-      );
-    }
-  });
+    },
+  );
 
-  it("rejects scheduler.wait instead of mistaking native waiting for a fake timer", async () => {
+  it("rejects scheduler.wait instead of mistaking native waiting for a fake timer", WORKERS, async () => {
     const scheduler = (globalThis as { scheduler?: { wait(ms: number): Promise<void> } }).scheduler;
     if (!scheduler) return; // Workers-only API; the same suite runs on both projects.
     await expect(
@@ -449,10 +463,9 @@ describe(suiteName, { timeout: 120_000 }, () => {
     ],
   ];
   for (const [name, work] of probes) {
-    it(`controls ${name} captured before provider imports`, async () => {
+    it(`controls ${name} captured before provider imports`, WORKERS, async () => {
       const rows = new Set<string>();
-      for (const jitter of tierSeeds([1, 2, 3, 4, 5, 6]))
-        rows.add(await captureCall(probeSpec(work), "probe", { jitter }));
+      for (const jitter of [1]) rows.add(await captureCall(probeSpec(work), "probe", { jitter }));
       expect(rows.size, name).toBe(1);
       const row = JSON.parse([...rows][0]!) as Row;
       expect(row.result, name).toMatchObject({ ok: true });
@@ -472,7 +485,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     });
   }
 
-  it("rejects saved unsupported sources even when the provider swallows their errors", async () => {
+  it("rejects saved unsupported sources even when the provider swallows their errors", WORKERS, async () => {
     const probes = [
       ["CompressionStream", () => new savedCompression("gzip")],
       ["prebound fetch", () => savedFetch("https://probe.example/real-network")],
@@ -496,18 +509,22 @@ describe(suiteName, { timeout: 120_000 }, () => {
     }
   });
 
-  it("refreshes module state and controls values read at module load for every order and capture", async () => {
-    const load = async () => probeSpec((await import("./goldens/load-probe.js")).sample);
-    const spec = await load();
-    const rows = [];
-    for (const jitter of tierSeeds([1, 2, 3])) rows.push(await captureCall(spec, "probe", { jitter, load }));
-    expect(new Set(rows).size).toBe(1);
-    const row = JSON.parse(rows[0]!) as Row;
-    expect(row.variants).toBeUndefined();
-    expect(row.result).toMatchObject({ ok: true, value: { loadedAt: GOLDEN_NOW, calls: 1, before: 0, after: 5 } });
-  });
+  it(
+    "refreshes module state and controls values read at module load for every order and capture",
+    WORKERS,
+    async () => {
+      const load = async () => probeSpec((await import("./goldens/load-probe.js")).sample);
+      const spec = await load();
+      const rows = [];
+      for (const jitter of [1]) rows.push(await captureCall(spec, "probe", { jitter, load }));
+      expect(new Set(rows).size).toBe(1);
+      const row = JSON.parse(rows[0]!) as Row;
+      expect(row.variants).toBeUndefined();
+      expect(row.result).toMatchObject({ ok: true, value: { loadedAt: GOLDEN_NOW, calls: 1, before: 0, after: 5 } });
+    },
+  );
 
-  it("fails on controlled work left after completion instead of dropping it at the next scenario", async () => {
+  it("fails on controlled work left after completion instead of dropping it at the next scenario", NODE, async () => {
     await expect(
       captureCall(
         probeSpec(async () => {
@@ -533,14 +550,14 @@ describe(suiteName, { timeout: 120_000 }, () => {
     ).rejects.toThrow(/controlled work outlived call completion/);
   });
 
-  it("rejects provider module loading as an unsupported source at entry", async () => {
+  it("rejects provider module loading as an unsupported source at entry", NODE, async () => {
     const load = async () => probeSpec((await import("./goldens/import-probe.js")).unsupportedImport);
     await expect(captureCall(await load(), "probe", { load })).rejects.toThrow(
       /Unsupported asynchronous source: dynamic import/,
     );
   });
 
-  it("rejects Node host-module aliases before a provider can save native references", async () => {
+  it("rejects Node host-module aliases before a provider can save native references", NODE, async () => {
     const load = async () => probeSpec((await import("./goldens/native-import-probe.js")).unsupportedAlias);
     await expect(
       captureCall(
@@ -551,7 +568,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     ).rejects.toThrow(/Unsupported asynchronous source: host module: node:timers/);
   });
 
-  it("keeps Vitest runner clocks and timers native outside capture", async () => {
+  it("keeps Vitest runner clocks and timers native outside capture", WORKERS, async () => {
     const before = Date.now();
     expect(before).toBeGreaterThan(GOLDEN_NOW);
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -564,32 +581,30 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect(vi.isFakeTimers()).toBe(false);
   });
 
-  it.skipIf(!bothOrders)(
-    "distinguishes C awaiting B from C awaiting both by the reverse-order observation",
-    async () => {
-      const capture = (both: boolean) =>
-        captureCall(
-          probeSpec(async () => {
-            const a = fetch("https://probe.example/a");
-            const b = fetch("https://probe.example/b");
-            await (both ? Promise.all([a, b]) : b);
-            await fetch("https://probe.example/c");
-            await a;
-            return "done";
-          }),
-          "probe",
-        );
-      const onlyB = JSON.parse(await capture(false)) as Row;
-      const both = JSON.parse(await capture(true)) as Row;
-      expect(onlyB.steps).toEqual(both.steps);
-      expect(onlyB.variants?.[0]?.order).toBe("reverse");
-      expect(onlyB.variants?.[0]?.steps.flat().map((request) => request.after)).toEqual([0, 0, 1]);
-      expect(both.variants).toBeUndefined();
-      expect(onlyB).not.toEqual(both);
-    },
-  );
+  it("distinguishes C awaiting B from C awaiting both by the reverse-order observation", NODE, async () => {
+    const capture = (both: boolean) =>
+      captureCall(
+        probeSpec(async () => {
+          const a = fetch("https://probe.example/a");
+          const b = fetch("https://probe.example/b");
+          await (both ? Promise.all([a, b]) : b);
+          await fetch("https://probe.example/c");
+          await a;
+          return "done";
+        }),
+        "probe",
+        { orders: "both" },
+      );
+    const onlyB = JSON.parse(await capture(false)) as Row;
+    const both = JSON.parse(await capture(true)) as Row;
+    expect(onlyB.steps).toEqual(both.steps);
+    expect(onlyB.variants?.[0]?.order).toBe("reverse");
+    expect(onlyB.variants?.[0]?.steps.flat().map((request) => request.after)).toEqual([0, 0, 1]);
+    expect(both.variants).toBeUndefined();
+    expect(onlyB).not.toEqual(both);
+  });
 
-  it("keeps frontiers linear for 300 sequential pages", async () => {
+  it("keeps frontiers linear for 300 sequential pages", NODE, async () => {
     const capture = async (pages: number) =>
       JSON.parse(
         await captureCall(
@@ -609,7 +624,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect(JSON.stringify(large).length).toBeLessThan(JSON.stringify(small).length * 2.1);
   });
 
-  it("supports queueMicrotask, counted Blob reads, and synchronous TextDecoderStream pipelines", async () => {
+  it("supports queueMicrotask, counted Blob reads, and synchronous TextDecoderStream pipelines", WORKERS, async () => {
     const spec = probeSpec(async () => {
       await new Promise<void>((resolve) => queueMicrotask(resolve));
       const text = await new Blob(["body"]).text();
@@ -629,7 +644,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect((JSON.parse(a) as Row).result).toMatchObject({ ok: true, value: "body" });
   });
 
-  it("controls Effect nanoseconds and its scheduler across captures on the virtual clock", async () => {
+  it("controls Effect nanoseconds and its scheduler across captures on the virtual clock", WORKERS, async () => {
     const spec = probeSpec(async () => {
       const before = await runEdge(Clock.currentTimeNanos);
       const monotonicBefore = await runEdge(Clock.monotonicTimeNanos);
@@ -641,7 +656,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
       };
     });
     const rows = [];
-    for (const jitter of tierSeeds([1, 2, 3])) rows.push(await captureCall(spec, "probe", { jitter }));
+    for (const jitter of [1]) rows.push(await captureCall(spec, "probe", { jitter }));
     expect(new Set(rows).size).toBe(1);
     expect((JSON.parse(rows[0]!) as Row).result).toMatchObject({
       ok: true,
@@ -656,30 +671,34 @@ describe(suiteName, { timeout: 120_000 }, () => {
   // Planning Center's get_plan sends three requests at once. A provider timer
   // before one of them is virtual: a delay of 0 ms leaves it in the first
   // step, any longer one moves it to the next, and no schedule changes which.
-  it("places a request sent after a provider's own delay by causality, the same under every schedule", async () => {
-    const plan = rowOf(stored["./goldens/planning-center/calls.json"]!, "get_plan");
-    expect(stepSizes(plan)).toEqual([3]);
-    for (const ms of [0, 1, 5, 50]) {
-      const rows = new Set<string>();
-      for (const jitter of tierSeeds([undefined, 1, 2, 3, 4, 5, 6])) {
-        rows.add(
-          await captureCall(planningCenter, "get_plan", { seam: itemsAfter(ms), ...(jitter ? { jitter } : {}) }),
-        );
+  it(
+    "places a request sent after a provider's own delay by causality, the same under every schedule",
+    NODE,
+    async () => {
+      const plan = rowOf(stored["./goldens/planning-center/calls.json"]!, "get_plan");
+      expect(stepSizes(plan)).toEqual([3]);
+      for (const ms of [0, 1, 5, 50]) {
+        const rows = new Set<string>();
+        for (const jitter of [undefined]) {
+          rows.add(
+            await captureCall(planningCenter, "get_plan", { seam: itemsAfter(ms), ...(jitter ? { jitter } : {}) }),
+          );
+        }
+        expect(rows.size, `${ms} ms`).toBe(1);
+        const row = JSON.parse([...rows][0]!) as Row;
+        if (ms === 0) {
+          expect(row).toEqual(plan);
+          continue;
+        }
+        expect(stepSizes(row), `${ms} ms`).toEqual([2, 1]);
+        expect(row.steps[1]![0]!.url).toMatch(/\/items\?/);
+        expect(row.waitedMs).toBe(ms);
+        expect(row.result).toEqual(plan.result);
       }
-      expect(rows.size, `${ms} ms`).toBe(1);
-      const row = JSON.parse([...rows][0]!) as Row;
-      if (ms === 0) {
-        expect(row).toEqual(plan);
-        continue;
-      }
-      expect(stepSizes(row), `${ms} ms`).toEqual([2, 1]);
-      expect(row.steps[1]![0]!.url).toMatch(/\/items\?/);
-      expect(row.waitedMs).toBe(ms);
-      expect(row.result).toEqual(plan.result);
-    }
-  });
+    },
+  );
 
-  it("INV-5: the leak guard decodes every encoding of a secret, nested, and a truncated start", () => {
+  it("INV-5: the leak guard decodes every encoding of a secret, nested, and a truncated start", NODE, () => {
     const secret = "golden-probe-token/123+456=é";
     const secrets = { probe: secret };
     const leaks = [
@@ -722,7 +741,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     }
   });
 
-  it("uses well-formed RSA fixture PEM keys that sign and verify", async () => {
+  it("uses well-formed RSA fixture PEM keys that sign and verify", WORKERS, async () => {
     const der = (pem: string) =>
       Uint8Array.from(atob(pem.split("-----")[2]!.replace(/\s/g, "")), (char) => char.charCodeAt(0));
     const algorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
@@ -735,7 +754,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
     expect(privateKey.algorithm).toMatchObject({ modulusLength: 2048 });
   });
 
-  it("INV-5: the leak guard looks for a PEM key past its armor and DER framing, which guides print", () => {
+  it("INV-5: the leak guard looks for a PEM key past its armor and DER framing, which guides print", NODE, () => {
     const body = PRIVATE_KEY.split("-----")[2]!.replace(/\s/g, "");
     // A 2048-bit RSA key's first 37 bytes, 49 base64 characters, are tags,
     // lengths, version, and algorithm; its modulus follows.
@@ -764,66 +783,64 @@ describe(suiteName, { timeout: 120_000 }, () => {
     }
   });
 
-  it("INV-5: fails every provider's echo fixture, before placeholders, when sent-secret redaction is disabled", async () => {
-    vi.doMock("../src/sent-secrets.js", async () => {
-      const module = await vi.importActual<typeof import("../src/sent-secrets.js")>("../src/sent-secrets.js");
-      // Every entry point that returns redacted text: the projection, wire text, provider
-      // lanes, and bounded reads.
-      vi.spyOn(module.SentSecrets.prototype, "redact").mockImplementation((value) => value);
-      vi.spyOn(module.SentSecrets.prototype, "text").mockImplementation((value) => value);
-      vi.spyOn(module.SentSecrets.prototype, "parts").mockImplementation((parts) => parts);
-      vi.spyOn(module.SentSecrets.prototype, "redactOpenTail").mockImplementation((value) => value);
-      return module;
-    });
-    await expect(captureGoldens(infisical)).rejects.toThrow(/the caller-visible result leaks <secret:/);
-    expect(await echoesThatPass()).toEqual([]);
-  });
+  it(
+    "INV-5: fails every provider's echo fixture, before placeholders, when sent-secret redaction is disabled",
+    NODE,
+    async () => {
+      vi.doMock("../src/sent-secrets.js", async () => {
+        const module = await vi.importActual<typeof import("../src/sent-secrets.js")>("../src/sent-secrets.js");
+        // Every entry point that returns redacted text: the projection, wire text, provider
+        // lanes, and bounded reads.
+        vi.spyOn(module.SentSecrets.prototype, "redact").mockImplementation((value) => value);
+        vi.spyOn(module.SentSecrets.prototype, "text").mockImplementation((value) => value);
+        vi.spyOn(module.SentSecrets.prototype, "parts").mockImplementation((parts) => parts);
+        vi.spyOn(module.SentSecrets.prototype, "redactOpenTail").mockImplementation((value) => value);
+        return module;
+      });
+      await expect(captureGoldens(infisical)).rejects.toThrow(/the caller-visible result leaks <secret:/);
+      expect(await echoesThatPass()).toEqual([]);
+    },
+  );
 
-  it("INV-5: fails or changes every provider's echo fixture when redaction stops registering percent-encoded forms", async () => {
-    const baselines = await echoBaselines();
-    withoutForms((value) => [
-      new URLSearchParams({ value }).toString().slice(6),
-      encodeURIComponent(value),
-      encodeURI(value),
-    ]);
-    expect(await echoesThatPass(baselines)).toEqual([]);
-  });
+  it(
+    "INV-5: fails or changes every provider's echo fixture when redaction stops registering percent-encoded forms",
+    NODE,
+    async () => {
+      const baselines = await echoBaselines();
+      withoutForms((value) => [
+        new URLSearchParams({ value }).toString().slice(6),
+        encodeURIComponent(value),
+        encodeURI(value),
+      ]);
+      expect(await echoesThatPass(baselines)).toEqual([]);
+    },
+  );
 
-  it("INV-5: fails or changes every provider's echo fixture when redaction stops registering base64 forms", async () => {
-    const baselines = await echoBaselines();
-    withoutForms((value) => [base64(value), base64Url(value)]);
-    expect(await echoesThatPass(baselines)).toEqual([]);
-  });
+  it(
+    "INV-5: fails or changes every provider's echo fixture when redaction stops registering base64 forms",
+    NODE,
+    async () => {
+      const baselines = await echoBaselines();
+      withoutForms((value) => [base64(value), base64Url(value)]);
+      expect(await echoesThatPass(baselines)).toEqual([]);
+    },
+  );
 
-  it("INV-5: fails or changes every provider's echo fixture when redaction stops registering the base64url form alone", async () => {
-    const baselines = await echoBaselines();
-    withoutForms((value) => [base64Url(value)].filter((form) => form !== base64(value)));
-    expect(await echoesThatPass(baselines)).toEqual([]);
-  });
+  it(
+    "INV-5: fails or changes every provider's echo fixture when redaction stops registering the base64url form alone",
+    NODE,
+    async () => {
+      const baselines = await echoBaselines();
+      withoutForms((value) => [base64Url(value)].filter((form) => form !== base64(value)));
+      expect(await echoesThatPass(baselines)).toEqual([]);
+    },
+  );
 
-  it("matches the stored goldens without a mutation, so no earlier capture's state decided the tests above", async () => {
-    expect((await captureGoldens(infisical)).calls).toBe(storedInfisicalCalls);
-  });
-
-  // Two captures in one process, each with a different seed delaying requests
-  // before and after they reach the network (microtasks, timers due now, real
-  // Web Crypto and event-loop turns) and releasing one answer at a time in canonical
-  // order: neither an earlier capture's caches nor scheduling may move a byte.
-  for (const spec of specs) {
-    it.skipIf(!fullTier)(
-      `${spec.provider}: repeated captures with scheduling jitter match the stored goldens`,
-      async () => {
-        const extra = (process.env.CONNECTA_GOLDENS_SEEDS ?? "").split(",").filter(Boolean).map(Number);
-        for (const jitter of tierSeeds([1, 2, ...extra])) {
-          const files = await captureGoldens(spec, { jitter });
-          for (const file of goldenFiles(spec)) {
-            expect(files[file], `${spec.provider}/${file}.json with jitter ${jitter}`).toBe(
-              stored[`./goldens/${spec.provider}/${file}.json`],
-            );
-          }
-        }
-      },
-      120_000,
-    );
-  }
+  it(
+    "matches the stored goldens without a mutation, so no earlier capture's state decided the tests above",
+    NODE,
+    async () => {
+      expect((await captureGoldens(infisical)).calls).toBe(storedInfisicalCalls);
+    },
+  );
 });

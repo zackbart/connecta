@@ -1,3 +1,4 @@
+import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { describe, expect, it } from "vitest";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
@@ -44,7 +45,7 @@ function deployment() {
 }
 
 describe("MCP subscriptions", () => {
-  it.each(["modern", "legacy"] as const)("does not advertise tool list changes to a %s client", async (era) => {
+  it.each(["modern", "legacy"] as const)("does not advertise tool list changes to a %s client", NODE, async (era) => {
     const c = deployment();
     try {
       const request =
@@ -75,6 +76,7 @@ describe("MCP subscriptions", () => {
 
   it.each(["modern", "legacy"] as const)(
     "refuses 20 concurrent %s listens without starving tools/call",
+    NODE,
     async (era) => {
       const c = deployment();
       const controller = new AbortController();
@@ -145,7 +147,7 @@ describe("MCP subscriptions", () => {
     },
   );
 
-  it("refuses modern listens even when admission is full, without admitting a spoofed tools/call", async () => {
+  it("refuses modern listens even when admission is full, without admitting a spoofed tools/call", NODE, async () => {
     let started!: () => void;
     let release!: () => void;
     const entered = new Promise<void>((resolve) => {
@@ -223,7 +225,7 @@ describe("MCP subscriptions", () => {
     ["header mismatch", (request: Request) => request.headers.set("MCP-Protocol-Version", "2025-06-18"), 400, -32020],
     ["method header", (request: Request) => request.headers.set("Mcp-Method", "tools/list"), 400, -32020],
     ["content type", (request: Request) => request.headers.set("Content-Type", "text/plain"), 415, -32000],
-  ] as const)("retains %s validation before refusing a listen", async (_name, change, status, code) => {
+  ] as const)("retains %s validation before refusing a listen", NODE, async (_name, change, status, code) => {
     const c = deployment();
     try {
       const request = rpc("modern", "subscriptions/listen", { notifications: { toolsListChanged: true } }, 1);
@@ -237,7 +239,7 @@ describe("MCP subscriptions", () => {
     }
   });
 
-  it("bounds authorization for a modern listen without taking a permit", async () => {
+  it("bounds authorization for a modern listen without taking a permit", WORKERS, async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
       release = resolve;
@@ -279,7 +281,7 @@ describe("MCP subscriptions", () => {
     }
   });
 
-  it("cancels a stalled listen body at the request deadline", async () => {
+  it("cancels a stalled listen body at the request deadline", WORKERS, async () => {
     let cancelled = false;
     const c = createTestConnecta({
       connectors: [],

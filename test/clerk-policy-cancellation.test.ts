@@ -1,3 +1,4 @@
+import { WORKERS } from "./fixtures/runtime-tags.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { clerkAuth } from "../src/auth/clerk.js";
 
@@ -44,6 +45,7 @@ afterEach(() => {
 // denial. An upstream failure it turns into `false` is its own verdict.
 it.each(["domain", "gate", "gate-false"] as const)(
   "INV-4 INV-7: real SDK %s cancellation, deadline, or failure never caches a policy denial",
+  WORKERS,
   async (policy) => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -116,7 +118,7 @@ it.each(["domain", "gate", "gate-false"] as const)(
   },
 );
 
-it("INV-7: the real SDK does not negative-cache a cancelled JWKS lookup", async () => {
+it("INV-7: the real SDK does not negative-cache a cancelled JWKS lookup", WORKERS, async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   let started!: () => void;
   const entered = new Promise<void>((resolve) => {

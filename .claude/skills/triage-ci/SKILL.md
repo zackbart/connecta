@@ -18,7 +18,8 @@ are cancelled; inspect the newest head's run.
 - `node`: unfiltered `test:node` through `vitest.config.node.ts`, including
   INV/spec evidence and collection enforcement.
 - `workers`: `test:workers`, the runtime-sensitive `WORKERS_SUITES` in
-  [vitest.config.ts](../../../vitest.config.ts).
+  [vitest.config.ts](../../../vitest.config.ts). Mixed suites tag native cases
+  `workers`; the Workers project skips cases tagged `node`. Node runs both.
 
 Separate workflows report status without participating in `check`:
 

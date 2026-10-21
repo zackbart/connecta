@@ -1,6 +1,6 @@
 name: Security
 
-# Independent status: dependency-changing PRs, every main push and nightly.
+# Independent audit: dependency/workflow PRs, main, nightly and manual runs.
 on:
   pull_request:
     paths:
