@@ -36,6 +36,7 @@ import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -44,6 +45,8 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
+import { encodeForAgent, redactBeforeCut, redactBoundedRead, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -179,7 +182,8 @@ function bool(value: unknown): boolean | undefined {
 }
 
 /** Drive reports sizes as int64 strings. */
-function sizeOf(value: unknown): number | undefined {
+function sizeOf(ctx: ConnectorContext, value: unknown): number | undefined {
+  if (redactBeforeCut(ctx, value) !== value) return undefined;
   const size = typeof value === "string" ? Number(value) : value;
   return typeof size === "number" && Number.isSafeInteger(size) && size >= 0 ? size : undefined;
 }
@@ -196,11 +200,13 @@ function idsOf(value: unknown): string[] {
 class Cuts {
   private readonly cut = new Set<string>();
 
+  constructor(private readonly ctx: ConnectorContext) {}
+
   /** A string Drive does not bound, cut to `bytes` of JSON with "…". */
   label(field: string, value: unknown, bytes = LABEL_BYTES): string | undefined {
     const whole = typeof value === "string" ? value : undefined;
     if (whole === undefined || (whole === "" && field !== "name")) return undefined;
-    const kept = clampText(whole, bytes, () => "…");
+    const kept = clampText(this.ctx, whole, bytes, () => "…");
     if (kept !== whole) this.cut.add(field);
     return kept;
   }
@@ -243,6 +249,7 @@ class Cuts {
  * left out are named in `truncatedFields`, which `extra` may add to.
  */
 function projectFile(
+  ctx: ConnectorContext,
   value: unknown,
   fallbackId?: string,
   nameBytes = ROW_NAME_BYTES,
@@ -250,14 +257,14 @@ function projectFile(
 ): JsonRecord {
   const file = asRecord(value);
   const shortcut = asRecord(file["shortcutDetails"]);
-  const cuts = new Cuts();
+  const cuts = new Cuts(ctx);
   const projected = compact({
     id: cuts.id("id", file["id"]) ?? fallbackId,
     name: cuts.label("name", file["name"], nameBytes),
     mimeType: cuts.label("mimeType", file["mimeType"]),
     parents: cuts.ids("parents", file["parents"]),
     driveId: cuts.id("driveId", file["driveId"]),
-    size: sizeOf(file["size"]),
+    size: sizeOf(ctx, file["size"]),
     modifiedTime: cuts.label("modifiedTime", file["modifiedTime"]),
     owners: cuts.labels(
       "owners",
@@ -282,8 +289,8 @@ const CAPABILITIES = [
   "canAddChildren",
 ] as const;
 
-function projectFileDetail(value: unknown, fallbackId: string): JsonRecord {
-  return projectFile(value, fallbackId, DETAIL_NAME_BYTES, (file, cuts) => {
+function projectFileDetail(ctx: ConnectorContext, value: unknown, fallbackId: string): JsonRecord {
+  return projectFile(ctx, value, fallbackId, DETAIL_NAME_BYTES, (file, cuts) => {
     const modifier = asRecord(file["lastModifyingUser"]);
     const granted = asRecord(file["capabilities"]);
     const capabilities = compact(Object.fromEntries(CAPABILITIES.map((name) => [name, bool(granted[name])])));
@@ -300,10 +307,10 @@ function projectFileDetail(value: unknown, fallbackId: string): JsonRecord {
   });
 }
 
-function projectPermission(value: unknown, fallbackId?: string): JsonRecord {
+function projectPermission(ctx: ConnectorContext, value: unknown, fallbackId?: string): JsonRecord {
   const permission = asRecord(value);
   const details = asArray(permission["permissionDetails"]).map(asRecord);
-  const cuts = new Cuts();
+  const cuts = new Cuts(ctx);
   const inheritedFrom = details
     .map((detail) => cuts.id("inheritedFrom", detail["inheritedFrom"]))
     .find((id) => id !== undefined);
@@ -368,9 +375,18 @@ async function fingerprint(value: unknown): Promise<string> {
   return base64url(digest.subarray(0, 12));
 }
 
-function encodeCursor(resume: Resume): string {
+function cursorText(resume: Resume): string {
   const { token, skip, size, scope, page, last } = resume;
-  return base64url(encoder.encode(JSON.stringify([token, skip, size, scope, page, last])));
+  return JSON.stringify([token, skip, size, scope, page, last]);
+}
+
+/**
+ * The cursor an agent pages with. Drive's page token is the only downstream
+ * text in it, and it arrives redacted ({@link pageOf}); the rest is
+ * connecta's counts and fingerprints.
+ */
+function encodeCursor(ctx: ConnectorContext, resume: Resume): string {
+  return encodeForAgent(ctx, cursorText(resume), { url: true, claims: true });
 }
 
 const FINGERPRINT = /^[A-Za-z0-9_-]{16}$/;
@@ -418,10 +434,15 @@ function decodeCursor(cursor: string): Resume {
  */
 function issuable(token: string): boolean {
   const widest = "A".repeat(16);
-  return (
-    encodeCursor({ token, skip: MAX_PAGE_SIZE, size: MAX_PAGE_SIZE, scope: widest, page: widest, last: widest })
-      .length <= MAX_CURSOR_CHARS
-  );
+  const text = cursorText({
+    token,
+    skip: MAX_PAGE_SIZE,
+    size: MAX_PAGE_SIZE,
+    scope: widest,
+    page: widest,
+    last: widest,
+  });
+  return Math.ceil((encoder.encode(text).length * 4) / 3) <= MAX_CURSOR_CHARS;
 }
 
 /** One page of rows as Drive returned it. */
@@ -444,6 +465,7 @@ interface Fetched {
  * handler merely returns as unhandled before the handler adopts it.
  */
 async function pageOf(
+  ctx: ConnectorContext,
   key: string,
   args: JsonRecord,
   /** The tool and every argument that decides which rows, in which order. */
@@ -464,6 +486,9 @@ async function pageOf(
     );
   }
   const fetched = await fetch(resume.token ?? undefined, resume.size);
+  // Drive's token goes into a cursor the agent decodes, which no later pass reads through:
+  // it is redacted first, so a token echoing a sent value cannot carry it.
+  if (fetched.next !== undefined) fetched.next = redactSentSecrets(ctx, fetched.next);
   if (fetched.next !== undefined && !issuable(fetched.next)) {
     throw new ConnectorCallError(
       "connector_call_failed",
@@ -485,9 +510,9 @@ async function pageOf(
   const build = (count: number): JsonRecord => {
     const nextCursor =
       count < rows.length
-        ? encodeCursor({ ...resume, skip: resume.skip + count, page, last: lasts[resume.skip + count - 1] ?? "" })
+        ? encodeCursor(ctx, { ...resume, skip: resume.skip + count, page, last: lasts[resume.skip + count - 1] ?? "" })
         : fetched.next
-          ? encodeCursor({ token: fetched.next, skip: 0, size: resume.size, scope, page: null, last: null })
+          ? encodeCursor(ctx, { token: fetched.next, skip: 0, size: resume.size, scope, page: null, last: null })
           : null;
     return { [key]: rows.slice(0, count), ...fetched.extra, page: { hasMore: nextCursor !== null, nextCursor } };
   };
@@ -563,11 +588,16 @@ function codePointCut(value: string, max: number): { end: number; total: number 
  * read only in part, which is cut whatever its length: there is more past it.
  */
 function capped(
-  body: string,
+  ctx: ConnectorContext,
+  whole: string,
   max: number,
   partial: { size: number | undefined } | undefined,
   fits: (content: string) => boolean,
 ): { content: string; contentTruncated: boolean } {
+  if (codePointCut(whole, max).total <= max && !partial && fits(whole))
+    return { content: whole, contentTruncated: false };
+  // Every secret the request sent is replaced before the cut, which could otherwise split one.
+  const body = redactBeforeCut(ctx, whole);
   const { total } = codePointCut(body, max);
   if (total <= max && !partial && fits(body)) return { content: body, contentTruncated: false };
   const of = partial
@@ -716,8 +746,8 @@ async function readContent(
     ),
   );
   const mimeType = String(file["mimeType"] ?? "application/octet-stream");
-  const size = sizeOf(file["size"]);
-  const cuts = new Cuts();
+  const size = sizeOf(ctx, file["size"]);
+  const cuts = new Cuts(ctx);
   const base = compact({
     id: cuts.id("id", file["id"]) ?? fileId,
     name: cuts.label("name", file["name"], ROW_NAME_BYTES),
@@ -748,16 +778,17 @@ async function readContent(
       contentTruncated: false,
       note: exported.note,
     });
-    return { ...result, ...capped(body, maxChars, undefined, within(result)) };
+    return { ...result, ...capped(ctx, body, maxChars, undefined, within(result)) };
   }
 
   if (isText(mimeType)) {
     const read = await download(client, ctx, filePath, textBudget(maxChars));
     let body = decodeIn(read.bytes, read.contentType);
-    // A cut can land inside a character; drop the half, never show it.
-    if (read.more) body = body.replace(/(?:\uFFFD|[\uD800-\uDBFF])$/, "");
+    // A cut can land inside a character; drop the half, never show it. A sent
+    // secret the read stopped inside never arrives whole, so its start goes too.
+    if (read.more) body = redactBoundedRead(ctx, body.replace(/(?:\uFFFD|[\uD800-\uDBFF])$/, ""));
     const result = { ...base, format: "text", content: "", contentTruncated: false };
-    return { ...result, ...capped(body, maxChars, read.more ? { size } : undefined, within(result)) };
+    return { ...result, ...capped(ctx, body, maxChars, read.more ? { size } : undefined, within(result)) };
   }
 
   // Base64 is four characters per three bytes and never escaped, so the file
@@ -779,7 +810,7 @@ async function readContent(
   if (size !== undefined && size > limit) return tooLarge(`${size} bytes`);
   const read = await download(client, ctx, filePath, limit);
   if (read.more) return tooLarge(`more than ${limit} bytes`);
-  return { ...base, format: "base64", content: base64(read.bytes), contentTruncated: false };
+  return { ...base, format: "base64", content: encodeForAgent(ctx, read.bytes), contentTruncated: false };
 }
 
 // --- Writes -----------------------------------------------------------------------
@@ -809,20 +840,11 @@ async function adding<T>(work: () => Promise<T>, check: string): Promise<T> {
       outcome.phase !== "refused" &&
       outcome.phase !== "before-send"
     ) {
-      throw new ConnectorCallError(error.code, `${error.message} ${check}`, { retryable: false, cause: error });
+      throw googleFailureMessage(error, `${error.message} ${check}`);
     }
     throw error;
   }
 }
-
-/**
- * Writes safe to send twice: each sets fixed values — a name, a description,
- * the trashed flag, a role, the whole content — so a second identical request
- * leaves the file as the first did, and a 5xx stays a retryable outage. Never
- * a create, copy, share, permission delete, or move, whose second send makes a
- * second thing, fails differently, or acts on parents the first send changed.
- */
-const IDEMPOTENT = { idempotent: true } as const;
 
 const CHECK_CREATED =
   "Find it with search_files or list_folder_items before creating it again: a second call makes a second one.";
@@ -873,8 +895,8 @@ function media(args: JsonRecord): { bytes: Uint8Array; type: string } | undefine
 
 /**
  * One `multipart/related` body: the metadata as JSON, then the media. Built
- * whole as bytes, never a stream, so the shared client's single 401 replay
- * can send it again unchanged.
+ * whole as bytes, never a stream: the shared client refuses a body it could
+ * not send twice, though it never resends an upload, which is a write.
  */
 function multipart(
   metadata: JsonRecord,
@@ -1093,7 +1115,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     query: Record<string, string | number | boolean | undefined>,
   ) =>
     // The Drive query decides the rows: folder, search, corpus, drive, order.
-    pageOf("files", args, { tool, ...query }, async (pageToken, pageSize) => {
+    pageOf(ctx, "files", args, { tool, ...query }, async (pageToken, pageSize) => {
       const listing = asRecord(
         await client.json(
           {
@@ -1113,7 +1135,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       );
       return {
         ids: asArray(listing["files"]).map((file) => String(asRecord(file)["id"] ?? "")),
-        rows: asArray(listing["files"]).map((file) => projectFile(file)),
+        rows: asArray(listing["files"]).map((file) => projectFile(ctx, file)),
         next: text(listing["nextPageToken"]),
         // Drive's own truncation: it stopped before searching every corpus.
         extra: listing["incompleteSearch"] === true ? { incompleteSearch: true } : undefined,
@@ -1125,9 +1147,9 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     fileId: string,
     body: JsonRecord,
     query: Record<string, string | undefined> = {},
-    options: { idempotent?: true } = {},
   ) =>
     projectFile(
+      ctx,
       await client.json(
         {
           method: "PATCH",
@@ -1136,7 +1158,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           body,
         },
         ctx,
-        options,
       ),
       fileId,
     );
@@ -1251,6 +1272,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: FILE_DETAIL_SCHEMA,
       handler: async (args, ctx) =>
         projectFileDetail(
+          ctx,
           await client.json(
             {
               method: "GET",
@@ -1322,6 +1344,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       },
       handler: async (args, ctx) =>
         await pageOf(
+          ctx,
           "permissions",
           args,
           { tool: "list_permissions", fileId: args["fileId"] },
@@ -1343,7 +1366,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             );
             return {
               ids: asArray(listing["permissions"]).map((permission) => String(asRecord(permission)["id"] ?? "")),
-              rows: asArray(listing["permissions"]).map((permission) => projectPermission(permission)),
+              rows: asArray(listing["permissions"]).map((permission) => projectPermission(ctx, permission)),
               next: text(listing["nextPageToken"]),
             };
           },
@@ -1387,37 +1410,43 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         required: ["drives", "page"],
       },
       handler: async (args, ctx) =>
-        await pageOf("drives", args, { tool: "list_shared_drives", q: args["query"] }, async (pageToken, pageSize) => {
-          const listing = asRecord(
-            await client.json(
-              {
-                method: "GET",
-                path: "/drives",
-                query: {
-                  q: args["query"],
-                  fields: "nextPageToken,drives(id,name,hidden)",
-                  pageSize,
-                  pageToken,
+        await pageOf(
+          ctx,
+          "drives",
+          args,
+          { tool: "list_shared_drives", q: args["query"] },
+          async (pageToken, pageSize) => {
+            const listing = asRecord(
+              await client.json(
+                {
+                  method: "GET",
+                  path: "/drives",
+                  query: {
+                    q: args["query"],
+                    fields: "nextPageToken,drives(id,name,hidden)",
+                    pageSize,
+                    pageToken,
+                  },
                 },
-              },
-              ctx,
-            ),
-          );
-          return {
-            ids: asArray(listing["drives"]).map((value) => String(asRecord(value)["id"] ?? "")),
-            rows: asArray(listing["drives"]).map((value) => {
-              const sharedDrive = asRecord(value);
-              const cuts = new Cuts();
-              return compact({
-                id: cuts.id("id", sharedDrive["id"]),
-                name: cuts.label("name", sharedDrive["name"]),
-                hidden: sharedDrive["hidden"] === true ? true : undefined,
-                truncatedFields: cuts.fields,
-              });
-            }),
-            next: text(listing["nextPageToken"]),
-          };
-        }),
+                ctx,
+              ),
+            );
+            return {
+              ids: asArray(listing["drives"]).map((value) => String(asRecord(value)["id"] ?? "")),
+              rows: asArray(listing["drives"]).map((value) => {
+                const sharedDrive = asRecord(value);
+                const cuts = new Cuts(ctx);
+                return compact({
+                  id: cuts.id("id", sharedDrive["id"]),
+                  name: cuts.label("name", sharedDrive["name"]),
+                  hidden: sharedDrive["hidden"] === true ? true : undefined,
+                  truncatedFields: cuts.fields,
+                });
+              }),
+              next: text(listing["nextPageToken"]),
+            };
+          },
+        ),
     },
     {
       name: "create_folder",
@@ -1430,6 +1459,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: FILE_SCHEMA,
       handler: async (args, ctx) =>
         projectFile(
+          ctx,
           await adding(
             () =>
               client.json(
@@ -1496,6 +1526,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             );
           }
           return projectFile(
+            ctx,
             await adding(
               () =>
                 client.json(
@@ -1508,6 +1539,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         }
         const framed = multipart(metadata, content);
         return projectFile(
+          ctx,
           await adding(
             () =>
               upload.json(
@@ -1552,6 +1584,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           throw new ConnectorCallError("invalid_args", "Pass content or contentBase64: the file's new content.");
         }
         return projectFile(
+          ctx,
           await upload.json(
             {
               method: "PATCH",
@@ -1561,8 +1594,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
               rawBody: content.bytes as BodyInit,
             },
             ctx,
-            // The whole content, replaced: a second send leaves the same file.
-            IDEMPOTENT,
           ),
           String(args["fileId"]),
         );
@@ -1581,13 +1612,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         if (args["name"] === undefined && args["description"] === undefined) {
           throw new ConnectorCallError("invalid_args", "Pass name, description, or both.");
         }
-        return patch(
-          ctx,
-          args["fileId"],
-          compact({ name: args["name"], description: args["description"] }),
-          {},
-          IDEMPOTENT,
-        );
+        return patch(ctx, args["fileId"], compact({ name: args["name"], description: args["description"] }));
       },
     },
     {
@@ -1644,6 +1669,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: FILE_SCHEMA,
       handler: async (args, ctx) =>
         projectFile(
+          ctx,
           await adding(
             () =>
               client.json(
@@ -1668,7 +1694,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       annotations: destructive,
       inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
       outputSchema: FILE_SCHEMA,
-      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: true }, {}, IDEMPOTENT),
+      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: true }),
     },
     {
       name: "restore_file",
@@ -1678,7 +1704,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       annotations: additive,
       inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
       outputSchema: FILE_SCHEMA,
-      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: false }, {}, IDEMPOTENT),
+      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: false }),
     },
     {
       name: "share_file",
@@ -1746,6 +1772,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         if (args["emailMessage"] !== undefined && notify !== true)
           refuse("emailMessage needs sendNotificationEmail true.");
         return projectPermission(
+          ctx,
           await adding(
             () =>
               client.json(
@@ -1787,6 +1814,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: PERMISSION_SCHEMA,
       handler: async (args, ctx) =>
         projectPermission(
+          ctx,
           await client.json(
             {
               method: "PATCH",
@@ -1795,7 +1823,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
               body: { role: args["role"] },
             },
             ctx,
-            IDEMPOTENT,
           ),
           String(args["permissionId"]),
         ),
@@ -1941,22 +1968,24 @@ function driveConnector(id: string, options: DriveOptions): Connector {
   const upload = googleWorkspaceClient({ ...shared, baseUrl: uploadBaseUrl(baseUrl) });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Drive",
+        description: `Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
+          // Required: whose Drive it is, the first-sheet CSV, and what
+          // update_file_content replaces are conventions no schema can carry.
+          required: true,
+        },
+        tools: guarded(tools(client, upload)),
       }),
-      title: options.title ?? "Google Drive",
-      description: `Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
-        // Required: whose Drive it is, the first-sheet CSV, and what
-        // update_file_content replaces are conventions no schema can carry.
-        required: true,
-      },
-      tools: guarded(tools(client, upload)),
-    }),
+    ),
   );
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { specTypeSchemas, type ServerContext } from "@modelcontextprotocol/server";
 import {
   activityHistory,
@@ -306,7 +306,10 @@ describe("2026-07-28 core", () => {
     await refusal(await c.fetch(modern("tools/list")), 503, -33002);
 
     let release!: () => void;
-    let authorizing = false;
+    let markAuthorizing!: () => void;
+    const authorizing = new Promise<void>((resolve) => {
+      markAuthorizing = resolve;
+    });
     const blocked = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -318,21 +321,24 @@ describe("2026-07-28 core", () => {
       auth: {
         kind: "blocked",
         authorize: async () => {
-          authorizing = true;
+          markAuthorizing();
           await blocked;
           return { ok: true };
         },
       },
     });
+    vi.useFakeTimers();
     const first = busy.fetch(modern("tools/list"));
     try {
-      await expect.poll(() => authorizing).toBe(true);
+      await authorizing;
       await refusal(await busy.fetch(modern("tools/list")), 503, -33001);
+      await vi.advanceTimersByTimeAsync(100);
       await refusal(await first, 504, -33003);
     } finally {
       release();
       await first.then((response) => response.body?.cancel()).catch(() => {});
       await busy.close();
+      vi.useRealTimers();
     }
   });
 

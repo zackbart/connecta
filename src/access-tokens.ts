@@ -1,3 +1,4 @@
+import { withAuthenticationDeadline } from "./auth-admission.js";
 import { authorizationCredential, isMachineCredential } from "./inbound-credential.js";
 import type { AuthResult, IdentityReference, InboundAuth, KVStorage } from "./types.js";
 import { assertKnownOptions, ConfigError, optionsOf } from "./config-schema.js";
@@ -12,6 +13,7 @@ import {
   isAgentName,
   trustAgentProvider,
 } from "./agent-identity.js";
+import { keepErrorName } from "./redaction-identity.js";
 
 const TOKEN_PREFIX = "cta_";
 const TOKEN_BYTES = 32;
@@ -99,6 +101,7 @@ export class AccessTokenError extends Error {
     super(message);
   }
 }
+keepErrorName(AccessTokenError, "AccessTokenError");
 
 /** Options every token mutation takes. */
 export interface AccessTokenOperationOptions {
@@ -883,22 +886,29 @@ export class AccessTokenManager {
     const credential = authorizationCredential(request);
     const token = credential.kind === "bearer" ? credential.token : undefined;
     if (!token || !TOKEN_VALUE_RE.test(token)) return unauthorized();
-    const hash = await hashToken(token);
-    const lookupRaw = await this.storage.get(lookupKey(hash));
-    if (!lookupRaw) return unauthorized();
-    const lookup = parseLookup(lookupRaw);
-    if (!lookup) return unauthorized();
-    const record = await this.read(lookup.id);
-    if (!record || record.revokedAt || record.tokenHash !== hash || record.tokenPrefix !== token.slice(0, 12)) {
-      return unauthorized();
-    }
-    // The slot is the authority: a surviving lookup or record it does not
-    // name is inert. Human-bound and unbound records, and agents no longer in
-    // code, refuse exactly as an unknown token does.
-    if (record.principal || record.agent === undefined || !this.agents.has(record.agent)) return unauthorized();
-    const { slot } = await this.readSlot(record.agent);
-    if (slot?.state !== "issued" || slot.tokenId !== record.id) return unauthorized();
-    return { ok: true, subjectId: agentSubjectId(record.agent), agent: record.agent };
+    return withAuthenticationDeadline(request, async (signal) => {
+      signal.throwIfAborted();
+      const hash = await hashToken(token);
+      signal.throwIfAborted();
+      const lookupRaw = await this.storage.get(lookupKey(hash));
+      signal.throwIfAborted();
+      if (!lookupRaw) return unauthorized();
+      const lookup = parseLookup(lookupRaw);
+      if (!lookup) return unauthorized();
+      const record = await this.read(lookup.id);
+      signal.throwIfAborted();
+      if (!record || record.revokedAt || record.tokenHash !== hash || record.tokenPrefix !== token.slice(0, 12)) {
+        return unauthorized();
+      }
+      // The slot is the authority: a surviving lookup or record it does not
+      // name is inert. Human-bound and unbound records, and agents no longer in
+      // code, refuse exactly as an unknown token does.
+      if (record.principal || record.agent === undefined || !this.agents.has(record.agent)) return unauthorized();
+      const { slot } = await this.readSlot(record.agent);
+      signal.throwIfAborted();
+      if (slot?.state !== "issued" || slot.tokenId !== record.id) return unauthorized();
+      return { ok: true, subjectId: agentSubjectId(record.agent), agent: record.agent };
+    });
   }
 }
 

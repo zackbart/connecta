@@ -10,6 +10,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { attachCallClassification } from "../src/call-classification.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CatalogService } from "../src/catalog-service.js";
@@ -222,6 +223,16 @@ const echoingRefusal = (status: number, error?: string) => (body: string) => {
   return new Response(text, { status, headers: { "content-type": "application/json" } });
 };
 
+/**
+ * A call's context as an invocation of a read builds it: these suites call
+ * `read` directly, and a remote MCP call outside an invocation with no
+ * definition to go on is a write (INV-1).
+ */
+function readContext(context: ConnectorContext): ConnectorContext {
+  attachCallClassification(context, "read");
+  return context;
+}
+
 function scope(logger?: Logger): ConnectorContext {
   return {
     ...connectorContext(memoryStorage()),
@@ -402,12 +413,12 @@ describe("an OAuth flow on a live client", () => {
     vi.stubGlobal("fetch", fetchStub);
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation });
     const { logger, lines } = capturingLogger();
-    const context: ConnectorContext = {
+    const context = readContext({
       ...connectorContext(storage),
       logger,
       requestScope: {},
       allowAuthorization: true,
-    };
+    });
     expect(await connector.status!(context)).toMatchObject({ state: "ok" });
     const error = await connector.callTool("read", {}, context).then(
       () => null,
@@ -522,12 +533,12 @@ describe("an OAuth flow on a live client", () => {
     );
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: mode });
     const { logger, lines } = capturingLogger();
-    const context: ConnectorContext = {
+    const context = readContext({
       ...connectorContext(memoryStorage()),
       logger,
       requestScope: {},
       allowAuthorization: true,
-    };
+    });
     expect(await connector.status!(context)).toMatchObject({ state: "ok" });
     const first = connector.callTool("read", {}, context).then(
       () => null,
@@ -630,8 +641,14 @@ describe("a reply the SDK cannot parse", () => {
       mode,
     );
     expect(error.message).toContain('Connector "svc" tools/call with https://downstream.example failed (SyntaxError).');
-    // A SyntaxError's verdict, as it had before its text was withheld.
-    expect(classified).toEqual({ ...classifyCallError(new SyntaxError("Unexpected token")), message: error.message });
+    // A SyntaxError's verdict, as it had before its text was withheld. The
+    // unlisted tool is a direct write, and an unreadable reply proves nothing
+    // about it, so its outcome is unknown (INV-9).
+    expect(classified).toEqual({
+      ...classifyCallError(new SyntaxError("Unexpected token")),
+      message: error.message,
+      writeOutcome: "unknown",
+    });
   });
 
   it.each(modes)("withholds a parser's account of the handshake's reply (%s)", async (mode) => {
@@ -694,7 +711,8 @@ describe("a reply the SDK cannot parse", () => {
     await connector.closeScope!(context);
     // The SDK reports a frame it cannot parse only to the transport's
     // `onerror`, which nothing renders; the call itself runs out of time.
-    expect(classifyCallError(error)).toMatchObject({ code: "timeout", retryable: true });
+    // The unlisted tool is a direct write, so the timeout is an unknown outcome.
+    expect(classifyCallError(error)).toMatchObject({ code: "timeout", retryable: false, writeOutcome: "unknown" });
     expectWithheld(rendered(error), JSON.stringify(classifyCallError(error)), ...lines);
   });
 
@@ -997,6 +1015,8 @@ describe("the MCP boundary is an allow-list", () => {
       "fetch",
       downstream({
         live: true,
+        // A listed read: a direct write's abort after dispatch is an unknown outcome instead.
+        tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
         toolCall: () => {
           controller.abort(reason);
           return new Response(new ReadableStream({ start() {} }), { headers: { "content-type": "application/json" } });
@@ -1005,6 +1025,7 @@ describe("the MCP boundary is an allow-list", () => {
     );
     const connector = remoteMcp("svc", { url: MCP_URL, versionNegotiation: mode });
     const context: ConnectorContext = { ...scope(), signal: controller.signal };
+    await connector.listTools(context);
     const error = await connector.callTool("read", {}, context).then(
       () => null,
       (err: unknown) => err,
@@ -1618,7 +1639,7 @@ describe("SDK failure facts", () => {
   ] as const)("INV-6: SDK error %s uses facts and drops payload", async (original, code, retryable) => {
     vi.stubGlobal("fetch", downstream({ live: true }));
     const connector = remoteMcp("svc-timeout-503", { url: MCP_URL, versionNegotiation: "legacy" });
-    const context = scope();
+    const context = readContext(scope());
     try {
       await connector.status!(context);
       vi.spyOn(Client.prototype, "callTool").mockRejectedValueOnce(original);

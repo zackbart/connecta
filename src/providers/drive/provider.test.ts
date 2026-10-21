@@ -879,7 +879,7 @@ describe("writing files", () => {
     const contentType = calls[0]!.headers.get("content-type")!;
     const boundary = /^multipart\/related; boundary=(connecta-[\w-]+)$/.exec(contentType)?.[1];
     expect(boundary).toBeDefined();
-    // Bytes, never a stream, so a 401 replay can send it again.
+    // Bytes, never a stream: the shared client refuses a body it could not resend.
     expect(calls[0]!.raw).toBeInstanceOf(Uint8Array);
     const parts = decode(calls[0]!.raw).split(`--${boundary}`);
     expect(parts[1]).toBe(
@@ -890,18 +890,26 @@ describe("writing files", () => {
     expect(result).toEqual({ id: "f9", name: "notes.md", mimeType: "text/markdown" });
   });
 
-  it("resends the same upload bytes when a 401 forces a fresh token", async () => {
+  it("INV-9: never resends an upload Google answered with 401, and mints a fresh token for a deliberate repeat", async () => {
     let first = true;
     route = () => {
       if (!first) return { body: { id: "f9" } };
       first = false;
       return GOOGLE_ERROR(401, "authError", "Invalid Credentials");
     };
-    await call(connection(), "create_file", { name: "a.txt", content: "same bytes" });
+    const connector = connection();
+    await expect(call(connector, "create_file", { name: "a.txt", content: "same bytes" })).rejects.toMatchObject({
+      code: "auth_required",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(calls.map((_, index) => line(index))).toEqual(["POST upload/files"]);
+    expect(tokenCalls).toBe(1);
+
+    // The refused token is gone: the explicit repeat is one new request on a fresh one.
+    await call(connector, "create_file", { name: "a.txt", content: "same bytes" });
     expect(calls.map((_, index) => line(index))).toEqual(["POST upload/files", "POST upload/files"]);
     expect(tokenCalls).toBe(2);
-    expect(decode(calls[1]!.raw)).toBe(decode(calls[0]!.raw));
-    expect(decode(calls[1]!.raw)).toContain("same bytes");
   });
 
   it("imports content as a Google Doc, and creates an empty Sheet with no upload", async () => {
@@ -1800,11 +1808,16 @@ describe("Google's outcome for a write decides what it may say (shared update #3
     ["trash_file", { fileId: "f1" }],
     ["restore_file", { fileId: "f1" }],
     ["update_permission", { fileId: "f1", permissionId: "p1", role: "reader" }],
-  ])("a 5xx to %s, which sets fixed values, stays a retryable outage", async (name, args) => {
-    route = () => SERVER_ERROR;
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "unavailable", retryable: true });
-  });
+  ])(
+    "INV-9: a 5xx to %s is unknown, though it sets fixed values: no operation hint grants retry credit",
+    async (name, args) => {
+      route = () => SERVER_ERROR;
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(failure.message).toContain("may have been applied");
+      expect(calls).toHaveLength(1);
+    },
+  );
 });
 
 describe("a redirected or rate-limited write never claims an outcome (shared update #4)", () => {

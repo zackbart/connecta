@@ -1,0 +1,1156 @@
+[
+  {
+    "label": "get_spreadsheet",
+    "tool": "get_spreadsheet",
+    "args": {
+      "spreadsheetId": "sheet-budget-1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-get-spreadsheet@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "title": "2026 Budget",
+        "url": "https://docs.google.com/spreadsheets/d/sheet-budget-1/edit",
+        "locale": "en_US",
+        "timeZone": "America/Chicago",
+        "sheets": [
+          {
+            "sheetId": 0,
+            "title": "Summary",
+            "index": 0,
+            "type": "GRID",
+            "rowCount": 1000,
+            "columnCount": 26,
+            "frozenRowCount": 1
+          },
+          {
+            "sheetId": 7,
+            "title": "Q3 Budget",
+            "index": 1,
+            "type": "GRID",
+            "hidden": true,
+            "rowCount": 500,
+            "columnCount": 8
+          }
+        ],
+        "namedRanges": [
+          {
+            "namedRangeId": "n1",
+            "name": "Totals",
+            "sheetId": 0,
+            "range": "'Summary'!A1:C5"
+          },
+          {
+            "namedRangeId": "n2",
+            "name": "Spend",
+            "sheetId": 7,
+            "range": "'Q3 Budget'!B2:D"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "get_values",
+    "tool": "get_values",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "ranges": [
+        "Summary!A1:C3",
+        "'Q3 Budget'!B:B"
+      ],
+      "valueRenderOption": "UNFORMATTED_VALUE",
+      "dateTimeRenderOption": "FORMATTED_STRING"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-get-values@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchGet?ranges=Summary%21A1%3AC3&ranges=%27Q3+Budget%27%21B%3AB&majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "valueRanges": [
+          {
+            "range": "Summary!A1:C3",
+            "values": [
+              [
+                "Item",
+                "Q3"
+              ],
+              [
+                "Rent",
+                1200
+              ],
+              []
+            ],
+            "rowCount": 3
+          },
+          {
+            "range": "'Q3 Budget'!B1:B1000",
+            "values": [],
+            "rowCount": 0
+          }
+        ],
+        "cellCount": 5,
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        }
+      }
+    }
+  },
+  {
+    "label": "get_values paged by maxCells",
+    "tool": "get_values",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "ranges": [
+        "Data!A1:B10",
+        "Other!A1:A2"
+      ],
+      "maxCells": 6
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-get-values-paged-by-maxcells@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchGet?ranges=Data%21A1%3AB10&ranges=Other%21A1%3AA2&majorDimension=ROWS",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "valueRanges": [
+          {
+            "range": "Data!A1:B10",
+            "values": [
+              [
+                "r1",
+                1
+              ],
+              [
+                "r2",
+                2
+              ],
+              [
+                "r3",
+                3
+              ]
+            ],
+            "rowCount": 3,
+            "truncated": true,
+            "omittedRows": 7
+          }
+        ],
+        "cellCount": 6,
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJkIjoiSHJPVHFsN2lIaURQeXEwSUQxeEdLdyIsImkiOjAsInMiOjN9"
+        }
+      }
+    }
+  },
+  {
+    "label": "update_values",
+    "tool": "update_values",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "range": "Summary!A1",
+      "values": [
+        [
+          "Item",
+          "=SUM(B2:B9)"
+        ],
+        [
+          null,
+          ""
+        ]
+      ],
+      "valueInputOption": "USER_ENTERED"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-update-values@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "valueInputOption": "USER_ENTERED",
+              "data": [
+                {
+                  "range": "Summary!A1",
+                  "majorDimension": "ROWS",
+                  "values": [
+                    [
+                      "Item",
+                      "=SUM(B2:B9)"
+                    ],
+                    [
+                      null,
+                      ""
+                    ]
+                  ]
+                }
+              ],
+              "includeValuesInResponse": false
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "updatedRange": "Summary!A1:B2",
+        "updatedRows": 2,
+        "updatedColumns": 2,
+        "updatedCells": 4
+      }
+    }
+  },
+  {
+    "label": "batch_update_values",
+    "tool": "batch_update_values",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "valueInputOption": "RAW",
+      "data": [
+        {
+          "range": "A!A1",
+          "values": [
+            [
+              1,
+              true
+            ]
+          ]
+        },
+        {
+          "range": "B!A1",
+          "values": [
+            [
+              "x"
+            ],
+            [
+              "y"
+            ]
+          ]
+        }
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-batch-update-values@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "valueInputOption": "RAW",
+              "data": [
+                {
+                  "range": "A!A1",
+                  "majorDimension": "ROWS",
+                  "values": [
+                    [
+                      1,
+                      true
+                    ]
+                  ]
+                },
+                {
+                  "range": "B!A1",
+                  "majorDimension": "ROWS",
+                  "values": [
+                    [
+                      "x"
+                    ],
+                    [
+                      "y"
+                    ]
+                  ]
+                }
+              ],
+              "includeValuesInResponse": false
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "totalUpdatedRows": 3,
+        "totalUpdatedColumns": 2,
+        "totalUpdatedCells": 4,
+        "totalUpdatedSheets": 2,
+        "updates": [
+          {
+            "updatedRange": "A!A1:B1",
+            "updatedRows": 1,
+            "updatedColumns": 2,
+            "updatedCells": 2
+          },
+          {
+            "updatedRange": "B!A1:A2",
+            "updatedRows": 2,
+            "updatedColumns": 1,
+            "updatedCells": 2
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "append_values",
+    "tool": "append_values",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "range": "'Q3 Budget'!A:D",
+      "values": [
+        [
+          "2026-10-06",
+          "Rent",
+          1200,
+          "paid"
+        ]
+      ],
+      "valueInputOption": "USER_ENTERED"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-append-values@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values/'Q3%20Budget'!A%3AD:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&includeValuesInResponse=false",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "majorDimension": "ROWS",
+              "values": [
+                [
+                  "2026-10-06",
+                  "Rent",
+                  1200,
+                  "paid"
+                ]
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "tableRange": "'Q3 Budget'!A1:D20",
+        "updatedRange": "'Q3 Budget'!A21:D21",
+        "updatedRows": 1,
+        "updatedColumns": 4,
+        "updatedCells": 4
+      }
+    }
+  },
+  {
+    "label": "clear_values",
+    "tool": "clear_values",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "ranges": [
+        "A!A1:B9",
+        "B!C:C"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-clear-values@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1/values:batchClear",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "ranges": [
+                "A!A1:B9",
+                "B!C:C"
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "clearedRanges": [
+          "A!A1:B9",
+          "B!C1:C1000"
+        ]
+      }
+    }
+  },
+  {
+    "label": "create_spreadsheet",
+    "tool": "create_spreadsheet",
+    "args": {
+      "title": "Attendance 2026",
+      "sheetTitles": [
+        "Sundays",
+        "Midweek"
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-create-spreadsheet@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties.title%2Csheets.properties%28sheetId%2Ctitle%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "properties": {
+                "title": "Attendance 2026"
+              },
+              "sheets": [
+                {
+                  "properties": {
+                    "title": "Sundays"
+                  }
+                },
+                {
+                  "properties": {
+                    "title": "Midweek"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "new-1",
+        "title": "Attendance 2026",
+        "url": "https://docs.google.com/spreadsheets/d/new-1/edit",
+        "sheets": [
+          {
+            "sheetId": 0,
+            "title": "Sundays"
+          },
+          {
+            "sheetId": 42,
+            "title": "Midweek"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "add_sheet",
+    "tool": "add_sheet",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "title": "Q4",
+      "index": 2,
+      "rowCount": 100,
+      "columnCount": 6
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-add-sheet@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "addSheet": {
+                    "properties": {
+                      "title": "Q4",
+                      "index": 2,
+                      "gridProperties": {
+                        "rowCount": 100,
+                        "columnCount": 6
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "sheetId": 99,
+        "title": "Q4",
+        "index": 2,
+        "type": "GRID",
+        "rowCount": 100,
+        "columnCount": 6
+      }
+    }
+  },
+  {
+    "label": "batch_update_spreadsheet",
+    "tool": "batch_update_spreadsheet",
+    "args": {
+      "spreadsheetId": "sheet-budget-1",
+      "requests": [
+        {
+          "deleteDimension": {
+            "range": {
+              "sheetId": 7,
+              "dimension": "ROWS",
+              "startIndex": 3,
+              "endIndex": 9
+            }
+          }
+        },
+        {
+          "duplicateSheet": {
+            "sourceSheetId": 0,
+            "newSheetName": "Copy of Summary"
+          }
+        }
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-batch-update-spreadsheet@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "deleteDimension": {
+                    "range": {
+                      "sheetId": 7,
+                      "dimension": "ROWS",
+                      "startIndex": 3,
+                      "endIndex": 9
+                    }
+                  }
+                },
+                {
+                  "duplicateSheet": {
+                    "sourceSheetId": 0,
+                    "newSheetName": "Copy of Summary"
+                  }
+                }
+              ],
+              "includeSpreadsheetInResponse": false
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "replies": [
+          {},
+          {
+            "duplicateSheet": {
+              "properties": {
+                "sheetId": 101,
+                "title": "Copy of Summary",
+                "index": 2
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "get_spreadsheet echoes sent secrets",
+    "tool": "get_spreadsheet",
+    "args": {
+      "spreadsheetId": "sheet-budget-1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "sheets-get-spreadsheet-echoes-sent-secrets@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/spreadsheets",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://sheets.googleapis.com/v4/spreadsheets/sheet-budget-1?fields=spreadsheetId%2CspreadsheetUrl%2Cproperties%28title%2Clocale%2CtimeZone%29%2Csheets.properties%28sheetId%2Ctitle%2Cindex%2CsheetType%2Chidden%2CgridProperties%28rowCount%2CcolumnCount%2CfrozenRowCount%2CfrozenColumnCount%29%29%2CnamedRanges%28namedRangeId%2Cname%2Crange%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "spreadsheetId": "sheet-budget-1",
+        "title": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]",
+        "url": "https://docs.google.com/spreadsheets/d/sheet-budget-1/edit",
+        "locale": "en_US",
+        "timeZone": "America/Chicago",
+        "sheets": [
+          {
+            "sheetId": 0,
+            "title": "Summary",
+            "index": 0,
+            "type": "GRID",
+            "rowCount": 1000,
+            "columnCount": 26,
+            "frozenRowCount": 1
+          },
+          {
+            "sheetId": 7,
+            "title": "Q3 Budget",
+            "index": 1,
+            "type": "GRID",
+            "hidden": true,
+            "rowCount": 500,
+            "columnCount": 8
+          }
+        ],
+        "namedRanges": [
+          {
+            "namedRangeId": "n1",
+            "name": "Totals",
+            "sheetId": 0,
+            "range": "'Summary'!A1:C5"
+          },
+          {
+            "namedRangeId": "n2",
+            "name": "Spend",
+            "sheetId": 7,
+            "range": "'Q3 Budget'!B2:D"
+          }
+        ]
+      }
+    }
+  }
+]

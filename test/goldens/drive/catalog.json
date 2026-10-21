@@ -1,0 +1,1732 @@
+{
+  "id": "files",
+  "kind": "api",
+  "title": "Google Drive",
+  "description": "Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — Staff documents for alice",
+  "guide": {
+    "summary": "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
+    "content": "# Google Drive usage\n\nActs as the signed-in person's own Google Drive through Workspace delegation: what they can open, and nothing they cannot.\n\nConnection purpose: Staff documents for alice\n\n## Whose Drive\n\nEvery call acts as the Workspace address deployment config maps the caller\nto, and reaches exactly the files that person can open, shared drives\nincluded; an agent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No\nargument names an account. A call with none mapped fails `auth_required`; only an operator can change\nthat. A missing file\nand one this person cannot see fail alike — Google does not distinguish them.\n\n## Finding files\n\n- `search_files` takes Drive query syntax: `name contains 'x'`,\n  `fullText contains 'x'`, `mimeType = '…'`, `'<folderId>' in parents`,\n  `modifiedTime > '2026-01-01T00:00:00'`. Quote values with single quotes.\n  Trashed files are left out unless `includeTrashed`. `incompleteSearch:\n  true` means Drive gave up before searching everything; narrow the query or\n  the corpus. Shared drives: `list_shared_drives`, then `corpora: \"drive\"`\n  with its `driveId`.\n- Page with `page.nextCursor` and the same arguments; a cursor from another\n  tool or other arguments is refused. A page can stop short of `limit` to\n  stay under `maxBytes`; the cursor resumes at the first row left out, and\n  fails `conflict` if that page changed meanwhile — start over then.\n- Ids come from these reads or a Drive URL (`/d/<id>/`, `/folders/<id>`);\n  never guess one.\n\n## Reading content\n\n- `get_file_content` exports Docs as Markdown, Sheets as CSV of the\n  **first sheet only**, and Slides as plain text; reads text files as text;\n  and returns other files as base64 when the encoded file fits the result. Anything else — a\n  larger binary, a drawing, a form, a folder, a shortcut — comes back as\n  `format: \"unavailable\"` with a `note`, never as an empty success.\n- Text is capped by `maxChars`; a cut ends with a truncation marker and\n  `contentTruncated: true`. Drive exports at most 10 MB.\n- Every read stays under `maxBytes` of JSON. The default is what one result\n  can carry into `execute_code`, so a program always receives it. A larger\n  `maxBytes` (up to 4 MiB — a binary of up to 1 MiB) reaches only a direct\n  `call_tool`, which pages it with `connecta.result`.\n\n## Writing\n\n- `create_folder` and `restore_file` add without losing or exposing\n  anything.\n- A new file takes its folder's sharing, not its source's: `create_file`\n  and `copy_file` into a shared folder disclose that content to everyone\n  the folder is shared with, so both are approved like any destructive write.\n  Check the destination with `list_permissions` first. `convertTo`\n  imports content as a Google Doc, Sheet, or Slides file.\n- `update_file_content` replaces the whole content; send all of it.\n  `update_file` renames; `move_file` changes the folder and with it who\n  inherits access.\n- `trash_file` is recoverable for 30 days with `restore_file`. There is no\n  permanent delete and no ownership transfer.\n- `share_file` emails no one unless `sendNotificationEmail: true`. Check\n  `list_permissions` before and after changing access, and confirm with the\n  person before sharing with `anyone` or a whole domain.\n"
+  },
+  "tools": [
+    {
+      "name": "search_files",
+      "description": "Search Drive files the user can open with Drive query syntax, returning name, type, folder, size, and link per file. Content needs get_file_content.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Drive query: name contains 'budget', fullText contains 'elders', mimeType = 'application/pdf', modifiedTime > '2026-01-01T00:00:00', 'me' in owners. Omit for everything."
+          },
+          "corpora": {
+            "type": "string",
+            "enum": [
+              "user",
+              "domain",
+              "drive",
+              "allDrives"
+            ],
+            "description": "Where to look: user (default; My Drive and shared with me), drive (one shared drive, with driveId), allDrives (slower, may be incomplete), domain."
+          },
+          "driveId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Shared drive id from list_shared_drives; required with corpora drive, refused otherwise."
+          },
+          "orderBy": {
+            "type": "string",
+            "enum": [
+              "modifiedTime desc",
+              "modifiedTime",
+              "name",
+              "name desc",
+              "createdTime desc",
+              "folder,name"
+            ],
+            "description": "Sort order. Drive refuses any sort on a fullText query, which comes back by relevance."
+          },
+          "includeTrashed": {
+            "type": "boolean",
+            "description": "Include trashed files, which are left out by default."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 65536,
+            "maximum": 4194304,
+            "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "parents": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "driveId": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "modifiedTime": {
+                  "type": "string"
+                },
+                "owners": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "trashed": {
+                  "type": "boolean"
+                },
+                "webViewLink": {
+                  "type": "string"
+                },
+                "shortcutTargetId": {
+                  "type": "string"
+                },
+                "shortcutTargetMimeType": {
+                  "type": "string"
+                },
+                "truncatedFields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+                }
+              }
+            }
+          },
+          "incompleteSearch": {
+            "type": "boolean"
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "files",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_folder_items",
+      "description": "List the files and folders directly inside one Drive folder, in My Drive or a shared drive. Not recursive: list a subfolder by its own id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "folderId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Folder id, a shared drive id for its top level, or root for My Drive."
+          },
+          "orderBy": {
+            "type": "string",
+            "enum": [
+              "modifiedTime desc",
+              "modifiedTime",
+              "name",
+              "name desc",
+              "createdTime desc",
+              "folder,name"
+            ],
+            "description": "Sort order; defaults to folders first, then by name."
+          },
+          "includeTrashed": {
+            "type": "boolean",
+            "description": "Include trashed files, which are left out by default."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 65536,
+            "maximum": 4194304,
+            "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          }
+        },
+        "required": [
+          "folderId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "parents": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "driveId": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "modifiedTime": {
+                  "type": "string"
+                },
+                "owners": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "trashed": {
+                  "type": "boolean"
+                },
+                "webViewLink": {
+                  "type": "string"
+                },
+                "shortcutTargetId": {
+                  "type": "string"
+                },
+                "shortcutTargetMimeType": {
+                  "type": "string"
+                },
+                "truncatedFields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+                }
+              }
+            }
+          },
+          "incompleteSearch": {
+            "type": "boolean"
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "files",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_file",
+      "description": "Get one Drive file's metadata: name, type, folder, owners, sharing flag, description, and what this user may do with it. Never its content.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          }
+        },
+        "required": [
+          "fileId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          },
+          "description": {
+            "type": "string"
+          },
+          "createdTime": {
+            "type": "string"
+          },
+          "modifiedBy": {
+            "type": "string"
+          },
+          "shared": {
+            "type": "boolean"
+          },
+          "starred": {
+            "type": "boolean"
+          },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "canEdit": {
+                "type": "boolean"
+              },
+              "canComment": {
+                "type": "boolean"
+              },
+              "canShare": {
+                "type": "boolean"
+              },
+              "canDownload": {
+                "type": "boolean"
+              },
+              "canTrash": {
+                "type": "boolean"
+              },
+              "canRename": {
+                "type": "boolean"
+              },
+              "canAddChildren": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_file_content",
+      "description": "Read a Drive file's content: Docs as Markdown, Sheets as CSV of the first sheet, Slides as text, text files as text, small binaries as base64. Never drawings or folders.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "maxChars": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000,
+            "description": "Characters (code points) of text kept, 1 to 100000; defaults to 20000. Longer text ends with a truncation marker. Binaries ignore it."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 65536,
+            "maximum": 4194304,
+            "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          }
+        },
+        "required": [
+          "fileId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "markdown",
+              "csv",
+              "text",
+              "base64",
+              "unavailable"
+            ]
+          },
+          "exportedAs": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "contentTruncated": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "format",
+          "contentTruncated"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_permissions",
+      "description": "List who a Drive file or folder is shared with: each permission's id, type, role, and address or domain. Use the ids with update_permission or delete_permission.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 65536,
+            "maximum": 4194304,
+            "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          }
+        },
+        "required": [
+          "fileId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "group",
+                    "domain",
+                    "anyone"
+                  ]
+                },
+                "role": {
+                  "type": "string"
+                },
+                "emailAddress": {
+                  "type": "string"
+                },
+                "domain": {
+                  "type": "string"
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "allowFileDiscovery": {
+                  "type": "boolean"
+                },
+                "expirationTime": {
+                  "type": "string"
+                },
+                "inherited": {
+                  "type": "boolean"
+                },
+                "inheritedFrom": {
+                  "type": "string"
+                },
+                "deleted": {
+                  "type": "boolean"
+                },
+                "truncatedFields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "permissions",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_shared_drives",
+      "description": "List the shared drives the user is a member of, with their ids for search_files and list_folder_items. Not the files inside them.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 1024,
+            "description": "Shared drive query, e.g. name contains 'Finance'. Omit for every drive."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Rows per page, 1 to 100; defaults to 25. Connecta's cap, below Drive's 1,000."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 65536,
+            "maximum": 4194304,
+            "description": "Serialized bytes of the whole result; defaults to 196608, what execute_code can receive. Raise it, to 4194304, only for a direct call_tool read."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "drives": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "hidden": {
+                  "type": "boolean"
+                },
+                "truncatedFields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          }
+        },
+        "required": [
+          "drives",
+          "page"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "create_folder",
+      "description": "Create a new, empty Drive folder, in My Drive or inside another folder. Shares nothing beyond what the parent folder already grants.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "File name as Drive shows it, extension included where it has one."
+          },
+          "parentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Folder id to place it in, or root for My Drive; defaults to My Drive."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 10000,
+            "description": "Free-text description shown in Drive's details pane."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "create_file",
+      "description": "Create a Drive file from text or base64 content, or an empty one; convertTo makes a Google Doc, Sheet, or Slides file. Whoever can see its folder can see it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "File name as Drive shows it, extension included where it has one."
+          },
+          "parentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Folder id to place it in, or root for My Drive; defaults to My Drive."
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 1000000,
+            "description": "Text content, up to 1000000 characters (connecta's cap). Exclusive with contentBase64."
+          },
+          "contentBase64": {
+            "type": "string",
+            "maxLength": 1398104,
+            "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+            "description": "Binary content as base64, up to 1048576 bytes decoded (connecta's cap; Drive allows 5 MB). Exclusive with content."
+          },
+          "mimeType": {
+            "type": "string",
+            "maxLength": 255,
+            "pattern": "^[A-Za-z0-9][\\w.+-]*/[A-Za-z0-9][\\w.+-]*$",
+            "description": "Media type of the content: text/plain, text/markdown, text/csv, application/pdf. Never a Google type. Defaults to text/plain or application/octet-stream."
+          },
+          "convertTo": {
+            "type": "string",
+            "enum": [
+              "document",
+              "spreadsheet",
+              "presentation"
+            ],
+            "description": "Import as a Google type: markdown, HTML, or text to document; CSV to spreadsheet. Without content, an empty one."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 10000,
+            "description": "Free-text description shown in Drive's details pane."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "update_file_content",
+      "description": "Replace a Drive file's entire content with new text or base64 bytes; the old content survives only in Drive's version history. Keeps name, folder, and sharing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 1000000,
+            "description": "Text content, up to 1000000 characters (connecta's cap). Exclusive with contentBase64."
+          },
+          "contentBase64": {
+            "type": "string",
+            "maxLength": 1398104,
+            "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+            "description": "Binary content as base64, up to 1048576 bytes decoded (connecta's cap; Drive allows 5 MB). Exclusive with content."
+          },
+          "mimeType": {
+            "type": "string",
+            "maxLength": 255,
+            "pattern": "^[A-Za-z0-9][\\w.+-]*/[A-Za-z0-9][\\w.+-]*$",
+            "description": "Media type of the new content: usually the file's own, text/markdown for a Google Doc, text/csv for a Sheet (replacing every tab)."
+          }
+        },
+        "required": [
+          "fileId",
+          "mimeType"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "update_file",
+      "description": "Rename a Drive file or folder, or replace its description. Never its content, folder, or sharing: use update_file_content, move_file, or share_file.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "File name as Drive shows it, extension included where it has one."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 10000,
+            "description": "Free-text description shown in Drive's details pane."
+          }
+        },
+        "required": [
+          "fileId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "move_file",
+      "description": "Move a Drive file or folder into another folder or shared drive, out of the folder it is in now. Can change who has access to it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "folderId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Destination folder id, a shared drive id for its top level, or root for My Drive."
+          }
+        },
+        "required": [
+          "fileId",
+          "folderId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "copy_file",
+      "description": "Copy a Drive file into a new file, optionally renamed or in another folder. The copy is shared like its folder, not like the original; no folders.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "Name of the copy; defaults to Drive's \"Copy of …\"."
+          },
+          "parentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Folder for the copy; defaults to the original's."
+          }
+        },
+        "required": [
+          "fileId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "trash_file",
+      "description": "Move a Drive file or folder to the trash, where Drive deletes it for good after 30 days; restore_file undoes it. Never deletes permanently itself.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          }
+        },
+        "required": [
+          "fileId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "restore_file",
+      "description": "Restore (untrash) a trashed Drive file or folder to where it was. Cannot recover a file already deleted from the trash.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          }
+        },
+        "required": [
+          "fileId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "driveId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "modifiedTime": {
+            "type": "string"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trashed": {
+            "type": "boolean"
+          },
+          "webViewLink": {
+            "type": "string"
+          },
+          "shortcutTargetId": {
+            "type": "string"
+          },
+          "shortcutTargetMimeType": {
+            "type": "string"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "share_file",
+      "description": "Share a Drive file or folder with a user, group, domain, or anyone with the link, at a role up to writer. Sends no email unless asked; never transfers ownership.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "group",
+              "domain",
+              "anyone"
+            ],
+            "description": "Grantee kind: user or group needs emailAddress, domain needs domain, anyone means anyone with the link."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "reader",
+              "commenter",
+              "writer",
+              "fileOrganizer",
+              "organizer"
+            ],
+            "description": "Access granted. fileOrganizer and organizer exist only on shared drives. Ownership is never granted here."
+          },
+          "emailAddress": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320,
+            "pattern": "^[^\\s@]+@[^\\s@]+$",
+            "description": "The user's or group's email address, for type user or group only."
+          },
+          "domain": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253,
+            "pattern": "^[A-Za-z0-9.-]+$",
+            "description": "The Workspace domain, for type domain only."
+          },
+          "allowFileDiscovery": {
+            "type": "boolean",
+            "description": "For domain or anyone: whether it appears in search rather than needing the link. Defaults to false."
+          },
+          "sendNotificationEmail": {
+            "type": "boolean",
+            "description": "Email a user or group that it was shared. Defaults to false; Drive requires it for a non-Google address."
+          },
+          "emailMessage": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Message in the notification email; only with sendNotificationEmail true."
+          }
+        },
+        "required": [
+          "fileId",
+          "type",
+          "role"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "group",
+              "domain",
+              "anyone"
+            ]
+          },
+          "role": {
+            "type": "string"
+          },
+          "emailAddress": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "allowFileDiscovery": {
+            "type": "boolean"
+          },
+          "expirationTime": {
+            "type": "string"
+          },
+          "inherited": {
+            "type": "boolean"
+          },
+          "inheritedFrom": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "update_permission",
+      "description": "Change the role of one existing share on a Drive file or folder. Never makes anyone an owner; an inherited share is changed on the folder it comes from.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "permissionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Permission id from list_permissions."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "reader",
+              "commenter",
+              "writer",
+              "fileOrganizer",
+              "organizer"
+            ],
+            "description": "Access granted. fileOrganizer and organizer exist only on shared drives. Ownership is never granted here."
+          }
+        },
+        "required": [
+          "fileId",
+          "permissionId",
+          "role"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "group",
+              "domain",
+              "anyone"
+            ]
+          },
+          "role": {
+            "type": "string"
+          },
+          "emailAddress": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "allowFileDiscovery": {
+            "type": "boolean"
+          },
+          "expirationTime": {
+            "type": "string"
+          },
+          "inherited": {
+            "type": "boolean"
+          },
+          "inheritedFrom": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "truncatedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields this result shortened (a string ending in …), capped (a list past ten), or left out (a malformed id). get_file keeps longer names."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "delete_permission",
+      "description": "Remove one share from a Drive file or folder, revoking that user's, group's, domain's, or link's access. Never deletes the file; an owner cannot be removed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "File or folder id, from search_files, list_folder_items, or a Drive URL's /d/<id>."
+          },
+          "permissionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Permission id from list_permissions."
+          }
+        },
+        "required": [
+          "fileId",
+          "permissionId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string"
+          },
+          "permissionId": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "fileId",
+          "permissionId",
+          "deleted"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    }
+  ]
+}

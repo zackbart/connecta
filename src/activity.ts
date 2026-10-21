@@ -4,6 +4,7 @@ import { routeActivity } from "./routes/activity.js";
 import type { ActivityModule } from "./module-contracts.js";
 import { boundedEchoText, classificationCode, type ClassificationCode } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
+import { keepErrorName } from "./redaction-identity.js";
 import type { Logger } from "./types.js";
 
 /**
@@ -271,6 +272,7 @@ export class InvalidActivityCursorError extends Error {
     super("invalid activity cursor");
   }
 }
+keepErrorName(InvalidActivityCursorError, "InvalidActivityCursorError");
 
 export type ActivityReadGate = (actor: ActivityActor) => boolean | Promise<boolean>;
 

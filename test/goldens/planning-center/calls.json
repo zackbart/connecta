@@ -1,0 +1,2582 @@
+[
+  {
+    "label": "pco_api_get",
+    "tool": "pco_api_get",
+    "args": {
+      "path": "/publishing/v2/episodes",
+      "query": [
+        {
+          "name": "where[title]",
+          "value": "Easter"
+        },
+        {
+          "name": "per_page",
+          "value": 5
+        }
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/publishing/v2/episodes?where%5Btitle%5D=Easter&per_page=5",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2024-03-25"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": [
+            {
+              "type": "Episode",
+              "id": "71",
+              "attributes": {
+                "title": "Easter Sunday",
+                "published_to_library_at": null
+              }
+            }
+          ],
+          "meta": {
+            "total_count": 1,
+            "count": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "pco_api_get version override",
+    "tool": "pco_api_get",
+    "args": {
+      "path": "/people/v2/campuses",
+      "version": "2025-11-10"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/campuses",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2025-11-10"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": [
+            {
+              "type": "Campus",
+              "id": "501",
+              "attributes": {
+                "name": "Downtown"
+              }
+            }
+          ],
+          "meta": {
+            "total_count": 1,
+            "count": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "pco_api_mutate",
+    "tool": "pco_api_mutate",
+    "args": {
+      "method": "POST",
+      "path": "/giving/v2/batches",
+      "body": {
+        "data": {
+          "type": "Batch",
+          "attributes": {
+            "description": "Sunday offering"
+          }
+        }
+      }
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/giving/v2/batches",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "Batch",
+                "attributes": {
+                  "description": "Sunday offering"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": {
+            "type": "Batch",
+            "id": "81",
+            "attributes": {
+              "description": "Sunday offering",
+              "status": "in_progress"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "pco_api_mutate DELETE",
+    "tool": "pco_api_mutate",
+    "args": {
+      "method": "DELETE",
+      "path": "/people/v2/emails/101"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "DELETE",
+          "url": "https://api.planningcenteronline.com/people/v2/emails/101",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": null
+      }
+    }
+  },
+  {
+    "label": "get_me",
+    "tool": "get_me",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/me?include=organization",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "1",
+        "name": "Alice Admin",
+        "first_name": "Alice",
+        "last_name": "Admin",
+        "status": "active",
+        "organization": {
+          "id": "100",
+          "name": "Grace Church",
+          "time_zone": "America/Chicago"
+        }
+      }
+    }
+  },
+  {
+    "label": "search_people",
+    "tool": "search_people",
+    "args": {
+      "search": "alice",
+      "status": "active",
+      "updatedSince": "2026-01-01",
+      "order": "-updated_at",
+      "perPage": 1
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/people?where%5Bsearch_name_or_email_or_phone_number%5D=alice&where%5Bstatus%5D=active&where%5Bupdated_at%5D%5Bgte%5D=2026-01-01&order=-updated_at&include=emails%2Cphone_numbers&per_page=1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "people": [
+          {
+            "id": "7",
+            "name": "Alice Smith",
+            "first_name": "Alice",
+            "last_name": "Smith",
+            "nickname": null,
+            "status": "active",
+            "membership": "Member",
+            "child": false,
+            "primary_email": "alice@example.com",
+            "primary_phone": "(555) 010-0100",
+            "updated_at": "2026-01-01T00:00:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": true,
+          "nextOffset": 1,
+          "totalCount": 2
+        }
+      }
+    }
+  },
+  {
+    "label": "get_person",
+    "tool": "get_person",
+    "args": {
+      "personId": "7"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/people/7?include=emails%2Cphone_numbers%2Caddresses%2Chouseholds%2Cprimary_campus",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "7",
+        "name": "Alice Smith",
+        "first_name": "Alice",
+        "last_name": "Smith",
+        "nickname": null,
+        "status": "active",
+        "membership": "Member",
+        "child": false,
+        "primary_email": "alice@example.com",
+        "primary_phone": "(555) 010-0100",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "birthdate": "1985-05-23",
+        "gender": "Female",
+        "created_at": "2020-03-01T15:00:00Z",
+        "primary_campus": {
+          "id": "501",
+          "name": "Downtown"
+        },
+        "emails": [
+          {
+            "id": "101",
+            "address": "old@example.com",
+            "location": "Work",
+            "primary": false
+          },
+          {
+            "id": "102",
+            "address": "alice@example.com",
+            "location": "Home",
+            "primary": true
+          }
+        ],
+        "phone_numbers": [
+          {
+            "id": "201",
+            "number": "(555) 010-0100",
+            "location": "Mobile",
+            "primary": true
+          }
+        ],
+        "addresses": [
+          {
+            "id": "301",
+            "street_line_1": "1 Main St",
+            "city": "Nashville",
+            "state": "TN",
+            "zip": "37209",
+            "country_code": "US",
+            "location": "Home",
+            "primary": true
+          }
+        ],
+        "households": [
+          {
+            "id": "401",
+            "name": "Smith household",
+            "primary_contact_id": "7",
+            "member_count": 3
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "create_person",
+    "tool": "create_person",
+    "args": {
+      "firstName": "Bob",
+      "lastName": "Jones",
+      "birthdate": "1990-04-12",
+      "membership": "Visitor",
+      "child": false
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/people",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "Person",
+                "attributes": {
+                  "first_name": "Bob",
+                  "last_name": "Jones",
+                  "birthdate": "1990-04-12",
+                  "membership": "Visitor",
+                  "child": false
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "9",
+        "name": "Bob Jones",
+        "first_name": "Bob",
+        "last_name": "Jones",
+        "nickname": null,
+        "status": "active",
+        "membership": "Visitor",
+        "child": false,
+        "primary_email": null,
+        "primary_phone": null,
+        "updated_at": "2026-01-02T03:04:05Z"
+      }
+    }
+  },
+  {
+    "label": "update_person",
+    "tool": "update_person",
+    "args": {
+      "personId": "9",
+      "status": "inactive",
+      "nickname": null
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "PATCH",
+          "url": "https://api.planningcenteronline.com/people/v2/people/9",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "Person",
+                "id": "9",
+                "attributes": {
+                  "nickname": null,
+                  "status": "inactive"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "9",
+        "name": "Bob Jones",
+        "first_name": "Bob",
+        "last_name": "Jones",
+        "nickname": null,
+        "status": "inactive",
+        "membership": "Visitor",
+        "child": false,
+        "primary_email": null,
+        "primary_phone": null,
+        "updated_at": "2026-01-02T03:04:05Z"
+      }
+    }
+  },
+  {
+    "label": "add_person_email",
+    "tool": "add_person_email",
+    "args": {
+      "personId": "9",
+      "address": "bob@example.com",
+      "primary": true
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/people/9/emails",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "Email",
+                "attributes": {
+                  "address": "bob@example.com",
+                  "location": "Home",
+                  "primary": true
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "103",
+        "address": "bob@example.com",
+        "location": "Home",
+        "primary": true,
+        "person_id": "9"
+      }
+    }
+  },
+  {
+    "label": "add_person_phone_number",
+    "tool": "add_person_phone_number",
+    "args": {
+      "personId": "9",
+      "number": "555-0199"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/people/9/phone_numbers",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "PhoneNumber",
+                "attributes": {
+                  "number": "555-0199",
+                  "location": "Mobile"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "203",
+        "number": "(555) 019-9000",
+        "location": "Mobile",
+        "primary": false,
+        "person_id": "9"
+      }
+    }
+  },
+  {
+    "label": "list_lists",
+    "tool": "list_lists",
+    "args": {
+      "name": "Volunteers%",
+      "order": "name"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/lists?where%5Bname%5D=Volunteers%25&order=name&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "lists": [
+          {
+            "id": "3",
+            "name": "Volunteers",
+            "description": "Everyone serving this quarter",
+            "total_people": 42,
+            "status": "complete",
+            "refreshed_at": "2026-01-01T12:00:00Z",
+            "auto_refresh": true,
+            "automations_active": false
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_list_people",
+    "tool": "list_list_people",
+    "args": {
+      "listId": "3"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/lists/3/people?include=emails%2Cphone_numbers&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "people": [
+          {
+            "id": "7",
+            "name": "Alice Smith",
+            "first_name": "Alice",
+            "last_name": "Smith",
+            "nickname": null,
+            "status": "active",
+            "membership": "Member",
+            "child": false,
+            "primary_email": "alice@example.com",
+            "primary_phone": "(555) 010-0100",
+            "updated_at": "2026-01-01T00:00:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "run_list",
+    "tool": "run_list",
+    "args": {
+      "listId": "3"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/lists/3/run",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "listId": "3",
+        "queued": true
+      }
+    }
+  },
+  {
+    "label": "list_workflows",
+    "tool": "list_workflows",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/workflows?filter=not_archived&include=steps&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "workflows": [
+          {
+            "id": "5",
+            "name": "First-time guests",
+            "total_cards_count": 12,
+            "total_ready_card_count": 4,
+            "total_overdue_card_count": 1,
+            "total_unassigned_card_count": 2,
+            "my_ready_card_count": 1,
+            "archived_at": null,
+            "steps": [
+              {
+                "id": "51",
+                "name": "Call",
+                "sequence": 1
+              },
+              {
+                "id": "52",
+                "name": "Send welcome gift",
+                "sequence": 2
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_workflow_cards",
+    "tool": "list_workflow_cards",
+    "args": {
+      "workflowId": "5",
+      "stage": "ready",
+      "overdue": true
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/workflows/5/cards?where%5Bstage%5D=ready&where%5Boverdue%5D=true&include=person%2Ccurrent_step&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "cards": [
+          {
+            "id": "88",
+            "stage": "ready",
+            "person_id": "7",
+            "person_name": "Alice Smith",
+            "assignee_id": null,
+            "current_step_id": "51",
+            "current_step_name": "Call",
+            "moved_to_step_at": "2025-12-20T00:00:00Z",
+            "snooze_until": null,
+            "overdue": true,
+            "completed_at": null,
+            "removed_at": null
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "add_workflow_card",
+    "tool": "add_workflow_card",
+    "args": {
+      "workflowId": "5",
+      "personId": "9",
+      "assigneeId": "1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/workflows/5/cards",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "WorkflowCard",
+                "attributes": {
+                  "person_id": "9",
+                  "assignee_id": "1"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "89",
+        "stage": "ready",
+        "person_id": "9",
+        "person_name": null,
+        "assignee_id": "1",
+        "current_step_id": "51",
+        "current_step_name": null,
+        "moved_to_step_at": "2026-01-02T03:04:05Z",
+        "overdue": false
+      }
+    }
+  },
+  {
+    "label": "apply_workflow_card_action",
+    "tool": "apply_workflow_card_action",
+    "args": {
+      "personId": "7",
+      "cardId": "88",
+      "action": "snooze",
+      "snoozeDays": 15
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/people/7/workflow_cards/88/snooze",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "attributes": {
+                  "duration": 15
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "cardId": "88",
+        "action": "snooze",
+        "applied": true
+      }
+    }
+  },
+  {
+    "label": "apply_workflow_card_action promote",
+    "tool": "apply_workflow_card_action",
+    "args": {
+      "personId": "7",
+      "cardId": "88",
+      "action": "promote"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/people/7/workflow_cards/88/promote",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "cardId": "88",
+        "action": "promote",
+        "applied": true
+      }
+    }
+  },
+  {
+    "label": "add_workflow_card_note",
+    "tool": "add_workflow_card_note",
+    "args": {
+      "personId": "7",
+      "cardId": "88",
+      "note": "Left a voicemail."
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/people/7/workflow_cards/88/notes",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "WorkflowCardNote",
+                "attributes": {
+                  "note": "Left a voicemail."
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "91",
+        "note": "Left a voicemail.",
+        "created_at": "2026-01-02T03:04:05Z"
+      }
+    }
+  },
+  {
+    "label": "list_person_notes",
+    "tool": "list_person_notes",
+    "args": {
+      "personId": "7"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/people/7/notes?order=-created_at&include=category&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "notes": [
+          {
+            "id": "601",
+            "note": "Visited after surgery.",
+            "note_category_id": "41",
+            "person_id": "7",
+            "display_date": "2025-12-15T00:00:00Z",
+            "created_at": "2025-12-15T18:00:00Z",
+            "created_by_id": "1",
+            "category": "Pastoral"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "add_person_note",
+    "tool": "add_person_note",
+    "args": {
+      "personId": "7",
+      "note": "Called to check in.",
+      "noteCategoryId": "41"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/people/v2/people/7/notes",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "Note",
+                "attributes": {
+                  "note": "Called to check in.",
+                  "note_category_id": "41"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "602",
+        "note": "Called to check in.",
+        "note_category_id": "41",
+        "person_id": "7",
+        "display_date": "2026-01-02T03:04:05Z",
+        "created_at": "2026-01-02T03:04:05Z",
+        "created_by_id": "1",
+        "category": null
+      }
+    }
+  },
+  {
+    "label": "list_person_field_data",
+    "tool": "list_person_field_data",
+    "args": {
+      "personId": "7"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/people/7/field_data?include=field_definition&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "fields": [
+          {
+            "id": "701",
+            "field_definition_id": "711",
+            "field": "Favorite color",
+            "data_type": "string",
+            "value": "Blue",
+            "file_name": null
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_forms",
+    "tool": "list_forms",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/forms?filter=not_archived&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "forms": [
+          {
+            "id": "4",
+            "name": "Connection card",
+            "description": "Tell us about yourself",
+            "active": true,
+            "submission_count": 17,
+            "public_url": "https://grace.example/people/forms/4",
+            "archived_at": null
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_form_submissions",
+    "tool": "list_form_submissions",
+    "args": {
+      "formId": "4",
+      "submittedAfter": "2026-01-01"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/people/v2/forms/4/form_submissions?where%5Bcreated_at%5D%5Bgte%5D=2026-01-01&order=-created_at&include=form_submission_values%2Cform_fields%2Cperson&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-04"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "submissions": [
+          {
+            "id": "801",
+            "created_at": "2026-01-01T16:00:00Z",
+            "person_id": "7",
+            "person_name": "Alice Smith",
+            "values": [
+              {
+                "field": "T-shirt size",
+                "value": "Medium"
+              },
+              {
+                "field": "Interested in serving?",
+                "value": "Yes"
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_service_types",
+    "tool": "list_service_types",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/service_types?order=sequence&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "serviceTypes": [
+          {
+            "id": "10",
+            "name": "Sunday Morning",
+            "frequency": "Weekly",
+            "sequence": 0,
+            "parent_id": "11"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_plans",
+    "tool": "list_plans",
+    "args": {
+      "serviceTypeId": "10"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans?filter=future&order=sort_date&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "plans": [
+          {
+            "id": "20",
+            "title": "Easter",
+            "series_title": "Resurrection",
+            "dates": "April 5, 2026",
+            "sort_date": "2026-04-05T14:00:00Z",
+            "items_count": 2,
+            "plan_people_count": 6,
+            "needed_positions_count": 1,
+            "planning_center_url": "https://services.planningcenteronline.com/plans/20"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "get_plan",
+    "tool": "get_plan",
+    "args": {
+      "serviceTypeId": "10",
+      "planId": "20"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/items?per_page=100",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        },
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/team_members?include=team&per_page=100",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        },
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20?include=plan_times",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "plan": {
+          "id": "20",
+          "title": "Easter",
+          "series_title": "Resurrection",
+          "dates": "April 5, 2026",
+          "sort_date": "2026-04-05T14:00:00Z",
+          "total_length": 4500,
+          "needed_positions_count": 1,
+          "planning_center_url": "https://services.planningcenteronline.com/plans/20",
+          "times": [
+            {
+              "id": "1101",
+              "name": "9am",
+              "time_type": "service",
+              "starts_at": "2026-04-05T14:00:00Z",
+              "ends_at": "2026-04-05T15:15:00Z"
+            }
+          ]
+        },
+        "items": [
+          {
+            "id": "901",
+            "sequence": 1,
+            "item_type": "header",
+            "title": "Welcome",
+            "service_position": "during",
+            "song_id": null,
+            "arrangement_id": null
+          },
+          {
+            "id": "902",
+            "sequence": 2,
+            "item_type": "song",
+            "title": "Amazing Grace",
+            "length": 240,
+            "key_name": "G",
+            "song_id": "30",
+            "arrangement_id": "31"
+          }
+        ],
+        "teamMembers": [
+          {
+            "id": "1001",
+            "name": "Alice Smith",
+            "status": "C",
+            "team_position_name": "Vocals",
+            "team_id": "40",
+            "team_name": "Band",
+            "person_id": "7"
+          }
+        ],
+        "itemsTruncated": true,
+        "teamMembersTruncated": false
+      }
+    }
+  },
+  {
+    "label": "list_teams",
+    "tool": "list_teams",
+    "args": {
+      "serviceTypeId": "10"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/service_types/10/teams?include=team_positions&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "teams": [
+          {
+            "id": "40",
+            "name": "Band",
+            "archived_at": null,
+            "positions": [
+              {
+                "id": "41",
+                "name": "Vocals"
+              },
+              {
+                "id": "42",
+                "name": "Bass"
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_person_schedules",
+    "tool": "list_person_schedules",
+    "args": {
+      "personId": "7"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/people/7/schedules?filter=future&order=starts_at&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "schedules": [
+          {
+            "id": "1201",
+            "dates": "April 5, 2026",
+            "sort_date": "2026-04-05T14:00:00Z",
+            "service_type_name": "Sunday Morning",
+            "team_name": "Band",
+            "team_position_name": "Vocals",
+            "status": "C",
+            "decline_reason": null,
+            "plan_id": "20"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "schedule_plan_person",
+    "tool": "schedule_plan_person",
+    "args": {
+      "serviceTypeId": "10",
+      "planId": "20",
+      "personId": "9",
+      "teamId": "40",
+      "teamPositionName": "Bass"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/team_members",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "PlanPerson",
+                "attributes": {
+                  "person_id": "9",
+                  "team_id": "40",
+                  "team_position_name": "Bass",
+                  "status": "U"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "1002",
+        "name": "Bob Jones",
+        "status": "U",
+        "team_position_name": "Bass",
+        "decline_reason": null,
+        "team_id": "40",
+        "team_name": null,
+        "person_id": "9"
+      }
+    }
+  },
+  {
+    "label": "add_plan_item",
+    "tool": "add_plan_item",
+    "args": {
+      "serviceTypeId": "10",
+      "planId": "20",
+      "title": "Amazing Grace",
+      "songId": "30",
+      "arrangementId": "31",
+      "length": 240
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/services/v2/service_types/10/plans/20/items",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "Item",
+                "attributes": {
+                  "title": "Amazing Grace",
+                  "song_id": "30",
+                  "arrangement_id": "31",
+                  "length": 240
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "903",
+        "sequence": 3,
+        "item_type": "song",
+        "title": "Amazing Grace",
+        "length": 240,
+        "key_name": null,
+        "service_position": "during",
+        "song_id": "30",
+        "arrangement_id": "31"
+      }
+    }
+  },
+  {
+    "label": "list_songs",
+    "tool": "list_songs",
+    "args": {
+      "title": "Amazing%",
+      "order": "title"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/songs?where%5Btitle%5D=Amazing%25&order=title&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "songs": [
+          {
+            "id": "30",
+            "title": "Amazing Grace",
+            "author": "John Newton",
+            "ccli_number": 22025,
+            "themes": "Grace, Salvation",
+            "hidden": false,
+            "last_scheduled_at": "2025-12-21T15:00:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_song_arrangements",
+    "tool": "list_song_arrangements",
+    "args": {
+      "songId": "30"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/services/v2/songs/30/arrangements?include=keys&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2018-11-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "arrangements": [
+          {
+            "id": "31",
+            "name": "Default",
+            "bpm": 72,
+            "meter": "3/4",
+            "length": 240,
+            "chord_chart_key": "G",
+            "sequence_short": [
+              "V1",
+              "V2",
+              "C"
+            ],
+            "keys": [
+              {
+                "id": "32",
+                "name": "Default",
+                "starting_key": "G",
+                "ending_key": "G"
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_groups",
+    "tool": "list_groups",
+    "args": {
+      "name": "Young%",
+      "archived": "include"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/groups/v2/groups?where%5Bname%5D=Young%25&where%5Barchive_status%5D=include&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2023-07-10"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "groups": [
+          {
+            "id": "8",
+            "name": "Young Adults",
+            "memberships_count": 14,
+            "schedule": "Tuesdays at 7pm",
+            "contact_email": "youngadults@example.com",
+            "archived_at": null,
+            "public_church_center_web_url": "https://grace.example/groups/young-adults",
+            "group_type_id": "81"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_group_memberships",
+    "tool": "list_group_memberships",
+    "args": {
+      "groupId": "8",
+      "role": "leader"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/groups/v2/groups/8/memberships?where%5Brole%5D=leader&include=person&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2023-07-10"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "memberships": [
+          {
+            "id": "1301",
+            "role": "leader",
+            "joined_at": "2025-01-01T00:00:00Z",
+            "person_id": "7",
+            "first_name": "Alice",
+            "last_name": "Smith"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "add_group_member",
+    "tool": "add_group_member",
+    "args": {
+      "groupId": "8",
+      "personId": "9"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "POST",
+          "url": "https://api.planningcenteronline.com/groups/v2/groups/8/memberships?include=person",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "content-type": "application/json",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2023-07-10"
+          },
+          "body": {
+            "json": {
+              "data": {
+                "type": "Membership",
+                "attributes": {
+                  "person_id": "9",
+                  "role": "member"
+                }
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "id": "1302",
+        "role": "member",
+        "joined_at": "2026-01-02T03:04:05Z",
+        "person_id": "9",
+        "first_name": "Bob",
+        "last_name": "Jones"
+      }
+    }
+  },
+  {
+    "label": "list_group_events",
+    "tool": "list_group_events",
+    "args": {
+      "groupId": "8",
+      "startsAfter": "2026-01-01",
+      "startsBefore": "2026-02-01"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/groups/v2/groups/8/events?where%5Bstarts_at%5D%5Bgte%5D=2026-01-01&where%5Bstarts_at%5D%5Blt%5D=2026-02-01&filter=not_canceled&order=starts_at&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2023-07-10"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "events": [
+          {
+            "id": "1401",
+            "name": "Weekly meeting",
+            "starts_at": "2026-01-06T01:00:00Z",
+            "ends_at": "2026-01-06T02:30:00Z",
+            "canceled": false,
+            "visitors_count": 2,
+            "virtual_location_url": null,
+            "group_id": "8"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_check_in_events",
+    "tool": "list_check_in_events",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/check-ins/v2/events?filter=not_archived&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2025-05-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "events": [
+          {
+            "id": "2",
+            "name": "Sunday Kids",
+            "frequency": "Weekly",
+            "archived_at": null
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_check_in_event_periods",
+    "tool": "list_check_in_event_periods",
+    "args": {
+      "eventId": "2",
+      "startsAfter": "2025-12-01"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/check-ins/v2/events/2/event_periods?where%5Bstarts_at%5D%5Bgte%5D=2025-12-01&order=-starts_at&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2025-05-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "periods": [
+          {
+            "id": "1501",
+            "starts_at": "2025-12-28T15:00:00Z",
+            "ends_at": "2025-12-28T17:00:00Z",
+            "regular_count": 48,
+            "guest_count": 5,
+            "volunteer_count": 12,
+            "unique_total_count": 65,
+            "note": null
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_check_ins",
+    "tool": "list_check_ins",
+    "args": {
+      "eventId": "2",
+      "serviceAfter": "2025-12-28",
+      "serviceBefore": "2025-12-29",
+      "kind": "guest"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/check-ins/v2/events/2/check_ins?where%5Bevent_period%5D%5Bstarts_at%5D%5Bgte%5D=2025-12-28&where%5Bevent_period%5D%5Bstarts_at%5D%5Blt%5D=2025-12-29&filter=guest&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2025-05-28"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "checkIns": [
+          {
+            "id": "1601",
+            "first_name": "Carol",
+            "last_name": "Smith",
+            "kind": "Guest",
+            "number": 14,
+            "security_code": "X7K",
+            "created_at": "2025-12-28T14:55:00Z",
+            "checked_out_at": "2025-12-28T16:40:00Z",
+            "one_time_guest": true,
+            "person_id": null,
+            "event_period_id": "1501"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_calendar_event_instances",
+    "tool": "list_calendar_event_instances",
+    "args": {
+      "startsAfter": "2026-01-01",
+      "startsBefore": "2026-01-08"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/calendar/v2/event_instances?where%5Bstarts_at%5D%5Bgte%5D=2026-01-01&where%5Bstarts_at%5D%5Blt%5D=2026-01-08&order=starts_at&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2026-06-22"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "instances": [
+          {
+            "id": "1701",
+            "name": "Staff meeting",
+            "starts_at": "2026-01-05T15:00:00Z",
+            "ends_at": "2026-01-05T16:00:00Z",
+            "all_day_event": false,
+            "location": "Room 101",
+            "kind": "Standard",
+            "recurrence_description": "Weekly on Monday",
+            "church_center_url": "https://grace.example/calendar/1701",
+            "event_id": "1702"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_signups",
+    "tool": "list_signups",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/registrations/v2/signups?filter=unarchived&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2025-05-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "signups": [
+          {
+            "id": "1801",
+            "name": "Winter retreat",
+            "open": true,
+            "closed": false,
+            "open_at": "2025-11-01T00:00:00Z",
+            "close_at": "2026-01-31T00:00:00Z",
+            "maximum_capacity": 80,
+            "at_maximum_capacity": false,
+            "archived": false,
+            "new_registration_url": "https://grace.example/registrations/1801"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_signup_attendees",
+    "tool": "list_signup_attendees",
+    "args": {
+      "signupId": "1801",
+      "status": "active"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/registrations/v2/signups/1801/attendees?filter=active&include=person&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2025-05-01"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "attendees": [
+          {
+            "id": "1811",
+            "name": "Alice Smith",
+            "active": true,
+            "waitlisted": false,
+            "canceled": false,
+            "complete": true,
+            "created_at": "2025-11-03T12:00:00Z",
+            "person_id": "7"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_donations",
+    "tool": "list_donations",
+    "args": {
+      "receivedAfter": "2025-12-01",
+      "fundId": "61",
+      "succeededOnly": true
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/giving/v2/donations?where%5Breceived_at%5D%5Bgte%5D=2025-12-01&where%5Bfund_id%5D=61&filter=succeeded&order=-received_at&include=designations%2Cdesignations.fund&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "donations": [
+          {
+            "id": "1901",
+            "amount_cents": 7500,
+            "amount_currency": "USD",
+            "fee_cents": -248,
+            "received_at": "2025-12-28T15:30:00Z",
+            "payment_method": "card",
+            "payment_status": "succeeded",
+            "refunded": false,
+            "person_id": "7",
+            "batch_id": null,
+            "campus_id": "501",
+            "designations": [
+              {
+                "fund_id": "61",
+                "fund": "General",
+                "amount_cents": 5000
+              },
+              {
+                "fund_id": "62",
+                "fund": "Missions",
+                "amount_cents": 2500
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_donations by donor",
+    "tool": "list_donations",
+    "args": {
+      "personId": "7",
+      "perPage": 1,
+      "offset": 1
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/giving/v2/people/7/donations?order=-received_at&include=designations%2Cdesignations.fund&per_page=1&offset=1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "donations": [
+          {
+            "id": "1902",
+            "amount_cents": 2000,
+            "amount_currency": "USD",
+            "fee_cents": 0,
+            "received_at": "2025-12-21T15:30:00Z",
+            "payment_method": "cash",
+            "payment_status": "succeeded",
+            "refunded": false,
+            "person_id": "7",
+            "batch_id": "81",
+            "campus_id": null,
+            "designations": [
+              {
+                "fund_id": "61",
+                "fund": "General",
+                "amount_cents": 2000
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": true,
+          "nextOffset": 2,
+          "totalCount": 3
+        }
+      }
+    }
+  },
+  {
+    "label": "list_funds",
+    "tool": "list_funds",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/giving/v2/funds?per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "funds": [
+          {
+            "id": "61",
+            "name": "General",
+            "ledger_code": "4000",
+            "visibility": "everywhere",
+            "default": true,
+            "description": null
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_batches",
+    "tool": "list_batches",
+    "args": {
+      "status": "committed"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/giving/v2/batches?filter=committed&order=-updated_at&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "batches": [
+          {
+            "id": "81",
+            "description": "Sunday offering",
+            "status": "committed",
+            "donations_count": 32,
+            "total_cents": 412500,
+            "total_currency": "USD",
+            "committed_at": "2025-12-22T10:00:00Z",
+            "created_at": "2025-12-21T18:00:00Z",
+            "batch_group_id": null
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_pledge_campaigns",
+    "tool": "list_pledge_campaigns",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/giving/v2/pledge_campaigns?order=-starts_at&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "campaigns": [
+          {
+            "id": "2001",
+            "name": "Building fund",
+            "starts_at": "2025-09-01T00:00:00Z",
+            "ends_at": "2026-08-31T00:00:00Z",
+            "goal_cents": 50000000,
+            "received_total_from_pledges_cents": 12000000,
+            "received_total_outside_of_pledges_cents": 800000,
+            "fund_id": "63"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_pledges",
+    "tool": "list_pledges",
+    "args": {
+      "pledgeCampaignId": "2001"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/giving/v2/pledge_campaigns/2001/pledges?per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "pledges": [
+          {
+            "id": "2011",
+            "amount_cents": 120000,
+            "donated_total_cents": 40000,
+            "joint_giver_amount_cents": null,
+            "created_at": "2025-09-07T16:00:00Z",
+            "person_id": "7"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_recurring_donations",
+    "tool": "list_recurring_donations",
+    "args": {
+      "status": "active"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/giving/v2/recurring_donations?where%5Bstatus%5D=active&include=designations%2Cdesignations.fund&per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2019-10-18"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "recurringDonations": [
+          {
+            "id": "2101",
+            "amount_cents": 10000,
+            "amount_currency": "USD",
+            "schedule": "Monthly on the 1st",
+            "status": "active",
+            "next_occurrence": "2026-02-01",
+            "last_donation_received_at": "2026-01-01T12:00:00Z",
+            "person_id": "7",
+            "designations": [
+              {
+                "fund_id": "62",
+                "fund": "Missions",
+                "amount_cents": 10000
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "list_webhook_subscriptions",
+    "tool": "list_webhook_subscriptions",
+    "args": {},
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/webhooks/v2/webhook_subscriptions?per_page=25",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2022-10-20"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "subscriptions": [
+          {
+            "id": "2201",
+            "name": "people.v2.events.person.created",
+            "url": "https://hooks.example.com/people",
+            "active": true,
+            "application_id": "2202",
+            "created_at": "2025-06-01T00:00:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextOffset": null,
+          "totalCount": 1
+        }
+      }
+    }
+  },
+  {
+    "label": "pco_api_get echoes sent secrets",
+    "tool": "pco_api_get",
+    "args": {
+      "path": "/publishing/v2/episodes/71"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "method": "GET",
+          "url": "https://api.planningcenteronline.com/publishing/v2/episodes/71",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Basic base64(<secret:applicationId>:<secret:secret>)",
+            "user-agent": "connecta/<version> (+https://github.com/zackbart/connecta)",
+            "x-pco-api-version": "2024-03-25"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "result": {
+          "data": {
+            "type": "Episode",
+            "id": "71",
+            "attributes": {
+              "title": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]"
+            }
+          }
+        }
+      }
+    }
+  }
+]

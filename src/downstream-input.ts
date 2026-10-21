@@ -67,6 +67,8 @@ export interface DownstreamRequestState {
 interface PendingInput {
   connector: string;
   address: string;
+  /** The suspended call was a write, so it may already have applied. */
+  write: boolean;
   requestState?: string;
   inputRequests: InputRequests;
   inputs: InputBindings;
@@ -98,6 +100,7 @@ export async function captureDownstreamInput(
   address: string,
   raw: unknown,
   secrets: SentSecrets,
+  write: boolean,
 ): Promise<void> {
   if (!withinBudget(raw))
     throw new ConnectorCallError("input_required_limit", "The downstream input payload exceeds 64 KiB.");
@@ -159,7 +162,7 @@ export async function captureDownstreamInput(
       if (parsed.issues) return invalidInput();
       // A schema controls the accepted answer. Refuse redaction changes rather
       // than asking the host to submit different field names or enum values.
-      if (secrets.redact(parsed.value.requestedSchema) !== parsed.value.requestedSchema) return invalidInput();
+      if (secrets.changes(parsed.value.requestedSchema)) return invalidInput();
       inputRequests[namespace(connector, index)] = inputRequired.elicit({
         message: `Downstream ${connector}: ${parsed.value.message}`,
         requestedSchema: parsed.value.requestedSchema,
@@ -175,14 +178,25 @@ export async function captureDownstreamInput(
   pendingInputs.set(scope, {
     connector,
     address,
+    write,
     ...(raw.requestState !== undefined ? { requestState: raw.requestState as string } : {}),
     inputRequests,
     inputs,
   });
 }
 
-function failure(code: string, message: string): ToolResult {
-  const structuredContent = { ok: false, error: { code, message, retryable: false } };
+function failure(code: string, message: string, write = false): ToolResult {
+  // A handler asks for input from inside its run: a suspended write may
+  // already have applied, so it is never told to start over (INV-9).
+  const error = write
+    ? {
+        code,
+        message: `${message} Whether the write took effect is unknown; check its target before any fresh call.`,
+        retryable: false,
+        writeOutcome: "unknown",
+      }
+    : { code, message, retryable: false };
+  const structuredContent = { ok: false, error };
   return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent, isError: true };
 }
 
@@ -392,11 +406,13 @@ export class DownstreamElicitation {
       return failure(
         "input_required_unsupported",
         "Downstream input requires an authenticated direct call and a sealing vault.",
+        pending.write,
       );
     if ((previous?.round ?? 0) >= MAX_INPUT_ROUNDS)
       return failure(
         "input_required_round_limit",
-        "The downstream still requires input after three rounds. Start a new direct request.",
+        `The downstream still requires input after three rounds.${pending.write ? "" : " Start a new direct request."}`,
+        pending.write,
       );
     const previousStates = [
       ...new Set([
@@ -405,7 +421,7 @@ export class DownstreamElicitation {
       ]),
     ].filter((value) => value !== pending.requestState);
     if (!withinBudget([...previousStates, ...(pending.requestState !== undefined ? [pending.requestState] : [])])) {
-      return failure("input_required_limit", "The downstream private state history exceeds 64 KiB.");
+      return failure("input_required_limit", "The downstream private state history exceeds 64 KiB.", pending.write);
     }
     const state: DownstreamRequestState = {
       version: 2,
@@ -434,7 +450,10 @@ export class DownstreamElicitation {
       context,
     );
     if (requestState.length > MAX_RELAY_STATE_CHARS)
-      return failure("input_required_limit", "The sealed downstream state exceeds 128 KiB.");
+      return failure("input_required_limit", "The sealed downstream state exceeds 128 KiB.", pending.write);
+    // Authenticated, encrypted Connecta state, never the vendor's plaintext
+    // state: a coincidental match must not corrupt it.
+    sentSecretsForRequest(scope).mintedState(requestState);
     // Opaque echoes and mutable schemas/URLs were refused during capture.
     // Downstream prompt messages are prose under the payload rules.
     return sentSecretsForRequest(scope).redact(

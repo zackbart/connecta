@@ -3,6 +3,7 @@ import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext, JsonSchema } from "../../types.js";
 import { AppAuth, type Permissions } from "./auth.js";
 import { ScopePolicy, target, type GitHubScope, type Target } from "./scope.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 const text = (description: string): JsonSchema => ({ type: "string", minLength: 1, description });
 const ownerRepo = { owner: text("Configured repository owner."), repo: text("Repository name under that owner.") };
@@ -117,6 +118,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       { method, path: `${repoPath(t)}${suffix}`, ...(body !== undefined ? { body } : {}) },
       token,
       ctx,
+      true,
     );
     return data ?? { deleted: true };
   };
@@ -390,9 +392,10 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           },
           token,
           ctx,
+          true,
         );
       },
     },
   ];
-  return api(id, { tools });
+  return tracksEveryRequest(api(id, { tools }));
 }

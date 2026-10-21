@@ -5,17 +5,23 @@ import { Cause, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
 import { attachCallAdmission } from "./call-admission-context.js";
+import { attachCallClassification } from "./call-classification.js";
 import { CatalogService, type ResolvedCatalogTool } from "./catalog-service.js";
 import {
   boundedEchoText,
   classificationCode,
   classifyCallError,
+  classifyWithoutAdvice,
   ConnectorCallError,
   echoedCallArgs,
   framingError,
+  keyResendAdviceOf,
+  resendAdviceOf,
+  withResendAdvice,
   type AuthRecoveryMode,
   type CallErrorDetails,
   type ClassificationCode,
+  type KeyResendAdvice,
 } from "./errors.js";
 import { downstreamValue } from "./mcp-result.js";
 import {
@@ -30,6 +36,14 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 import { recoveryFor } from "./call-recovery.js";
+import {
+  forgetProviderFailure,
+  isKnownProviderFailure,
+  keyProtectsLogicalCall,
+  knownForLogicalCall,
+  knownProviderFailure,
+  openLogicalCall,
+} from "./provider-call.js";
 import { classifyWriteOutcome } from "./write-outcome.js";
 import {
   classificationDigest,
@@ -45,6 +59,7 @@ import {
   assertDownstreamOutputSafe,
   type DownstreamInputResult,
 } from "./downstream-input-context.js";
+import { keepErrorName } from "./redaction-identity.js";
 
 function defined<T extends object>(values: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as {
@@ -140,8 +155,8 @@ function isCallerCancellation(error: unknown, signal: AbortSignal | undefined): 
 
 /**
  * A downstream MCP tool answered with `isError`. Classified exactly as the
- * plain `Error`: untyped, non-retryable, and marked so
- * a write's outcome can tell "the service said no" from "nobody answered".
+ * plain `Error`: untyped and non-retryable. It is a read's answer; for a
+ * write it is a 2xx reply after which the handler may have applied it.
  */
 class DownstreamToolError extends Error {}
 
@@ -172,13 +187,17 @@ function assertRawMcpSuccess(kind: ResolvedCatalogTool["connector"]["kind"], res
 }
 
 /**
- * Whether a failed attempt is the downstream tool's own answer: an MCP
- * `isError`. A connector's typed error is not, by itself, one — a response
- * too large to read or a refused redirect comes after the request was acted
- * on — so its code decides instead (`classifyWriteOutcome`).
+ * Whether a failed attempt is the downstream tool's own answer. For a read:
+ * an MCP `isError`, or a boundary's known refusal/unsent failure. For a
+ * write, only refusal provenance that holds for the whole logical call
+ * (`knownForLogicalCall`); an `isError` arrives over a 2xx after the handler
+ * ran. A typed error alone is not proof: a body ceiling, refused redirect, or
+ * handler error may follow execution. Boundaries supply provenance, never
+ * wording.
  */
-function answeredFailure(error: unknown): boolean {
-  return error instanceof DownstreamToolError;
+function answeredFailure(error: unknown, write: boolean, ctx: object | undefined): boolean {
+  if (!write) return error instanceof DownstreamToolError || isKnownProviderFailure(error);
+  return ctx !== undefined && knownForLogicalCall(ctx, error);
 }
 
 export interface InvocationTiming {
@@ -292,6 +311,7 @@ export class InvocationFailure extends Error {
     this.data = details;
   }
 }
+keepErrorName(InvocationFailure, "InvocationFailure");
 
 /**
  * Shared downstream invocation engine. Address/catalog resolution is delegated
@@ -335,6 +355,12 @@ export class InvocationService {
       let dispatchContext: object | undefined;
       let preInvocationAuthFailure = false;
       let answered = false;
+      // A dispatched failure's advice to send it again, composed by enrich
+      // only once the outcome allows it (resendAdvice), and its advice to
+      // reuse an idempotency key, only where that key protects the whole
+      // logical call (keyResendAdvice, keyProtectsLogicalCall).
+      let failureAdvice: string | undefined;
+      let failureKeyAdvice: KeyResendAdvice | undefined;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
       context.sentSecrets?.include(sentSecrets);
       // A write gate's refusal that is no attempt; see WriteGateDecision.
@@ -386,7 +412,9 @@ export class InvocationService {
       const enrich = (error: CallErrorDetails, target: typeof activityTarget): CallErrorDetails => {
         if (!target) return error;
         const recovery = recoveryFor(dispatchContext);
-        const recoveryRetry = recovery?.["idempotencyKey"]
+        // A recorded key is a diagnostic; advice to reuse it needs proof that
+        // it protects the whole logical call, not one request inside it.
+        const recoveryRetry = keyProtectsLogicalCall(dispatchContext, recovery?.["idempotencyKey"])
           ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
           : "";
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
@@ -414,16 +442,28 @@ export class InvocationService {
                   : " The arguments could not be echoed safely; use the exact arguments you sent."),
           };
         }
+        const enteredWrite =
+          dispatchedToConnector && resolved !== undefined && resolved.definition.classification !== "read";
+        // A dispatched write without refusal provenance is unknown whatever
+        // its connector's code says, a custom connector's included: never
+        // retryable, and no advice below may tell the agent to retry it.
+        const unknownWrite =
+          enteredWrite && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
+        if (unknownWrite) error = { ...error, retryable: false, writeOutcome: "unknown" };
+        // The failure's advice to send it again was kept apart until now, and
+        // joins its message only where the outcome allows it: never on a write
+        // whose outcome is unknown, whatever redaction did to the message.
+        // Key-reuse advice also needs its key to protect the logical call.
+        else {
+          if (failureKeyAdvice && keyProtectsLogicalCall(dispatchContext, failureKeyAdvice.key))
+            error = { ...error, message: withResendAdvice(error.message, failureKeyAdvice.advice) };
+          if (failureAdvice !== undefined)
+            error = { ...error, message: withResendAdvice(error.message, failureAdvice) };
+        }
         // Any other dispatched write whose outcome is unknown (a lost response
         // body, a 5xx, an unreadable reply) keeps the facts its connector
         // recorded before dispatch, here and through program write accounting.
-        if (
-          recovery &&
-          !error.uncertainCall &&
-          dispatchedToConnector &&
-          resolved?.definition.classification === "write" &&
-          classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown"
-        ) {
+        if (recovery && !error.uncertainCall && unknownWrite) {
           const echoed = argumentEcho;
           error = {
             ...error,
@@ -440,10 +480,16 @@ export class InvocationService {
         if (error.code === "auth_required" && target.connector.startAuth) {
           error = { ...error, code: "downstream_oauth_required" };
         }
-        const enteredWrite = resolved?.definition.classification === "write" && dispatchedToConnector;
         switch (error.code) {
           case "input_required_unsupported":
             if (context.processInputRequired) return error;
+            // Resending could apply the write twice: reconcile first.
+            if (unknownWrite)
+              return {
+                ...error,
+                retry:
+                  "Do not resend this write. Re-read its target to check whether it took effect before any fresh call.",
+              };
             return {
               ...error,
               nextAction: {
@@ -496,6 +542,8 @@ export class InvocationService {
                 : `Retry ${target.connector.id}.${target.toolName} after the operator completes recovery.`,
             };
           case "provider_permission_denied":
+            // A write whose outcome is unknown is never told to retry.
+            if (error.writeOutcome === "unknown") return error;
             return {
               ...error,
               connector: target.connector.id,
@@ -504,7 +552,7 @@ export class InvocationService {
                 "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access.",
             };
           case "invalid_args":
-            if (!error.validation) return error;
+            if (!error.validation || error.writeOutcome === "unknown") return error;
             return {
               ...error,
               connector: target.connector.id,
@@ -546,7 +594,7 @@ export class InvocationService {
           };
         }
         // Downstream diagnostics were redacted under payload rules where they entered.
-        const details = sentSecrets.redact(enrich(error, target), "envelope");
+        const details = carryFailureFacts(error, sentSecrets.redact(enrich(error, target), "envelope"));
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,
@@ -708,9 +756,16 @@ export class InvocationService {
               defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
             );
             attachCallAdmission(connectorContext, permit);
+            attachCallClassification(connectorContext, write ? "write" : "read");
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
             dispatchContext = connectorContext;
+            // The one object and function this call invokes, read once: its
+            // logical call, auth check, and dispatch all name them, so a
+            // connector that reassigns its own callTool mid-call changes none.
+            const connector = target.connector;
+            const callTool = connector.callTool;
+            openLogicalCall(connectorContext, connector, callTool);
             try {
               if (target.connector.credential) {
                 if (!connectorContext.credential) {
@@ -727,7 +782,7 @@ export class InvocationService {
                   );
                 }
               }
-              await resolveInvocationAuth(target.connector, connectorContext);
+              await resolveInvocationAuth(connector, callTool, connectorContext);
             } catch (error) {
               const code = classifyCallError(error).code;
               preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
@@ -745,7 +800,9 @@ export class InvocationService {
               },
               target.definition,
             );
-            return await target.connector.callTool(
+            // Reflect.apply, never the function's own `call` or `apply`
+            // property, which anyone holding the function could replace.
+            return await Reflect.apply(callTool, connector, [
               target.toolName,
               args ?? {},
               connectorContext,
@@ -753,7 +810,7 @@ export class InvocationService {
               // invocation's classification and schema private, even during
               // this call, and give every dispatch its own deep copy.
               { definition: structuredClone(target.definition), ...defined({ input }) },
-            );
+            ]);
           };
           // The permit belongs to this scope, so success, failure, and the
           // deadline's interruption all release it. Interruption stops the
@@ -780,11 +837,22 @@ export class InvocationService {
                   }),
                 );
                 if (target.connector.kind === "mcp" && isDownstreamInputResult(reply)) {
+                  // The downstream suspended for input. A handler asks for
+                  // input from inside its run, so a write may already have
+                  // applied: only a read's suspension is a known answer.
                   if (!context.processInputRequired)
-                    throw new ConnectorCallError(
-                      "input_required_unsupported",
-                      "The downstream returned input_required. Use the equivalent direct MCP call to provide input.",
-                    );
+                    throw write
+                      ? new ConnectorCallError(
+                          "input_required_unsupported",
+                          "The downstream returned input_required after this write was sent, and this call cannot provide input. Whether the write took effect is unknown.",
+                          { writeOutcome: "unknown" },
+                        )
+                      : knownProviderFailure(
+                          new ConnectorCallError(
+                            "input_required_unsupported",
+                            "The downstream returned input_required. Use the equivalent direct MCP call to provide input.",
+                          ),
+                        );
                   const value = yield* Effect.tryPromise({
                     try: () => Promise.resolve(context.processInputRequired!(reply, target, sentSecrets)),
                     catch: (error) => error,
@@ -805,10 +873,14 @@ export class InvocationService {
             if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
             if (!dispatchedToConnector && admissionSignal?.aborted) return callerCancelledDetails();
             const attemptError = Cause.squash(attempt.cause);
-            answered = answeredFailure(attemptError);
-            return isCallerCancellation(attemptError, context.requestSignal)
-              ? callerCancelledDetails()
-              : carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
+            answered = answeredFailure(attemptError, write, dispatchContext);
+            if (isCallerCancellation(attemptError, context.requestSignal)) return callerCancelledDetails();
+            failureAdvice = resendAdviceOf(attemptError);
+            failureKeyAdvice = keyResendAdviceOf(attemptError);
+            const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
+            // An inner call's verdict that does not hold for this one is withdrawn.
+            if (write && !answered) forgetProviderFailure(details);
+            return details;
           }
           if ("inputRequired" in attempt.value) {
             inputRequiredValue = { value: attempt.value.value as T };
@@ -847,9 +919,11 @@ export class InvocationService {
       );
       if (Exit.isFailure(dispatched)) {
         const failure = Cause.squash(dispatched.cause);
+        failureAdvice = resendAdviceOf(failure);
+        failureKeyAdvice = keyResendAdviceOf(failure);
         const details = context.requestSignal?.aborted
           ? callerCancelledDetails()
-          : carryFailureFacts(failure, classifyCallError(sentSecrets.redact(failure)));
+          : carryFailureFacts(failure, classifyWithoutAdvice(sentSecrets.redact(failure)));
         return failed(details);
       }
       if (dispatched.value) return failed(dispatched.value);

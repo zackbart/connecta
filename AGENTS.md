@@ -76,16 +76,16 @@ Workers suite), and `build` (build, declarations, bundle, examples, package and
 Docker smoke) in parallel with a shared pnpm store cache. The build job packs
 its existing `dist/` without rebuilding. Superseded PR runs are cancelled;
 every push to main runs every check. A planning-only PR, whose every path is
-under `decisions/` or `.changes/` (`scripts/ci-planning-paths.sh`), skips
-`node`, `workers`, `build` and `browser`; `static` still runs. Shipped docs are
+under `decisions/` or `.changes/` (`scripts/ci-planning-paths.sh`), runs only the golden suites in
+`node` and `workers`, and skips `build` and `browser`; `static` still runs. Shipped docs are
 not planning. `browser` skips a PR whose every path is
 in the safe set in `scripts/ci-browser-paths.sh`; `security` runs on PRs when
 a root or nested manifest, lockfile, `pnpm-workspace.yaml`, or `.npmrc` changes
 (the list is in `scripts/ci-security-paths.sh`), including the template
 installed by package/Docker smoke and published examples. The nightly Security
-workflow and publishing also audit dependencies. The single required `check` gate requires static and changes
-to succeed, Node, Workers and build to succeed or skip as planning-only, and
-browser/security to pass or be intentionally skipped. Playwright's `visual`
+workflow and publishing also audit dependencies. The single required `check` gate requires static, changes, Node and Workers
+to succeed, build to succeed or skip as planning-only, and browser/security
+to pass or be intentionally skipped. Playwright's `visual`
 project (pixel comparisons) never retries; `behavior` and `@unstable`-tagged
 comparisons keep two CI retries. A browser run with any failed attempt uploads
 the `playwright-report` artifact (HTML report, diffs, traces). The advisory
@@ -99,6 +99,31 @@ this variable compare against the `origin/main` merge base; if either comparison
 base equals HEAD, they use HEAD's first parent. Fetch the base SHA and sufficient
 history (increase CI `fetch-depth`) if the guard reports missing history.
 Local `pnpm run check` remains the full core and browser gate.
+
+Provider characterization has two tiers, selected by
+`scripts/ci-goldens-tier.mjs` through the `changes` job's `goldens` output and
+`CONNECTA_GOLDENS_TIER` in both runtime jobs. Every PR runs the always tier:
+Node compares all golden bytes under fresh forward and reverse module graphs;
+Workers compares every golden's canonical observation under a fresh graph.
+Load-time source controls and the runtime-independent mutation/source checks
+remain active, with one seed. Planning-only PRs run these two suites while
+skipping the remaining runtime suites, build and browser.
+Every main push runs the full tier. PRs also run full when changing
+`src/providers/`, `src/connectors/`, `src/http/`, `src/storage/`, transitive
+provider/harness imports (derived with TypeScript's parser and resolver),
+`test/goldens/`, the golden suites, provider fixtures, Vitest configuration,
+dependency manifests/lockfiles, or selector/source-boundary tooling. Unknown
+paths/dependencies and classification errors select full. The `changes` job first classifies with
+Node built-ins from the runner: main pushes and directly relevant or unknown
+paths select full, docs-only paths select always, and deletions (including
+renames with rename detection disabled) select full. Only existing source/test
+modules whose tier depends on transitive imports install dependencies and run
+the TypeScript graph selector. This includes every
+step-1 provider migration. Full adds Workers reverse order, repeated provider
+captures and the complete jitter matrix on both runtimes. Only the exact env
+value `always` reduces the tier; unset or invalid values run full locally, so
+`pnpm run check` keeps the complete gate. Fixed public test PEM keys avoid
+repeated RSA generation; module graphs remain freshly evaluated for each order.
 
 ## Source map
 

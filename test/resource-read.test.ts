@@ -156,7 +156,7 @@ it("INV-3, INV-4: an absent or resource-incapable connector fails without mintin
 
 it("INV-3, INV-4: resource URI and extra arguments cannot change the personal credential owner", async () => {
   const vault = new CredentialVault(memoryStorage(), btoa("r".repeat(32)));
-  await vault.set("docs", "personal-resource-credential", "operator", "admitted-owner");
+  await vault.set("docs", "pR7-m2Qx-9vLk-4Wz8", "operator", "admitted-owner");
   const getAll = vi.spyOn(vault, "getAll");
   const { connector } = fixture({
     authScope: "personal",
@@ -203,7 +203,7 @@ it.each(["auth_required", "provider_permission_denied", "not_found", "rate_limit
 );
 
 it("INV-5: custom resource values, keys, failures and later guest output redact credential echoes", async () => {
-  const token = "credential-resource-echo-12345";
+  const token = "cE4-x9Pq-7Lm2-Vr6K";
   const { connector } = fixture({
     credential: { label: "Token" },
     async readResource(uri, ctx) {
@@ -330,7 +330,7 @@ it("INV-3, INV-7: resource reads share host-call budgets and request scope, with
 });
 
 it("INV-3, INV-5, INV-7: remote resource reads use resources/read, redact sent headers and keep typed misses", async () => {
-  const token = "remote-resource-sent-credential";
+  const token = "rS8-k3Wd-6Yp1-Qz5N";
   const requests: Request[] = [];
   const downstream = httpDownstream(
     (server) => {
@@ -413,7 +413,7 @@ it("INV-3, INV-5, INV-7: remote resource reads use resources/read, redact sent h
 function advertisedRemote(uriTemplates?: string[]) {
   const storage = memoryStorage();
   const calls: Array<{ method: string; uri?: string }> = [];
-  let token = "alice-resource-token";
+  let token = "aT2-v8Hn-5Kq9-Mx3J";
   let mode: "ok" | "loop" | "error" = "ok";
   const downstream = httpDownstream((server) =>
     server.registerResource("manual", "docs://public/manual", {}, async () => ({ contents: [] })),
@@ -428,7 +428,7 @@ function advertisedRemote(uriTemplates?: string[]) {
     if (message?.method === "resources/list" || message?.method === "resources/templates/list") {
       if (mode === "error" && message.params?.cursor) return new Response("private-inventory-error", { status: 403 });
       const resources = message.method === "resources/list";
-      const owner = request.headers.get("authorization") === "Bearer alice-resource-token" ? "alice" : "bob";
+      const owner = request.headers.get("authorization") === "Bearer aT2-v8Hn-5Kq9-Mx3J" ? "alice" : "bob";
       return Response.json({
         jsonrpc: "2.0",
         id: message.id,
@@ -475,7 +475,7 @@ function advertisedRemote(uriTemplates?: string[]) {
     url: downstream.url,
     auth: {
       type: "request",
-      token: async (ctx) => (callerOf(ctx)?.identity.actor.id === "bob" ? "bob-resource-token" : token),
+      token: async (ctx) => (callerOf(ctx)?.identity.actor.id === "bob" ? "bT6-p1Rz-8Lw4-Nc7F" : token),
     },
     logger: silentLogger,
   });
@@ -498,7 +498,7 @@ function advertisedRemote(uriTemplates?: string[]) {
       mode = value;
     },
     rotate: () => {
-      token = "rotated-alice-resource-token";
+      token = "rA9-d4Gs-2Vk7-Hy5Q";
     },
   };
 }

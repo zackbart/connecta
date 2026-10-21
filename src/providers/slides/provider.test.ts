@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SLIDES_API_BASE_URL, SLIDES_SCOPES, slides } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
+import { classifyCallError } from "../../errors.js";
 import { classifyTool } from "../../tool-safety.js";
 import { validateToolInput } from "../../validate.js";
 import { compactDiscoverySchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, typescriptSignature } from "../../catalog.js";
@@ -734,7 +735,7 @@ describe("errors (H11)", () => {
     }).catch((error) => error);
     expect(failure.code).toBe("conflict");
     expect(failure.retryable).toBe(false);
-    expect(failure.message).toContain("Re-read it for the current revision");
+    expect(classifyCallError(failure).message).toContain("Re-read it for the current revision");
   });
 
   it("leaves other refusals of a revision-checked write as they are", async () => {

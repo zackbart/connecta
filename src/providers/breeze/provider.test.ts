@@ -781,6 +781,48 @@ describe("Breeze typed failures and credential test", () => {
     expect(bad.code).toBe("invalid_args");
   });
 
+  it("INV-9: a write's 5xx is an unknown outcome although Breeze writes with GET; a read's stays unavailable", async () => {
+    queue({ status: 503, text: "" }, { status: 503, text: "" }, { status: 503, text: "" });
+    const connector = connection();
+    for (const [tool, args] of [
+      ["assign_tag", { personId: "1", tagId: "2" }],
+      [
+        "breeze_api_mutate",
+        {
+          path: "/tags/assign",
+          query: [
+            { name: "person_id", value: "1" },
+            { name: "tag_id", value: "2" },
+          ],
+        },
+      ],
+    ] as const) {
+      const error = await failure(call(connector, tool, args));
+      expect(error, tool).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(error.message).toContain("Whether the write took effect at Breeze is unknown");
+    }
+    expect(calls.map((entry) => entry.method)).toEqual(["GET", "GET"]);
+    expect(await failure(call(connector, "list_tags"))).toMatchObject({ code: "unavailable", retryable: true });
+  });
+
+  it("INV-5: neither hatch returns a calendar's keyless feed address", async () => {
+    const calendars = [
+      {
+        id: 0,
+        name: "Main",
+        color: "b2cd92",
+        address: "https://gracechurch.breezechms.com/events/feed/SECRET",
+        embed_key: "AbC",
+      },
+    ];
+    queue({ body: calendars }, { body: calendars });
+    const connector = connection();
+    for (const tool of ["breeze_api_get", "breeze_api_mutate"]) {
+      const result = await call(connector, tool, { path: "/events/calendars/list" });
+      expect(result, tool).toEqual({ result: [{ id: 0, name: "Main", color: "b2cd92" }] });
+    }
+  });
+
   it("reads a failure Breeze reports inside a 200, and not a null errors field", async () => {
     queue(
       { body: { success: false, errors: "Payment not found" } },

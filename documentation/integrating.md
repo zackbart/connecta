@@ -230,6 +230,43 @@ refuses what that user cannot see. `excludeApps` is defense in depth on top of
 that boundary: it narrows what Connecta exposes, not what the token can do
 elsewhere.
 
+Church Community Builder and Tithe.ly drop sensitive fields from every
+result by default: for `ccb()`, allergies, giving numbers and dates, envelope
+ids, statement dates, attendance prayer requests and meeting notes, and form
+payment details (`CCB_SENSITIVE_FIELDS`); for `tithely()`, an organization's
+payout `bank` and `legal` contact (`TITHELY_SENSITIVE_FIELDS`). The drop goes
+by field name at any depth and covers the named tools, `raw: true`, the read
+hatches, CCB's advanced search, and write replies. No tool argument returns
+them. A deployment that needs them opts in with `sensitiveFields: "return"`,
+after which `raw: true` and the hatches return CCB's or Tithe.ly's rows
+without the drop:
+
+```ts
+import { ccb } from "@zackbart/connecta/providers/ccb";
+
+const church = ccb("church", {
+  purpose: "Pastoral care for the care team",
+  environment: "production",
+  mode: "identity",
+  clientId: env.CCB_CLIENT_ID,
+  clientSecret: env.CCB_CLIENT_SECRET,
+  sensitiveFields: "return",
+});
+```
+
+The option controls a projection, not credential redaction: either way,
+`api()` replaces every credential the connection sent with `[redacted]`
+wherever it appears in a result. The drop removes fields from results only.
+CCB's advanced search can still filter on them, so a value can be inferred
+from which rows match; where that matters, leave `read:advanced_searches` out
+of `scopes`.
+
+Planning Center withholds the credentials its bodies can carry, in every
+mode and on every path: a webhook subscription's signing secret
+(`authenticity_secret`, also in a create or `rotate_secret` reply) and an
+organization's `secret`. No tool argument or option returns them; an operator
+reads them in Planning Center.
+
 ## Another remote MCP server
 
 Declare its endpoint and intended auth mode. This fragment uses a server-stored
@@ -315,6 +352,21 @@ writes use `call_destructive_tool` or a program, within the caller's grants; a
 `readOnly` endpoint refuses them and omits them from search. Client approval is independent of
 tool definition. Use declared output
 schemas when known; runtime observations cannot replace them.
+
+A write leaves once. Once a write-classified tool's handler has run, any
+failure it ends with is non-retryable with `writeOutcome: "unknown"`, whatever
+its code: a handler can reach the network in ways `api()` cannot observe, so
+nothing it reports proves its write was not sent. A raw network error or an
+`unavailable` becomes `connector_call_failed`; any other `ConnectorCallError`
+keeps its code. Failures before
+the handler runs stay ordinary refusals: argument validation against
+`inputSchema` and missing authorization. Declare input constraints in
+`inputSchema` so a malformed write is refused before the handler starts. A
+read's failure keeps its own advice, so a network error stays a retryable
+`unavailable`. `ctx.oauth.fetch` never resends a write the API answered with
+HTTP 401 (see [Downstream OAuth on api()](./auth.md#downstream-oauth-on-api)).
+When the handler settles, the call ends: a `ctx.fetch` or `ctx.oauth.fetch`
+request it starts afterwards fails without being sent.
 
 ## Separate ownership from visibility
 

@@ -7,6 +7,7 @@ import { defineProvider, type ProviderContext } from "../../provider.js";
 import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
 import { restTools } from "../_shared/rest/tools.js";
 import { stripeRest, type StripeMode } from "./rest.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export type { StripeMode } from "./rest.js";
 export { STRIPE_API_BASE_URL } from "./rest.js";
@@ -284,27 +285,29 @@ function stripeApiKey(id: string, options: Readonly<StripeApiKeyOptions>, provid
   const copy = MODE_COPY[mode];
   const live = mode === "production" ? "live" : "test";
   const rest = stripeRest(mode, connectedAccount);
-  return apiConnector(id, {
-    ...provider.connectorOptions,
-    title: options.title ?? copy.title,
-    description: `Stripe payments (${copy.blurb}) — ${options.purpose}`,
-    credential: {
-      label: `Stripe ${live}-mode secret or restricted key`,
-      description: `A ${live}-mode secret (sk_${live}_…) or restricted (rk_${live}_…) key; prefer a restricted key with only the permissions this connector needs. It is sent only to api.stripe.com and files.stripe.com, stored encrypted, and never displayed.`,
-      placeholder: `rk_${live}_…`,
-    },
-    testCredential: rest.testCredential,
-    callAdmission: STRIPE_ADMISSION[mode],
-    usageGuide: {
-      content: keyUsageGuide(mode, options.purpose, connectedAccount, options.instructions),
-      // Explicit rather than derived: a key connector must lead with its one mode.
-      summary:
-        mode === "production"
-          ? "PRODUCTION: real money. One live-mode key over REST; search operations, read details, then read or write."
-          : "Sandbox: test data only. One test-mode key over REST; search operations, read details, then read or write.",
-    },
-    tools: [...restTools(rest.vendor), ...rest.tools],
-  });
+  return tracksEveryRequest(
+    apiConnector(id, {
+      ...provider.connectorOptions,
+      title: options.title ?? copy.title,
+      description: `Stripe payments (${copy.blurb}) — ${options.purpose}`,
+      credential: {
+        label: `Stripe ${live}-mode secret or restricted key`,
+        description: `A ${live}-mode secret (sk_${live}_…) or restricted (rk_${live}_…) key; prefer a restricted key with only the permissions this connector needs. It is sent only to api.stripe.com and files.stripe.com, stored encrypted, and never displayed.`,
+        placeholder: `rk_${live}_…`,
+      },
+      testCredential: rest.testCredential,
+      callAdmission: STRIPE_ADMISSION[mode],
+      usageGuide: {
+        content: keyUsageGuide(mode, options.purpose, connectedAccount, options.instructions),
+        // Explicit rather than derived: a key connector must lead with its one mode.
+        summary:
+          mode === "production"
+            ? "PRODUCTION: real money. One live-mode key over REST; search operations, read details, then read or write."
+            : "Sandbox: test data only. One test-mode key over REST; search operations, read details, then read or write.",
+      },
+      tools: [...restTools(rest.vendor), ...rest.tools],
+    }),
+  );
 }
 
 /**

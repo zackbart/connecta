@@ -4,6 +4,7 @@ import { inputRequired, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { attachCallClassification } from "../src/call-classification.js";
 import { ConnectorCallError, classifyCallError } from "../src/errors.js";
 import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
 import { InvocationFailure } from "../src/invocation.js";
@@ -1695,11 +1696,14 @@ describe("downstream tool error classification", () => {
               : status === 408
                 ? "timeout"
                 : "connector_call_failed",
-        retryable: status === 429 || status === 408,
+        // The unlisted tool is a direct write: a 408 is a timeout, whose
+        // outcome is unknown; every other 4xx is the endpoint's refusal.
+        retryable: status === 429,
         message: expect.stringContaining(
           status === 403 ? "Check the account's permissions" : "timeout is not a valid parameter:",
         ),
       });
+      expect(classifyCallError(error).writeOutcome).toBe(status === 408 ? "unknown" : undefined);
       expect(new TextEncoder().encode(classifyCallError(error).message).length).toBeLessThanOrEqual(515);
       await connector.closeScope!(context);
     },
@@ -1737,6 +1741,9 @@ describe("remote MCP transport diagnostics", () => {
       versionNegotiation: "legacy",
     });
     const context = ctx();
+    // Served as a read, so the diagnostics come back as the transport gave
+    // them. A write's network failure is an unknown outcome instead (INV-9).
+    attachCallClassification(context, "read");
     try {
       const error = await connector.callTool("read", {}, context).catch((error) => error);
       expect(classifyCallError(error)).toMatchObject({

@@ -7,6 +7,20 @@ import { READ_ONLY, CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-sha
 import { assertStaticToolNames } from "../tool-name.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
+import { callClassification } from "../call-classification.js";
+import { classifyTool } from "../tool-safety.js";
+import {
+  closeProviderCall,
+  enterProviderBoundary,
+  knownProviderFailure,
+  providerBoundary,
+  providerCallContext,
+  providerFetch,
+  providerRequests,
+  tracksRequests,
+} from "../provider-call.js";
+import { providerCallFailure } from "../write-outcome.js";
+import { deriveContext } from "../derived-context.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -112,9 +126,12 @@ export interface ApiOAuthAccess {
   /**
    * `fetch` with the calling owner's access token as `Authorization: Bearer`.
    * Only to `apiOrigins`; redirects are returned unfollowed. A 401 earns one
-   * coordinated refresh and one replay; a second 401, a refused refresh, or
-   * no grant at all throws `auth_required`, and an authorization-server
-   * outage throws a retryable `unavailable`.
+   * coordinated refresh. A read-classified call's request is then sent once
+   * more; a write's never is, and the call fails with `connector_call_failed`
+   * whose outcome is unknown, so the agent checks the target before
+   * repeating it. A second 401, a refused refresh, or no grant at all throws
+   * `auth_required`, and an authorization-server outage throws a retryable
+   * `unavailable`.
    */
   fetch(input: string | URL, init?: RequestInit): Promise<Response>;
 }
@@ -281,8 +298,8 @@ export interface ApiOAuthHooks {
   consumeAuthError(ctx: ConnectorContext): Promise<void>;
   /** Requires callbackParams with a nonempty state, including without PKCE. */
   finishAuth(code: string, ctx: ConnectorContext, callbackParams: URLSearchParams): Promise<void>;
-  /** The handler-facing accessor for one call's context. */
-  access(ctx: ConnectorContext): ApiOAuthAccess;
+  /** The handler-facing accessor for one call's context; a write's request is never resent. */
+  access(ctx: ConnectorContext, call: { write: boolean }): ApiOAuthAccess;
 }
 
 /**
@@ -355,9 +372,11 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
     },
     async callTool(name, args, ctx) {
       trackCredentialReads(ctx);
+      enterProviderBoundary(ctx, connector);
       const tool = byName.get(name);
+      // Refusals before the handler runs are known failures: nothing was sent.
       if (!tool) {
-        throw new Error(`Unknown tool "${name}" on connector "${id}"`);
+        throw knownProviderFailure(new Error(`Unknown tool "${name}" on connector "${id}"`));
       }
       const input = args ?? {};
       if (validateArgs && tool.inputSchema) {
@@ -374,26 +393,50 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
           },
           { connector: id, tool },
         );
-        if (invalid) throw invalid;
+        if (invalid) throw knownProviderFailure(invalid);
       }
       // `await` (not a bare promise return) so a handler that throws before
       // its first await never sits handler-less for the thenable-adoption
       // microtask — workerd and vitest both report that gap as an unhandled
       // rejection even though the caller catches the failure.
-      // Preserve the registry's context identity: private caller/provenance
-      // markers belong to it, as does the grant its accessor reaches.
-      const handlerCtx: ApiHandlerContext = Object.assign(ctx, {
-        fetch: sentSecretsFetch(ctx),
-        ...(oauth ? { oauth: oauth.access(ctx) } : {}),
+      // Derived, never mutated: the registry's context stays as it was, and
+      // the call state beside it (caller, admission permit, recovery facts,
+      // sent secrets) resolves through the handler's copy. The grant sends a
+      // write once: the registry's classification of this call decides, else
+      // the rule the registry would apply to the tool (INV-1).
+      const write = (callClassification(ctx) ?? classifyTool(tool)) === "write";
+      const callCtx = providerCallContext(ctx);
+      const handlerCtx = deriveContext<ApiHandlerContext>(callCtx, {
+        fetch: providerFetch(callCtx, opts.title ?? id, false, sentSecretsFetch(ctx)),
+        ...(oauth ? { oauth: oauth.access(callCtx, { write }) } : {}),
       });
+      let result: unknown;
       try {
-        return redactSentSecrets(ctx, await tool.handler(input, handlerCtx));
+        result = await tool.handler(input, handlerCtx);
       } catch (error) {
-        // The request's own abort reason, by identity, is the caller's.
-        if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
+        // Settled before anything is decided or reported: a request that has
+        // not left by now (a sibling awaiting its credential) never will.
+        closeProviderCall(callCtx);
         // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
         // URL, so it must never masquerade as the failed downstream host.
-        if (error instanceof ConnectorCallError) throw redactSentSecrets(ctx, error);
+        const settle = (failure: unknown) =>
+          redactSentSecrets(
+            ctx,
+            providerCallFailure(handlerCtx, { title: opts.title ?? id }, failure, {
+              dispatched: true,
+              fallback: write ? "write" : "read",
+              finalize: true,
+              // Only a declared provider's ledger can see every request.
+              untracked: !tracksRequests(connector),
+            }),
+          );
+        // The request's own abort reason, by identity, is the caller's. A
+        // direct write's is settled like any other failure: it may have left.
+        if (ctx.signal?.aborted === true && error === ctx.signal.reason) {
+          if (!write || callClassification(ctx) !== undefined) throw error;
+          throw settle(error);
+        }
+        if (error instanceof ConnectorCallError) throw settle(error);
         if (!networkErrorCode(error)) {
           // Anything else is a runtime's, parser's, or stream's account of
           // what the handler read (a JSON parser quotes the reply it choked
@@ -404,23 +447,39 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
           // ConnectorCallError. No host is named: connecta does not know
           // which destination the handler read.
           const kind = errorLabel(error);
-          throw attachFailureFacts(
-            carryFailureFacts(
-              error,
-              new WithheldTextError(
-                `Connector "${id}" tool "${name}" handler failed` +
-                  `${kind ? ` (${kind})` : ""}. Its text is withheld because it ` +
-                  "can quote what the downstream sent.",
+          throw settle(
+            attachFailureFacts(
+              carryFailureFacts(
                 error,
+                new WithheldTextError(
+                  `Connector "${id}" tool "${name}" handler failed` +
+                    `${kind ? ` (${kind})` : ""}. Its text is withheld because it ` +
+                    "can quote what the downstream sent.",
+                  error,
+                ),
               ),
+              { step: "handler" },
             ),
-            { step: "handler" },
           );
         }
-        throw unavailableCallError(error, undefined, undefined, ctx.signal);
+        // A handler is opaque: by the time its fetch failed it may already
+        // have sent the write, so no network code proves a write unsent.
+        const unreachable = unavailableCallError(error, undefined, undefined, ctx.signal);
+        // A raw handler with no tracked requests remains opaque, as before.
+        // Once guarded requests exist their ledger supplies the dispatch proof.
+        if (providerRequests(handlerCtx)?.length) throw settle(unreachable);
+        throw providerCallFailure(ctx, { title: opts.title ?? id }, unreachable, {
+          dispatched: true,
+          fallback: classifyTool(tool),
+        });
       }
+      closeProviderCall(callCtx);
+      return redactSentSecrets(ctx, result);
     },
   };
+  // This boundary's identity in a logical call, fixed now: this object with
+  // this function, never whatever the property or a copy holds by then.
+  providerBoundary(connector);
   if (oauth)
     registerInvocationAuth(connector, async (ctx) => {
       // The built-in static OAuth status only reads the stored grant. It never

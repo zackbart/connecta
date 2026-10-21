@@ -266,7 +266,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       held.release();
 
       const error = await finishing;
-      expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
+      expect(String(error)).toMatch(/authorization changed while this request was in flight\./);
       expect(classifyCallError(error)).toMatchObject({ code: "unavailable", retryable: true });
       // Not the code, the verifier, or the client secret: no token request at all.
       expect(server.tokenRequests).toEqual([]);
@@ -312,7 +312,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       release.resolve();
 
       const error = await finishing;
-      expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
+      expect(String(error)).toMatch(/authorization changed while this request was in flight\./);
       expect(server.tokenRequests).toEqual([]);
     },
   );
@@ -355,7 +355,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       await started(c, backing);
       release.resolve();
 
-      expect(String(await finishing)).toMatch(/authorization changed while this request was in flight; try again/);
+      expect(String(await finishing)).toMatch(/authorization changed while this request was in flight\./);
       expect(server.tokenRequests).toEqual([]);
     },
   );
@@ -379,7 +379,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
 
       const error = await finish(server.issue("code-a"));
 
-      expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
+      expect(String(error)).toMatch(/authorization changed while this request was in flight\./);
       expect(server.carrying("code-a")).toBe(1);
       const restart = required(restarted);
       expect(await storedTokens(storage, epoch)).toBeUndefined();

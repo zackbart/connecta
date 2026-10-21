@@ -1,3 +1,9 @@
+import {
+  assertProviderCallOpen,
+  boundProviderRequest,
+  dispatchProviderRequest,
+  providerRequest,
+} from "../provider-call.js";
 import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
   AuthorizationServerMetadata,
@@ -8,10 +14,11 @@ import type {
 import { byteReadResponse } from "../byte-read-response.js";
 import { sentSecretsFor, sentSecretsFetch, shortSecretWarning } from "../sent-secrets.js";
 import type { ApiOAuthClientAuthentication, ApiOAuthConfig, ApiOAuthHooks } from "../connectors/api-connector.js";
-import { ConnectorCallError, msg } from "../errors.js";
+import { ConnectorCallError, msg, resendAdviceOf, withResendAdvice } from "../errors.js";
 import { oauthPartitionFor, retainOAuthPartition, retainingOAuthPartition } from "../oauth-partition.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { describeFailure } from "../operator-record.js";
+import { unsentAfterUnauthorized } from "../write-outcome.js";
 import type { ConnectorContext, ConnectorStatus } from "../types.js";
 import {
   assertOAuthScope,
@@ -22,6 +29,17 @@ import {
 import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
 import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
+
+/**
+ * Token-request header values Connecta itself sends, by lowercase name: JSON
+ * content negotiation and the media types maintained providers configure.
+ * Registering one would redact a vendor's name wherever its fragments recur.
+ * Any other configured value, under any name, may carry a credential and is
+ * registered.
+ */
+export const PUBLIC_TOKEN_REQUEST_HEADERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["accept", new Set(["application/json", "application/vnd.ccbchurch.v2+json"])],
+]);
 
 /**
  * Downstream OAuth for a hand-written `api()` connector: the authorization
@@ -365,15 +383,23 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    */
   const tokenEndpointFetch = async (ctx: ConnectorContext, input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
+    const dispatch = providerRequest(ctx, true, id);
     if (settings.tokenRequestHeaders.length === 0 || `${url.origin}${url.pathname}` !== settings.identity) {
       trackRemoteClientRequest(sentSecretsFor(ctx), input, init);
-      return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, redirect: "manual" }));
+      dispatch.dispatched = true;
+      const response = await sentSecretsFetch(ctx)(input, { ...init, redirect: "manual" });
+      dispatch.status = response.status;
+      return byteReadResponse(response);
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
-    for (const [, value] of settings.tokenRequestHeaders) sentSecretsFor(ctx).header(value);
+    for (const [name, value] of settings.tokenRequestHeaders)
+      if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) sentSecretsFor(ctx).header(value);
     trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
-    return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" }));
+    dispatch.dispatched = true;
+    const response = await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" });
+    dispatch.status = response.status;
+    return byteReadResponse(response);
   };
 
   /**
@@ -408,16 +434,38 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const disconnectedMessage = `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`;
 
   /**
-   * One request through the owner's grant. A 401 earns exactly one recovery:
-   * a token another request has already rotated in, or else one coordinated
-   * refresh. A second 401 is `auth_required`, latched for the request scope
-   * so a program's later calls do not each spend a refresh on it.
+   * The token to send after `spent` drew a 401: one another request has
+   * already rotated in, or else one coordinated refresh.
+   */
+  const renewedToken = async (provider: StaticOAuthProvider, ctx: ConnectorContext, spent: string) => {
+    const current = await provider.tokens(issuerContext);
+    if (current && current.access_token !== spent) return current.access_token;
+    if ((await runAuth(provider, ctx)) !== "AUTHORIZED") throw authRequiredError();
+    const refreshed = await provider.tokens(issuerContext);
+    if (!refreshed) throw authRequiredError();
+    return refreshed.access_token;
+  };
+
+  /**
+   * One request through the owner's grant. A 401 earns exactly one recovery
+   * ({@link renewedToken}). A read is then sent once more; a write never is
+   * (INV-9), since a server may act on a request before it rejects the
+   * token. Whatever recovery meets is never reported as retryable: an
+   * authorization verdict keeps its code, and anything else (a disconnect or
+   * reset racing the refresh) leaves the outcome unknown. A second 401 is
+   * `auth_required`, latched for the request scope so a program's later
+   * calls do not each spend a refresh on it.
    */
   const authorizedFetch = async (
     ctx: ConnectorContext,
+    write: boolean,
     input: string | URL,
     init: RequestInit = {},
   ): Promise<Response> => {
+    // A call that already ended reads no token and sends nothing more.
+    assertProviderCallOpen(ctx, id, false);
+    const dispatch = boundProviderRequest(init) ?? providerRequest(ctx, false, id, { method: init.method ?? "GET" });
+    dispatch.dispatched = false;
     const url = new URL(input);
     if (!settings.apiOrigins.has(url.origin)) {
       throw new ConnectorCallError(
@@ -452,12 +500,14 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       // The handler reads the answer with `.json()` or `.text()`, which read
       // bytes here: workerd quotes a text read's non-text Content-Type in
       // its own log, out of the handler's reach.
+      dispatchProviderRequest(ctx, dispatch);
       const response = await sentSecretsFetch(ctx)(url, {
         ...init,
         headers: sent,
         redirect: "manual",
         ...(signal ? { signal } : {}),
       });
+      dispatch.status = response.status;
       return byteReadResponse(response);
     };
 
@@ -477,17 +527,17 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       const first = await send(tokens.access_token);
       if (first.status !== 401) return first;
       void first.body?.cancel().catch(() => {});
-
-      let accessToken: string;
-      const current = await provider.tokens(issuerContext);
-      if (current && current.access_token !== tokens.access_token) {
-        accessToken = current.access_token;
-      } else {
-        if ((await runAuth(provider, ctx)) !== "AUTHORIZED") throw authRequiredError();
-        const refreshed = await provider.tokens(issuerContext);
-        if (!refreshed) throw authRequiredError();
-        accessToken = refreshed.access_token;
+      if (write) {
+        let renewal: unknown;
+        try {
+          await renewedToken(provider, ctx, tokens.access_token);
+        } catch (error) {
+          if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
+          renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
+        }
+        throw unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal);
       }
+      const accessToken = await renewedToken(provider, ctx, tokens.access_token);
       const second = await send(accessToken);
       if (second.status !== 401) return second;
       void second.body?.cancel().catch(() => {});
@@ -568,12 +618,15 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         return { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
       }
       // Reaches the agent through authorize_connector. Text already in
-      // connecta's words passes (token responses are rebuilt before the SDK
-      // reads them); anything else is told from its record.
+      // connecta's words passes with its advice to try again, since this is
+      // no write's failure (token responses are rebuilt before the SDK reads
+      // them); anything else is told from its record.
       return {
         state: "error",
         message:
-          error instanceof ConnectorCallError || error instanceof OAuthError ? msg(error) : describeFailure(id, error),
+          error instanceof ConnectorCallError || error instanceof OAuthError
+            ? withResendAdvice(msg(error), resendAdviceOf(error))
+            : describeFailure(id, error),
       };
     }
   };
@@ -636,8 +689,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       await provider.consumeAuthError();
     }, 0),
     finishAuth: retainingOAuthPartition(finishAuth, 1),
-    access: (ctx) => ({
-      fetch: (input, init) => authorizedFetch(ctx, input, init),
+    access: (ctx, call) => ({
+      fetch: (input, init) => authorizedFetch(ctx, call.write, input, init),
     }),
   };
 }

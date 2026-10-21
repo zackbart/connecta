@@ -19,6 +19,7 @@ import {
   type SqlStatement,
   sqlStorage,
 } from "./storage/sql.js";
+import { keepErrorName } from "./redaction-identity.js";
 
 /**
  * The part of a D1 binding connecta uses. Structural, so this package's
@@ -155,6 +156,7 @@ export class KvToD1CopyError extends Error {
     super(message);
   }
 }
+keepErrorName(KvToD1CopyError, "KvToD1CopyError");
 
 /** D1 string and row limit, in UTF-8 bytes.
  * https://developers.cloudflare.com/d1/platform/limits/

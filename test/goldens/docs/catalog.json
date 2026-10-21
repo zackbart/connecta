@@ -1,0 +1,710 @@
+{
+  "id": "docs",
+  "kind": "api",
+  "title": "Google Docs",
+  "description": "Google Docs as the signed-in Workspace user: read, create, and edit documents by id — Staff meeting notes",
+  "guide": {
+    "summary": "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
+    "content": "# Google Docs usage\n\nReads and edits Google Docs as the signed-in person through Workspace delegation; it cannot search or list documents.\n\nConnection purpose: Staff meeting notes\n\n## Whose documents\n\nEvery call acts as the Workspace account deployment config maps the caller\nto, and reaches exactly the documents Drive shares with that person; an\nagent acts as the owner of the pool it came through, unless the deployment fixes one shared account that every caller, agent or person, acts as. No argument names an\naccount. A call with none mapped fails `auth_required`; only an operator can change\nthat.\n\n## Finding a document\n\nThere is no search or list tool. Take the id from a\ndocs.google.com URL (the part after `/d/`), from the person, or from a\nGoogle Drive connection's file search. A failure on an id may mean it does\nnot exist or is not shared with this person; Google does not say which.\n\n## Reading\n\n- `get_document` renders every tab as markdown-ish text: headings, lists,\n  links, tables as pipe rows, footnotes after the body, images and other\n  embeds as bracketed markers. Headers, footers, floating images, and\n  comments are not rendered; a tab's `notRendered` names any it holds, and\n  `suggestion_marks` there means the text mixes unmarked suggested\n  insertions and deletions in (read with `suggestions` to preview). Text past `maxChars` (shared across tabs) ends with a marker;\n  pass `tabId` to read one tab.\n- Before an index-based edit, read with `withIndexes: true` and target an\n  element's `startIndex`/`endIndex`. A long document's rows page with\n  `page.nextCursor`; send `maxChars: 0` on later pages, and start over if\n  `revisionId` changed between them. Indexes are UTF-16 code units and\n  shift after every edit. Keep `revisionId` and pass it as\n  `requiredRevisionId`, so an edit against a document someone else has\n  changed fails `conflict` with nothing applied; re-read and recompute. Indexes\n  from a suggestions preview (`accepted`/`rejected`) are not valid for\n  edits.\n- `raw: true` returns Google's document resource for the tabs instead of\n  the rendering — styles, headers, footers, named ranges, list and segment ids\n  that `batch_update_document` requests may need. It is large: pass\n  `tabId`, and call it directly rather than inside `execute_code`,\n  which carries at most 256 KiB per result.\n- The same holds for a `maxChars` above the default: a long rendering\n  can pass here and still be refused inside `execute_code`, even when the\n  program would only measure it. Read it with a direct `call_tool`, paged\n  with `connecta.result`, or read one tab at a time.\n\n## Editing\n\n- `create_document` makes a new document in My Drive's root. Never create\n  again after a failure that may have left one behind; the message says\n  which. When the document exists but its starting text failed, the message\n  names its id: append the text with `append_text` straight away only when\n  Google refused it; otherwise read the document first and append only what\n  is missing.\n- An edit sent with no answer back, answered with a server error, or\n  redirected says its outcome is unknown: re-read the document with\n  `get_document` to check whether it took effect before any fresh call.\n  `requiredRevisionId` is a precondition, not an idempotency key, so it\n  makes no repeat safe. One Google answered 2xx whose reply was unreadable\n  says it was applied: do not repeat it.\n- `append_text` joins the last paragraph; begin with `\\n` for a new one.\n- `replace_all_text` changes every match at once; read first and make\n  `find` specific.\n- `batch_update_document` takes raw Docs API requests (`deleteContentRange`,\n  `updateTextStyle`, `insertTable`, `createParagraphBullets`, …) for what\n  the named tools cannot do. It is always destructive, and requires the\n  `requiredRevisionId` from the read it was planned against: up to 100\n  requests, each exactly one generally available kind (the Developer Preview\n  comment and suggestion kinds are refused). Several requests in one\n  call apply atomically, and each sees the index shifts of those before it;\n  order deletions from the end of the document backwards.\n"
+  },
+  "tools": [
+    {
+      "name": "get_document",
+      "description": "Get one Google Doc as readable markdown-ish text per tab, with its title and revisionId; withIndexes adds the start/end indexes edits target. Cannot search or list documents.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Document id: the part after /d/ in its URL, or a Drive file id for a Google Doc."
+          },
+          "tabId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "description": "Render only this tab (from a previous get_document); omit for every tab."
+          },
+          "maxChars": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (call_tool, connecta.result to page): execute_code carries at most 256 KiB per result."
+          },
+          "withIndexes": {
+            "type": "boolean",
+            "description": "Add each tab's elements: every paragraph, table, and table of contents with UTF-16 startIndex and endIndex, 64 KiB per page (connecta's cap); page with cursor."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 12,
+            "pattern": "^e:[0-9]{1,9}$",
+            "description": "Opaque page.nextCursor from a withIndexes read; pass it back unchanged with the same arguments, and maxChars: 0 to skip the text again."
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Return Google's document resource (every style, header, footer, named range, list and segment id) for the tabs instead of the rendering; not with maxChars or withIndexes. Connecta caps it at 4194304 bytes."
+          },
+          "suggestions": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "accepted",
+              "rejected"
+            ],
+            "description": "How suggested edits read: inline (editors' default; the indexes edits use), or a preview with all accepted or all rejected (indexes not valid for edits)."
+          }
+        },
+        "required": [
+          "documentId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "tabs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tabId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "parentTabId": {
+                  "type": "string"
+                },
+                "nestingLevel": {
+                  "type": "integer"
+                },
+                "endIndex": {
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "textTruncated": {
+                  "type": "boolean"
+                },
+                "notRendered": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "headers",
+                      "footers",
+                      "positioned_objects",
+                      "suggestion_marks",
+                      "unknown_elements"
+                    ]
+                  }
+                },
+                "elements": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "paragraph",
+                          "table",
+                          "table_of_contents"
+                        ]
+                      },
+                      "startIndex": {
+                        "type": "integer"
+                      },
+                      "endIndex": {
+                        "type": "integer"
+                      },
+                      "style": {
+                        "type": "string"
+                      },
+                      "row": {
+                        "type": "integer"
+                      },
+                      "column": {
+                        "type": "integer"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "textTruncated"
+              ]
+            }
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "hasMore": {
+                "type": "boolean"
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "hasMore",
+              "nextCursor"
+            ]
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "raw": {
+            "type": "object",
+            "properties": {
+              "documentId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "revisionId": {
+                "type": "string"
+              },
+              "suggestionsViewMode": {
+                "type": "string"
+              },
+              "commentsViewMode": {
+                "type": "string"
+              },
+              "body": {
+                "type": "object"
+              },
+              "headers": {
+                "type": "object"
+              },
+              "footers": {
+                "type": "object"
+              },
+              "footnotes": {
+                "type": "object"
+              },
+              "documentStyle": {
+                "type": "object"
+              },
+              "namedStyles": {
+                "type": "object"
+              },
+              "lists": {
+                "type": "object"
+              },
+              "namedRanges": {
+                "type": "object"
+              },
+              "inlineObjects": {
+                "type": "object"
+              },
+              "positionedObjects": {
+                "type": "object"
+              },
+              "suggestedDocumentStyleChanges": {
+                "type": "object"
+              },
+              "suggestedNamedStylesChanges": {
+                "type": "object"
+              },
+              "comments": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "suggestions": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "tabs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tabProperties": {
+                      "type": "object"
+                    },
+                    "documentTab": {
+                      "type": "object"
+                    },
+                    "childTabs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "documentId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "create_document",
+      "description": "Create a new Google Doc in the user's My Drive root with a title and optional plain-text body. Cannot choose a folder, apply a template, or copy a document.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "Document title, one line. Connecta's 1,000-character cap."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000000,
+            "description": "Optional plain-text body; \\n starts a new paragraph."
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId",
+          "url"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "append_text",
+      "description": "Append plain text to the end of a Google Doc's body, or of one tab. It joins the last paragraph; start with \\n for a new one. Never removes or restyles text.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Document id: the part after /d/ in its URL, or a Drive file id for a Google Doc."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000000,
+            "description": "Plain text; \\n starts a new paragraph. Google caps a document near 1.02 million characters."
+          },
+          "tabId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "description": "Tab to append to; omit for the first tab."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^\\S+$",
+            "description": "revisionId from get_document or a previous edit. If the document has changed since, the edit fails conflict and nothing is applied."
+          }
+        },
+        "required": [
+          "documentId",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "insert_text",
+      "description": "Insert plain text at one UTF-16 index of a Google Doc's body, from get_document withIndexes. Inserts only; nothing existing is removed or restyled.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Document id: the part after /d/ in its URL, or a Drive file id for a Google Doc."
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000000,
+            "description": "UTF-16 index inside an existing paragraph, from get_document withIndexes; 1 is the body's start. Not a table's start index."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000000,
+            "description": "Plain text; \\n starts a new paragraph. Google caps a document near 1.02 million characters."
+          },
+          "tabId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "description": "Tab the index belongs to; omit for the first tab."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^\\S+$",
+            "description": "revisionId from get_document or a previous edit. If the document has changed since, the edit fails conflict and nothing is applied."
+          }
+        },
+        "required": [
+          "documentId",
+          "index",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "replace_all_text",
+      "description": "Replace every occurrence of a string (or regex) in a Google Doc, in all tabs or the listed ones, and report how many changed. Overwrites text; no preview.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Document id: the part after /d/ in its URL, or a Drive file id for a Google Doc."
+          },
+          "find": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000,
+            "description": "Text to find. With regex: true, a regular expression in Google's RE2 syntax."
+          },
+          "replaceWith": {
+            "type": "string",
+            "maxLength": 1000000,
+            "description": "Replacement text; an empty string deletes every match."
+          },
+          "matchCase": {
+            "type": "boolean",
+            "description": "Match case exactly. Defaults to false."
+          },
+          "regex": {
+            "type": "boolean",
+            "description": "Treat find as an RE2 regular expression. Defaults to false."
+          },
+          "tabIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "description": "Tab id from get_document."
+            },
+            "description": "Only these tabs; omit for every tab."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^\\S+$",
+            "description": "revisionId from get_document or a previous edit. If the document has changed since, the edit fails conflict and nothing is applied."
+          }
+        },
+        "required": [
+          "documentId",
+          "find",
+          "replaceWith"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string"
+          },
+          "occurrencesChanged": {
+            "type": "integer"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId",
+          "occurrencesChanged"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    {
+      "name": "batch_update_document",
+      "description": "Apply raw Docs API documents.batchUpdate requests to one Google Doc at a required revision, atomically: all apply or none. Always destructive; prefer named edits.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Document id: the part after /d/ in its URL, or a Drive file id for a Google Doc."
+          },
+          "requests": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 1,
+              "propertyNames": {
+                "enum": [
+                  "addDocumentTab",
+                  "createDropdownDefinition",
+                  "createFooter",
+                  "createFootnote",
+                  "createHeader",
+                  "createNamedRange",
+                  "createParagraphBullets",
+                  "deleteContentRange",
+                  "deleteDropdownDefinition",
+                  "deleteFooter",
+                  "deleteHeader",
+                  "deleteNamedRange",
+                  "deleteParagraphBullets",
+                  "deletePositionedObject",
+                  "deleteTab",
+                  "deleteTableColumn",
+                  "deleteTableRow",
+                  "insertDate",
+                  "insertDropdown",
+                  "insertInlineImage",
+                  "insertPageBreak",
+                  "insertPerson",
+                  "insertRichLink",
+                  "insertSectionBreak",
+                  "insertTable",
+                  "insertTableColumn",
+                  "insertTableRow",
+                  "insertText",
+                  "mergeTableCells",
+                  "pinTableHeaderRows",
+                  "replaceAllText",
+                  "replaceImage",
+                  "replaceNamedRangeContent",
+                  "unmergeTableCells",
+                  "updateDocumentStyle",
+                  "updateDocumentTabProperties",
+                  "updateDropdownDefinitionProperties",
+                  "updateDropdownProperties",
+                  "updateNamedStyle",
+                  "updateParagraphStyle",
+                  "updateSectionStyle",
+                  "updateTableCellStyle",
+                  "updateTableColumnProperties",
+                  "updateTableRowStyle",
+                  "updateTextStyle"
+                ]
+              },
+              "description": "One Docs API Request, exactly one kind (insertText, deleteContentRange, updateTextStyle, …), e.g. {\"deleteContentRange\":{\"range\":{\"startIndex\":5,\"endIndex\":9}}}. Indexes are UTF-16, from get_document withIndexes."
+            },
+            "description": "Requests in order, 1 to 100 (connecta's cap). Later requests see earlier ones' index shifts."
+          },
+          "requiredRevisionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^\\S+$",
+            "description": "revisionId from get_document or a previous edit; required, so raw edits are planned against what was read. If the document has changed, it fails conflict and nothing is applied."
+          }
+        },
+        "required": [
+          "documentId",
+          "requests",
+          "requiredRevisionId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "replies": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "replyCount": {
+            "type": "integer"
+          },
+          "repliesTruncated": {
+            "type": "boolean"
+          },
+          "notice": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId",
+          "replies",
+          "replyCount"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    }
+  ]
+}

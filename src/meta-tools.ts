@@ -809,6 +809,7 @@ function metaToolsForRequest(
                 `${resolved.connector.id}.${resolved.toolName}`,
                 result,
                 secrets,
+                resolved.definition.classification !== "read",
               );
               return { toolResult: { content: [] } };
             },

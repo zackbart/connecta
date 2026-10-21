@@ -994,15 +994,16 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
           return Response.json({
             ...(JSON.parse(String(init.body)) as object),
             client_id: `${name}-client`,
-            client_secret: `${name}-secret`,
+            // No eight-unit run of the server's host, which a secret's fragment would redact.
+            client_secret: `${name.slice(0, 3)}-9Vm2Lq7X`,
           });
         }
         if (url.href === `${server}/token`) {
           issued++;
           return Response.json({
-            access_token: `${name}-access-${issued}`,
+            access_token: `${name}.access.${issued}`,
             token_type: "Bearer",
-            refresh_token: `${name}-refresh-${issued}`,
+            refresh_token: `${name}.refresh.${issued}`,
           });
         }
       }
@@ -1052,8 +1053,8 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     // what a vulnerable client sends to whoever is named, and the control that
     // keeps the next test from passing for want of a refresh.
     const refresh = server.requests.find(({ url }) => url === `${trusted}/token`);
-    expect(refresh?.text).toMatch(/refresh_token=trusted-refresh-\d/);
-    expect(refresh?.text).toContain("client_secret=trusted-secret");
+    expect(refresh?.text).toMatch(/refresh_token=trusted\.refresh\.\d/);
+    expect(refresh?.text).toContain("client_secret=tru-9Vm2Lq7X");
     expect(server.requests.filter(({ url }) => new URL(url).origin === foreign)).toEqual([]);
   });
 
@@ -1151,7 +1152,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     await consent(c, storage, started.authorizationUrl);
     expect((await storedGrant(storage))?.body).toMatchObject({
       issuer: trusted,
-      tokens: { refresh_token: expect.stringMatching(/^trusted-refresh-/) },
+      tokens: { refresh_token: expect.stringMatching(/^trusted\.refresh\./) },
     });
     for (const { url, text } of server.requests) {
       expect(text, url).not.toMatch(/legacy-/);
@@ -1210,7 +1211,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
       }
       expect((await storedGrant(storage))?.body).toMatchObject({
         issuer: foreign,
-        tokens: { refresh_token: expect.stringMatching(/^foreign-refresh-/) },
+        tokens: { refresh_token: expect.stringMatching(/^foreign\.refresh\./) },
       });
 
       // B's grant survives its next flow: it refreshes at B's server, in B's epoch.
@@ -1272,7 +1273,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     const storage: KVStorage = {
       ...backing,
       async compareAndSet(key, expected, next, options) {
-        if (holding && key === GRANT && next?.includes("trusted-access")) {
+        if (holding && key === GRANT && next?.includes("trusted.access")) {
           holding = false;
           reached.resolve();
           await resume.promise;
@@ -1297,7 +1298,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     resume.resolve();
 
     const error = await finishing;
-    expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
+    expect(String(error)).toMatch(/authorization changed while this request was in flight\./);
     expect(await epochOf(storage)).not.toBe(epochA);
     expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
   });

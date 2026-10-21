@@ -31,6 +31,9 @@ import { CatalogService } from "../../catalog-service.js";
 import { InvocationService } from "../../invocation.js";
 import { runEdge } from "../../runtime/run.js";
 import { writeStateOf } from "../../program-writes.js";
+import { attachCallClassification } from "../../call-classification.js";
+import { isKnownProviderFailure } from "../../provider-call.js";
+import { classifyWriteOutcome } from "../../write-outcome.js";
 import { classifyTool } from "../../tool-safety.js";
 import { connectorGuideSummary } from "../../skills.js";
 import { makeRegistry, silentLogger } from "../../../test/helpers.js";
@@ -1984,6 +1987,53 @@ describe("notion() error mapping", () => {
     expect(upstream.code).toBe("unavailable");
     expect(upstream.retryable).toBe(true);
   });
+
+  caseOf(
+    "INV-9: a write's 409 conflict_error is a conflict to reconcile, never retried; a read's backs off",
+    async () => {
+      const conflict = { object: "error", status: 409, code: "conflict_error", message: "Conflict occurred." };
+      // The served verdict decides in both directions, not the tool's default.
+      const served = (classification: "read" | "write") => {
+        const ctx = context();
+        attachCallClassification(ctx, classification);
+        return ctx;
+      };
+      const writes = [
+        () => call(build(), "integration_create_page", { parent_page_id: "page-1", title: "Notes" }),
+        () => call(build(), "integration_get_page", { page_id: "page-1" }, served("write")),
+      ];
+      for (const send of writes) {
+        queue({ status: 409, body: conflict });
+        const error = await refusal(send());
+        expect(error).toMatchObject({ code: "conflict", retryable: false });
+        expect(error.retryAfterMs).toBeUndefined();
+        expect(error.writeOutcome).toBeUndefined();
+        expect(error.message).toContain("conflict_error");
+        expect(error.message).toContain("do not repeat it automatically");
+        expect(error.message).not.toContain("safe to retry");
+        // The sole request's own 4xx: a known failed write, not an unknown one.
+        expect(isKnownProviderFailure(error)).toBe(true);
+        expect(
+          classifyWriteOutcome({
+            ok: false,
+            dispatched: true,
+            answered: isKnownProviderFailure(error),
+            error: { code: error.code },
+          }),
+        ).toBe("failed");
+      }
+      const reads = [
+        () => call(build(), "integration_get_page", { page_id: "page-1" }),
+        () => call(build(), "integration_create_page", { parent_page_id: "page-1", title: "Notes" }, served("read")),
+      ];
+      for (const send of reads) {
+        queue({ status: 409, body: conflict });
+        const error = await refusal(send());
+        expect(error).toMatchObject({ code: "unavailable", retryable: true, retryAfterMs: 1_000 });
+      }
+      expect(calls).toHaveLength(4);
+    },
+  );
 
   caseOf("INV-9: names what a failed write committed, so the caller reads it instead of repeating", async () => {
     queue({

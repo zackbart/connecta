@@ -17,7 +17,7 @@ import { connectorContext, spyLogger } from "./fixtures/misc.js";
 import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
-const SECRET = "sent-secret/+with=encoding";
+const SECRET = "zq7-echo/+with=encoding";
 const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
 afterEach(() => {
@@ -82,12 +82,16 @@ describe("call-scoped sent credentials", () => {
     expect(error.message).toContain(SECRET);
   });
 
-  it("INV-5: ordinary diagnostics and results keep their text and identity", () => {
+  it("INV-5: ordinary diagnostics and results keep their text, and plain results their identity", () => {
     const secrets = new SentSecrets();
     secrets.add(SECRET);
     const error = new ConnectorCallError("invalid_args", "The token field requires an ordinary repository name.");
     const result = { content: [{ type: "text", text: "Bearer authentication refused for this repository." }] };
-    expect(secrets.redact(error)).toBe(error);
+    // An error is always a checked copy of its own class, never the original.
+    const safe = secrets.redact(error);
+    expect(safe).not.toBe(error);
+    expect(safe).toBeInstanceOf(ConnectorCallError);
+    expect([safe.code, safe.message, safe.retryable]).toEqual([error.code, error.message, error.retryable]);
     expect(secrets.redact(result)).toBe(result);
   });
 
@@ -98,7 +102,8 @@ describe("call-scoped sent credentials", () => {
     expect(secrets.text("a [redacted] 1234567")).toBe("a [redacted] 1234567");
     secrets.header(`Basic ${btoa(`a:${SECRET}`)}`);
     expect(secrets.text("a valid ordinary diagnostic")).toBe("a valid ordinary diagnostic");
-    expect(secrets.text(`a:${SECRET}`)).toBe("[redacted]");
+    // A Basic username beside a registrable password is an identifier, matched whole only.
+    expect(secrets.text(`a:${SECRET}`)).toBe("a:[redacted]");
     secrets.add("12345678");
     expect(secrets.text("12345678 [redacted]")).toBe("[redacted] [redacted]");
     expect(secrets.text(secrets.text(`Bearer ${SECRET}`))).toBe("[redacted]");
@@ -139,11 +144,11 @@ describe("call-scoped sent credentials", () => {
       label: "ordinary row",
     }));
     secrets.redact(rows[0]);
-    const matcher = secrets["views"].matcher;
-    expect(matcher).toBeDefined();
+    const fragments = secrets["views"].fragments;
+    expect(fragments).toBeDefined();
     const result = secrets.redact(rows);
     expect(result[9_999]!.text).toBe("row 9999 [redacted]");
-    expect(secrets["views"].matcher).toBe(matcher);
+    expect(secrets["views"].fragments).toBe(fragments);
   });
 
   it("INV-5 INV-8: finds twice-escaped credentials across bounded scanning windows", () => {
@@ -199,14 +204,17 @@ describe("call-scoped sent credentials", () => {
     }
   });
 
-  it.each(["unicode", "split", "escaped"])(
+  it.each(["unicode", "split", "escaped", "fragment"])(
     "INV-5: %s MCP text is redacted after unwrapping, before paging and emits",
     async (form) => {
       const token = 'credential/"with-escapes';
       const storage = memoryStorage();
       const vault = new CredentialVault(storage, KEY);
       await vault.set("remote", token, "test-user");
-      const serialized = JSON.stringify({ echo: token, padding: "x".repeat(600) });
+      const serialized = JSON.stringify({
+        echo: form === "fragment" ? token.slice(3, -3) : token,
+        padding: "x".repeat(600),
+      });
       const escaped = serialized.replace(
         token.replace(/"/g, '\\"'),
         token
@@ -247,12 +255,18 @@ describe("call-scoped sent credentials", () => {
         if (!header.hasMore) break;
         offset = header.nextOffset;
       }
-      expect(JSON.parse(reconstructed).echo).toBe("[redacted]");
+      // Blocks unwrap joined by a newline, so a document split across two is text; each
+      // block keeps its own piece of the match as a placeholder.
+      const expectEcho = (data: any) =>
+        form === "split"
+          ? expect(data).toMatch(/^\{"echo":"\[redacted\]\n\[redacted\]","padding":"x+"\}$/)
+          : expect(data.echo).toBe("[redacted]");
+      expectEcho(JSON.parse(reconstructed));
       const executor: Executor = {
         execute: async (_code, providers) => {
           const host = providers[0]!.fns;
-          const result = (await host.call!("remote.read", {})) as { data: { echo: string }; format: string };
-          expect(result.data.echo).toBe("[redacted]");
+          const result = (await host.call!("remote.read", {})) as { data: unknown; format: string };
+          expectEcho(result.data);
           await host.emit!({ type: "text", text: token });
           return { result: { echoed: token }, logs: [token] };
         },
@@ -586,7 +600,7 @@ describe("call-scoped sent credentials", () => {
     }
   });
 
-  it("INV-5: calls sharing a request scope do not inherit another call's slot values", async () => {
+  it("INV-5: calls sharing a request scope redact previously sent slot values without widening a different request", async () => {
     const connector = api("api", {
       credential: { label: "Key" },
       tools: [
@@ -609,6 +623,8 @@ describe("call-scoped sent credentials", () => {
     };
     const second = { ...first };
     await expect(connector.callTool("read", { authenticate: true }, first)).rejects.toThrow("[redacted]");
-    await expect(connector.callTool("read", {}, second)).rejects.toThrow(SECRET);
+    await expect(connector.callTool("read", {}, second)).rejects.toThrow("[redacted]");
+    const separate = { ...first, requestScope: {} };
+    await expect(connector.callTool("read", {}, separate)).rejects.toThrow(SECRET);
   });
 });

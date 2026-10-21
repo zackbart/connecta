@@ -56,6 +56,7 @@ import { byteReadResponse } from "../byte-read-response.js";
 import {
   redactCatalog,
   redactSentSecrets,
+  requestSentSecrets,
   sentSecretsFor,
   shortSecretWarning,
   trackCredentialReads,
@@ -80,8 +81,11 @@ import {
   ConnectorCallError,
   msg,
   networkErrorCode,
+  resendAdvice,
+  resendAdviceOf,
   unavailableCallError,
   WithheldTextError,
+  withResendAdvice,
 } from "../errors.js";
 import {
   attachFailureFacts,
@@ -110,6 +114,10 @@ import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "./guarded-fetch.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
+import { callClassification } from "../call-classification.js";
+import { classifyTool } from "../tool-safety.js";
+import { enterProviderBoundary, knownProviderFailure, providerBoundary } from "../provider-call.js";
+import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
@@ -264,7 +272,9 @@ export interface RemoteMcpOptions {
    * rejected. `"same-origin"` follows at most five redirects while preserving
    * standard 301/302/303/307/308 method semantics. Cross-origin redirects and
    * HTTPS downgrades are always refused, so credentials never cross the
-   * configured request's origin.
+   * configured request's origin. A write is never sent to a redirect target
+   * under either policy: a redirect answering a write fails it as an unknown
+   * outcome (INV-9), so set `url` to the endpoint that answers directly.
    */
   redirects?: RemoteMcpRedirectPolicy;
   /**
@@ -742,10 +752,11 @@ function isCursorShapeError(err: unknown): boolean {
  * passed the MCP and OAuth boundaries, and the origin and errno connecta
  * derived for it, which a message alone would drop.
  */
+/** An authorization start's failure for authorize_connector: no write's, so its advice stays. */
 function startMessage(err: unknown): string {
   const details = err instanceof ConnectorCallError ? err.details : undefined;
   const facts = [details?.host, details?.code].filter(Boolean).join(", ");
-  return facts ? `${msg(err)} (${facts})` : msg(err);
+  return withResendAdvice(facts ? `${msg(err)} (${facts})` : msg(err), resendAdviceOf(err));
 }
 
 /**
@@ -786,7 +797,7 @@ function terminateSession(transport: Transport, logger: Logger, connectorId: str
   return Effect.raceAllFirst([
     // The SDK issues no request at all when no `mcp-session-id` was captured,
     // so a stateless downstream never sees a spurious DELETE.
-    promised(() => Promise.resolve(terminate.call(transport))).pipe(
+    promised(() => Promise.resolve(Reflect.apply(terminate, transport, []))).pipe(
       Effect.catch((error) =>
         // The SDK's error quotes the downstream's status text, and its `data`
         // the body, so the record keeps only the status it answered with.
@@ -1345,6 +1356,7 @@ function withheldAs(message: string, verdict: unknown): Error {
       ...(verdict.details ? { details: verdict.details } : {}),
       ...(verdict.validation ? { validation: verdict.validation } : {}),
       ...(verdict.current ? { current: verdict.current } : {}),
+      ...(verdict.writeOutcome ? { writeOutcome: verdict.writeOutcome } : {}),
     });
   }
   return new WithheldTextError(message, verdict);
@@ -1407,6 +1419,68 @@ function registrationErrorCode(body: string): string | undefined {
   }
 }
 
+/**
+ * One logical `tools/call` as its requests meet the wire. The pinned SDK can
+ * send one call more than once: after a 401 it renews the grant and resends
+ * the message, a redirect hop sends its body again, and a `HeaderMismatch`
+ * answer makes `callTool` relist and send the call again under a new JSON-RPC
+ * id. So a write is held to one send by its call, never by any one message
+ * (INV-9). Reads keep the SDK's recoveries.
+ */
+interface CallDispatch {
+  /** At most one request for this call may leave connecta. */
+  write: boolean;
+  /** A request for this call was handed to fetch; no other one may be. */
+  sent: boolean;
+  /** The answer was a 401, so the SDK renews the grant and resends. */
+  unauthorized: boolean;
+  /** The answer was a redirect, whose next hop would send the write again. */
+  redirected: boolean;
+  /** A further send of this call was stopped before it left. */
+  resendRefused: boolean;
+}
+
+/**
+ * The key a `tools/call`'s params carry its dispatch under. Object spread
+ * copies a symbol-keyed property, and the pinned SDK only spreads a request's
+ * params (to add a progress token or its `_meta` envelope); `JSON.stringify`
+ * skips symbol keys, so nothing of it reaches the wire.
+ */
+const DISPATCH = Symbol("connecta.dispatch");
+
+function newDispatch(write: boolean): CallDispatch {
+  return { write, sent: false, unauthorized: false, redirected: false, resendRefused: false };
+}
+
+function withDispatch<T extends object>(params: T, dispatch: CallDispatch): T {
+  Object.defineProperty(params, DISPATCH, { value: dispatch, enumerable: true });
+  return params;
+}
+
+function dispatchOf(params: unknown): CallDispatch | undefined {
+  return params !== null && typeof params === "object"
+    ? (params as { [DISPATCH]?: CallDispatch })[DISPATCH]
+    : undefined;
+}
+
+/** A further request for a write that already left, stopped before it does. */
+function resendRefused(dispatch: CallDispatch): ConnectorCallError {
+  dispatch.resendRefused = true;
+  return new ConnectorCallError("connector_call_failed", "This write was already sent once; it was not sent again.", {
+    retryable: false,
+    writeOutcome: "unknown",
+  });
+}
+
+/** Lost tracking cannot prove whether an earlier message already sent a write. */
+function missingDispatch(): ConnectorCallError {
+  return new ConnectorCallError(
+    "connector_call_failed",
+    "The downstream call lost its dispatch record and cannot be proven read-only. It was not sent; whether an earlier write took effect is unknown. Check the target before repeating it.",
+    { retryable: false, writeOutcome: "unknown" },
+  );
+}
+
 interface ConnectionState {
   /**
    * The request scope's lifetime, closed once, by closeScope, and never
@@ -1432,6 +1506,8 @@ interface ConnectionState {
    * `cacheToolMetadata` reach-through.
    */
   toolDefinitions: Map<string, Tool>;
+  /** Active logical calls prove read safety if a message loses its dispatch. */
+  dispatches: Map<CallDispatch, string>;
   /**
    * The connect in flight, published before any of it runs so every call
    * that arrives meanwhile joins it rather than starting a second. Completed
@@ -1670,15 +1746,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       return attachFailureFacts(
         carryFailureFacts(
           err,
-          withheldAs(
-            `Connector "${id}" could not register an OAuth client with ` +
-              `${origin ?? "its authorization server"}: the ` +
-              `registration endpoint answered HTTP ${err.status}` +
-              `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
-              "withheld because it can quote the request or anything the server " +
-              "chose to add. Check the server's client registration policy, then " +
-              "retry authorization.",
-            downstreamCallError(err, undefined, trail.last?.retryAfterMs),
+          resendAdvice(
+            withheldAs(
+              `Connector "${id}" could not register an OAuth client with ` +
+                `${origin ?? "its authorization server"}: the ` +
+                `registration endpoint answered HTTP ${err.status}` +
+                `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
+                "withheld because it can quote the request or anything the server " +
+                "chose to add. Check the server's client registration policy.",
+              downstreamCallError(err, undefined, trail.last?.retryAfterMs),
+            ),
+            ", then retry authorization",
           ),
         ),
         facts,
@@ -1706,12 +1784,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return attachFailureFacts(
       carryFailureFacts(
         err,
-        withheldAs(
-          `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
-            `failed${errorKind(err)}. The error is withheld because its text can ` +
-            "quote what the server sent. Check the server's OAuth metadata, then " +
-            "retry authorization.",
-          classified,
+        resendAdvice(
+          withheldAs(
+            `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
+              `failed${errorKind(err)}. The error is withheld because its text can ` +
+              "quote what the server sent. Check the server's OAuth metadata.",
+            classified,
+          ),
+          ", then retry authorization",
         ),
       ),
       facts,
@@ -1750,7 +1830,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       undefined,
       undefined,
       undefined,
-      sentSecretsFor(ctx),
+      requestSentSecrets(ctx),
     );
     const verdict =
       isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
@@ -1858,7 +1938,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
     };
     adapted.onUnauthorized = (ctx) =>
-      flow((trace) => onUnauthorized.call(adapted, { ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }));
+      flow((trace) => Reflect.apply(onUnauthorized, adapted, [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }]));
     internals._stepUpAuthorize = (challenge, retries) =>
       flow((trace) => {
         const traced = trace(internals._fetchWithInit ?? fetch);
@@ -1868,7 +1948,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
           set: (target, key, value) => Reflect.set(target, key, value, target),
         });
-        return stepUp.call(self, challenge, retries);
+        return Reflect.apply(stepUp, self, [challenge, retries]);
       });
   };
 
@@ -2173,6 +2253,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         client: null,
         transport: null,
         toolDefinitions: new Map(),
+        dispatches: new Map(),
         connecting: null,
         authRequired: false,
         provider: null,
@@ -2257,8 +2338,22 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
+    // Missing records never acquire a fresh write attempt. Only active calls
+    // for this exact tool, all classified read, can prove a recordless message
+    // safe. Catalog hints alone cannot prove the invocation's served verdict.
+    const untrackedRead = (params: unknown): boolean => {
+      if (!skillObject(params) || typeof params.name !== "string") return false;
+      let read = false;
+      for (const [dispatch, name] of entryFor(ctx).dispatches) {
+        if (name !== params.name) continue;
+        if (dispatch.write) return false;
+        read = true;
+      }
+      return read;
+    };
+    // This transport's calls on the wire, by JSON-RPC id, while each is sent.
+    const flights = new Map<string | number, CallDispatch>();
     const trackedFetch: FetchLike = async (input, init) => {
-      trackSentRequest(ctx, input, init);
       let rpc: unknown;
       if (typeof init?.body === "string") {
         try {
@@ -2267,14 +2362,29 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           /* OAuth exchanges can send form-encoded bodies. */
         }
       }
-      const writeContinuation =
-        downstreamWriteContinuation(ctx.requestScope ?? ctx) &&
-        init?.method === "POST" &&
-        skillObject(rpc) &&
-        rpc.method === "tools/call";
+      const toolCall = init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call" ? rpc : undefined;
+      const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) && toolCall !== undefined;
+      // Every request a write sends passes here. The first leaves; any other
+      // stops before it does (INV-9), whatever sent it: the SDK's resend after
+      // a 401 or a step-up, which still renews the grant for a deliberate
+      // repeat, or a redirect hop.
+      const flight =
+        toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
+          ? flights.get(toolCall.id)
+          : undefined;
+      if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
+      if (flight?.write) {
+        if (flight.sent) throw resendRefused(flight);
+        flight.sent = true;
+      }
+      trackSentRequest(ctx, input, init);
       const response = writeContinuation
         ? await fetch(input, { ...init, redirect: "manual" })
         : await fetch(input, init);
+      if (flight?.write) {
+        if (response.status === 401) flight.unauthorized = true;
+        else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
+      }
       if (writeContinuation && (response.status === 401 || (response.status >= 300 && response.status < 400))) {
         await response.body?.cancel().catch(() => {});
         // Stop before the SDK can refresh auth or follow a redirect and resend
@@ -2283,7 +2393,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         throw new ConnectorCallError(
           "connector_call_failed",
           "The downstream redirected a write continuation; it was not repeated.",
-          { retryable: false },
+          { retryable: false, writeOutcome: "unknown" },
+        );
+      }
+      if (flight?.redirected) {
+        await response.body?.cancel().catch(() => {});
+        // A 307 or 308 keeps the method and body, so following it would send
+        // the write again; the server may have acted before redirecting.
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "The downstream answered this write with a redirect; it was not sent again.",
+          { retryable: false, writeOutcome: "unknown" },
         );
       }
       if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
@@ -2327,7 +2447,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         ),
       });
       boundOAuthFlows(ctx, transport, url, [signal, ctx.signal]);
-      return transport;
+      return sendingEachWriteOnce(transport, flights, untrackedRead);
     }
     const headers =
       opts.auth?.type === "headers"
@@ -2335,10 +2455,48 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         : (credentialAuth || requestAuth) && credentialFramed !== null
           ? { ...requestAuth?.headers, [credentialHeader]: credentialFramed }
           : undefined;
-    return new StreamableHTTPClientTransport(url, {
-      ...(headers ? { requestInit: { headers } } : {}),
-      fetch: guardedFetch,
-    });
+    return sendingEachWriteOnce(
+      new StreamableHTTPClientTransport(url, {
+        ...(headers ? { requestInit: { headers } } : {}),
+        fetch: guardedFetch,
+      }),
+      flights,
+      untrackedRead,
+    );
+  };
+
+  /**
+   * Admit a write's call to the wire once, whatever JSON-RPC id a later
+   * message for it carries, and show `trackedFetch` which call each message
+   * belongs to while it is sent. A missing record fails closed unless active
+   * calls prove the tool is read (INV-1, INV-9).
+   */
+  const sendingEachWriteOnce = (
+    transport: StreamableHTTPClientTransport,
+    flights: Map<string | number, CallDispatch>,
+    untrackedRead: (params: unknown) => boolean,
+  ): StreamableHTTPClientTransport => {
+    const send = transport.send.bind(transport);
+    transport.send = async (message, options) => {
+      const request =
+        !Array.isArray(message) && "method" in message && message.method === "tools/call" && "id" in message
+          ? message
+          : undefined;
+      if (!request) return await send(message, options);
+      const dispatch = dispatchOf(request.params);
+      if (!dispatch) {
+        if (!untrackedRead(request.params)) throw missingDispatch();
+        return await send(message, options);
+      }
+      if (dispatch.write && dispatch.sent) throw resendRefused(dispatch);
+      flights.set(request.id, dispatch);
+      try {
+        return await send(message, options);
+      } finally {
+        flights.delete(request.id);
+      }
+    };
+    return transport;
   };
 
   const reset = (state: ConnectionState) => {
@@ -2442,10 +2600,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const currentCredential = await readCredential(ctx);
         if (isClosed(state)) throw scopeEndedError();
         if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
-          throw new ConnectorCallError(
-            "connector_call_failed",
-            "The downstream credential changed while connecting; retry the operation.",
-            { retryable: true },
+          throw resendAdvice(
+            new ConnectorCallError("connector_call_failed", "The downstream credential changed while connecting.", {
+              retryable: true,
+            }),
+            "; retry the operation",
           );
         }
         closeHalf(state);
@@ -3070,13 +3229,33 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async callTool(name, args, ctx, options) {
+      enterProviderBoundary(ctx, connector);
+      // Refusals before this call's dispatch record exists: no tools/call of
+      // its can have left, so they are known failures (ledger provenance).
       if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
-        throw new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist.");
+        throw knownProviderFailure(
+          new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist."),
+        );
       }
       const state = stateFor(ctx);
-      const client = await ensureConnected(ctx, state);
+      const client = await ensureConnected(ctx, state).catch((error: unknown) => {
+        throw knownProviderFailure(error);
+      });
+      const definition = options?.definition;
+      // The registry's verdict for this call; outside an invocation, the
+      // dispatched definition's, else a reviewed write or the annotations.
+      const reviewed = classification?.tools[name];
+      const verdict = typeof reviewed === "object" ? reviewed.verdict : reviewed;
+      const annotations = (definition ?? state.toolDefinitions.get(name))?.annotations as ToolDef["annotations"];
+      const write =
+        (callClassification(ctx) ??
+          definition?.classification ??
+          (verdict !== undefined && verdict !== "read"
+            ? "write"
+            : classifyTool({ name, ...(annotations ? { annotations } : {}) }))) === "write";
+      const dispatch = newDispatch(write);
+      state.dispatches.set(dispatch, name);
       try {
-        const definition = options?.definition;
         const toolDefinition = definition
           ? {
               ...definition,
@@ -3102,17 +3281,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         const result = await client
           .callTool(
-            {
-              name,
-              arguments: (args ?? {}) as Record<string, unknown>,
-              ...options?.input,
-            },
+            withDispatch(
+              {
+                name,
+                arguments: (args ?? {}) as Record<string, unknown>,
+                ...options?.input,
+              },
+              dispatch,
+            ),
             {
               ...requestOptions(ctx),
               allowInputRequired: true,
               // SDK 2.3.1's callTool checks outputSchema even for a suspension.
               // Retain its header mirroring, then validate only final results.
-              ...(toolDefinition ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } } : {}),
+              // Given a definition, it never relists and sends a call again
+              // after a HeaderMismatch answer, so a write always has one.
+              ...(toolDefinition
+                ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } }
+                : write
+                  ? { toolDefinition: { name, inputSchema: { type: "object" } as Tool["inputSchema"] } }
+                  : {}),
             },
           )
           .catch((err: unknown) => {
@@ -3132,13 +3320,51 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         return result;
       } catch (err) {
+        const direct = write && callClassification(ctx) === undefined;
+        // The request's own abort reason passes by identity for a read or a
+        // served call. A direct write's is finalized below: it may have left.
+        const ownAbort = ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err);
+        if (ownAbort && !direct) throw err;
         // A grant revoked after connect surfaces here, not in ensureConnected.
-        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
-        if (requiresAuthorization(err)) {
-          if (state.client === client) state.authRequired = true;
-          if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
-        }
-        throw downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
+        if (requiresAuthorization(err) && state.client === client) state.authRequired = true;
+        const failure = ownAbort
+          ? err
+          : err instanceof UnauthorizedError
+            ? carryFailureFacts(err, authRequiredError())
+            : downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
+        if (!write) throw failure;
+        // A write that left is never advertised as safe to repeat (INV-9):
+        // not after a 401, whatever the grant's recovery met; not after a
+        // redirect or a further send stopped here; and not after a gateway's
+        // 502 to 504, a timeout, or a connection lost once it was sent.
+        const verdict = dispatch.unauthorized
+          ? unsentAfterUnauthorized(`Connector "${id}"'s MCP server`, dispatch.resendRefused ? undefined : failure)
+          : dispatch.redirected || dispatch.resendRefused
+            ? new ConnectorCallError(
+                "connector_call_failed",
+                `Connector "${id}"'s MCP server ` +
+                  (dispatch.redirected
+                    ? "answered this write with a redirect, and the write was not sent again, "
+                    : "was sent this write, and a second send of it was stopped, ") +
+                  "so whether it took effect is unknown: check the target before repeating it.",
+                { retryable: false, writeOutcome: "unknown" },
+              )
+            : failure;
+        const vendor = { title: `connector "${id}"` };
+        // Whether this call's tools/call reached fetch is the dispatch ledger;
+        // the HTTP status the endpoint answered is its served verdict. Once
+        // sent, a JSON-RPC error (-32602 included: a server can run the
+        // handler and then reject its result), an unreadable result, or a
+        // failed output validation is no refusal, direct or served.
+        const status = failureRecord({}, err).httpStatus;
+        const settled = providerCallFailure(ctx, vendor, verdict, {
+          dispatched: dispatch.sent,
+          ...(status === undefined ? {} : { status }),
+          fallback: "write",
+        });
+        throw settled === failure ? failure : carryFailureFacts(failure, settled);
+      } finally {
+        state.dispatches.delete(dispatch);
       }
     },
 
@@ -3202,7 +3428,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (state.client === client) state.authRequired = true;
           if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
         }
-        throw downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
+        throw downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
       }
     },
 
@@ -3413,7 +3639,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         : redactSentSecrets(ctx, result);
     } catch (error) {
       assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error);
-      throw redactSentSecrets(ctx, error);
+      // The request's whole set: an outer wrapper may still cut what passes here.
+      throw requestSentSecrets(ctx).redact(error);
     } finally {
       active.delete(ctx);
     }
@@ -3466,6 +3693,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   }
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
+  // This boundary's identity in a logical call: this object with its
+  // published, fully wrapped function, fixed now, never what the property or
+  // a copy holds by then.
+  providerBoundary(connector);
   if (isOauth)
     registerInvocationAuth(
       connector,

@@ -25,6 +25,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { SharedRead } from "./runtime/shared-read.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
 import type { Connector, JsonSchema, ToolDef } from "./types.js";
+import { keepErrorName } from "./redaction-identity.js";
 
 export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
@@ -126,6 +127,7 @@ export class DiscoveryPolicyError extends Error {
     this.name = "DiscoveryPolicyError";
   }
 }
+keepErrorName(DiscoveryPolicyError, "DiscoveryPolicyError");
 
 /** Validate before ranking so a huge page request does no proportional work. */
 function discoverySearchLimit(value: unknown): number {

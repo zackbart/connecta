@@ -9,8 +9,10 @@ import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { memoryStorage } from "../../storage/memory.js";
+import { requestSentSecrets } from "../../sent-secrets.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide, ToolDef } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
+import { echoForms, expectNoFragment, straddling } from "../../../test/helpers/secret-echoes.js";
 
 const BASE = "https://connecta.test";
 const PROD_API = "https://api.ccbchurch.com";
@@ -421,7 +423,7 @@ describe("ccb() reads", () => {
     expect(fake.requests.at(-1)!.url.searchParams.get("per_page")).toBe("25");
   });
 
-  it("drops sensitive individual fields unless raw is asked for", async () => {
+  it("drops sensitive individual fields from the projection", async () => {
     const { fake, call } = await connected();
     const row = {
       ...PERSON,
@@ -443,10 +445,62 @@ describe("ccb() reads", () => {
     for (const secret of ["peanuts", "G-17", "envelope", "last_giving_date", "actions", "thumbnail"]) {
       expect(text).not.toContain(secret);
     }
-    expect(await call("get_individual", { individualId: 42, raw: true })).toMatchObject({
+  });
+
+  it("INV-4: raw rows, hatches, and search drop sensitive fields unless deployment code returns them", async () => {
+    const individual = {
+      ...PERSON,
+      allergies: "peanuts",
+      confirmed_no_allergies: false,
+      giving_number: "G-17",
+      envelope_user_id: 3,
+      last_giving_date: "2026-09-01",
+      date_anyone_run_giving_statement: "2026-01-02",
+      family: { members: [{ id: 43, allergies: "shellfish" }] },
+    };
+    const attendance = { event_id: 12, occurrence: "20260927", prayer_requests: "private", notes: "leader notes" };
+    const response = { id: 5, form_id: 2, payment: { method: "CREDIT_CARD", total: 2500 }, payment_status: "PAID" };
+    const routes = [
+      on("GET", "/individuals/42", () => json(individual)),
+      on("GET", "/events/12/attendance/20260927", () => json(attendance)),
+      on("GET", "/forms/2/responses", () => json([response], { "x-next-page": "" })),
+      on("POST", "/search/individuals/results", () => json([individual], { "x-next-page": "" })),
+      on("PUT", "/individuals/42", () => json(individual)),
+    ];
+    const reads: Array<[string, Record<string, unknown>]> = [
+      ["get_individual", { individualId: 42, raw: true }],
+      ["get_event_attendance", { eventId: 12, occurrence: "2026-09-27", raw: true }],
+      ["list_form_responses", { formId: 2, raw: true }],
+      ["ccb_api_get", { path: "/individuals/42" }],
+      ["ccb_api_get", { path: "/events/12/attendance/20260927" }],
+      ["ccb_api_search", { domain: "individuals", body: { filters: {} } }],
+      ["ccb_api_mutate", { method: "PUT", path: "/individuals/42", body: { first_name: "Ada" } }],
+    ];
+    const secrets = ["peanuts", "shellfish", "G-17", "envelope", "giving", "statement", "private", "leader notes"];
+    const dropped = await connected({ access: "read-write" });
+    dropped.fake.route(...routes);
+    for (const [tool, args] of reads) {
+      const text = JSON.stringify(await dropped.call(tool, args));
+      for (const secret of [...secrets, "allerg", "CREDIT_CARD"])
+        expect(text, `${tool} ${secret}`).not.toContain(secret);
+    }
+    expect(JSON.stringify(await dropped.call("ccb_api_get", { path: "/individuals/42" }))).toContain(
+      '"name":"Grace Hopper"',
+    );
+    expect(guide(dropped.connector).content).toContain("leaves the sensitive fields out");
+
+    // An argument cannot widen it; only the deployment's option can.
+    const returned = await connected({ access: "read-write", sensitiveFields: "return" });
+    returned.fake.route(...routes);
+    expect(await returned.call("get_individual", { individualId: 42, raw: true })).toMatchObject({
       allergies: "peanuts",
       giving_number: "G-17",
     });
+    expect(JSON.stringify(await returned.call("ccb_api_get", { path: "/events/12/attendance/20260927" }))).toContain(
+      "leader notes",
+    );
+    expect(guide(returned.connector).content).toContain("This connection returns sensitive fields");
+    expect(() => connection({ sensitiveFields: "raw" as never })).toThrow(/sensitiveFields/);
   });
 
   it("addresses an event occurrence and drops prayer requests from attendance", async () => {
@@ -504,12 +558,39 @@ describe("ccb() typed failures (H11)", () => {
     return failure(call("get_group", { groupId: 5 }));
   }
 
+  it("INV-5: error normalization cannot trim a private value before redaction", async () => {
+    const value = `   ${"private-error-with-whitespace/".repeat(30)}`;
+    const { fake, connector, ctx } = await connected();
+    const context = ctx();
+    context.requestScope = {};
+    requestSentSecrets(context).arguments(
+      { private: value },
+      {
+        type: "object",
+        properties: { private: { type: "string", writeOnly: true } },
+      },
+    );
+    fake.route(on("GET", "/groups/5", () => json({ message: value }, {}, 400)));
+    const failed = await failure(Promise.resolve(connector.callTool("get_group", { groupId: 5 }, context)));
+    expect(failed.message).toContain("[redacted]");
+    expect(failed.message).not.toContain("private-error-with-whitespace");
+  });
+
   it("maps a 403 to a non-retryable gap that re-authorizing cannot fix", async () => {
     const failed = await failing(json({ message: "Insufficient scope" }, {}, 403));
     expect(failed).toMatchObject({ code: "provider_permission_denied", retryable: false });
     expect(failed.message).toContain("Insufficient scope");
     expect(failed.message).toContain("Re-authorizing alone will not fix it");
   });
+
+  // The fake mints access-1 for the grant; every form of it, cut through its middle.
+  it.each(echoForms("access-1"))(
+    "INV-5: a 400 echoing the sent token %s across the 500-character cap leaks no fragment of it",
+    async (_name, form) => {
+      const failed = await failing(json({ message: straddling(form, 500) }, {}, 400));
+      expectNoFragment(failed.message, form, { secret: "access-1" });
+    },
+  );
 
   it("maps a 404 to not_found, because CCB reports permission gaps as 403", async () => {
     expect(await failing(new Response(null, { status: 404 }))).toMatchObject({ code: "not_found", retryable: false });
@@ -593,6 +674,47 @@ describe("ccb() escape hatches (H14)", () => {
     expect(await failure(call("ccb_api_search", { domain: "permission_individuals", body: {} }))).toMatchObject({
       code: "invalid_args",
     });
+  });
+
+  it("INV-9: a mutation's 5xx is an unknown outcome, never retryable; a read's stays unavailable", async () => {
+    const { fake, call } = await connected({ access: "read-write" });
+    fake.route(
+      on("POST", "/individuals/42/notes", () => json({ errors: [{ message: "boom" }] }, {}, 503)),
+      on("GET", "/church/membership_types", () => json({}, {}, 503)),
+    );
+    expect(
+      await failure(
+        call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
+      ),
+    ).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(fake.requests.filter((request) => request.method === "POST")).toHaveLength(1);
+    expect(await failure(call("ccb_api_get", { path: "/church/membership_types" }))).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
+  });
+
+  it("INV-9: after a 401 the grant refreshes, a search (a POST read) replays once, and a mutation is never resent", async () => {
+    const { fake, call } = await connected({ access: "read-write" });
+    fake.route(
+      on("POST", "/search/individuals/results", () => json([{ id: 1 }], { "x-next-page": "" })),
+      on("POST", "/individuals/42/notes", () => json({ id: 3 })),
+    );
+    fake.expireAccess();
+    expect((await call("ccb_api_search", { domain: "individuals", body: {} })).result).toEqual([{ id: 1 }]);
+    expect(fake.requests.filter((request) => request.url.pathname === "/search/individuals/results")).toHaveLength(2);
+
+    fake.expireAccess();
+    expect(
+      await failure(
+        call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
+      ),
+    ).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(fake.requests.filter((request) => request.url.pathname === "/individuals/42/notes")).toHaveLength(1);
+    // The renewed grant serves the deliberate repeat.
+    expect(
+      await call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
+    ).toEqual({ result: { id: 3 } });
   });
 
   it("sends a JSON mutation through the approval-gated hatch", async () => {

@@ -44,7 +44,7 @@ describe("repairing error envelopes", () => {
     expect(call).not.toHaveBeenCalled();
   });
   it.each([true, false])(
-    "INV-5: input-required retry hints omit writeOnly arguments on read=%s",
+    "INV-5 INV-9: input-required retry hints omit writeOnly arguments, and a write gets none, on read=%s",
     async (readOnlyHint) => {
       const call = vi.fn(async () => {
         throw new ConnectorCallError("input_required_unsupported", "Use a direct call.");
@@ -68,25 +68,33 @@ describe("repairing error envelopes", () => {
       ]);
       const result = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
         "private.submit",
-        { target: "p1", password: "z" },
+        { target: "p1", password: "private-password-marker" },
         { source: "execute_code", readOnly: false },
       );
+      if (result.ok) throw new Error("Expected input-required failure");
+      expect(call).toHaveBeenCalledOnce();
+      expect(JSON.stringify(result)).not.toContain("private-password-marker");
+      if (!readOnlyHint) {
+        // The connector was entered and nothing proves the write unapplied.
+        expect(result.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+        expect(result.error.nextAction).toBeUndefined();
+        expect(result.error.retry).toMatch(/^Do not resend this write\. Re-read its target/);
+        return;
+      }
       expect(result).toMatchObject({
         ok: false,
         error: {
           nextAction: {
-            tool: readOnlyHint ? "call_tool" : "call_destructive_tool",
+            tool: "call_tool",
             arguments: { address: "private.submit", args: { target: "p1" }, argsRedacted: true },
           },
         },
       });
-      if (result.ok) throw new Error("Expected input-required failure");
       const action = result.error.nextAction;
-      if (!action || !("tool" in action) || (action.tool !== "call_tool" && action.tool !== "call_destructive_tool"))
+      if (!action || !("tool" in action) || action.tool !== "call_tool")
         throw new Error("Expected direct-call recovery");
       expect(action.arguments["args"]).not.toHaveProperty("password");
       expect(action.purpose).toContain("original arguments");
-      expect(call).toHaveBeenCalledOnce();
     },
   );
   describe.each([undefined, "mcp", "value"] as const)("direct-call result mode %s", (resultMode) => {

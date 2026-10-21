@@ -96,7 +96,13 @@ describe("Infisical security boundaries", () => {
           ok: false,
           dispatched: true,
           attempts: 1,
-          error: { code: "auth_required", retryable: false, reconciliationRequired: true },
+          error: {
+            code: "connector_call_failed",
+            retryable: false,
+            message: expect.stringContaining(
+              "The credential is renewed for the next call, but the write was not sent again",
+            ),
+          },
         });
         expect(dispatched).toHaveLength(1);
         expect(dispatched[0]!.method).toBe(method);
@@ -156,7 +162,10 @@ describe("Infisical security boundaries", () => {
         ok: false,
         dispatched: true,
         attempts: 1,
-        error: { code: failure === "network" ? "unavailable" : "write_outcome_unknown" },
+        error:
+          failure === "network"
+            ? { code: "connector_call_failed", retryable: false }
+            : { code: "write_outcome_unknown", retryable: false },
       });
       expect(operational).toBe(1);
     });
@@ -206,7 +215,11 @@ describe("Infisical security boundaries", () => {
               value: {
                 projects: [{ environments: [] }],
                 metadataOmitted: true,
-                credentialEcho: "[redacted] / [redacted]",
+                // Padded vault values are registered as read, so a literal space beside an echo
+                // can be part of the match.
+                credentialEcho: expect.stringMatching(
+                  padded ? /^\[redacted\] ?\/ ?\[redacted\]$/ : /^\[redacted\] \/ \[redacted\]$/,
+                ),
               },
             });
           }

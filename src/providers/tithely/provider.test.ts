@@ -273,7 +273,7 @@ describe("testCredentials (H12)", () => {
 });
 
 describe("named reads (H9, H10)", () => {
-  it("projects organizations to funds and drops bank and legal details unless raw", async () => {
+  it("projects organizations to funds and drops bank and legal details", async () => {
     queue({
       body: {
         status: "success",
@@ -301,10 +301,32 @@ describe("named reads (H9, H10)", () => {
     });
     expect(JSON.stringify(lean)).not.toContain("6789");
     expect(JSON.stringify(lean)).not.toContain("1985");
+  });
 
-    queue({ body: { status: "success", organization_id: "org_1", type: "Organization", object: ORGANIZATION } });
-    const raw = await call(connection(), "get_organization", { organizationId: "org_1", raw: true });
-    expect(raw.bank.account_number_last4).toBe("6789");
+  it("INV-4: raw rows and hatch replies drop bank and legal details unless deployment code returns them", async () => {
+    const organization = { status: "success", organization_id: "org_1", type: "Organization", object: ORGANIZATION };
+    const reads: Array<[string, Record<string, unknown>, StubResponse]> = [
+      ["get_organization", { organizationId: "org_1", raw: true }, { body: organization }],
+      ["list_organizations", { raw: true }, { body: { status: "success", type: "List", data: [ORGANIZATION] } }],
+      ["get_charge", { chargeId: "ch_1", raw: true }, { body: { status: "success", object: FULL_CHARGE } }],
+      ["tithely_api_get", { path: "/organizations/org_1" }, { body: organization }],
+    ];
+    for (const [tool, args, response] of reads) {
+      queue(response);
+      const text = JSON.stringify(await call(connection(), tool, args));
+      for (const secret of ["6789", "TEST BANK", "1985", "Rogers", '"bank"', '"legal"']) {
+        expect(text, `${tool} ${secret}`).not.toContain(secret);
+      }
+      // An argument cannot widen it; only the deployment's option can.
+      queue(response);
+      expect(JSON.stringify(await call(connection({ sensitiveFields: "return" }), tool, args))).toContain("6789");
+    }
+    queue({ body: { status: "success", object: ORGANIZATION } });
+    const written = await call(connection(), "tithely_api_mutate", { method: "POST", path: "/organizations/org_1" });
+    expect(JSON.stringify(written)).not.toContain("6789");
+    expect(guide(connection()).content).toContain("leaves them out");
+    expect(guide(connection({ sensitiveFields: "return" })).content).toContain("This connection returns them");
+    expect(() => connection({ sensitiveFields: "raw" })).toThrow(/sensitiveFields/);
   });
 
   it("falls back to fund names when giving_types_full is absent", async () => {
@@ -683,6 +705,36 @@ describe("typed failures (H11)", () => {
     expect(typed.retryable).toBe(retryable);
     if (retryAfterMs !== undefined) expect(typed.retryAfterMs).toBe(retryAfterMs);
     if (message) expect(typed.message).toContain(message);
+  });
+
+  it("INV-9: a write's 5xx or lost reply is an unknown outcome, never retryable; a read's stays unavailable", async () => {
+    const mutate = { method: "POST", path: "/charges", form: [{ name: "amount", value: 2500 }] };
+    queue({ status: 503, text: "<html>down</html>" });
+    await expect(call(connection(), "tithely_api_mutate", mutate)).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      message: expect.stringContaining("Whether the write took effect at Tithe.ly is unknown"),
+    });
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new TypeError("connection reset"));
+    await expect(call(connection(), "tithely_api_mutate", mutate)).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+    // A refused connection proves nothing either: fetch may have made an
+    // earlier attempt behind it.
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(
+      Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }),
+    );
+    await expect(call(connection(), "tithely_api_mutate", mutate)).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    queue({ status: 503, text: "<html>down</html>" });
+    await expect(call(connection(), "get_charge", { chargeId: "ch_1" })).rejects.toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
   });
 
   it("never maps a 404 to not_found, because absence and reach are indistinguishable", async () => {

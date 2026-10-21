@@ -5,7 +5,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { SentSecrets } from "../src/sent-secrets.js";
+import { SentSecrets, sentSecretsFor } from "../src/sent-secrets.js";
 import { downstreamSkillUri } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -234,7 +234,12 @@ it("INV-5: program resource, local guide and downstream skill reads take payload
     }`,
   });
   expect(program.isError, JSON.stringify(program.structuredContent)).toBeFalsy();
-  expect(witnessed).toEqual([REDACTED, REDACTED, REDACTED]);
+  expect(witnessed).toHaveLength(3);
+  for (const echo of witnessed) {
+    // A short private value is replaced wherever it occurs; the text around it stays.
+    expect(echo).toContain(`PIN ${REDACTED}`);
+    expect(echo).not.toContain("7931426");
+  }
 });
 
 it("INV-5: public-schema remote tools redact bare numeric bearer credentials in direct modes and QuickJS", async () => {
@@ -278,6 +283,160 @@ it("INV-5: public-schema remote tools redact bare numeric bearer credentials in 
   });
   expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
   expect(result.structuredContent).toMatchObject({ result: { data: REDACTED, format: "text" } });
+});
+
+it("INV-5: an array whose toJSON echoes a credential reaches the QuickJS guest only checked", async () => {
+  const token = "Q8!wZ2?A7@vR4#";
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).add(token);
+      // Its entries are public; what serialization sends is the toJSON result.
+      return Object.assign(["public"], { toJSON: () => ({ echo: token }) });
+    },
+  };
+  const result = await createExecuteTool(
+    makeRegistry([connector]),
+    BASE,
+    executor,
+    silentLogger,
+  )({ code: 'async () => (await connecta.call("wire.read")).data.echo.slice(0, 7)' });
+  // Seven units are below K, so only what the guest received decides what returns.
+  expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+  expect(result.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
+});
+
+it("INV-5: an error whose class and instance name a credential reaches the QuickJS guest only checked", async () => {
+  const token = "Q8!wZ2?A7@vR4#";
+  class Named extends Error {}
+  Object.defineProperty(Named, "name", { value: token });
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).add(token);
+      return { value: Object.assign(new Named("public"), { name: token }) };
+    },
+  };
+  const execute = createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger);
+  // The review's program: seven units are below K, so only what the guest received decides.
+  const review = await execute({ code: 'async () => (await connecta.call("wire.read")).data.value.name.slice(0, 7)' });
+  expect(review.isError, JSON.stringify(review.structuredContent)).toBeFalsy();
+  expect(review.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
+  const seen = await execute({ code: 'async () => JSON.stringify((await connecta.call("wire.read")).data.value)' });
+  expect(JSON.stringify(seen.structuredContent)).not.toContain(token.slice(0, 7));
+});
+
+it("INV-5: a credential split across an error's own name and message reaches the QuickJS guest only checked", async () => {
+  const token = "Q8!wZ2?A7@vR4#";
+  const split = () => {
+    class SplitError extends Error {}
+    const error = new SplitError();
+    delete error.stack;
+    return Object.defineProperties(error, {
+      name: { value: token.slice(0, 7), enumerable: true, configurable: true, writable: true },
+      message: { value: token.slice(7), enumerable: true, configurable: true, writable: true },
+    });
+  };
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).add(token);
+      return { value: split() };
+    },
+  };
+  const execute = createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger);
+  // The review's program: each half is below K, so only what the guest received decides.
+  const review = await execute({ code: 'async () => (await connecta.call("wire.read")).data.value.name.slice(0, 7)' });
+  expect(review.isError, JSON.stringify(review.structuredContent)).toBeFalsy();
+  expect(review.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
+  const joined = await execute({
+    code: 'async () => { const v = (await connecta.call("wire.read")).data.value; return v.name + v.message; }',
+  });
+  const seen = JSON.stringify(joined.structuredContent);
+  for (const half of [token.slice(0, 7), token.slice(7)]) expect(seen).not.toContain(half);
+});
+
+it.each([
+  [
+    "a function with a toJSON",
+    () => ({ value: Object.assign(() => {}, { toJSON: () => ({ echo: "Q8!wZ2?A7@vR4#" }) }) }),
+  ],
+  [
+    "a typed-array subclass with a toJSON",
+    () => ({
+      value: new (class Bytes extends Uint8Array {
+        toJSON() {
+          return { echo: "Q8!wZ2?A7@vR4#" };
+        }
+      })([1, 2, 3]),
+    }),
+  ],
+  [
+    "an ArrayBuffer subclass with a toJSON",
+    () => ({
+      value: new (class Buffer extends ArrayBuffer {
+        toJSON() {
+          return { echo: "Q8!wZ2?A7@vR4#" };
+        }
+      })(3),
+    }),
+  ],
+])("INV-5: %s never serializes a credential into the QuickJS guest", async (_name, reply) => {
+  const token = "Q8!wZ2?A7@vR4#";
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).add(token);
+      return reply();
+    },
+  };
+  const execute = createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger);
+  // The review's program: seven units are below K, so only what the guest received decides.
+  const review = await execute({ code: 'async () => (await connecta.call("wire.read")).data.value.echo.slice(0, 7)' });
+  expect(JSON.stringify(review.structuredContent)).not.toContain(token.slice(0, 7));
+  const seen = await execute({ code: 'async () => JSON.stringify((await connecta.call("wire.read")).data.value)' });
+  expect(seen.isError, JSON.stringify(seen.structuredContent)).toBeFalsy();
+  expect(JSON.stringify(seen.structuredContent)).not.toContain(token.slice(0, 7));
+});
+
+it("INV-5: a typed array's numbers reach the QuickJS guest only checked as JSON scalars", async () => {
+  const value = "12345678";
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).arguments({ value }, VALUE_SCHEMA);
+      return { value: new Uint32Array([12345678]) };
+    },
+  };
+  const result = await createExecuteTool(
+    makeRegistry([connector]),
+    BASE,
+    executor,
+    silentLogger,
+  )({ code: 'async () => String((await connecta.call("wire.read")).data.value[0]).slice(0, 7)' });
+  expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+  expect(result.structuredContent).not.toMatchObject({ result: value.slice(0, 7) });
+  expect(JSON.stringify(result.structuredContent)).not.toContain(value.slice(0, 7));
 });
 
 it("INV-5: JSON text keeps its exact bytes unless an echo is redacted, then stays valid JSON", () => {

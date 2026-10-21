@@ -21,6 +21,7 @@ jobs:
       planning: ${{ steps.paths.outputs.planning }}
       browser: ${{ steps.paths.outputs.browser }}
       security: ${{ steps.paths.outputs.security }}
+      goldens: ${{ steps.goldens.outputs.goldens }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -35,19 +36,53 @@ jobs:
           planning=false
           browser=true
           security=true
+          goldens=full
           if [[ "$EVENT_NAME" == pull_request ]]; then
-            git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/paths"
-            planning=$(bash scripts/ci-planning-paths.sh < "$RUNNER_TEMP/paths")
-            browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/paths")
-            security=$(bash scripts/ci-security-paths.sh < "$RUNNER_TEMP/paths")
+            if git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/paths"; then
+              planning=$(bash scripts/ci-planning-paths.sh < "$RUNNER_TEMP/paths")
+              browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/paths")
+              security=$(bash scripts/ci-security-paths.sh < "$RUNNER_TEMP/paths")
+              # Classification failures must spend more CI, never skip the oracle.
+              if git diff --no-renames --diff-filter=D --quiet "$BASE_SHA...$HEAD_SHA"; then
+                goldens=$(node scripts/ci-goldens-tier.mjs --fast < "$RUNNER_TEMP/paths") || goldens=full
+                case "$goldens" in full|always|graph) ;; *) goldens=full ;; esac
+              fi
+            else
+              echo "Path diff failed; running every check with full goldens." >&2
+            fi
           fi
+          echo "Provider goldens tier: $goldens"
           # A planning-only change has nothing for Chromium to exercise.
           if [[ "$planning" == true ]]; then browser=false; fi
           {
             echo "planning=$planning"
             echo "browser=$browser"
             echo "security=$security"
+            echo "goldens=$goldens"
           } >> "$GITHUB_OUTPUT"
+      - if: steps.paths.outputs.goldens == 'graph'
+        uses: pnpm/action-setup@v6
+      - if: steps.paths.outputs.goldens == 'graph'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - if: steps.paths.outputs.goldens == 'graph'
+        run: pnpm install --frozen-lockfile
+      - name: Resolve provider goldens tier
+        id: goldens
+        env:
+          FIRST_PASS: ${{ steps.paths.outputs.goldens }}
+        run: |
+          goldens=full
+          if [[ "$FIRST_PASS" == graph ]]; then
+            goldens=$(node scripts/ci-goldens-tier.mjs < "$RUNNER_TEMP/paths") || goldens=full
+          elif [[ "$FIRST_PASS" == always ]]; then
+            goldens=always
+          fi
+          if [[ "$goldens" != always ]]; then goldens=full; fi
+          echo "Provider goldens tier: $goldens"
+          echo "goldens=$goldens" >> "$GITHUB_OUTPUT"
 
   # Keep every check:core check, but give both runtimes their own runner.
   # Static checks run for every change, including planning-only pull requests.
@@ -72,14 +107,14 @@ jobs:
       - run: pnpm run check:unused
       - run: pnpm run typecheck
 
-  # Decision records and changelog fragments ship nothing that tests or the
-  # package build read, so planning-only pull requests skip these three jobs.
+  # Planning-only PRs still run the golden oracle on both runtimes, while
+  # skipping the rest of the suites and the package build.
   node:
     needs: changes
-    if: needs.changes.outputs.planning != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      CONNECTA_GOLDENS_TIER: ${{ needs.changes.outputs.goldens }}
       # PR checkout is a merge commit whose first parent is the PR base.
       # Pushes must compare before the entire push, even after main advances.
       CONNECTA_STANDARD_BASE: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
@@ -103,13 +138,17 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # A Node-only config, not --project: retain invariant/spec enforcement.
-      - run: pnpm run test --config vitest.config.node.ts
+      - if: needs.changes.outputs.planning != 'true'
+        run: pnpm run test --config vitest.config.node.ts
+      - if: needs.changes.outputs.planning == 'true'
+        run: pnpm run test:node test/goldens.test.ts test/goldens-harness.test.ts
 
   workers:
     needs: changes
-    if: needs.changes.outputs.planning != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CONNECTA_GOLDENS_TIER: ${{ needs.changes.outputs.goldens }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -118,7 +157,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run test:workers
+      - if: needs.changes.outputs.planning != 'true'
+        run: pnpm run test:workers
+      - if: needs.changes.outputs.planning == 'true'
+        run: pnpm run test:workers test/goldens.test.ts test/goldens-harness.test.ts
 
   build:
     needs: changes
@@ -226,10 +268,10 @@ jobs:
           SECURITY_RESULT: ${{ needs.security.result }}
           SECURITY_REQUIRED: ${{ needs.changes.outputs.security }}
         run: |
-          # A planning-only pull request intentionally skips node, workers and build.
+          # A planning-only pull request skips build; both golden runtime jobs must pass.
           planned() { [[ "$1" == success || ( "$PLANNING_ONLY" == true && "$1" == skipped ) ]]; }
           if [[ "$STATIC_RESULT" == success && "$CHANGES_RESULT" == success ]] &&
-             planned "$NODE_RESULT" && planned "$WORKERS_RESULT" && planned "$BUILD_RESULT" &&
+             [[ "$NODE_RESULT" == success && "$WORKERS_RESULT" == success ]] && planned "$BUILD_RESULT" &&
              [[ "$BROWSER_RESULT" == success || ( "$BROWSER_REQUIRED" == false && "$BROWSER_RESULT" == skipped ) ]] &&
              [[ "$SECURITY_RESULT" == success || ( "$SECURITY_REQUIRED" == false && "$SECURITY_RESULT" == skipped ) ]]; then
             echo "All required checks passed"

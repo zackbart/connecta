@@ -25,11 +25,14 @@ and fail-closed history requirements.
 ## Which rules apply
 
 - **A new provider** meets the whole standard from its first commit. It never
-  joins `PENDING`; the suite fails an off-standard new folder.
-  **Transitional:** until S.1 (the tooling PR in 0011's batches) lands, no folder
-  can pass D2 or G, because nothing writes `drift.json`'s `generated` block or
-  the Conventions section yet. Until B.4 (the kit) lands, no `api` or `dual`
-  provider can be built on the kit. Do not add a provider before then.
+  joins `PENDING`; the suite fails an off-standard new folder, and
+  `providers:generate` refuses one that breaks D or G.
+  **Transitional:** `providers:generate` writes `drift.json`'s `generated`
+  block and the Conventions section (S.1). Until B.4 (the kit) lands, no `api`
+  or `dual` provider can be built on the kit, and no definition carries the
+  kit facts (`kit`: the operation manifest, page size, hatch verdicts) that
+  `generated.operations` and the paging and hatch Conventions read. Do not add
+  an `api` or `dual` provider before then.
 - **A migration PR** is step 1 or step 2 for one provider, never both. See
   [Migrating a provider](#migrating-a-provider).
 - **A change to a provider still in `PENDING`** keeps its current shape. See
@@ -106,9 +109,13 @@ tools to capture evidence.
 Humans write sources, reasons, and dates; tools write lists and digests.
 
 - `version: 2` and `provider: "<name>"`.
-- `generated` (`operations` from `manifest(vendor)`, `hosted` from the
-  served hosted classification, and one `sha256` per hashed evidence file) is
-  written by `providers:generate`. Never edit it.
+- `generated` (`operations` from the definition's `kit.operations`, the kit's
+  `manifest(vendor)`; `hosted` from the reviewed classification's names; one
+  `sha256` per `evidence/` catalog, pin, document and candidates file) is
+  written by `providers:generate`. Never edit it: `check:providers-generated`
+  fails a hand edit, and evidence bytes that moved since the last run. Tools
+  own the whole file's formatting (two-space JSON, `generated` after
+  `provider`); the formatter skips it.
 - `checks` keep the types `scripts/drift-check.mjs` knows. A `manual` check
   needs an https `source`, a one-paragraph `reason` (why it cannot be
   automated, and what to compare), and `lastVerified` (`YYYY-MM-DD`).
@@ -122,9 +129,24 @@ Humans write sources, reasons, and dates; tools write lists and digests.
   and review narrative, without inventing a catalog. `generated.evidence`
   hashes captures; drift compares names AND hints.
   Accept catalog changes only by explicit review, never by `--record`.
-- No hand-kept lists: no `reviewed` names, and `endpoints` entries are keyed
-  by an `operation` from `generated.operations`, with digests written by
-  `providers:check --record`.
+- No hand-kept lists: no `reviewed` names, and `endpoints` and
+  `versioned-endpoints` rows are `{ operation, page?, specRevision, contract }`,
+  keyed by an `operation` from `generated.operations`, with digests written by
+  `providers:check --record` in that spelling. ReadMe operation pages name
+  their `page` on each row, not in `specification.pages`. A manifest
+  operation no row records is an `operation-unrecorded` finding for the
+  provider, with or without an endpoint check. To add one, write its row
+  without `contract`: `providers:generate` accepts a row awaiting its digest,
+  `providers:check --record --provider <name>` writes it, and the standard
+  suite refuses a committed row without one.
+- `mcp-docs` and `oauth-discovery` checks compare documented names with
+  `generated.hosted`; `reviewedAccess` may name only those.
+- A record must also be one `providers:check` can read:
+  `scripts/drift-validate.mjs` is the one offline validator, shared by
+  `providers:check`, `providers:generate` and the standard suite, which
+  report what it rejects as `D3: providers:check rejects …`.
+- `providers:check` reports each manual check last verified more than 180
+  days ago as `manual-stale`. No test fails as the calendar moves.
 
 ## The guide (G)
 
@@ -156,10 +178,22 @@ Keep these out of it:
 - anything a schema states, INV ids, and repository paths.
 
 Text that differs by implementation or option goes in unnested
-`<!-- when: <key> -->` … `<!-- end -->` blocks, with keys the definition
-declares (`hosted` and `api` for a dual provider). Never interpolate values
-into guide text. The guide leads with the routing fact, keeps its summary
-within 120 bytes, and never restates a schema (H13).
+`<!-- when: <key> -->` … `<!-- end -->` blocks, each marker alone on its line.
+The definition declares the closed key set and a pure selector,
+`blocks: { keys, select(options) }` (`hosted` and `api` for a dual provider),
+and `usageGuide` renders the selected blocks; `defineProvider` and
+`providers:generate` refuse an undeclared key. Never interpolate values into
+guide text. The guide leads with the routing fact, keeps its summary within
+120 bytes, and never restates a schema (H13).
+
+`providers:generate` appends `## Conventions` to `skill.generated.ts` from the
+definition: results (`fields`, `truncated`) for an `api` surface, the
+withheld-value rule when the folder has `safety.ts`, paging from
+`kit.pageSize`, the hatch's tools, approval and refused operations from
+`kit.hatch`, the write-once rule for every kind, and the hosted catalog rules
+for `mcp`. A dual provider's API and hosted lines sit in its `api` and `hosted`
+blocks. The error and idempotency-key conventions arrive with the kit's
+`VendorErrors` and write declarations (B.4).
 
 ## The agent-facing surface (S)
 
@@ -194,6 +228,37 @@ read verdicts (including read-only POST); writes remain destructive regardless
 of method. H9's projection/truncation and H14's confinement and safety split
 still apply.
 
+## Sent-secret text safety (INV-5)
+
+Redact downstream values before cutting, trimming, collapsing whitespace,
+normalizing, or extracting text from them. Use `redactBeforeCut(ctx, …)` from
+`src/sent-secrets.ts`; Workspace products use `clampText(ctx, …)` for bounded
+fields. Redact a joined text value before deriving titles, summaries, previews,
+or other copies. A failure mapper behind `restTools()` receives a redacted
+body; a `result` hook that throws one redacts it with `ctx`.
+
+Text read only up to a bound, or that the vendor stopped listing, takes
+`redactBoundedRead(ctx, …)` on the original text. It merges complete matches
+and unfinished-tail matches before replacing anything, including one-unit
+prefixes. Shared-prefix tails can therefore be conservatively withheld.
+Protect every representation, including raw branches. If extraction's source
+changed under redaction, return the marker rather than extracting from it.
+Bind paging cursors to the redacted representation when offsets count its
+units, even when the vendor also supplies a revision. A cursor an agent decodes
+holds downstream values only redacted: pass each vendor token or id through
+`redactSentSecrets(ctx, …)` before placing it, a value it only compares through
+a digest, and encode the claims with `encodeForAgent(ctx, json, { url: true,
+claims: true })`. Every string in the claims is checked under payload rules, so
+one placed raw withholds the cursor; keep Connecta's own counts as numbers.
+
+The output boundary matches whole forms and every eight-unit run across adjacent
+leaves, so it cannot see a value split into pieces shorter than eight with other
+fields between them, as rich-text runs or styled text runs are. Match such a
+lane joined with `requestSentSecrets(ctx).parts(pieces, bounded)` before the
+pieces are copied, and write each returned piece back. Return binary content as
+`{ format: "base64", content }` (or MCP `blob`/`data`) so the boundary decodes it;
+never base64-encode bytes into another field.
+
 ## Value safety
 
 Value safety is required for every `api` or `dual` provider. Under the
@@ -207,7 +272,7 @@ No response may return a credential or a stored secret value unless a
 reviewed named tool exists to return it (architecture, "Value safety for REST
 vendors"). The steps:
 
-1. Set `options.valueSafety` in the OpenAPI pin (`true`, or
+1. Set `options.valueSafety` in the OpenAPI pin, `evidence/openapi.json` (`true`, or
    `{ "operationWords": "<regex>" }` for a vendor's own secret families,
    `{ "expansions": false }` for an API that answers ids unless expanded,
    `{ "dataRoot": "result" }` for an envelope) so `providers:spec` writes the
@@ -216,7 +281,14 @@ vendors"). The steps:
    pinned document) after every table edit: it checks each reviewed path
    against the pinned response schema and stamps the ones that resolve. A path
    the schema lacks fails it; fix the path, or, for a shared verdict or a
-   field the schema leaves undeclared, acknowledge it as absent.
+   field the schema leaves undeclared, acknowledge it in the table's
+   `absent: { reason, operations?, resources? }`, keyed like the table. A
+   vendor that publishes no JSON document pins its published bytes with
+   `vendored: true` and keeps the reviewed JSON conversion in
+   `evidence/openapi.document.json`; `providers:spec` compiles that offline,
+   and the pin moves only by review, never by `--record`. The generated
+   index states that document's digest, so `check:providers-generated` reads
+   it as stale once the document changes: rerun `providers:spec`.
 2. Write the table with the shared `refuse`, `redact`, and `safe` helpers
    from `../_shared/rest/value-safety.ts`: one verdict per candidate, each with
    a reason, `fields` for names reviewed once across the API, and, when
@@ -374,9 +446,13 @@ These hold on every path.
 
 Run `pnpm run providers:generate`. Folder discovery derives provider exports,
 Knip entries, bundle membership and baselines, packed smoke fixtures, portable
-convention imports, the bounded README inventory, `skill.generated.ts`, and,
-from S.1, `drift.json`'s `generated` block and the Conventions section. Do not
-hand-edit generated membership lists.
+convention imports, the bounded README inventory, `skill.generated.ts` with
+its Conventions, and `drift.json`'s `generated` block. It reads the pending
+lists from `test/provider-pending-baseline.json` and refuses, before writing
+anything, a D violation in a provider past step 1 and a G violation in one
+past step 2, using the rule checks in `test/provider-standard.ts`. Do not
+hand-edit generated membership lists. Run it again after `providers:spec`, so
+the evidence digests follow the files.
 
 `pnpm run check:providers-generated` compares expected outputs without
 writing. Adding a folder must require no central provider list edit. Public
@@ -397,8 +473,8 @@ Catalog access does not prove operational auth or enable a preset. Recording
 never accepts catalog changes. For a categorized documentation inventory,
 retain the current category/name capture in `inventory.categories`. Explicitly
 reviewed tools absent from the current reference may remain in the runtime
-classification and in `reviewed`; name those absences in
-`inventory.acknowledgedRemoved`. Names deliberately left to live annotations
+classification and in `reviewed` (`generated.hosted` in version 2); name those
+absences in `inventory.acknowledgedRemoved`. Names deliberately left to live annotations
 belong in `inventory.acknowledgedUnclassified`, with the review rationale in
 the provider's evidence. Neither list accepts future names or partial
 captures; complete category counts remain mandatory.

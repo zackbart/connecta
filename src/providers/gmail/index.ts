@@ -37,6 +37,8 @@ import {
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
+import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -127,19 +129,23 @@ const ENTITIES: Readonly<Record<string, string>> = {
   nbsp: " ",
 };
 
-function decodeEntities(value: string): string {
-  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
+function decodeEntities(ctx: ConnectorContext, value: string): string {
+  const safe = redactBeforeCut(ctx, value);
+  const decoded = safe.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
     if (name[0] === "#") {
       const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
       return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
     }
     return ENTITIES[name.toLowerCase()] ?? entity;
   });
+  return redactBeforeCut(ctx, decoded);
 }
 
 /** Readable text from an HTML part that has no plain-text sibling. */
-function htmlToText(html: string): string {
+function htmlToText(ctx: ConnectorContext, html: string): string {
+  html = redactBeforeCut(ctx, html);
   return decodeEntities(
+    ctx,
     html
       .replace(/<(script|style|head)\b[\s\S]*?<\/\1\s*>/gi, "")
       .replace(/<br\s*\/?>/gi, "\n")
@@ -162,38 +168,41 @@ function base64UrlBytes(data: string): Uint8Array {
   return bytes;
 }
 
-function charsetOf(part: JsonRecord): string {
+function charsetOf(ctx: ConnectorContext, part: JsonRecord): string {
   const type = header(part, "Content-Type") ?? "";
+  if (redactBeforeCut(ctx, type) !== type) return "[redacted]";
   // Consume complete parameters so a semicolon inside another quoted value
   // cannot masquerade as a charset. MIME allows whitespace between tokens.
   const parameters = /;\s*([^=;\s]+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^;\s]*))/g;
   for (const match of type.matchAll(parameters)) {
     if (match[1]!.toLowerCase() === "charset") {
-      return (match[2]?.replace(/\\(.)/g, "$1") ?? match[3] ?? "").trim();
+      const source = match[2] ?? match[3] ?? "";
+      if (redactBeforeCut(ctx, source) !== source) return "[redacted]";
+      return redactBeforeCut(ctx, source.replace(/\\(.)/g, "$1")).trim();
     }
   }
   return "utf-8";
 }
 
 /** Bytes as text, with an explicit notice when the declared charset is unsupported. */
-function decodeIn(part: JsonRecord, data: string): { text: string; note?: string } {
+function decodeIn(ctx: ConnectorContext, part: JsonRecord, data: string): { text: string; note?: string } {
   let bytes: Uint8Array;
   try {
     bytes = base64UrlBytes(data);
   } catch {
     return { text: "" };
   }
-  return decodeBytes(part, bytes);
+  return decodeBytes(ctx, part, bytes);
 }
 
-function decodeBytes(part: JsonRecord, bytes: Uint8Array): { text: string; note?: string } {
-  const charset = charsetOf(part);
+function decodeBytes(ctx: ConnectorContext, part: JsonRecord, bytes: Uint8Array): { text: string; note?: string } {
+  const charset = charsetOf(ctx, part);
   try {
     return { text: new TextDecoder(charset).decode(bytes) };
   } catch {
     return {
       text: new TextDecoder().decode(bytes),
-      note: `Gmail declared unsupported charset "${clipped(charset, FIELD_BYTES)}"; decoded as UTF-8.`,
+      note: `Gmail declared unsupported charset "${clipped(ctx, charset, FIELD_BYTES)}"; decoded as UTF-8.`,
     };
   }
 }
@@ -307,10 +316,10 @@ async function readBody(
     );
     data = text(fetched["data"]);
   }
-  const decoded = data ? decodeIn(chosen, data) : { text: "" };
+  const decoded = data ? decodeIn(ctx, chosen, data) : { text: "" };
   // Uncut: the caller caps it, by characters and by the result's bytes.
   return {
-    text: format === "html" ? htmlToText(decoded.text) : decoded.text,
+    text: format === "html" ? htmlToText(ctx, decoded.text) : decoded.text,
     bodyFormat: format,
     ...(decoded.note ? { bodyNote: decoded.note } : {}),
   };
@@ -362,13 +371,13 @@ function labelsOf(labelIds: readonly string[]): { labelIds: string[]; labelIdsOm
 /** Attachment rows listed per message; the rest are counted, not listed. */
 const MAX_LISTED_ATTACHMENTS = 20;
 
-function attachmentsOf(payload: JsonRecord): { listed: JsonRecord[]; omitted: number } {
+function attachmentsOf(ctx: ConnectorContext, payload: JsonRecord): { listed: JsonRecord[]; omitted: number } {
   const all = walk(payload).attachments;
   return {
     listed: all.slice(0, MAX_LISTED_ATTACHMENTS).map((part) =>
       compact({
-        filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
-        mimeType: clipped(text(part["mimeType"]), FIELD_BYTES),
+        filename: clipped(ctx, text(part["filename"]) ?? "", FIELD_BYTES),
+        mimeType: clipped(ctx, text(part["mimeType"]), FIELD_BYTES),
         size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
         ...ids({
           attachmentId: [asRecord(part["body"])["attachmentId"], ATTACHMENT_ID_BYTES],
@@ -496,8 +505,8 @@ async function readAttachment(
   const base = compact({
     messageId,
     ...ids({ partId: [part["partId"]] }),
-    filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
-    mimeType: clipped(text(part["mimeType"]) ?? "application/octet-stream", FIELD_BYTES),
+    filename: clipped(ctx, text(part["filename"]) ?? "", FIELD_BYTES),
+    mimeType: clipped(ctx, text(part["mimeType"]) ?? "application/octet-stream", FIELD_BYTES),
     size,
   });
   const unavailable = (note: string) => ({ ...base, format: "unavailable", contentTruncated: false, note });
@@ -527,14 +536,14 @@ async function readAttachment(
     if (!chosen) return unavailable("This forwarded message has no readable text body; open it in Gmail.");
     const bytes = await attachmentBytes(client, ctx, messageId, chosen);
     if (!bytes) return unavailable("Gmail returned no readable forwarded message body data; open it in Gmail.");
-    const rendered = decodeBytes(chosen, bytes);
+    const rendered = decodeBytes(ctx, chosen, bytes);
     if (!rendered.text.trim())
       return unavailable("This forwarded message has no readable text body; open it in Gmail.");
     const headers = ["From", "To", "Date", "Subject"].flatMap((name) => {
       const value = own.map((entry) => header(entry, name)).find((entry) => entry !== undefined);
       return value === undefined ? [] : [`${name}: ${value}`];
     });
-    const body = mimeOf(chosen) === "text/html" ? htmlToText(rendered.text) : rendered.text;
+    const body = mimeOf(chosen) === "text/html" ? htmlToText(ctx, rendered.text) : rendered.text;
     if (!body.trim()) return unavailable("This forwarded message has no readable text body; open it in Gmail.");
     decoded = headers.length > 0 ? `${headers.join("\n")}\n\n${body}` : body;
     envelope = { ...envelope, ...compact({ note: rendered.note }) };
@@ -542,20 +551,16 @@ async function readAttachment(
     const bytes = await attachmentBytes(client, ctx, messageId, part);
     if (!bytes) return unavailable("Gmail returned no attachment data; open it in Gmail.");
     if (bytes.length > limit) return tooLarge();
-    if (!isText) {
-      let binary = "";
-      for (let index = 0; index < bytes.length; index += 0x8000) {
-        binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-      }
-      return { ...envelope, content: btoa(binary) };
-    }
-    const rendered = decodeBytes(part, bytes);
+    if (!isText) return { ...envelope, content: encodeForAgent(ctx, bytes) };
+    const rendered = decodeBytes(ctx, part, bytes);
     decoded = rendered.text;
     if (mime === "message/rfc822" && !decoded.trim()) {
       return unavailable("This forwarded message has no readable text body; open it in Gmail.");
     }
     envelope = { ...envelope, ...compact({ note: rendered.note }) };
   }
+  // Every secret the request sent is replaced before either cut below.
+  if (decoded.length > maxChars || jsonBytes(decoded) > maxBytes) decoded = redactBeforeCut(ctx, decoded);
   const characters = Array.from(decoded);
   const marker = (dropped: number) =>
     `\n[… ${dropped} more characters truncated; raise maxChars or maxBytes for a direct call_tool, or open it in Gmail]`;
@@ -570,7 +575,7 @@ async function readAttachment(
   // cut by both limits still has one marker, counted in the result's budget.
   const prefix = characters.slice(0, maxChars).join("");
   const contentBudget = maxBytes - jsonBytes(envelope) + jsonBytes("");
-  const kept = clampText(prefix, contentBudget - jsonBytes(marker(characters.length)) + 2, () => "");
+  const kept = clampText(ctx, prefix, contentBudget - jsonBytes(marker(characters.length)) + 2, () => "");
   const content = kept + marker(characters.length - Array.from(kept).length);
   return { ...envelope, content, contentTruncated: true };
 }
@@ -584,12 +589,15 @@ const FIELD_BYTES = 512;
 const HEADER_BYTES = 4 * 1024;
 
 /** A string cut to `maxBytes` of JSON, ending in "…" when it was cut. */
-function clipped<T extends string | undefined>(value: T, maxBytes: number): T {
-  return (value === undefined ? value : clampText(value, maxBytes, () => "…")) as T;
+function clipped<T extends string | undefined>(ctx: ConnectorContext, value: T, maxBytes: number): T {
+  return (value === undefined ? value : clampText(ctx, value, maxBytes, () => "…")) as T;
 }
 
-/** Cut a body at `max` characters and say so in the text itself. */
-function capped(body: string, max: number): { body: string; bodyTruncated: boolean } {
+/** Cut a body at `max` characters and say so in the text itself, after replacing every
+ * secret the request sent: a cut through an echo leaves a fragment nothing redacts. */
+function capped(ctx: ConnectorContext, whole: string, max: number): { body: string; bodyTruncated: boolean } {
+  if (whole.length <= max) return { body: whole, bodyTruncated: false };
+  const body = redactBeforeCut(ctx, whole);
   if (body.length <= max) return { body, bodyTruncated: false };
   const rest = body.length - max;
   return {
@@ -626,8 +634,8 @@ async function projectMessage(
   const message = asRecord(value);
   const payload = asRecord(message["payload"]);
   const read = await readBody(client, ctx, idOf(message["id"]), payload, maxBodyChars);
-  const attachments = attachmentsOf(payload);
-  const headerOf = (name: string) => clipped(header(payload, name), HEADER_BYTES);
+  const attachments = attachmentsOf(ctx, payload);
+  const headerOf = (name: string) => clipped(ctx, header(payload, name), HEADER_BYTES);
   const { omittedIds, ...messageIds } = ids({ id: [message["id"]], threadId: [message["threadId"]] });
   const projected = compact({
     ...messageIds,
@@ -641,7 +649,7 @@ async function projectMessage(
     subject: headerOf("Subject"),
     messageIdHeader: headerOf("Message-ID"),
     inReplyTo: headerOf("In-Reply-To"),
-    snippet: text(message["snippet"]) ? clipped(decodeEntities(message["snippet"]), HEADER_BYTES) : undefined,
+    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(ctx, message["snippet"]), HEADER_BYTES) : undefined,
     body: "",
     bodyTruncated: false,
     bodyFormat: read.bodyFormat,
@@ -655,7 +663,7 @@ async function projectMessage(
   // result, and cut again by exactly what it is over, until it fits. Every
   // field is counted as sent — `false` is a byte longer than `true` — so a
   // body at the exact boundary is not a byte over.
-  const byCharacters = capped(read.text, maxBodyChars);
+  const byCharacters = capped(ctx, read.text, maxBodyChars);
   const build = (body: string) =>
     finish({ ...projected, body, bodyTruncated: byCharacters.bodyTruncated || body !== byCharacters.body });
   let body = byCharacters.body;
@@ -664,7 +672,7 @@ async function projectMessage(
     const over = jsonBytes(result) - budget;
     if (over <= 0) return result;
     const target = Math.max(2, jsonBytes(body) - over);
-    const shorter = clampText(byCharacters.body, target, resultLimitMarker);
+    const shorter = clampText(ctx, byCharacters.body, target, resultLimitMarker);
     if (shorter === body) break;
     body = shorter;
     result = build(body);
@@ -716,11 +724,9 @@ function callKey(tool: string, shape: Record<string, unknown>): Promise<string> 
   return digest(JSON.stringify([tool, shape]));
 }
 
-function encodeCursor(claims: CursorClaims): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(claims));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+/** A cursor of connecta's own claims; Gmail's page token, its only downstream text, arrives redacted. */
+function encodeCursor(ctx: ConnectorContext, claims: CursorClaims): string {
+  return encodeForAgent(ctx, JSON.stringify(claims), { url: true, claims: true });
 }
 
 /** The claims of a cursor this call may resume, or a refusal saying why not. */
@@ -767,8 +773,14 @@ async function resumeAt(ids: readonly string[], claims: CursorClaims | undefined
   return seen;
 }
 
-async function cursorAfter(ids: readonly string[], seen: number, tool: string, call: string): Promise<string> {
-  return encodeCursor({ v: 1, t: tool, c: call, n: seen, f: await digest(JSON.stringify(ids.slice(0, seen))) });
+async function cursorAfter(
+  ctx: ConnectorContext,
+  ids: readonly string[],
+  seen: number,
+  tool: string,
+  call: string,
+): Promise<string> {
+  return encodeCursor(ctx, { v: 1, t: tool, c: call, n: seen, f: await digest(JSON.stringify(ids.slice(0, seen))) });
 }
 
 /** A page object whose cursor is as long as any this connection issues. */
@@ -795,7 +807,7 @@ function deliverable(tool: string, result: unknown, budget = RESULT_BUDGET_BYTES
   return result;
 }
 
-function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecord {
+function projectThreadSummary(ctx: ConnectorContext, value: unknown, listedSnippet: unknown): JsonRecord {
   const thread = asRecord(value);
   const messages = asArray(thread["messages"]).map(asRecord);
   const first = asRecord(messages[0]?.["payload"]);
@@ -810,27 +822,27 @@ function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecor
   const snippet = text(listedSnippet) ?? text(messages[messages.length - 1]?.["snippet"]);
   return compact({
     ...ids({ id: [thread["id"]] }),
-    subject: clipped(header(first, "Subject"), FIELD_BYTES),
-    from: clipped(header(first, "From"), FIELD_BYTES),
-    lastFrom: messages.length > 1 ? clipped(header(last, "From"), FIELD_BYTES) : undefined,
+    subject: clipped(ctx, header(first, "Subject"), FIELD_BYTES),
+    from: clipped(ctx, header(first, "From"), FIELD_BYTES),
+    lastFrom: messages.length > 1 ? clipped(ctx, header(last, "From"), FIELD_BYTES) : undefined,
     messageCount: messages.length,
     lastMessageAt: isoFromMillis(latest),
     unread: labels.has("UNREAD"),
     ...labelsOf([...labels]),
-    snippet: snippet ? clipped(decodeEntities(snippet), FIELD_BYTES) : undefined,
+    snippet: snippet ? clipped(ctx, decodeEntities(ctx, snippet), FIELD_BYTES) : undefined,
   });
 }
 
-function projectDraftSummary(value: unknown): JsonRecord {
+function projectDraftSummary(ctx: ConnectorContext, value: unknown): JsonRecord {
   const draft = asRecord(value);
   const message = asRecord(draft["message"]);
   const payload = asRecord(message["payload"]);
   return compact({
     ...ids({ draftId: [draft["id"]], messageId: [message["id"]], threadId: [message["threadId"]] }),
-    subject: clipped(header(payload, "Subject"), FIELD_BYTES),
-    to: clipped(header(payload, "To"), FIELD_BYTES),
+    subject: clipped(ctx, header(payload, "Subject"), FIELD_BYTES),
+    to: clipped(ctx, header(payload, "To"), FIELD_BYTES),
     updatedAt: isoFromMillis(message["internalDate"]),
-    snippet: text(message["snippet"]) ? clipped(decodeEntities(message["snippet"]), FIELD_BYTES) : undefined,
+    snippet: text(message["snippet"]) ? clipped(ctx, decodeEntities(ctx, message["snippet"]), FIELD_BYTES) : undefined,
   });
 }
 
@@ -1354,11 +1366,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
   const bodyChars = (args: JsonRecord, fallback: number): number =>
     typeof args["maxBodyChars"] === "number" ? args["maxBodyChars"] : fallback;
-  // Gmail's own page token, carried inside a cursor bound to this call.
-  const gmailPage = (listing: JsonRecord, tool: string, call: string) => {
+  // Gmail's own page token, carried inside a cursor bound to this call. It is redacted first:
+  // an agent decodes the cursor, and no later pass reads through its encoding.
+  const gmailPage = (ctx: ConnectorContext, listing: JsonRecord, tool: string, call: string) => {
     const token = text(listing["nextPageToken"]);
     if (token === undefined) return { hasMore: false, nextCursor: null };
-    const cursor = encodeCursor({ v: 1, t: tool, c: call, p: token });
+    const cursor = encodeCursor(ctx, { v: 1, t: tool, c: call, p: redactSentSecrets(ctx, token) });
     if (cursor.length > MAX_CURSOR_LENGTH) {
       throw new ConnectorCallError(
         "connector_call_failed",
@@ -1460,6 +1473,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const threads = await mapLimited(rows, SUMMARY_CONCURRENCY, (row) =>
           unlessGone(async () =>
             projectThreadSummary(
+              ctx,
               await client.json(
                 {
                   method: "GET",
@@ -1476,7 +1490,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           threads: threads.filter((thread) => thread !== undefined),
           resultSizeEstimate:
             typeof listing["resultSizeEstimate"] === "number" ? listing["resultSizeEstimate"] : undefined,
-          page: gmailPage(listing, "search_threads", call),
+          page: gmailPage(ctx, listing, "search_threads", call),
         });
       },
     },
@@ -1545,7 +1559,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           id: threadId,
           messageCount: all.length,
           messages,
-          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ids, next, "get_thread", call) : null },
+          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ctx, ids, next, "get_thread", call) : null },
         };
       },
     },
@@ -1709,7 +1723,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           }
           const row = compact({
             id,
-            name: clipped(text(label["name"]), FIELD_BYTES),
+            name: clipped(ctx, text(label["name"]), FIELD_BYTES),
             type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
           });
           const size = jsonBytes(row) + (labels.length > 0 ? 1 : 0);
@@ -1722,7 +1736,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         return compact({
           labels,
           labelsOmitted: omitted > 0 ? omitted : undefined,
-          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ids, next, "list_labels", call) : null },
+          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ctx, ids, next, "list_labels", call) : null },
         });
       },
     },
@@ -1776,6 +1790,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const drafts = await mapLimited(asArray(listing["drafts"]).map(asRecord), SUMMARY_CONCURRENCY, (row) =>
           unlessGone(async () =>
             projectDraftSummary(
+              ctx,
               await client.json(
                 {
                   method: "GET",
@@ -1787,7 +1802,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ),
           ),
         );
-        return { drafts: drafts.filter((draft) => draft !== undefined), page: gmailPage(listing, "list_drafts", call) };
+        return {
+          drafts: drafts.filter((draft) => draft !== undefined),
+          page: gmailPage(ctx, listing, "list_drafts", call),
+        };
       },
     },
     {
@@ -2012,33 +2030,35 @@ function gmailConnector(id: string, options: GmailOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Gmail (drafts only)",
+        description: `Gmail as the signed-in Workspace user: read mail and write drafts, never send — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
+          // Required: whose mailbox it is, and that update_draft replaces the
+          // body, are conventions no schema can carry.
+          required: true,
+        },
+        // Every tool's result passes the whole-size postcondition on its way out.
+        tools: tools(client).map((tool) => ({
+          ...tool,
+          handler: async (args, ctx) =>
+            deliverable(
+              tool.name,
+              await tool.handler(args, ctx),
+              tool.name === "get_attachment" && typeof args["maxBytes"] === "number"
+                ? args["maxBytes"]
+                : RESULT_BUDGET_BYTES,
+            ),
+        })),
       }),
-      title: options.title ?? "Gmail (drafts only)",
-      description: `Gmail as the signed-in Workspace user: read mail and write drafts, never send — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
-        // Required: whose mailbox it is, and that update_draft replaces the
-        // body, are conventions no schema can carry.
-        required: true,
-      },
-      // Every tool's result passes the whole-size postcondition on its way out.
-      tools: tools(client).map((tool) => ({
-        ...tool,
-        handler: async (args, ctx) =>
-          deliverable(
-            tool.name,
-            await tool.handler(args, ctx),
-            tool.name === "get_attachment" && typeof args["maxBytes"] === "number"
-              ? args["maxBytes"]
-              : RESULT_BUDGET_BYTES,
-          ),
-      })),
-    }),
+    ),
   );
 }

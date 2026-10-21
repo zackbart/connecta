@@ -682,7 +682,8 @@ opaque state and input responses is a continuation, not an automatic replay.
 The sealed arguments digest prevents using that continuation for fresh write
 arguments. A timeout or other failure during a continuation leaves its nonce
 spent, so it cannot authorize a second attempt. Write continuations stop at an
-HTTP 401 or redirect before the SDK can refresh authorization or resend the call.
+HTTP 401 or redirect before the SDK can refresh authorization or resend the call;
+an ordinary write lets the refresh run and stops only the resend.
 HTTP 403 scope escalation also remains disabled. Read continuations retain normal
 OAuth refresh behavior.
 
@@ -697,8 +698,16 @@ capped at 128 KiB. `input_required_invalid`, `input_required_limit`,
 and `input_required_unsupported` are non-retryable typed failures;
 `input_required_round_limit` is an untyped failure with `retryable: false`.
 
-Programs and in-process meta-tools return `input_required_unsupported`, with a
-`nextAction` naming the equivalent direct call and bounded original arguments.
+For a read, programs and in-process meta-tools return
+`input_required_unsupported`, with a `nextAction` naming the equivalent direct
+call and bounded original arguments. A downstream asks for input from inside
+its handler, so a write that suspends may already have applied. A write's
+`input_required_unsupported` is `retryable: false` with
+`writeOutcome: "unknown"`, carries no `nextAction`, and its `retry` says to
+re-read the target before any fresh call; a program counts it in
+`writes.unknown`. A direct write whose input cannot be relayed (no sealing
+vault, the round limit, or private state over its cap) also carries
+`writeOutcome: "unknown"` and is never told to start a new request.
 Programs never receive downstream state or prompts, and never restart to
 fulfill downstream input.
 
@@ -886,15 +895,16 @@ exposing backend error text.
 Submitted `writeOnly` values also enter the call's sent-secret output redaction
 set, including property names inside private object subtrees. Downstream
 result and error text quoting them, in raw or credential-supported encoded
-forms, is redacted before direct-call output, program returns, logs, and emits,
-or result stash persistence; paging in a later request reads already-redacted
-bytes. A program's `connecta.read` resources, connector usage guides, and
-downstream `connecta.skill` files take the same rules before the program sees
-them. JSON stays valid: a matching number or boolean becomes `"[redacted]"`.
-Empty private strings are exempt. A private value shorter than eight characters
-redacts only structured fields that equal it, so identifiers and approval state
-remain, and withholds prose that contains it, including error messages, while
-typed classification, retry facts, and write outcome remain.
+forms, or any run of eight consecutive units of one, is redacted before
+direct-call output, program returns, logs, and emits, or result stash
+persistence; paging in a later request reads already-redacted bytes. A
+program's `connecta.read` resources, connector usage guides, and downstream
+`connecta.skill` files take the same rules before the program sees them. JSON
+stays valid: a matching number or boolean becomes `"[redacted]"`. Empty private
+strings are exempt. A private value of one to three characters is withheld only
+where a whole string, property name, number, or boolean equals it; one of four
+to seven characters is also replaced wherever it occurs in result and error
+text. Typed classification, retry facts, and write outcome remain.
 Work limits withhold the affected text without failing the call. See
 [output redaction](./auth.md#what-a-servers-errors-may-say)
 for the shared encoding, budget, and argument-filter contract.
@@ -945,23 +955,121 @@ A write that times out after dispatch returns `write_outcome_unknown` with
 `retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted?, recovery? }`.
 No write is automatically replayed. `recovery` carries facts the connector
 recorded before dispatch, such as a REST connector's
-generated or caller-supplied `idempotencyKey`. Recovery accepts keys up to 255
+generated or caller-supplied `idempotencyKey`. A caller-supplied key that is
+empty once leading and trailing whitespace is removed is refused with
+`invalid_args` before dispatch and never recorded: fetch would send it empty,
+which is no key. Recovery accepts keys up to 255
 characters, matching the REST write schema. Other recovery values remain capped
 at 128 characters, with at most four facts per call and camelCase names of at
-most 32 characters. Values outside these bounds are dropped whole. A deliberate
+most 32 characters. Values outside these bounds are dropped whole. A recovery
+key is a diagnostic. Only when the call sent exactly one write, carrying that
+key, through the one connector it entered does `retry` add that a deliberate
 retry that reuses the key with the exact original arguments cannot repeat the
 write while the vendor retains the key
 (Stripe may prune v1 keys after 24 hours). After that, look the object up before
-retrying. When a connector recorded such facts, any other dispatched write whose
+retrying. The advice needs one boundary that owns the call and exactly one
+dispatched write carrying the key; GET and HEAD reads beside it do not count.
+A second write, a write the key did not travel on, or a connector that wraps
+another or enters more than one boundary never gets it, since reusing the key
+would protect that request alone. A key generated but never sent (a write
+refused before dispatch, such as one with no configured credential) stays in
+the message as a diagnostic, with no reuse advice, direct or served. When a connector recorded such facts, any other dispatched write whose
 outcome is unknown (a lost response body, a 5xx) also carries `uncertainCall`
 with them under its own code, and program write accounting keeps it. `args` may be partial reconciliation context
 with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget
 carry `argsOmitted: true`; sensitive or unresolved schemas also carry
 `argsRedacted: true`. When `args` is absent or redacted, use the original
 arguments if reconciliation requires another call. A timeout before dispatch remains `timeout`.
+A connector's `callTool` called directly from code, outside an invocation, has
+no such boundary: a write that may have been dispatched and then timed out
+(an SDK deadline or HTTP 408 included) keeps its code and timeout
+`details.code`, and is `retryable: false` with `writeOutcome: "unknown"`. A
+write the caller's own signal aborted after it may have been dispatched is
+the same: `timeout` when the reason is one (`AbortSignal.timeout`), else
+`connector_call_failed`, with the caller's reason as its `cause` (a redacted
+copy of the same class where the connector's output redaction applies, as on
+`remoteMcp()`) and the reason's class and code in `details` (`{ name: "TimeoutError", code:
+"timeout" }`). Only an idempotency key the vendor receives keeps such a direct
+write's retry advice: a key that is blank once trimmed, or that holds a
+character fetch cannot send in a header, is refused as `invalid_args`. A
+direct read's timeout stays retryable, and a direct read's own abort reason is
+rethrown unchanged.
 Program write accounting keeps this detail even if the guest catches the
 failure or returns early. Multiple uncertain writes use `uncertainCalls`,
 bounded to ten calls with `uncertainCallsTruncated` when more exist.
+
+A dispatched write is never reported as retryable once the downstream may
+have acted on it (INV-9). A 5xx (a gateway's 502 to 504 included), any
+network failure of its send (a refused connection included), or a reply that
+broke off is a non-retryable `connector_call_failed` whose outcome is unknown,
+from `remoteMcp()`, `api()` handlers, and the maintained providers alike;
+reads keep their retryable verdict. One send can hide several attempts:
+Node's fetch sends a request again after HTTP 421 and after an HTTP/2
+`REFUSED_STREAM`, both of which servers define as not processed, and an
+operator-installed dispatcher such as undici's `RetryAgent` can retry further,
+so a refusal on the last attempt says nothing about the earlier ones.
+Connecta therefore never reports a transport-failed write as known failed. A
+write stays a known failure, with its own advice, only on refusal provenance
+recorded where the evidence was observed: connecta refused it before it left,
+or the downstream served an HTTP refusal, a 4xx other than 408 that its
+provider reads as a refusal. A 408 is a timeout, and a refusing status the
+provider reads as `unavailable` or a timeout (Stripe's 424) does not prove the
+write unapplied, so a keyless Stripe write answered 424 is unknown. An error
+code is never that evidence by itself. A `rate_limited`,
+`invalid_args`, or any other code thrown after a 2xx (by a response mapper,
+a parser, or an output-schema check) or after a 408, and any JSON-RPC error a
+`remoteMcp()` server returns once the `tools/call` was sent (`-32602`
+included: a server can run the tool and then reject its own result), keeps
+its code and message for diagnostics but is `retryable: false` with
+`writeOutcome: "unknown"`, on a direct and a served call alike, and counts in
+a program's `writes.unknown`. A `remoteMcp()` write refused at the HTTP layer
+with a 4xx other than 408, or before its `tools/call` was sent, stays a known
+failure. A custom connector can show no such provenance: a served write whose
+`callTool` throws after it was entered is `retryable: false` with
+`writeOutcome: "unknown"` whatever its code, and gets no retry advice
+(neither "grant the permission, then retry" nor "correct the arguments and
+retry"). That includes a refusal it rethrows from a call it made to another
+connector: refusal evidence holds only for the whole call, so a custom
+connector that deletes one Stripe customer and is then refused 429 on a
+second reports the unknown outcome. A served write whose downstream MCP tool
+answers `isError` came back over a 2xx after the tool ran, so it is unknown
+too, with its text kept; a read's `isError` stays a known answer. No text on
+an unknown write says to retry it: a rate limit's or overload's wait-and-retry
+wording is dropped from its message, and an authorization or credential
+handoff (`instructions`) says to re-read the target before any fresh call
+instead of to retry the original call. A read, and a write with a known
+outcome, keep that advice. A failure during a composite
+call's later request leaves earlier requests' outcomes unknown, and once the
+call's outcome is decided, a request that had not left is never sent. A
+write the downstream answered with HTTP 401 is not resent: the credential is
+renewed (an OAuth refresh, Google Workspace's next token, Infisical's login)
+for any fresh call after the target is reconciled, and the call reports the
+same unknown outcome. If
+renewal fails, an authorization verdict keeps its code with `retryable: false`
+and `reconciliationRequired: true`, and anything else is the unknown outcome.
+A `remoteMcp()` write answered with a redirect is not sent to the new location,
+whatever the connector's `redirects` setting, and reports the unknown outcome;
+reads follow same-origin redirects as configured. An error whose write outcome
+is unknown carries `writeOutcome: "unknown"` unless its code is already
+`write_outcome_unknown`, and a program that sent the write fails with it counted
+in `writes.unknown` even when the program caught the failure. When that write
+met an authorization verdict, the program's error is that verdict, as a direct
+call reports it: its code, `connector`, `recovery`, and `nextAction`, with
+`writeOutcome: "unknown"` and `reconciliationRequired: true`. Any other unknown
+write makes it `write_outcome_unknown`.
+
+The classification served for the call decides this advice, including deployment
+`classification` overrides. For example, `classification: { crm: { get_person:
+"write" } }` makes a dispatched `crm.get_person` that receives HTTP 503 report
+`retryable: false` and `writeOutcome: "unknown"`, even if its request uses GET.
+A served read keeps the provider's read retry advice even if its request uses
+POST. Tool defaults and HTTP methods supply a fallback only when no served
+classification exists. A vendor idempotency key does not change an uncertain
+served write into retry advice; its recovery facts still help reconcile the
+target before any fresh call. An operation hint (a whole-resource `PUT`,
+fixed spreadsheet cells, a content-addressed upload) grants no retry credit on
+any call, direct or served: only an idempotency key the vendor honors, which is
+Stripe's today, keeps a direct write's retry advice.
 
 Retryability comes from typed errors, HTTP status, registered OAuth error codes,
 SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:

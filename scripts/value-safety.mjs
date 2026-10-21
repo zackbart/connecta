@@ -7,7 +7,7 @@
 // return it. Field-by-field redaction over a whole API cannot converge, so
 // every REST vendor reviews each operation this module flags with a verdict —
 // `refuse`, `redact` (reviewed field paths), or `safe` — in its
-// `value-safety.ts`, and the shared harness
+// `safety.ts` (`value-safety.ts` until its step 1), and the shared harness
 // (`src/providers/_shared/rest/value-safety-harness.ts`) fails when a flagged
 // operation has none, or a flagged field is neither redacted nor kept.
 //
@@ -15,12 +15,13 @@
 // it (Cloudflare's generator `responseSecrets` and Vercel's candidates file),
 // and deliberately over-inclusive; the review decides.
 //
-// `generate-openapi.mjs` writes the result to `value-safety.candidates.json`
-// beside the index when the source record sets `"valueSafety"`, stamped with
+// `generate-openapi.mjs` writes the result to `evidence/value-safety.json`
+// (`value-safety.candidates.json` in a folder that has not landed its step 1)
+// when the source record sets `"valueSafety"`, stamped with
 // the pinned digest and this format, so a moved pin or a tightened rule
 // forces a fresh review.
 
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -512,27 +513,37 @@ export function reviewedPaths(document, table, options = {}) {
   return { operations, resources, bindings, unresolved };
 }
 
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * A provider's reviewed table (the `value-safety.ts` export with
- * `operations`) and its acknowledged absent paths (`value-safety.absent.json`),
- * for `providers:spec`, which runs under tsx so it can read TypeScript.
+ * A provider's reviewed table (the export with `operations`) and its
+ * acknowledged absent paths, for `providers:spec`, which runs under tsx so it
+ * can read TypeScript. Under decision 0011's layout the table is in
+ * `safety.ts` and its `absent` field carries the acknowledgements with their
+ * reason; a folder that has not landed its step 1 keeps `value-safety.ts` and
+ * `value-safety.absent.json`. A folder mixing the two is refused.
  */
 export async function reviewedTable(directory) {
-  let module;
-  try {
-    module = await import(pathToFileURL(join(directory, "value-safety.ts")).href);
-  } catch (error) {
-    if (error?.code === "ERR_MODULE_NOT_FOUND") return undefined;
-    throw error;
+  const [standard, legacy, legacyAbsent] = await Promise.all(
+    ["safety.ts", "value-safety.ts", "value-safety.absent.json"].map((name) => exists(join(directory, name))),
+  );
+  if (standard && (legacy || legacyAbsent)) {
+    throw new Error(`${directory}: safety.ts carries the reviewed table and its absent paths; remove value-safety.*`);
   }
+  if (!standard && !legacy) return undefined;
+  const module = await import(pathToFileURL(join(directory, standard ? "safety.ts" : "value-safety.ts")).href);
   const table = Object.values(module).find((value) => value && typeof value === "object" && "operations" in value);
-  let absent = { operations: {}, resources: {} };
-  try {
-    absent = { ...absent, ...JSON.parse(await readFile(join(directory, "value-safety.absent.json"), "utf8")) };
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  return table ? { table, absent } : undefined;
+  if (!table) return undefined;
+  let absent = standard ? (table.absent ?? {}) : {};
+  if (legacyAbsent) absent = JSON.parse(await readFile(join(directory, "value-safety.absent.json"), "utf8"));
+  return { table, absent: { operations: {}, resources: {}, ...absent } };
 }
 
 /**

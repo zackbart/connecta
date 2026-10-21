@@ -76,11 +76,13 @@ it("INV-5: long credentials bound the matcher, so ordinary output survives a 128
 }, 60_000);
 
 it("INV-5: self-similar text shares long-form checks, so it cannot exhaust a 128 MiB heap and stays exact", () => {
+  // Identifiers are matched whole, by the long-form checks. A credential's every eight-unit
+  // run also matches, so an all-"s" text would be a fragment of these forms.
   const outcome = lowHeap(`
     const { SentSecrets } = await import("./src/sent-secrets.ts");
     const make = (length, count) => {
       const secrets = new SentSecrets();
-      for (let i = 0; i < count; i++) secrets.add("s".repeat(length) + "-end-" + String(i).padStart(2, "0"));
+      for (let i = 0; i < count; i++) secrets.identifier("s".repeat(length) + "-end-" + String(i).padStart(2, "0"));
       return secrets;
     };
     const measured = (size, count) => {

@@ -461,6 +461,37 @@ describe("api() transport diagnostics", () => {
     },
   );
 
+  it("INV-9: a write handler's network failure is an unknown outcome, never retryable, and a read's stays unavailable", async () => {
+    const failing = (code: string) => async () => {
+      throw code === "AbortError"
+        ? new DOMException("deadline", "AbortError")
+        : new TypeError("fetch failed", { cause: { code } });
+    };
+    for (const code of ["ECONNREFUSED", "ECONNRESET", "AbortError"]) {
+      const connector = api("crm", {
+        tools: [
+          { name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: failing(code) },
+          { name: "write", description: "Write", annotations: { readOnlyHint: false }, handler: failing(code) },
+        ],
+      });
+      const read = await connector.callTool("read", {}, ctx()).catch((error: unknown) => error);
+      expect(classifyCallError(read)).toMatchObject({ code: "unavailable", retryable: true });
+      const write = await connector.callTool("write", {}, ctx()).catch((error: unknown) => error);
+      // A handler may have sent its write before any fetch failed, so even a
+      // refused connection proves nothing; a deadline stays a timeout, which
+      // the invocation layer reports as write_outcome_unknown.
+      expect(classifyCallError(write)).toMatchObject(
+        code === "AbortError"
+          ? { code: "unavailable", details: { code: "timeout" } }
+          : {
+              code: "connector_call_failed",
+              retryable: false,
+              message: expect.stringContaining("Whether the write took effect at crm is unknown"),
+            },
+      );
+    }
+  });
+
   it("preserves sanitized typed details and never types provider prose", async () => {
     const typed = new ConnectorCallError("unavailable", "unreachable", {
       details: { host: "https://user:secret@example.com:8443/private?token=secret", code: "ENOTFOUND" },

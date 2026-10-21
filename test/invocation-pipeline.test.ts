@@ -172,12 +172,18 @@ describe("what a write's outcome can know", () => {
     expect(call).not.toHaveBeenCalled();
   });
 
-  it("tells an answer from silence", async () => {
+  it("INV-9: a write's isError is no answer, the same as silence (round 13)", async () => {
+    // It arrives over a 2xx after the handler ran, so it proves nothing unapplied.
     const answered = await send(
       writer(async () => ({ isError: true, content: [{ type: "text", text: "no such thread" }] }), "mcp"),
       { to: "a" },
     );
-    expect(answered).toMatchObject({ ok: false, dispatched: true, answered: true });
+    expect(answered).toMatchObject({
+      ok: false,
+      dispatched: true,
+      answered: false,
+      error: { message: "no such thread", retryable: false, writeOutcome: "unknown" },
+    });
     const silent = await send(
       writer(async () => {
         throw new TypeError("fetch failed");

@@ -1,0 +1,1932 @@
+[
+  {
+    "label": "get_presentation",
+    "tool": "get_presentation",
+    "args": {
+      "presentationId": "deck1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-get-presentation@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "title": "Easter Sunday",
+        "revisionId": "rev-1",
+        "url": "https://docs.google.com/presentation/d/deck1/edit",
+        "locale": "en",
+        "pageSize": {
+          "width": {
+            "magnitude": 9144000,
+            "unit": "EMU"
+          },
+          "height": {
+            "magnitude": 5143500,
+            "unit": "EMU"
+          }
+        },
+        "slideCount": 3,
+        "layouts": [
+          {
+            "objectId": "M1",
+            "kind": "master",
+            "displayName": "Light"
+          },
+          {
+            "objectId": "L1",
+            "kind": "layout",
+            "name": "TITLE",
+            "displayName": "Title slide",
+            "masterId": "M1"
+          },
+          {
+            "objectId": "L2",
+            "kind": "layout",
+            "name": "TITLE_AND_BODY",
+            "displayName": "Title and body",
+            "masterId": "M1"
+          }
+        ],
+        "slides": [
+          {
+            "objectId": "p",
+            "index": 0,
+            "layout": "Title slide",
+            "layoutId": "L1",
+            "title": "Easter Sunday",
+            "elements": [
+              {
+                "objectId": "title",
+                "kind": "shape",
+                "placeholder": "CENTERED_TITLE",
+                "text": "Easter Sunday"
+              },
+              {
+                "objectId": "body",
+                "kind": "shape",
+                "placeholder": "SUBTITLE",
+                "text": "He is risen\nindeed"
+              }
+            ],
+            "omittedElements": 1,
+            "notesPageId": "p_notes",
+            "notes": "Welcome everyone."
+          },
+          {
+            "objectId": "s2",
+            "index": 1,
+            "layout": "Title and body",
+            "layoutId": "L2",
+            "skipped": true,
+            "elements": [
+              {
+                "objectId": "photo",
+                "kind": "image",
+                "altText": "Empty tomb: Sunrise photo"
+              },
+              {
+                "objectId": "g-table",
+                "kind": "table",
+                "text": "Time\tService\n9:00\tSunrise service"
+              },
+              {
+                "objectId": "chart",
+                "kind": "chart",
+                "spreadsheetId": "sheet1"
+              }
+            ]
+          },
+          {
+            "objectId": "s3",
+            "index": 2,
+            "layout": "Title and body",
+            "layoutId": "L2",
+            "elements": []
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        }
+      }
+    }
+  },
+  {
+    "label": "get_presentation raw",
+    "tool": "get_presentation",
+    "args": {
+      "presentationId": "deck1",
+      "raw": true,
+      "limit": 1
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-get-presentation-raw@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "title": "Easter Sunday",
+        "revisionId": "rev-1",
+        "url": "https://docs.google.com/presentation/d/deck1/edit",
+        "locale": "en",
+        "pageSize": {
+          "width": {
+            "magnitude": 9144000,
+            "unit": "EMU"
+          },
+          "height": {
+            "magnitude": 5143500,
+            "unit": "EMU"
+          }
+        },
+        "slideCount": 3,
+        "slides": [
+          {
+            "objectId": "p",
+            "slideProperties": {
+              "layoutObjectId": "L1",
+              "notesPage": {
+                "objectId": "p_notes",
+                "notesProperties": {
+                  "speakerNotesObjectId": "n1"
+                },
+                "pageElements": [
+                  {
+                    "objectId": "slideImage",
+                    "image": {
+                      "contentUrl": "https://lh3.example/y"
+                    }
+                  },
+                  {
+                    "objectId": "n1",
+                    "shape": {
+                      "shapeType": "TEXT_BOX",
+                      "text": {
+                        "textElements": [
+                          {
+                            "startIndex": 0,
+                            "endIndex": 1,
+                            "paragraphMarker": {
+                              "style": {}
+                            }
+                          },
+                          {
+                            "textRun": {
+                              "content": "Welcome everyone.\n",
+                              "style": {
+                                "bold": true
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "pageElements": [
+              {
+                "objectId": "body",
+                "transform": {
+                  "scaleX": 1,
+                  "scaleY": 1,
+                  "translateX": 311700,
+                  "translateY": 2000000,
+                  "unit": "EMU"
+                },
+                "shape": {
+                  "shapeType": "TEXT_BOX",
+                  "placeholder": {
+                    "type": "SUBTITLE"
+                  },
+                  "text": {
+                    "textElements": [
+                      {
+                        "startIndex": 0,
+                        "endIndex": 1,
+                        "paragraphMarker": {
+                          "style": {}
+                        }
+                      },
+                      {
+                        "textRun": {
+                          "content": "He is risen\u000bindeed\n",
+                          "style": {
+                            "bold": true
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "objectId": "title",
+                "transform": {
+                  "scaleX": 1,
+                  "scaleY": 1,
+                  "translateX": 311700,
+                  "translateY": 744575,
+                  "unit": "EMU"
+                },
+                "shape": {
+                  "shapeType": "TEXT_BOX",
+                  "placeholder": {
+                    "type": "CENTERED_TITLE"
+                  },
+                  "text": {
+                    "textElements": [
+                      {
+                        "startIndex": 0,
+                        "endIndex": 1,
+                        "paragraphMarker": {
+                          "style": {}
+                        }
+                      },
+                      {
+                        "textRun": {
+                          "content": "Easter ",
+                          "style": {
+                            "bold": true
+                          }
+                        }
+                      },
+                      {
+                        "textRun": {
+                          "content": "Sunday\n",
+                          "style": {
+                            "bold": true
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "objectId": "rule",
+                "transform": {
+                  "scaleX": 1,
+                  "scaleY": 1,
+                  "translateX": 0,
+                  "translateY": 1500000,
+                  "unit": "EMU"
+                },
+                "line": {
+                  "lineType": "STRAIGHT_LINE"
+                }
+              }
+            ]
+          }
+        ],
+        "page": {
+          "hasMore": true,
+          "nextCursor": "eyJrIjoiZGVjayIsInAiOiJkZWNrMSIsInMiOiJyOnJldi0xIiwicmF3IjoxLCJpIjoxfQ"
+        }
+      }
+    }
+  },
+  {
+    "label": "get_page",
+    "tool": "get_page",
+    "args": {
+      "presentationId": "deck1",
+      "pageObjectId": "s2"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-get-page@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1/pages/s2?fields=objectId%2CpageType%2CrevisionId%2CslideProperties%28layoutObjectId%2CmasterObjectId%2CisSkipped%2CnotesPage%28objectId%29%29%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%2CmasterProperties%28displayName%29%2CnotesProperties%28speakerNotesObjectId%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "pageObjectId": "s2",
+        "revisionId": "rev-1",
+        "pageType": "SLIDE",
+        "layoutId": "L2",
+        "masterId": "M1",
+        "notesPageId": "s2_notes",
+        "skipped": true,
+        "elementCount": 3,
+        "elements": [
+          {
+            "objectId": "photo",
+            "kind": "image",
+            "altText": "Empty tomb: Sunrise photo"
+          },
+          {
+            "objectId": "g-table",
+            "kind": "table",
+            "groupId": "group",
+            "text": "Time\tService\n9:00\tSunrise service"
+          },
+          {
+            "objectId": "chart",
+            "kind": "chart",
+            "spreadsheetId": "sheet1"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        }
+      }
+    }
+  },
+  {
+    "label": "list_layouts",
+    "tool": "list_layouts",
+    "args": {
+      "presentationId": "deck1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-list-layouts@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2CrevisionId%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-1",
+        "total": 3,
+        "layouts": [
+          {
+            "objectId": "M1",
+            "kind": "master",
+            "displayName": "Light"
+          },
+          {
+            "objectId": "L1",
+            "kind": "layout",
+            "name": "TITLE",
+            "displayName": "Title slide",
+            "masterId": "M1"
+          },
+          {
+            "objectId": "L2",
+            "kind": "layout",
+            "name": "TITLE_AND_BODY",
+            "displayName": "Title and body",
+            "masterId": "M1"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        }
+      }
+    }
+  },
+  {
+    "label": "list_comments",
+    "tool": "list_comments",
+    "args": {
+      "presentationId": "deck1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-list-comments@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1?commentsViewMode=COMMENTS_VIEW_MODE_INCLUDED&fields=presentationId%2CrevisionId%2CcommentsViewMode%2Ccomments%2Cslides%28objectId%2CcommentAnchors%2CslideProperties%28notesPage%28objectId%2CcommentAnchors%29%29%29%2Clayouts%28objectId%2CcommentAnchors%29%2Cmasters%28objectId%2CcommentAnchors%29%2CnotesMaster%28objectId%2CcommentAnchors%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-1",
+        "total": 2,
+        "threads": [
+          {
+            "commentId": "c1",
+            "anchorId": "a1",
+            "status": "OPEN",
+            "pageObjectIds": [
+              "p"
+            ],
+            "objectIds": [
+              "body"
+            ],
+            "replyCount": 2,
+            "quote": "He is risen",
+            "headPost": {
+              "postId": "p1",
+              "author": {
+                "user": "users/1001",
+                "displayName": "Alice",
+                "me": true
+              },
+              "createTime": "2026-01-01T10:13:12Z",
+              "updateTime": "2026-01-01T10:13:12Z",
+              "content": "Should this be bigger?"
+            },
+            "replies": [
+              {
+                "postId": "p2",
+                "author": {
+                  "user": "users/2002",
+                  "displayName": "Bob"
+                },
+                "createTime": "2026-01-01T10:13:12Z",
+                "updateTime": "2026-01-01T10:13:12Z",
+                "content": "Agreed."
+              },
+              {
+                "postId": "p3",
+                "author": {
+                  "user": "users/2002",
+                  "displayName": "Bob"
+                },
+                "commentAction": "RESOLVE",
+                "createTime": "2026-01-01T10:13:12Z",
+                "updateTime": "2026-01-01T10:13:12Z"
+              }
+            ]
+          },
+          {
+            "commentId": "c2",
+            "anchorId": "a2",
+            "status": "RESOLVED",
+            "pageObjectIds": [
+              "p_notes"
+            ],
+            "objectIds": [
+              "n1"
+            ],
+            "replyCount": 0,
+            "headPost": {
+              "postId": "p4",
+              "author": {
+                "anonymous": true
+              },
+              "createTime": "2026-01-01T10:13:12Z",
+              "updateTime": "2026-01-01T10:13:12Z",
+              "content": "Typo in the notes"
+            }
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        }
+      }
+    }
+  },
+  {
+    "label": "get_slide_thumbnail",
+    "tool": "get_slide_thumbnail",
+    "args": {
+      "presentationId": "deck1",
+      "slideObjectId": "g1a2b3c_0:4",
+      "size": "MEDIUM"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-get-slide-thumbnail@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1/pages/g1a2b3c_0%3A4/thumbnail?thumbnailProperties.mimeType=PNG&thumbnailProperties.thumbnailSize=MEDIUM",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "contentUrl": "https://lh7.googleusercontent.com/thumb",
+        "width": 800,
+        "height": 450
+      }
+    }
+  },
+  {
+    "label": "create_presentation",
+    "tool": "create_presentation",
+    "args": {
+      "title": "Staff meeting"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-create-presentation@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "title": "Staff meeting"
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "new1",
+        "revisionId": "rev-1",
+        "title": "Staff meeting",
+        "url": "https://docs.google.com/presentation/d/new1/edit",
+        "slideObjectIds": [
+          "p"
+        ]
+      }
+    }
+  },
+  {
+    "label": "create_slide",
+    "tool": "create_slide",
+    "args": {
+      "presentationId": "deck1",
+      "layout": "TITLE_AND_BODY",
+      "insertionIndex": 1
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-create-slide@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "createSlide": {
+                    "insertionIndex": 1,
+                    "slideLayoutReference": {
+                      "predefinedLayout": "TITLE_AND_BODY"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-2",
+        "slideObjectId": "gNew"
+      }
+    }
+  },
+  {
+    "label": "replace_all_text",
+    "tool": "replace_all_text",
+    "args": {
+      "presentationId": "deck1",
+      "replacements": [
+        {
+          "find": "{{date}}",
+          "replace": "April 20"
+        },
+        {
+          "find": "easter",
+          "replace": "Easter",
+          "matchCase": false
+        }
+      ],
+      "slideObjectIds": [
+        "p",
+        "s2"
+      ],
+      "requiredRevisionId": "rev-1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-replace-all-text@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "replaceAllText": {
+                    "containsText": {
+                      "text": "{{date}}",
+                      "matchCase": true
+                    },
+                    "replaceText": "April 20",
+                    "pageObjectIds": [
+                      "p",
+                      "s2"
+                    ]
+                  }
+                },
+                {
+                  "replaceAllText": {
+                    "containsText": {
+                      "text": "easter",
+                      "matchCase": false
+                    },
+                    "replaceText": "Easter",
+                    "pageObjectIds": [
+                      "p",
+                      "s2"
+                    ]
+                  }
+                }
+              ],
+              "writeControl": {
+                "requiredRevisionId": "rev-1"
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-2",
+        "occurrencesChanged": 3,
+        "replacements": [
+          {
+            "find": "{{date}}",
+            "occurrencesChanged": 3
+          },
+          {
+            "find": "easter",
+            "occurrencesChanged": 0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "create_comment",
+    "tool": "create_comment",
+    "args": {
+      "presentationId": "deck1",
+      "objectId": "body",
+      "textRange": {
+        "startIndex": 0,
+        "endIndex": 11
+      },
+      "content": "Bigger?",
+      "assigneeEmail": "bob@example.com"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-create-comment@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "insertComment": {
+                    "shapeTextAnchor": {
+                      "objectId": "body",
+                      "textRange": {
+                        "type": "FIXED_RANGE",
+                        "startIndex": 0,
+                        "endIndex": 11
+                      }
+                    },
+                    "content": "Bigger?",
+                    "assigneeEmailAddress": "bob@example.com"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-2",
+        "commentId": "c9",
+        "anchorId": "a9",
+        "status": "OPEN",
+        "headPost": {
+          "postId": "p9",
+          "author": {
+            "user": "users/1001",
+            "displayName": "Alice",
+            "me": true
+          },
+          "createTime": "2026-01-01T10:13:12Z",
+          "updateTime": "2026-01-01T10:13:12Z",
+          "content": "Bigger?"
+        }
+      }
+    }
+  },
+  {
+    "label": "create_comment_reply",
+    "tool": "create_comment_reply",
+    "args": {
+      "presentationId": "deck1",
+      "commentId": "c1",
+      "content": "Done"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-create-comment-reply@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "addCommentReply": {
+                    "commentId": "c1",
+                    "post": {
+                      "content": "Done"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "commentId": "c1",
+        "post": {
+          "postId": "p11",
+          "author": {
+            "user": "users/2002",
+            "displayName": "Bob"
+          },
+          "createTime": "2026-01-01T10:13:12Z",
+          "updateTime": "2026-01-01T10:13:12Z",
+          "content": "Done"
+        }
+      }
+    }
+  },
+  {
+    "label": "update_comment_thread",
+    "tool": "update_comment_thread",
+    "args": {
+      "presentationId": "deck1",
+      "commentId": "c1",
+      "status": "RESOLVED"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-update-comment-thread@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "addCommentReply": {
+                    "commentId": "c1",
+                    "post": {
+                      "commentAction": "RESOLVE"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "commentId": "c1",
+        "post": {
+          "postId": "p12",
+          "author": {
+            "user": "users/2002",
+            "displayName": "Bob"
+          },
+          "commentAction": "RESOLVE",
+          "createTime": "2026-01-01T10:13:12Z",
+          "updateTime": "2026-01-01T10:13:12Z"
+        }
+      }
+    }
+  },
+  {
+    "label": "update_comment_post",
+    "tool": "update_comment_post",
+    "args": {
+      "presentationId": "deck1",
+      "commentId": "c1",
+      "postId": "p1",
+      "content": "Smaller?"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-update-comment-post@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "updateCommentPost": {
+                    "commentId": "c1",
+                    "postId": "p1",
+                    "content": "Smaller?"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-3",
+        "commentId": "c1",
+        "postId": "p1"
+      }
+    }
+  },
+  {
+    "label": "delete_comment",
+    "tool": "delete_comment",
+    "args": {
+      "presentationId": "deck1",
+      "commentId": "c1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-delete-comment@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "deleteComment": {
+                    "commentId": "c1"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-3",
+        "commentId": "c1"
+      }
+    }
+  },
+  {
+    "label": "delete_comment_reply",
+    "tool": "delete_comment_reply",
+    "args": {
+      "presentationId": "deck1",
+      "commentId": "c1",
+      "postId": "p2"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-delete-comment-reply@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "deleteCommentReply": {
+                    "commentId": "c1",
+                    "postId": "p2"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-3",
+        "commentId": "c1",
+        "postId": "p2"
+      }
+    }
+  },
+  {
+    "label": "batch_update_presentation",
+    "tool": "batch_update_presentation",
+    "args": {
+      "presentationId": "deck1",
+      "requiredRevisionId": "rev-2",
+      "requests": [
+        {
+          "insertText": {
+            "objectId": "title",
+            "text": "Hello",
+            "insertionIndex": 0
+          }
+        },
+        {
+          "createShape": {
+            "shapeType": "TEXT_BOX",
+            "elementProperties": {
+              "pageObjectId": "p"
+            }
+          }
+        }
+      ]
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-batch-update-presentation@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "POST",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1:batchUpdate",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>",
+            "content-type": "application/json"
+          },
+          "body": {
+            "json": {
+              "requests": [
+                {
+                  "insertText": {
+                    "objectId": "title",
+                    "text": "Hello",
+                    "insertionIndex": 0
+                  }
+                },
+                {
+                  "createShape": {
+                    "shapeType": "TEXT_BOX",
+                    "elementProperties": {
+                      "pageObjectId": "p"
+                    }
+                  }
+                }
+              ],
+              "writeControl": {
+                "requiredRevisionId": "rev-2"
+              }
+            }
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "revisionId": "rev-3",
+        "replies": [
+          {},
+          {
+            "createShape": {
+              "objectId": "box2"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "label": "get_presentation echoes sent secrets",
+    "tool": "get_presentation",
+    "args": {
+      "presentationId": "deck1"
+    },
+    "steps": [
+      [
+        {
+          "after": 0,
+          "auxiliary": "token",
+          "method": "POST",
+          "url": "https://oauth2.googleapis.com/token",
+          "headers": {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": {
+            "form": [
+              [
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+              ],
+              [
+                "assertion",
+                {
+                  "jwt": {
+                    "header": {
+                      "alg": "RS256",
+                      "typ": "JWT"
+                    },
+                    "claims": {
+                      "iss": "slides-get-presentation-echoes-sent-secrets@project.iam.gserviceaccount.com",
+                      "sub": "alice@example.com",
+                      "scope": "https://www.googleapis.com/auth/presentations",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": 1767323045,
+                      "exp": 1767326645
+                    },
+                    "signature": "<signature>"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      [
+        {
+          "after": 1,
+          "method": "GET",
+          "url": "https://slides.googleapis.com/v1/presentations/deck1?fields=presentationId%2Ctitle%2CrevisionId%2Clocale%2CpageSize%2Cmasters%28objectId%2CmasterProperties%28displayName%29%29%2Clayouts%28objectId%2ClayoutProperties%28name%2CdisplayName%2CmasterObjectId%29%29%2CnotesMaster%28objectId%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%2CisSkipped%2CnotesPage%28objectId%2CnotesProperties%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%29%2CpageElements%28objectId%2Ctitle%2Cdescription%2Ctransform%2CelementGroup%2Cline%28lineType%29%2Cimage%28contentUrl%29%2Cvideo%28source%29%2CsheetsChart%28spreadsheetId%29%2CwordArt%2Ctable%28rows%2Ccolumns%2CtableRows%28tableCells%28text%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29%2Cshape%28shapeType%2Cplaceholder%28type%2Cindex%2CparentObjectId%29%2Ctext%28textElements%28textRun%28content%29%2CautoText%28content%29%29%29%29%29%29",
+          "headers": {
+            "accept": "application/json",
+            "authorization": "Bearer <secret:accessToken>"
+          }
+        }
+      ]
+    ],
+    "result": {
+      "ok": true,
+      "format": "json",
+      "value": {
+        "presentationId": "deck1",
+        "title": "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]",
+        "revisionId": "rev-1",
+        "url": "https://docs.google.com/presentation/d/deck1/edit",
+        "locale": "en",
+        "pageSize": {
+          "width": {
+            "magnitude": 9144000,
+            "unit": "EMU"
+          },
+          "height": {
+            "magnitude": 5143500,
+            "unit": "EMU"
+          }
+        },
+        "slideCount": 3,
+        "layouts": [
+          {
+            "objectId": "M1",
+            "kind": "master",
+            "displayName": "Light"
+          },
+          {
+            "objectId": "L1",
+            "kind": "layout",
+            "name": "TITLE",
+            "displayName": "Title slide",
+            "masterId": "M1"
+          },
+          {
+            "objectId": "L2",
+            "kind": "layout",
+            "name": "TITLE_AND_BODY",
+            "displayName": "Title and body",
+            "masterId": "M1"
+          }
+        ],
+        "slides": [
+          {
+            "objectId": "p",
+            "index": 0,
+            "layout": "Title slide",
+            "layoutId": "L1",
+            "title": "Easter Sunday",
+            "elements": [
+              {
+                "objectId": "title",
+                "kind": "shape",
+                "placeholder": "CENTERED_TITLE",
+                "text": "Easter Sunday"
+              },
+              {
+                "objectId": "body",
+                "kind": "shape",
+                "placeholder": "SUBTITLE",
+                "text": "He is risen\nindeed"
+              }
+            ],
+            "omittedElements": 1,
+            "notesPageId": "p_notes",
+            "notes": "Welcome everyone."
+          },
+          {
+            "objectId": "s2",
+            "index": 1,
+            "layout": "Title and body",
+            "layoutId": "L2",
+            "skipped": true,
+            "elements": [
+              {
+                "objectId": "photo",
+                "kind": "image",
+                "altText": "Empty tomb: Sunrise photo"
+              },
+              {
+                "objectId": "g-table",
+                "kind": "table",
+                "text": "Time\tService\n9:00\tSunrise service"
+              },
+              {
+                "objectId": "chart",
+                "kind": "chart",
+                "spreadsheetId": "sheet1"
+              }
+            ]
+          },
+          {
+            "objectId": "s3",
+            "index": 2,
+            "layout": "Title and body",
+            "layoutId": "L2",
+            "elements": []
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        }
+      }
+    }
+  }
+]

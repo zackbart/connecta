@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, ConnectorContext, ToolDef } from "../../types.js";
 import { guideOf, servedTools, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
-import { ConnectorCallError } from "../../errors.js";
+import { classifyCallError, ConnectorCallError, keyResendAdviceOf } from "../../errors.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -660,8 +660,13 @@ describe("stripe() over an API key", () => {
     expect(key).toMatch(/^[0-9a-f-]{36}$/);
     expect(error.code).toBe("unavailable");
     expect(error.message).toContain("Request req_1.");
-    expect(error.message).toContain(`Idempotency-Key: ${key}. Reusing it with the exact original arguments`);
-    expect(error.message).toContain("only while the vendor retains the key; after that, look the object up");
+    // The key is a diagnostic in the message; the advice to reuse it is a
+    // segment of its own, composed for this one keyed request (round 16).
+    expect(error.message).toMatch(new RegExp(`Idempotency-Key: ${key}\\.$`));
+    expect(keyResendAdviceOf(error)).toMatchObject({ key });
+    const direct = classifyCallError(error).message;
+    expect(direct).toContain(`Idempotency-Key: ${key}. Reusing it with the exact original arguments`);
+    expect(direct).toContain("only while the vendor retains the key; after that, look the object up");
     // A caller's own key is already the caller's; the failure is passed through.
     const own = await refusal(
       connector.callTool(

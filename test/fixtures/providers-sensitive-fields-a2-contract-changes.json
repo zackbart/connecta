@@ -1,0 +1,93 @@
+{
+  "breeze": {
+    "padded-purpose": {
+      "describe": "a790bdedb9357d31354c0d6685a4e98841c492e0bfe516c8610f2cbc7dabdc83"
+    },
+    "empty-title": {
+      "describe": "a790bdedb9357d31354c0d6685a4e98841c492e0bfe516c8610f2cbc7dabdc83"
+    },
+    "blank-title": {
+      "describe": "a790bdedb9357d31354c0d6685a4e98841c492e0bfe516c8610f2cbc7dabdc83"
+    },
+    "default": {
+      "describe": "a790bdedb9357d31354c0d6685a4e98841c492e0bfe516c8610f2cbc7dabdc83"
+    },
+    "instructions": {
+      "describe": "a790bdedb9357d31354c0d6685a4e98841c492e0bfe516c8610f2cbc7dabdc83"
+    }
+  },
+  "ccb": {
+    "padded-purpose": {
+      "guide": "e2b6887b550dfd944d8c1b9aca95e20dc47532496481814344161c5cd058d8e6",
+      "describe": "779afa49514c67269462abc2c00290ed22411e023a89d9f880d14292323d68a1"
+    },
+    "empty-title": {
+      "guide": "e2b6887b550dfd944d8c1b9aca95e20dc47532496481814344161c5cd058d8e6",
+      "describe": "779afa49514c67269462abc2c00290ed22411e023a89d9f880d14292323d68a1"
+    },
+    "blank-title": {
+      "guide": "e2b6887b550dfd944d8c1b9aca95e20dc47532496481814344161c5cd058d8e6",
+      "describe": "779afa49514c67269462abc2c00290ed22411e023a89d9f880d14292323d68a1"
+    },
+    "default": {
+      "guide": "e2b6887b550dfd944d8c1b9aca95e20dc47532496481814344161c5cd058d8e6",
+      "describe": "779afa49514c67269462abc2c00290ed22411e023a89d9f880d14292323d68a1"
+    },
+    "identity": {
+      "guide": "e127625d5a15c95f537ea22dc171a2096e7595af82c5b8df94a07e876d9c3fab",
+      "describe": "12cb3862aa0dfa0ebe8e43efedeb4985a6ddda72fec6c8671eb4cedbae605d62"
+    },
+    "instructions": {
+      "guide": "4e70c8147c4cf3c57470d6361622b4315316e94543c044ab250d3ed52aadf8c9",
+      "describe": "779afa49514c67269462abc2c00290ed22411e023a89d9f880d14292323d68a1"
+    }
+  },
+  "tithely": {
+    "padded-purpose": {
+      "guide": "b0d678542038aca022ef3ad517cec009df401eddfd9f726a305f1fccbf1a9092",
+      "describe": "58bdc3578ea9d2cb53f864b3e88e29aa91a7ca66687d41cf923de8eb27c9ee04"
+    },
+    "empty-title": {
+      "guide": "b0d678542038aca022ef3ad517cec009df401eddfd9f726a305f1fccbf1a9092",
+      "describe": "58bdc3578ea9d2cb53f864b3e88e29aa91a7ca66687d41cf923de8eb27c9ee04"
+    },
+    "blank-title": {
+      "guide": "b0d678542038aca022ef3ad517cec009df401eddfd9f726a305f1fccbf1a9092",
+      "describe": "58bdc3578ea9d2cb53f864b3e88e29aa91a7ca66687d41cf923de8eb27c9ee04"
+    },
+    "default": {
+      "guide": "b0d678542038aca022ef3ad517cec009df401eddfd9f726a305f1fccbf1a9092",
+      "describe": "58bdc3578ea9d2cb53f864b3e88e29aa91a7ca66687d41cf923de8eb27c9ee04"
+    },
+    "test": {
+      "guide": "f6062d3e8836058a627d624486cbf77c55ba5b63d60249985c98e246304a89b1",
+      "describe": "58bdc3578ea9d2cb53f864b3e88e29aa91a7ca66687d41cf923de8eb27c9ee04"
+    },
+    "instructions": {
+      "guide": "5057c8dbd237de7bf972eeccc89dde74a14d7c3af36d0d6f304d8a5b9bcecab2",
+      "describe": "58bdc3578ea9d2cb53f864b3e88e29aa91a7ca66687d41cf923de8eb27c9ee04"
+    }
+  },
+  "planning-center": {
+    "padded-purpose": {
+      "guide": "f0dc3dc338c3730014197711daa74e21c92c510d4df623b26adb71b5f1e8db0f",
+      "describe": "8562c2d434da0a5b1f92d73df5a3e0ae77b3350cc232c0890ddf752a52cabd3e"
+    },
+    "empty-title": {
+      "guide": "f0dc3dc338c3730014197711daa74e21c92c510d4df623b26adb71b5f1e8db0f",
+      "describe": "8562c2d434da0a5b1f92d73df5a3e0ae77b3350cc232c0890ddf752a52cabd3e"
+    },
+    "blank-title": {
+      "guide": "f0dc3dc338c3730014197711daa74e21c92c510d4df623b26adb71b5f1e8db0f",
+      "describe": "8562c2d434da0a5b1f92d73df5a3e0ae77b3350cc232c0890ddf752a52cabd3e"
+    },
+    "default": {
+      "guide": "f0dc3dc338c3730014197711daa74e21c92c510d4df623b26adb71b5f1e8db0f",
+      "describe": "8562c2d434da0a5b1f92d73df5a3e0ae77b3350cc232c0890ddf752a52cabd3e"
+    },
+    "instructions": {
+      "guide": "dba86d6658d15db9b437290b86ca7bdf5ec7920231b1c1024617711a9c10241c",
+      "describe": "8562c2d434da0a5b1f92d73df5a3e0ae77b3350cc232c0890ddf752a52cabd3e"
+    }
+  }
+}

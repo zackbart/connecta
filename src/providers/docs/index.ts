@@ -26,10 +26,12 @@ import { skill } from "./skill.generated.js";
  */
 import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";
 import type { GuardedRequest } from "../../connectors/guarded-fetch.js";
+import { providerCallFailure } from "../../write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -39,6 +41,8 @@ import {
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
+import { requestSentSecrets, redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
   GoogleServiceAccount,
@@ -202,9 +206,9 @@ function keptId(value: unknown, kind: keyof typeof ID_RULES, name: string, dropp
 /** Titles are prose: cut to this many JSON bytes with a marker, never dropped. */
 const TITLE_BYTES = 4 * 1024;
 
-function boundedTitle(value: unknown): string | undefined {
+function boundedTitle(ctx: ConnectorContext, value: unknown): string | undefined {
   const title = text(value);
-  return title === undefined ? undefined : clampText(title, TITLE_BYTES, (more) => `… [${more} more characters]`);
+  return title === undefined ? undefined : clampText(ctx, title, TITLE_BYTES, (more) => `… [${more} more characters]`);
 }
 
 function droppedField(dropped: string[]): string[] | undefined {
@@ -236,6 +240,8 @@ interface IndexRow {
 }
 
 interface RenderState {
+  /** The call, whose sent secrets a preview replaces before it cuts. */
+  ctx: ConnectorContext;
   sources: TabSources;
   /** Footnotes in the order the body first references them. */
   footnotes: { id: string; number: string }[];
@@ -351,6 +357,23 @@ function elementText(element: JsonRecord, state: RenderState): { text: string; u
   return { text: "" };
 }
 
+/** Check the source lane across paragraphs before closing newlines disappear.
+ * This also protects raw copies; each affected run keeps its link and style. */
+function protectDocumentText(ctx: ConnectorContext, document: JsonRecord): void {
+  const runs: JsonRecord[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    const run = asRecord(asRecord(value)["textRun"]);
+    if (typeof run["content"] === "string") runs.push(run);
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(document);
+  const safe = requestSentSecrets(ctx).parts(runs.map((run) => run["content"]));
+  runs.forEach((run, index) => {
+    run["content"] = safe[index];
+  });
+}
+
 /** Docs' soft line break (Shift+Enter) inside one paragraph. */
 const VERTICAL_TAB = String.fromCharCode(0x0b);
 
@@ -367,6 +390,11 @@ function paragraphText(paragraph: JsonRecord, state: RenderState): string {
     if (last && last.url === piece.url) last.text += piece.text;
     else pieces.push(piece);
   }
+  const safe = requestSentSecrets(state.ctx).parts(pieces.map((piece) => piece.text));
+  for (const [index, piece] of pieces.entries()) {
+    piece.text = safe[index]!;
+    if (piece.url) piece.url = redactBeforeCut(state.ctx, piece.url);
+  }
   const lastPiece = pieces[pieces.length - 1];
   if (lastPiece) lastPiece.text = lastPiece.text.replace(/\n$/, "");
   return pieces
@@ -381,8 +409,9 @@ function safeCut(value: string, max: number): number {
   return max > 0 && code >= 0xd800 && code <= 0xdbff ? max - 1 : max;
 }
 
-function preview(value: string): string {
-  const flat = value.replace(/\s+/g, " ").trim();
+function preview(ctx: ConnectorContext, value: string): string {
+  // Collapsing whitespace can join a value that spans lines, so the flat text is checked too.
+  const flat = redactBeforeCut(ctx, redactBeforeCut(ctx, value).replace(/\s+/g, " ").trim());
   return flat.length > PREVIEW_CHARS ? `${flat.slice(0, safeCut(flat, PREVIEW_CHARS))}…` : flat;
 }
 
@@ -413,7 +442,7 @@ function renderContent(content: unknown, state: RenderState, cell?: { row: numbe
           style: style && style !== "NORMAL_TEXT" ? style : undefined,
           row: cell?.row,
           column: cell?.column,
-          text: preview(body),
+          text: preview(state.ctx, body),
         }),
       );
     } else if (element["table"]) {
@@ -446,17 +475,18 @@ function renderContent(content: unknown, state: RenderState, cell?: { row: numbe
 
 /** One tab's body as text, with its footnotes after it. */
 function renderTab(
+  ctx: ConnectorContext,
   tab: JsonRecord,
   sources: TabSources,
   rows: IndexRow[] | undefined,
 ): { text: string; notRendered: (typeof NOT_RENDERED)[number][] } {
   const marks: Marks = { suggested: false, unknown: false };
-  const state: RenderState = { sources, footnotes: [], rows, marks };
+  const state: RenderState = { ctx, sources, footnotes: [], rows, marks };
   const lines = renderContent(asRecord(tab["body"])["content"], state);
   const notes = state.footnotes.map(({ id, number }) => {
     const footnote = asRecord(sources.footnotes[id]);
     // Footnote content is its own segment: rendered, never indexed.
-    const inner: RenderState = { sources, footnotes: [], rows: undefined, marks };
+    const inner: RenderState = { ctx, sources, footnotes: [], rows: undefined, marks };
     return `[^${number}]: ${renderContent(footnote["content"], inner).join(" ").trim()}`;
   });
   const present = (key: string) => Object.keys(asRecord(tab[key])).length > 0;
@@ -523,8 +553,11 @@ function endIndexOf(body: unknown): number | undefined {
   return integer(asRecord(content[content.length - 1])["endIndex"]);
 }
 
-/** Cut text at `max` characters, never inside a surrogate pair, and say so. */
-function capped(value: string, max: number): { text: string; textTruncated: boolean } {
+/** Cut text at `max` characters, never inside a surrogate pair, and say so. Every secret the
+ * request sent is replaced first: a cut through an echo leaves a fragment nothing redacts. */
+function capped(ctx: ConnectorContext, whole: string, max: number): { text: string; textTruncated: boolean } {
+  if (whole.length <= max) return { text: whole, textTruncated: false };
+  const value = redactBeforeCut(ctx, whole);
   if (value.length <= max) return { text: value, textTruncated: false };
   const cut = safeCut(value, max);
   const rest = value.length - cut;
@@ -552,12 +585,17 @@ function findRawTab(tabs: unknown, tabId: string, depth = 0): JsonRecord | undef
  * the whole result as delivered — envelope included — that names its way out
  * rather than handing back a partial tree.
  */
-function rawDocument(document: JsonRecord, documentId: string, tabId: string | undefined): JsonRecord {
+function rawDocument(
+  ctx: ConnectorContext,
+  document: JsonRecord,
+  documentId: string,
+  tabId: string | undefined,
+): JsonRecord {
   const resource = tabId === undefined ? document : { ...document, tabs: [findRawTab(document["tabs"], tabId)] };
   const dropped: string[] = [];
   const result = compact({
     documentId,
-    title: boundedTitle(document["title"]),
+    title: boundedTitle(ctx, document["title"]),
     revisionId: keptId(document["revisionId"], "revisionId", "revisionId", dropped),
     url: documentUrl(documentId),
     dropped: droppedField(dropped),
@@ -591,8 +629,17 @@ function revisionAfter(reply: JsonRecord, dropped: string[]): string | undefined
 }
 
 // No cause: what it would carry is a transport, stream, or parser error that can quote the reply (#695).
-function uncertain(message: string): ConnectorCallError {
-  return new ConnectorCallError("connector_call_failed", message, { retryable: false });
+function uncertain(message: string, ctx: ConnectorContext): unknown {
+  return providerCallFailure(
+    ctx,
+    { title: "Google Docs" },
+    new ConnectorCallError("connector_call_failed", message, { retryable: false }),
+    {
+      dispatched: true,
+      status: 200,
+      fallback: "write",
+    },
+  );
 }
 
 /**
@@ -603,15 +650,15 @@ function uncertain(message: string): ConnectorCallError {
  * - `not-sent` (`before-send`): nothing left connecta. Nothing happened.
  * - `refused`: Google answered with a 4xx. Nothing applied.
  * - `unknown`: sent, and no status came back (`awaiting-response`), Google
- *   answered a 5xx (`server-error`, whatever reason it carries), or Google
- *   redirected (`redirected`, never followed). It may or may not have applied.
+ *   answered a 5xx (`server-error`, whatever reason it carries), Google
+ *   redirected (`redirected`, never followed), or Google answered 401 and the
+ *   write was not sent again (`unauthorized`). It may or may not have applied.
  * - `probably-applied` (`reading-body`): Google answered 2xx and the reply
  *   could not be used — it broke off, overflowed the ceiling, or would not
  *   parse.
  *
- * "Nothing applied" is claimed only for an observed 4xx: `refused` can also
- * carry a 5xx on an idempotent write, and no Docs write is sent `idempotent`
- * — a create or an insert sent twice is two; replaceAllText can match its own
+ * "Nothing applied" is claimed only for an observed 4xx (`refused`), never
+ * for a write's 5xx — a create or an insert sent twice is two; replaceAllText can match its own
  * replacement; and a revision-guarded batch sent again after its first landed
  * is refused as `conflict`, whose advice to reapply the change would then
  * duplicate it. A failure the client did not classify is `unknown`, the
@@ -633,6 +680,7 @@ function writeOutcome(error: unknown): WriteOutcome {
     case "awaiting-response":
     case "server-error":
     case "redirected":
+    case "unauthorized":
     default:
       return "unknown";
   }
@@ -676,13 +724,14 @@ async function sendWrite(
     if (ctx.signal?.aborted) throw error;
     const outcome = writeOutcome(error);
     if (outcome === "not-sent" || outcome === "refused") throw error;
-    throw uncertain(outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error)));
+    const message = outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error));
+    throw error instanceof ConnectorCallError ? googleFailureMessage(error, message) : uncertain(message, ctx);
   }
   if (reply.text.trim() === "") return {};
   try {
     return asRecord(JSON.parse(reply.text));
   } catch {
-    throw uncertain(words.applied);
+    throw uncertain(words.applied, ctx);
   }
 }
 
@@ -715,12 +764,10 @@ async function batchUpdate(
     },
     requiredRevisionId !== undefined,
     {
+      // A requiredRevisionId is a precondition, not an idempotency key the
+      // vendor honors, so it grants no repeat (INV-9).
       unknown: (detail) =>
-        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.${
-          requiredRevisionId
-            ? " Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat."
-            : ""
-        }`,
+        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.`,
       applied:
         "Google Docs accepted this edit (HTTP 2xx), so it was applied, but its reply could not be read, so the new revisionId and any counts are unknown. Do not repeat it; re-read the document with get_document.",
     },
@@ -1054,6 +1101,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
+        protectDocumentText(ctx, document);
         let tabs = flattenTabs(document);
         const wanted = typeof args["tabId"] === "string" ? args["tabId"] : undefined;
         if (wanted !== undefined) {
@@ -1068,7 +1116,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             );
           }
         }
-        if (raw) return rawDocument(document, documentId, wanted);
+        if (raw) return rawDocument(ctx, document, documentId, wanted);
         const withIndexes = args["withIndexes"] === true;
         let budget = typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_MAX_CHARS;
         // Index rows form one sequence across tabs; a page is the rows from
@@ -1085,8 +1133,8 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             footnotes: asRecord(tab.documentTab["footnotes"]),
             inlineObjects: asRecord(tab.documentTab["inlineObjects"]),
           };
-          const { text: full, notRendered } = renderTab(tab.documentTab, sources, rows);
-          const cut = capped(full, budget);
+          const { text: full, notRendered } = renderTab(ctx, tab.documentTab, sources, rows);
+          const cut = capped(ctx, full, budget);
           budget = Math.max(0, budget - full.length);
           let elements: IndexRow[] | undefined;
           if (rows) {
@@ -1106,7 +1154,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
           }
           return compact({
             tabId: keptId(tab.tabId, "tabId", `tabs[${index}].tabId`, dropped),
-            title: boundedTitle(tab.title),
+            title: boundedTitle(ctx, tab.title),
             parentTabId: keptId(tab.parentTabId, "tabId", `tabs[${index}].parentTabId`, dropped),
             nestingLevel: tab.nestingLevel,
             endIndex: endIndexOf(tab.documentTab["body"]),
@@ -1117,7 +1165,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
         });
         return compact({
           documentId,
-          title: boundedTitle(document["title"]),
+          title: boundedTitle(ctx, document["title"]),
           revisionId: keptId(document["revisionId"], "revisionId", "revisionId", dropped),
           url: documentUrl(documentId),
           dropped: droppedField(dropped),
@@ -1175,7 +1223,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
         const dropped: string[] = [];
         // An id that could not be passed back is no id at all.
         const documentId = keptId(created["documentId"], "documentId", "documentId", dropped);
-        if (!documentId) throw uncertain(createdButUnknown);
+        if (!documentId) throw uncertain(createdButUnknown, ctx);
         let revisionId = keptId(created["revisionId"], "revisionId", "revisionId", dropped);
         if (typeof args["text"] === "string") {
           try {
@@ -1193,13 +1241,10 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             // an explicit refusal proves the text is absent; anything else
             // sends the caller to look before appending.
             const detail = detailOf(cause);
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              ["refused", "not-sent"].includes(writeOutcome(cause))
-                ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
-                : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`,
-              { retryable: false, cause },
-            );
+            const message = ["refused", "not-sent"].includes(writeOutcome(cause))
+              ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
+              : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`;
+            throw cause instanceof ConnectorCallError ? googleFailureMessage(cause, message) : uncertain(message, ctx);
           }
         }
         return compact({
@@ -1474,22 +1519,24 @@ function docsConnector(id: string, options: DocsOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Docs",
+        description: `Google Docs as the signed-in Workspace user: read, create, and edit documents by id — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
+          // Required: whose documents they are, that ids come from elsewhere, and
+          // that indexes shift and go stale are conventions no schema can carry.
+          required: true,
+        },
+        tools: tools(client),
       }),
-      title: options.title ?? "Google Docs",
-      description: `Google Docs as the signed-in Workspace user: read, create, and edit documents by id — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
-        // Required: whose documents they are, that ids come from elsewhere, and
-        // that indexes shift and go stale are conventions no schema can carry.
-        required: true,
-      },
-      tools: tools(client),
-    }),
+    ),
   );
 }

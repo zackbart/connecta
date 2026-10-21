@@ -9,8 +9,20 @@ interface HandoffOptions {
   oauthConnectUnavailable?: string | undefined;
 }
 
-function oauthFollowUp(connectorId: string): string {
-  return `Then retry the original call; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside execute_code confirms the catalog now loads.`;
+// A write whose outcome is unknown is never told to retry after recovery: it
+// re-reads its target first (INV-9). Each handoff keeps that variant beside
+// it, since one handoff per connector serves every call in a request.
+const RECONCILE = "re-read the target of the write that failed to check whether it took effect before any fresh call";
+const afterUnknownWrite = new WeakMap<AuthorizationHandoff, AuthorizationHandoff>();
+
+function outcomeAware(build: (unknownWrite: boolean) => AuthorizationHandoff): AuthorizationHandoff {
+  const handoff = build(false);
+  afterUnknownWrite.set(handoff, build(true));
+  return handoff;
+}
+
+function oauthFollowUp(connectorId: string, unknownWrite: boolean): string {
+  return `Then ${unknownWrite ? RECONCILE : "retry the original call"}; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside execute_code confirms the catalog now loads.`;
 }
 
 /** Shared with explicit authorization; errors never request a forced restart. */
@@ -27,14 +39,14 @@ export async function authorizationHandoff(
   }
   if (!connector.startAuth) {
     if (!connector.credential) {
-      return {
+      return outcomeAware((unknownWrite) => ({
         connector: connector.id,
         recovery: "unavailable",
         message:
           `Connector "${connector.id}" declares neither downstream OAuth ` +
           "nor an operator-managed credential slot. Update the connector " +
-          "or deployment configuration before retrying.",
-      };
+          `or deployment configuration${unknownWrite ? `, then ${RECONCILE}` : " before retrying"}.`,
+      }));
     }
     const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
     if (!ctx.credential || !opts.credentialHandoffUrl) {
@@ -56,21 +68,20 @@ export async function authorizationHandoff(
         guidance: connector.credential.description ?? connector.credential.label,
       },
     ];
-    return {
+    const operatorUrl = opts.credentialHandoffUrl;
+    const label = connector.credential.label;
+    return outcomeAware((unknownWrite) => ({
       connector: connector.id,
       recovery: "operator_config",
-      credential: {
-        label: connector.credential.label,
-        fields,
-      },
-      operatorUrl: opts.credentialHandoffUrl,
+      credential: { label, fields },
+      operatorUrl,
       instructions:
         "Have the operator open operatorUrl, set and test the credential, " +
-        "then retry the original call. No redeploy is needed. " +
+        `then ${unknownWrite ? RECONCILE : "retry the original call"}. No redeploy is needed. ` +
         (connector.authScope === "personal"
           ? "Credential mutation requires the signed-in principal who owns this connection."
           : "Shared credential mutation requires a signed-in human with access to this connector."),
-    };
+    }));
   }
   if (opts.oauthConnectUnavailable || !opts.oauthConnectUrl)
     return {
@@ -86,15 +97,16 @@ export async function authorizationHandoff(
       recovery: "unavailable",
       message: "Your identity is not permitted to manage authentication for this connection.",
     };
-  return {
+  const authorizationUrl = await opts.oauthConnectUrl(connector.id, args.force);
+  return outcomeAware((unknownWrite) => ({
     connector: connector.id,
     recovery: "oauth",
     status: "auth_required",
-    authorizationUrl: await opts.oauthConnectUrl(connector.id, args.force),
+    authorizationUrl,
     instructions:
       "Copy authorizationUrl exactly as returned; do not decode or re-encode it. Open it in a browser and sign in as the user who requested this connection. Connecta verifies your identity and permission before starting consent. " +
-      oauthFollowUp(connector.id),
-  };
+      oauthFollowUp(connector.id, unknownWrite),
+  }));
 }
 
 interface RequestHandoffs {
@@ -131,7 +143,8 @@ export async function withAuthorizationHandoff<T extends CallErrorDetails>(scope
     request.handoffs.set(connector, handoff);
   }
   try {
-    const value = await handoff;
+    const shared = await handoff;
+    const value = (error.writeOutcome === "unknown" && afterUnknownWrite.get(shared)) || shared;
     return { ...error, ...value, message: error.message, ...(value.message ? { instructions: value.message } : {}) };
   } catch {
     // A signing/configuration failure cannot replace the original call failure

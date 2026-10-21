@@ -15,8 +15,10 @@
   aggregate (sums by fund, month, or donor count), not donor rows, unless the
   task needs named people.
 - Organization projections omit the payout bank's last four and the legal
-  contact's date of birth. `raw: true` and `tithely_api_get` return them;
-  do not reach for either to answer a giving question.
+  contact's date of birth.
+<!-- endfragment -->
+
+<!-- fragment: guide_1 -->
 
 ## Ids and vocabulary
 

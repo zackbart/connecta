@@ -1,3 +1,4 @@
+import { attachCallClassification } from "../../call-classification.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorContext, ToolDef } from "../../types.js";
 import { guideOf, mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
@@ -202,6 +203,36 @@ describe("cloudflare() over a key", () => {
     expect(error.message).toContain("[redacted]");
     expect(error.message).not.toMatch(/PRIVATE_TOKEN|PRIVATE_SIGNATURE/);
   });
+
+  it.each([503, 429])(
+    "INV-9: a zone ownership preflight cannot perform the resource write (HTTP %i)",
+    async (status) => {
+      const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
+      respond = (request) =>
+        request.url.pathname === `/client/v4/zones/${ZONE}` && status !== 503
+          ? envelope({ id: ZONE, account: { id: ACCOUNT } })
+          : Response.json({ success: false, errors: [] }, { status });
+      const ctx = token();
+      attachCallClassification(ctx, "write");
+      const error = await refusal(
+        connector.callTool(
+          "cloudflare_api_write",
+          {
+            method: "PATCH",
+            path: `/zones/${ZONE}/dns_records/r1`,
+            body: { ttl: 300 },
+          },
+          ctx,
+        ),
+      );
+      expect(sent).toHaveLength(status === 503 ? 1 : 2);
+      expect(error).toMatchObject({
+        code: status === 503 ? "unavailable" : "rate_limited",
+        retryable: true,
+        writeOutcome: undefined,
+      });
+    },
+  );
 
   it("builds Connecta's REST connector with an operator credential, admission, and its tool set", async () => {
     const connector = cloudflare("cf", { ...TOKEN, maxResultBytes: 30_000 });

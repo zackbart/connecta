@@ -28,8 +28,9 @@ import { required, silentLogger } from "./helpers.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
 
 const BASE = "https://connecta.test";
-const TOKEN_A = "principal-a-secret/+=";
-const TOKEN_B = "principal-b-secret/+=";
+// No eight-unit run in common: a shared run is itself a fragment of the other token.
+const TOKEN_A = "pA4-k9Xm/2Vq+=";
+const TOKEN_B = "pB7-w3Lz/8Rn+=";
 const closers: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
   vi.useRealTimers();

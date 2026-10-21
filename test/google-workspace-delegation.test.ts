@@ -1,3 +1,8 @@
+import { docs } from "../src/providers/docs/index.js";
+import { drive } from "../src/providers/drive/index.js";
+import { forms } from "../src/providers/forms/index.js";
+import { sheets } from "../src/providers/sheets/index.js";
+import { slides } from "../src/providers/slides/index.js";
 // Google Workspace domain-wide delegation, the layer every Workspace product
 // provider shares (src/providers/_shared/google/). Driven through gmail() because the
 // layer has no export of its own; the Gmail suite owns the tool surface.
@@ -12,13 +17,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { attachCaller } from "../src/connector-caller.js";
+import { attachCallClassification } from "../src/call-classification.js";
 import {
   googleOutcomeOf,
   googleReasonsOf,
   googleWorkspaceClient,
   workspaceConnection,
 } from "../src/providers/_shared/google/workspace.js";
-import { ConnectorCallError } from "../src/errors.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
@@ -1291,6 +1297,112 @@ describe("the in-memory token cache", () => {
   });
 });
 
+describe("Workspace served classification on unauthorized requests", () => {
+  it("INV-9: honors classification: { gmail: { list_labels: write } } for a GET answered 401", async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () => Response.json({ labels: [] }),
+    );
+    const connector = gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" });
+    const registry = makeRegistry([connector], { classification: { gmail: { list_labels: "write" } } });
+    const tools = createMetaTools(registry, "https://connecta.example");
+    const result = await tools.callDestructiveTool({ address: "gmail.list_labels", args: {} });
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: {
+        code: "auth_required",
+        retryable: false,
+        writeOutcome: "unknown",
+        reconciliationRequired: true,
+        nextAction: { tool: "authorize_connector", arguments: { connector: "gmail" } },
+      },
+    });
+    expect(apiCalls.map(({ method, authorization }) => ({ method, authorization }))).toEqual([
+      { method: "GET", authorization: "Bearer token-1" },
+    ]);
+    expect(tokenCalls).toHaveLength(1);
+    // A deliberate repeat is a new call and uses a fresh token.
+    expect((await tools.callDestructiveTool({ address: "gmail.list_labels", args: {} })).isError).toBeFalsy();
+    expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+  });
+
+  it.each([503, "reset"] as const)(
+    "INV-9: a write-classified Google GET's %s stays an unknown outcome",
+    async (answer) => {
+      apiReplies.push(() => {
+        if (answer === "reset") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+        return Response.json({ error: { code: 503 } }, { status: 503 });
+      });
+      const registry = makeRegistry(
+        [gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" })],
+        { classification: { gmail: { list_labels: "write" } } },
+      );
+      const result = await createMetaTools(registry, "https://connecta.example").callDestructiveTool({
+        address: "gmail.list_labels",
+        args: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "connector_call_failed", retryable: false },
+      });
+      expect(apiCalls).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    ["gmail", gmail, "create_draft", { body: "Draft text" }],
+    ["drive", drive, "create_folder", { name: "Example" }],
+    ["docs", docs, "create_document", { title: "Example" }],
+    ["forms", forms, "create_form", { title: "Example" }],
+    ["sheets", sheets, "create_spreadsheet", { title: "Example" }],
+    ["slides", slides, "create_presentation", { title: "Example" }],
+  ] as const)(
+    "INV-9: %s preserves the write's authorization verdict and unknown outcome through recovery advice",
+    async (_name, provider, tool, args) => {
+      apiReplies.push(() => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }));
+      const registry = makeRegistry([
+        provider("workspace", { purpose: "Files", serviceAccount: account(), subject: "alice@example.com" }),
+      ]);
+      const result = await createMetaTools(registry, "https://connecta.example").callDestructiveTool({
+        address: `workspace.${tool}`,
+        args,
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: {
+          code: "auth_required",
+          retryable: false,
+          writeOutcome: "unknown",
+          reconciliationRequired: true,
+          nextAction: { tool: "authorize_connector", arguments: { connector: "workspace" } },
+        },
+      });
+      expect(apiCalls).toHaveLength(1);
+      expect(tokenCalls).toHaveLength(1);
+    },
+  );
+
+  it("INV-9: a served read-classified POST replays once after 401 with the same body", async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () => Response.json({ id: "draft-1", message: { id: "message-1", threadId: "thread-1" } }),
+    );
+    const connector = gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" });
+    const registry = makeRegistry([connector], { classification: { gmail: { create_draft: "read" } } });
+    const result = await createMetaTools(registry, "https://connecta.example").callTool({
+      address: "gmail.create_draft",
+      args: { body: "Draft text" },
+    });
+    expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+    expect(apiCalls.map(({ method, authorization }) => ({ method, authorization }))).toEqual([
+      { method: "POST", authorization: "Bearer token-1" },
+      { method: "POST", authorization: "Bearer token-2" },
+    ]);
+    expect(apiCalls[1]!.body).toEqual(apiCalls[0]!.body);
+    expect(tokenCalls).toHaveLength(2);
+  });
+});
+
 // --- Failures -----------------------------------------------------------------------
 
 describe("token refusals map to what fixes them, and never carry a secret", () => {
@@ -1648,9 +1760,12 @@ describe("the shared client reads bytes and text for the products that need them
       expect(failure).toMatchObject({
         code: "conflict",
         retryable: false,
-        message:
-          "Google Drive refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.",
+        message: "Google Drive refused the write because the item changed after the revision it named.",
       });
+      // Its advice to send it again is a segment of its own, composed at output.
+      expect(classifyCallError(failure).message).toBe(
+        "Google Drive refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.",
+      );
     });
 
     it("applies to bytes and text requests too", async () => {
@@ -1716,7 +1831,7 @@ describe("the shared client reads bytes and text for the products that need them
         .json(write, context(), { revisionGuarded: true })
         .catch((error) => error);
       expect(failure).toMatchObject({ code });
-      expect(failure.message).toContain(words);
+      expect(classifyCallError(failure).message).toContain(words);
     });
 
     it("does not turn an unrelated refusal into a conflict", async () => {
@@ -1861,10 +1976,26 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(policy)).toEqual({ dispatched: true, status: 403, phase: "refused" });
       expect(googleReasonsOf(policy)).toEqual(["domainPolicy"]);
 
-      // Two 401s: the replay's refusal is the one reported.
-      const unauthorized = await failing(drive.json(write, context()));
+      // Two 401s on a read: the replay's refusal is the one reported.
+      const unauthorized = await failing(drive.json(read, context()));
       expect(unauthorized.code).toBe("auth_required");
       expect(googleOutcomeOf(unauthorized)).toEqual({ dispatched: true, status: 401, phase: "refused" });
+    });
+
+    it("INV-9 unauthorized: a write Google answered 401 is not sent again, and its outcome is unknown", async () => {
+      apiReplies.push(
+        () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+        () => Response.json({ id: "f1" }),
+      );
+      const drive = client();
+      const failure = await failing(drive.json(write, context()));
+      expect(failure).toMatchObject({ code: "auth_required", retryable: false, writeOutcome: "unknown" });
+      expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "unauthorized" });
+      expect(apiCalls).toHaveLength(1);
+      expect(tokenCalls).toHaveLength(1);
+      // The refused token is dropped: a deliberate repeat mints a fresh one.
+      await expect(drive.json(write, context())).resolves.toEqual({ id: "f1" });
+      expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
     });
 
     it("refused: an error status stays a refusal when its body is past the ceiling", async () => {
@@ -1955,15 +2086,6 @@ describe("the shared client reads bytes and text for the products that need them
         const failure = await failing(client().json(read, context()));
         expect(failure).toMatchObject({ code: "unavailable", retryable: true });
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
-      });
-
-      it("stays retryable for a write the provider marks idempotent", async () => {
-        apiReplies.push(upstream(503));
-        const failure = await failing(
-          client().json({ method: "PUT", path: "/files/f1", body: {} }, context(), { idempotent: true }),
-        );
-        expect(failure).toMatchObject({ code: "unavailable", retryable: true });
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "refused" });
       });
 
       /** A quota refusal, carried on whichever status. */
@@ -2068,17 +2190,16 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 302, phase: "redirected" });
       });
 
-      it("keeps a quota 5xx retryable for a read or an idempotent write", async () => {
+      it("keeps a quota 5xx retryable for a read, and a whole-resource PUT's unknown", async () => {
         apiReplies.push(quota(503, "rateLimitExceeded"), quota(503, "rateLimitExceeded"));
         const drive = client();
         const read = await failing(drive.json({ method: "GET", path: "/files/f1" }, context()));
         expect(read.code).toBe("rate_limited");
         expect(googleOutcomeOf(read)).toEqual({ dispatched: true, status: 503, phase: "refused" });
-        const idempotent = await failing(
-          drive.json({ method: "PUT", path: "/files/f1", body: {} }, context(), { idempotent: true }),
-        );
-        expect(idempotent.code).toBe("rate_limited");
-        expect(googleOutcomeOf(idempotent)).toEqual({ dispatched: true, status: 503, phase: "refused" });
+        // No operation hint makes a write repeatable: only a key would.
+        const put = await failing(drive.json({ method: "PUT", path: "/files/f1", body: {} }, context()));
+        expect(put).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(googleOutcomeOf(put)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
       });
 
       it("is unknown even when the 5xx body itself is past the ceiling", async () => {
@@ -2091,12 +2212,12 @@ describe("the shared client reads bytes and text for the products that need them
       });
     });
 
-    it("refreshes and replays once on a 401 whose body is past the ceiling", async () => {
+    it("refreshes and replays a read once on a 401 whose body is past the ceiling", async () => {
       apiReplies.push(
         () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } }),
         () => Response.json({ id: "f1" }),
       );
-      await expect(client(1024).json(write, context())).resolves.toEqual({ id: "f1" });
+      await expect(client(1024).json(read, context())).resolves.toEqual({ id: "f1" });
       expect(tokenCalls).toHaveLength(2);
       expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
     });
@@ -2105,7 +2226,7 @@ describe("the shared client reads bytes and text for the products that need them
       const oversized401 = () =>
         new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } });
       apiReplies.push(oversized401, oversized401);
-      const failure = await failing(client(1024).json(write, context()));
+      const failure = await failing(client(1024).json(read, context()));
       expect(failure.code).toBe("auth_required");
       expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "refused" });
       expect(apiCalls).toHaveLength(2);
@@ -2169,12 +2290,10 @@ describe("the shared client reads bytes and text for the products that need them
         }
       });
 
-      it("keeps an idempotent write's 5xx a refusal", async () => {
+      it("keeps a whole-resource PUT's 5xx a server error, never a refusal", async () => {
         const ctx = cancelledOnAnswer(oversized(503));
-        const failure = await failing(
-          client(1024).json({ method: "PUT", path: "/files/f1", body: {} }, ctx, { idempotent: true }),
-        );
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "refused" });
+        const failure = await failing(client(1024).json({ method: "PUT", path: "/files/f1", body: {} }, ctx));
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
       });
     });
 
@@ -2314,26 +2433,37 @@ describe("the shared client reads bytes and text for the products that need them
     });
   });
 
-  it("replays a byte body intact after a 401", async () => {
-    apiReplies.push(
-      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
-      () => Response.json({ id: "f9" }),
-    );
-    const upload = new Uint8Array([1, 2, 3, 4]);
-    await client().json(
-      {
-        method: "POST",
-        path: "/files",
-        headers: { "Content-Type": "application/octet-stream" },
-        rawBody: upload,
-      },
-      context(),
-    );
+  it("INV-9: replays a read's byte body intact after a 401, and never a write's", async () => {
+    const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
+    apiReplies.push(rejected, () => Response.json({ id: "f9" }), rejected);
+    const request = {
+      method: "POST" as const,
+      path: "/files",
+      headers: { "Content-Type": "application/octet-stream" },
+      rawBody: new Uint8Array([1, 2, 3, 4]),
+    };
+    // A call the registry classified as a read may send its POST again.
+    const readCall = context();
+    attachCallClassification(readCall, "read");
+    await client().json(request, readCall);
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
     expect(apiCalls.map((call) => call.body)).toEqual([
       [1, 2, 3, 4],
       [1, 2, 3, 4],
     ]);
+    // A write's is sent once, whatever classification is missing or says.
+    for (const classification of [undefined, "write"] as const) {
+      apiCalls.length = 0;
+      apiReplies.push(rejected);
+      const writeCall = context();
+      if (classification) attachCallClassification(writeCall, classification);
+      await expect(client().json(request, writeCall)).rejects.toMatchObject({
+        code: "auth_required",
+        retryable: false,
+        writeOutcome: "unknown",
+      });
+      expect(apiCalls).toHaveLength(1);
+    }
   });
 
   it("refuses a stream body, which a replay could not resend, before anything leaves", async () => {

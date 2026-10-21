@@ -1,13 +1,16 @@
+import { callClassification } from "../../call-classification.js";
 /** Infisical Universal Auth and a finite, reviewed REST secret-manager surface. */
 import { apiConnector as api, defined as compact, type ApiTool } from "../../connectors/api-connector.js";
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
 import type { ConnectorContext, JsonSchema } from "../../types.js";
 import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
+import { providerFailureMessage, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { skill } from "./skill.generated.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
 /** Connecta's response ceiling, before JSON parsing; not an Infisical limit. */
@@ -29,7 +32,8 @@ function failure(status: number, headers: Headers, login = false): ConnectorCall
   const detail = `Infisical returned HTTP ${status}.`;
   const wait = retryAfterMs(headers);
   const retry = wait === undefined ? {} : { retryAfterMs: wait };
-  if (status === 429) return new ConnectorCallError("rate_limited", `${detail} Wait before retrying.`, retry);
+  if (status === 429)
+    return resendAdvice(new ConnectorCallError("rate_limited", detail, retry), " Wait before retrying.");
   if (login && status >= 400 && status < 500)
     return new ConnectorCallError(
       "auth_required",
@@ -83,7 +87,7 @@ export const infisical = defineProvider<InfisicalOptions>({
       sentSecretsFor(ctx).secret(clientSecret);
       const issuedAt = Date.now();
       return await send(
-        { method: "POST", path: "/v1/auth/universal-auth/login", body: { clientId, clientSecret } },
+        { method: "POST", path: "/v1/auth/universal-auth/login", auxiliary: true, body: { clientId, clientSecret } },
         ctx,
         async (response) => {
           if (!response.ok) {
@@ -129,13 +133,17 @@ export const infisical = defineProvider<InfisicalOptions>({
       };
     });
     const call = async (request: GuardedRequest, ctx: ConnectorContext): Promise<unknown> => {
+      // The served verdict decides; direct requests fall back to the method.
+      const write = (callClassification(ctx) ?? (request.method === "GET" ? "read" : "write")) === "write";
       try {
         const attempt = (token: string) =>
           send({ ...request, headers: { Authorization: `Bearer ${token}` } }, ctx, async (response) => {
             // Even failures are drained through the bound; their text is never rendered.
             if (!response.ok) {
               await response.bytes();
-              return { rejected: response.status === 401, error: failure(response.status, response.headers) };
+              const error = failure(response.status, response.headers);
+              if (response.status !== 401) throw error;
+              return { rejected: true, error };
             }
             const parsed = await response.jsonResult();
             if (!("value" in parsed) && request.method !== "GET") return { rejected: false, value: undefined };
@@ -147,56 +155,65 @@ export const infisical = defineProvider<InfisicalOptions>({
           });
         const token = await tokens.token(ctx);
         let result = await attempt(token);
-        if (result.rejected) {
-          const refreshed = await tokens.token(ctx, token);
-          // A 401 can arrive after a write reached downstream code. Prepare a
-          // fresh token for an explicit invocation, but never replay this write.
-          if (request.method === "GET") result = await attempt(refreshed);
+        if (result.rejected && write) {
+          // A 401 can arrive after a write reached downstream code. Log in
+          // again so an explicit repeat finds a fresh token, but never replay
+          // this write, nor call it retryable if the login fails.
+          let renewal: unknown;
+          try {
+            await tokens.token(ctx, token);
+          } catch (error) {
+            renewal = error;
+          }
+          throw unsentAfterUnauthorized("Infisical", renewal);
         }
+        if (result.rejected) result = await attempt(await tokens.token(ctx, token));
         if (result.error) throw result.error;
         return result.value;
       } catch (error) {
         if (error instanceof ConnectorCallError && error.message.includes("response ceiling"))
-          throw new ConnectorCallError(
-            "connector_call_failed",
+          throw providerFailureMessage(
+            error,
             "Infisical's response exceeded 8 MiB. Narrow secretPath, drop recursive, or omit includeValues.",
-            { retryable: false },
           );
         throw error;
       }
     };
-    return api(id, {
-      ...provider.connectorOptions,
-      title: options.title ?? "Infisical",
-      description: `Infisical secrets management — ${options.purpose}`,
-      credential: {
-        label: "Machine identity",
-        description: "Universal Auth credentials. Project membership and roles bound this connection's access.",
-        fields: [
-          { name: "clientId", label: "Client ID", inputType: "text", placeholder: "Universal Auth client ID" },
-          { name: "clientSecret", label: "Client secret", inputType: "password", placeholder: "Paste client secret" },
-        ],
-      },
-      async testCredentials(values, ctx) {
-        const clientId = values["clientId"]?.trim(),
-          clientSecret = values["clientSecret"]?.trim();
-        if (!clientId || !clientSecret) return { ok: false, message: "Client ID and client secret are both required." };
-        try {
-          await exchange(clientId, clientSecret, ctx);
-          return { ok: true };
-        } catch (error) {
-          return {
-            ok: false,
-            message: error instanceof ConnectorCallError ? error.message : "Infisical login failed.",
-          };
-        }
-      },
-      usageGuide: provider.usageGuide({
-        context: [`Use this Infisical machine identity at ${baseUrl} for ${options.purpose}.`],
-        summary: "Find projects and environments first; secret values are omitted from lists unless requested.",
+    return tracksEveryRequest(
+      api(id, {
+        ...provider.connectorOptions,
+        title: options.title ?? "Infisical",
+        description: `Infisical secrets management — ${options.purpose}`,
+        credential: {
+          label: "Machine identity",
+          description: "Universal Auth credentials. Project membership and roles bound this connection's access.",
+          fields: [
+            { name: "clientId", label: "Client ID", inputType: "text", placeholder: "Universal Auth client ID" },
+            { name: "clientSecret", label: "Client secret", inputType: "password", placeholder: "Paste client secret" },
+          ],
+        },
+        async testCredentials(values, ctx) {
+          const clientId = values["clientId"]?.trim(),
+            clientSecret = values["clientSecret"]?.trim();
+          if (!clientId || !clientSecret)
+            return { ok: false, message: "Client ID and client secret are both required." };
+          try {
+            await exchange(clientId, clientSecret, ctx);
+            return { ok: true };
+          } catch (error) {
+            return {
+              ok: false,
+              message: error instanceof ConnectorCallError ? error.message : "Infisical login failed.",
+            };
+          }
+        },
+        usageGuide: provider.usageGuide({
+          context: [`Use this Infisical machine identity at ${baseUrl} for ${options.purpose}.`],
+          summary: "Find projects and environments first; secret values are omitted from lists unless requested.",
+        }),
+        tools: tools(call),
       }),
-      tools: tools(call),
-    });
+    );
   },
 });
 

@@ -20,8 +20,8 @@ let reply: () => Response = () => Response.json(responses.account);
 const ctx = () => ({
   ...connectorContext(),
   credential: {
-    get: async () => "fixture-account:fixture-secret",
-    getAll: async () => ({ value: "fixture-account:fixture-secret" }),
+    get: async () => "mp9Qx2.sa:pQ6?eT8+dW3=G5/f",
+    getAll: async () => ({ value: "mp9Qx2.sa:pQ6?eT8+dW3=G5/f" }),
   },
 });
 const api = (overrides: Partial<MixpanelApiOptions> = {}) => mixpanel("raw", { ...options, ...overrides });
@@ -82,7 +82,7 @@ describe("Mixpanel service-account REST", () => {
     expect(tools.filter((t) => classifyTool(t) !== "read").map((t) => t.name)).toEqual(["import_events"]);
     expect(tools.find((t) => t.name === "import_events")?.annotations).toEqual({ readOnlyHint: false });
     expect(connector.describe?.()).toMatchObject({ source: { kind: "api", provider: "mixpanel" } });
-    expect(JSON.stringify(connector.describe?.())).not.toContain("fixture-secret");
+    expect(JSON.stringify(connector.describe?.())).not.toContain("pQ6?eT8+dW3=G5/f");
     expect(JSON.stringify(connector.usageGuide)).toContain("never guess one");
     expect(JSON.stringify(connector.usageGuide)).toContain("maintenance mode");
   });
@@ -121,7 +121,7 @@ describe("Mixpanel service-account REST", () => {
       ]);
       expect(calls[1]?.url.search).toBe("");
       for (const { init } of calls) {
-        expect(new Headers(init.headers).get("Authorization")).toBe(`Basic ${btoa("fixture-account:fixture-secret")}`);
+        expect(new Headers(init.headers).get("Authorization")).toBe(`Basic ${btoa("mp9Qx2.sa:pQ6?eT8+dW3=G5/f")}`);
         expect(init.redirect).toBe("manual");
       }
     },
@@ -371,7 +371,7 @@ describe("Mixpanel service-account REST", () => {
     expect(calls[0]?.url.searchParams.get("strict")).toBe("1");
     expect(calls[0]?.url.searchParams.get("project_id")).toBe("99");
     expect(JSON.parse(String(calls[0]?.init.body))).toEqual([responses.event]);
-    reply = () => Response.json({ error: "fixture-secret raw payload" }, { status: 503 });
+    reply = () => Response.json({ error: "pQ6?eT8+dW3=G5/f raw payload" }, { status: 503 });
     await expect(call("import_events", { events: [responses.event] })).rejects.toMatchObject({
       retryable: false,
       message: expect.stringContaining("unknown"),
@@ -435,9 +435,9 @@ describe("Mixpanel service-account REST", () => {
     expect(JSON.stringify(await call("query_profiles"))).not.toContain("private-password");
     reply = () => new Response('{"event":"Signup","properties":{"time":1602611311,"password":"private-password"}}\n');
     expect(JSON.stringify(await call("export_events", range))).not.toContain("private-password");
-    reply = () => Response.json({ error: "fixture-secret private vendor message" }, { status: 400 });
+    reply = () => Response.json({ error: "pQ6?eT8+dW3=G5/f private vendor message" }, { status: 400 });
     await expect(call("list_projects")).rejects.toMatchObject({
-      message: expect.not.stringContaining("fixture-secret"),
+      message: expect.not.stringContaining("pQ6?eT8+dW3=G5/f"),
     });
     expect(Object.keys(MIXPANEL_VALUE_SAFETY.operations!).sort()).toEqual(
       openapi.ops.map(([method, path]) => `${method} ${path}`).sort(),

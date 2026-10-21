@@ -4,6 +4,7 @@ import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { createTestConnecta, required } from "./helpers.js";
@@ -512,58 +513,68 @@ describe("auth recovery invocation eligibility", () => {
     },
   );
 
-  it("INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials", async () => {
-    let entries = 0;
-    let reads = 0;
-    const service = api("service", {
-      tools: [
-        {
-          name: "write",
-          description: "Enter a write",
-          annotations: { readOnlyHint: false },
-          handler: () => {
-            entries++;
-            throw new ConnectorCallError("invalid_args", "Write refused inside handler");
+  it.each([true, false])(
+    "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials (tracked: %s)",
+    async (tracked) => {
+      let entries = 0;
+      let reads = 0;
+      const entered = api("service", {
+        tools: [
+          {
+            name: "write",
+            description: "Enter a write",
+            annotations: { readOnlyHint: false },
+            handler: () => {
+              entries++;
+              throw new ConnectorCallError("invalid_args", "Write refused inside handler");
+            },
           },
-        },
-      ],
-    });
-    const protectedRead = api("protected", {
-      credential: { label: "Read token" },
-      tools: [
-        {
-          name: "read",
-          description: "Read an item",
-          annotations: { readOnlyHint: true },
-          handler: () => {
-            reads++;
-            return {};
+        ],
+      });
+      // A handler that declares every request goes through the ledger refused
+      // a write it never sent; an undeclared one's write has no known outcome.
+      const service = tracked ? tracksEveryRequest(entered) : entered;
+      const protectedRead = api("protected", {
+        credential: { label: "Read token" },
+        tools: [
+          {
+            name: "read",
+            description: "Read an item",
+            annotations: { readOnlyHint: true },
+            handler: () => {
+              reads++;
+              return {};
+            },
           },
+        ],
+      });
+      const flow = setup(service, {
+        additional: [protectedRead],
+        program: async (call) => {
+          try {
+            await call("service.write", {});
+          } catch {
+            /* Continue to the protected read. */
+          }
+          return call("protected.read", {});
         },
-      ],
-    });
-    const flow = setup(service, {
-      additional: [protectedRead],
-      program: async (call) => {
-        try {
-          await call("service.write", {});
-        } catch {
-          /* Continue to the protected read. */
-        }
-        return call("protected.read", {});
-      },
-    });
-    const result = await flow.rpc("execute_code");
-    expect(result.resultType).not.toBe("input_required");
-    expect(result.structuredContent.error).toMatchObject({
-      code: "auth_required",
-      retryable: false,
-      reconciliationRequired: true,
-      authorizationUrl: expect.stringContaining(`${BASE}/connect/protected?h=`),
-    });
-    expect(entries).toBe(1);
-    expect(reads).toBe(0);
-  });
+      });
+      const result = await flow.rpc("execute_code");
+      expect(result.resultType).not.toBe("input_required");
+      expect(result.structuredContent.error).toMatchObject(
+        tracked
+          ? {
+              code: "auth_required",
+              retryable: false,
+              reconciliationRequired: true,
+              authorizationUrl: expect.stringContaining(`${BASE}/connect/protected?h=`),
+            }
+          : { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } },
+      );
+      expect(entries).toBe(1);
+      expect(reads).toBe(0);
+    },
+  );
 
   it.each([{}, { plain: true }, { guarded: true }, { plain: true, guarded: true }])(
     "INV-9: a direct write followed by an auth failure cannot elicit or replay (%j)",

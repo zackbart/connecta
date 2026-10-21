@@ -33,6 +33,9 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
+import { unprojectedResults } from "../_shared/sensitive-fields.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 import { ConnectorCallError } from "../../errors.js";
 import { CONNECTA_VERSION } from "../../version.js";
 import type {
@@ -47,6 +50,7 @@ import type {
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** Planning Center's REST origin. Override only for a proxy or test double. */
 export const PLANNING_CENTER_API_BASE_URL = "https://api.planningcenteronline.com";
@@ -655,12 +659,22 @@ function planningCenterFailure(status: number, headers: Headers, payload: unknow
 
 type Call = (request: PlanningCenterRequest, ctx: ConnectorContext) => Promise<any>;
 
+/**
+ * Credentials Planning Center returns in ordinary bodies, withheld by name at
+ * any depth from every result: a webhook subscription's `authenticity_secret`
+ * (its delivery signing key, also in a rotate_secret or create reply) and
+ * the Services organization's `secret`. No tool argument or deployment
+ * option returns either; an operator reads them in Planning Center.
+ */
+const withheld = unprojectedResults("drop", ["authenticity_secret", "secret"]);
+
 function planningCenterCall(
   send: GuardedTransport,
   versions: Readonly<Record<PlanningCenterApp, string>>,
   excluded: ReadonlySet<PlanningCenterApp>,
 ): Call {
   const apps = PLANNING_CENTER_APPS.filter((app) => !excluded.has(app));
+  // The shared transport settles failures using the served classification.
   return async (request, ctx) => {
     if (excluded.size > 0) refuseExcluded(literalSegments(request.path), [], request, excluded);
     const app = appForPath(request.path, apps);
@@ -676,7 +690,11 @@ function planningCenterCall(
       async (response) => {
         const parsed = await response.jsonResult();
         if (!response.ok) {
-          throw planningCenterFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
+          throw planningCenterFailure(
+            response.status,
+            response.headers,
+            redactBeforeCut(ctx, "value" in parsed ? parsed.value : undefined),
+          );
         }
         if ("parseError" in parsed) {
           throw new ConnectorCallError(
@@ -685,7 +703,7 @@ function planningCenterCall(
             { retryable: false },
           );
         }
-        return parsed.value;
+        return withheld(parsed.value);
       },
     );
   };
@@ -717,7 +735,8 @@ function idProperty(description: string): JsonSchema {
 
 const RAW_PROPERTY: JsonSchema = {
   type: "boolean",
-  description: "Return Planning Center's untouched JSON:API resources (and `included`) instead of the lean projection.",
+  description:
+    "Return Planning Center's JSON:API resources (and `included`) as sent, less withheld secrets, instead of the lean projection.",
 };
 
 const OFFSET_PROPERTY: JsonSchema = {
@@ -1247,12 +1266,12 @@ function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<Planni
     {
       name: "pco_api_get",
       description:
-        "Call any Planning Center GET endpoint in any product and return its untouched JSON:API body. Prefer a named read; this one does not flatten or resolve includes.",
+        "Call any Planning Center GET endpoint in any product and return its JSON:API body, less withheld secrets. Prefer a named read; this one does not flatten or resolve includes.",
       annotations: READ,
       inputSchema: input({ path: HATCH_PATH_PROPERTY, query: QUERY_PROPERTY, version: VERSION_PROPERTY }, ["path"]),
       outputSchema: {
         type: "object",
-        properties: { result: { description: "Planning Center's untouched response body." } },
+        properties: { result: { description: "Planning Center's response body, less withheld secrets." } },
         required: ["result"],
       },
       handler: async (args: JsonRecord, ctx) => ({
@@ -1294,7 +1313,9 @@ function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<Planni
       ),
       outputSchema: {
         type: "object",
-        properties: { result: { description: "Planning Center's untouched response body, or null for 204." } },
+        properties: {
+          result: { description: "Planning Center's response body, less withheld secrets, or null for 204." },
+        },
         required: ["result"],
       },
       handler: async (args: JsonRecord, ctx) => ({
@@ -2749,7 +2770,7 @@ function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<Planni
     {
       name: "list_webhook_subscriptions",
       description:
-        "List the organization's webhook subscriptions: event name, URL, and active state. Never returns the signing secret; that needs pco_api_get.",
+        "List the organization's webhook subscriptions: event name, URL, and active state. No tool returns a subscription's signing secret.",
       annotations: READ,
       inputSchema: input({ perPage: perPageProperty(defaultPageSize), offset: OFFSET_PROPERTY }),
       outputSchema: listOutput(
@@ -2774,8 +2795,8 @@ function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<Planni
             ctx,
           ),
         );
-        // `authenticity_secret` verifies deliveries. A projection is the
-        // place it never appears, so this read has no `raw` mode.
+        // `authenticity_secret` verifies deliveries. The transport withholds
+        // it from every result, and this read has no `raw` mode either.
         return {
           subscriptions: resources(document["data"]).map((row) =>
             pick(row, ["name", "url", "active", "application_id", "created_at"]),
@@ -2960,58 +2981,59 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
   const call = planningCenterCall(send, PLANNING_CENTER_API_VERSIONS, excluded);
   const surface = tools(call, defaultPageSize, excluded);
 
-  return api(id, {
-    ...(options.authScope ? { authScope: options.authScope } : {}),
-    title: options.title ?? "Planning Center",
-    description: `Planning Center church management — ${series(
-      DESCRIBED_APPS.filter((app) => !excluded.has(app)).map((app) => APP_TITLES[app]),
-    )}: ${purpose}`,
-    credential: auth.credential,
-    async testCredentials(values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult> {
-      try {
-        const document = asRecord(
-          await call(
-            { method: "GET", path: "/people/v2/me", query: { include: "organization" } },
-            {
-              ...ctx,
-              credential: {
-                get: async (field?: string) => (field ? (values[field] ?? null) : null),
-                getAll: async () => values,
-              },
-            },
-          ),
-        );
-        const me = created(document, "person record");
-        const organization = resources(document["included"]).find((row) => row.type === "Organization");
-        const name = attribute(me, "name") ?? `person ${me.id}`;
-        const where = attribute(organization, "name");
-        return {
-          ok: true,
-          message: `Authenticated as ${String(name)} (person ${me.id})${where ? ` in ${String(where)}` : ""}.`,
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof ConnectorCallError ? error.message : "Planning Center rejected the token.",
-        };
-      }
-    },
-    callAdmission: options.callAdmission === undefined ? PLANNING_CENTER_ADMISSION : options.callAdmission,
-    usageGuide: {
-      content: usageGuide(purpose, options.instructions, excluded),
-      summary:
-        "Person ids join every product, offset paging, per-product write limits, JSON:API hatches, pinned versions.",
-      // Deliberately not `required`. Every named tool's schema is complete
-      // enough to call it on its own; the guide carries the cross-product
-      // facts (merges, write limits, hatch framing) an agent needs only when
-      // it leaves the named surface or hits one of them.
-    },
-    ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
-    tools: [
-      ...surface.hatches,
-      ...PLANNING_CENTER_APPS.flatMap((app) => (excluded.has(app) ? [] : surface.apps[app])).filter(
-        (tool) => excluded.size === 0 || !LIST_TOOLS.has(tool.name),
-      ),
-    ],
-  });
+  return tracksEveryRequest(
+    api(id, {
+      ...(options.authScope ? { authScope: options.authScope } : {}),
+      title: options.title ?? "Planning Center",
+      description: `Planning Center church management — ${series(
+        DESCRIBED_APPS.filter((app) => !excluded.has(app)).map((app) => APP_TITLES[app]),
+      )}: ${purpose}`,
+      credential: auth.credential,
+      async testCredentials(values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult> {
+        try {
+          const document = asRecord(
+            await call(
+              { method: "GET", path: "/people/v2/me", query: { include: "organization" } },
+              deriveContext(ctx, {
+                credential: {
+                  get: async (field?: string) => (field ? (values[field] ?? null) : null),
+                  getAll: async () => values,
+                },
+              }),
+            ),
+          );
+          const me = created(document, "person record");
+          const organization = resources(document["included"]).find((row) => row.type === "Organization");
+          const name = attribute(me, "name") ?? `person ${me.id}`;
+          const where = attribute(organization, "name");
+          return {
+            ok: true,
+            message: `Authenticated as ${String(name)} (person ${me.id})${where ? ` in ${String(where)}` : ""}.`,
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            message: error instanceof ConnectorCallError ? error.message : "Planning Center rejected the token.",
+          };
+        }
+      },
+      callAdmission: options.callAdmission === undefined ? PLANNING_CENTER_ADMISSION : options.callAdmission,
+      usageGuide: {
+        content: usageGuide(purpose, options.instructions, excluded),
+        summary:
+          "Person ids join every product, offset paging, per-product write limits, JSON:API hatches, pinned versions.",
+        // Deliberately not `required`. Every named tool's schema is complete
+        // enough to call it on its own; the guide carries the cross-product
+        // facts (merges, write limits, hatch framing) an agent needs only when
+        // it leaves the named surface or hits one of them.
+      },
+      ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
+      tools: [
+        ...surface.hatches,
+        ...PLANNING_CENTER_APPS.flatMap((app) => (excluded.has(app) ? [] : surface.apps[app])).filter(
+          (tool) => excluded.size === 0 || !LIST_TOOLS.has(tool.name),
+        ),
+      ],
+    }),
+  );
 }

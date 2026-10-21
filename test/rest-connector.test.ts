@@ -1,9 +1,11 @@
+import { attachCallClassification } from "../src/call-classification.js";
 // The shared REST connector (src/providers/_shared/rest/) over a synthetic
 // vendor: validation against the pinned index before transport, the reviewed
 // read/write split, one envelope, bounded reads, and auth dispatch. Stripe's
 // own configuration is tested in src/providers/stripe/provider.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiConnector } from "../src/connectors/api-connector.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { OperationIndex, type OpenApiData, type SchemaNode } from "../src/providers/_shared/rest/operation-index.js";
 import { restTools, restTransport, type RestVendor } from "../src/providers/_shared/rest/tools.js";
@@ -115,7 +117,7 @@ function vendor(overrides: Partial<RestVendor> = {}, timeoutMs = 30_000): RestVe
 }
 
 function connector(overrides: Partial<RestVendor> = {}, timeoutMs?: number): Connector {
-  return apiConnector("acme", { tools: restTools(vendor(overrides, timeoutMs)) });
+  return tracksEveryRequest(apiConnector("acme", { tools: restTools(vendor(overrides, timeoutMs)) }));
 }
 
 const ctx = (): ConnectorContext => connectorContext();
@@ -440,6 +442,26 @@ describe("restTools()", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it.each(["GET", "HEAD", "POST"])(
+    "INV-9: a served write-classified REST %s never advertises an ambiguous failure as retryable",
+    async (method) => {
+      respond = () => new Response(null, { status: 503 });
+      const call = ctx();
+      attachCallClassification(call, "write");
+      await expect(
+        connector({ failure: () => new ConnectorCallError("unavailable", "Unavailable") }).callTool(
+          "acme_api_read",
+          {
+            method,
+            path: method === "HEAD" ? "/v1/widgets/w_1" : method === "POST" ? "/v1/widgets/query" : "/v1/widgets",
+          },
+          call,
+        ),
+      ).rejects.toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+      expect(sent).toHaveLength(1);
+    },
+  );
+
   it("INV-9: dispatches a write once and maps its failure through the vendor", async () => {
     respond = () => Response.json({ message: "boom" }, { status: 500 });
     const error = await refusal(
@@ -543,7 +565,7 @@ describe("restTools()", () => {
     expect(sent.map((request) => request.headers.has("idempotency-key"))).toEqual([false, false, false, true, false]);
   });
 
-  it("INV-9: treats a reset or 5xx on a write without a key as an unknown outcome, but not a failure before connecting", async () => {
+  it("INV-9: treats a reset, a refused connection, or a 5xx on a write without a key as an unknown outcome", async () => {
     const failing = (code: string) =>
       (async (input: RequestInfo | URL, init?: RequestInit) => {
         sent.push({
@@ -575,9 +597,14 @@ describe("restTools()", () => {
       code: "unavailable",
       retryable: true,
     });
-    // Never connected: nothing was sent, so repeating is safe.
+    // A refusal on fetch's last attempt says nothing about earlier ones.
     globalThis.fetch = failing("ECONNREFUSED");
     expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(await refusal(plain.callTool("acme_api_read", { path: "/v1/widgets" }, ctx()))).toMatchObject({
       code: "unavailable",
       retryable: true,
     });
@@ -590,7 +617,7 @@ describe("restTools()", () => {
     expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({ code: "invalid_args" });
   });
 
-  it("INV-9: exempts a connect-phase code only before a response exists, never while reading a body", async () => {
+  it("INV-9: no connect-phase code proves a write unsent, before a response or while reading its body", async () => {
     const plain = connector();
     const write = { method: "POST", path: "/v1/widgets", body: { name: "a" } };
     for (const code of ["EHOSTUNREACH", "ECONNREFUSED", "ENOTFOUND"]) {
@@ -608,15 +635,16 @@ describe("restTools()", () => {
         retryable: false,
       });
     }
-    // The same code from fetch itself, before any response, proves nothing was sent.
+    // Nor does the same code from fetch itself, before any response.
     globalThis.fetch = (async () => {
       throw Object.assign(new TypeError("fetch failed"), {
         cause: Object.assign(new Error("EHOSTUNREACH"), { code: "EHOSTUNREACH" }),
       });
     }) as typeof fetch;
     expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
-      code: "unavailable",
-      retryable: true,
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
     });
   });
 
@@ -624,16 +652,18 @@ describe("restTools()", () => {
     globalThis.fetch = (async () => Response.json({ message: "down" }, { status: 503 })) as typeof fetch;
     const app = createTestConnecta({
       connectors: [
-        apiConnector("acme", {
-          tools: restTools(
-            vendor({
-              failure: (status) =>
-                status >= 500
-                  ? new ConnectorCallError("unavailable", `Acme ${status}.`)
-                  : new ConnectorCallError("invalid_args", `Acme ${status}.`),
-            }),
-          ),
-        }),
+        tracksEveryRequest(
+          apiConnector("acme", {
+            tools: restTools(
+              vendor({
+                failure: (status) =>
+                  status >= 500
+                    ? new ConnectorCallError("unavailable", `Acme ${status}.`)
+                    : new ConnectorCallError("invalid_args", `Acme ${status}.`),
+              }),
+            ),
+          }),
+        ),
       ],
       logger: silentLogger,
     });
@@ -668,7 +698,11 @@ describe("restTools()", () => {
         { headers: { "content-type": "application/json" } },
       );
     const app = createTestConnecta({
-      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      connectors: [
+        tracksEveryRequest(
+          apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
+        ),
+      ],
       logger: silentLogger,
     });
     try {
@@ -690,7 +724,7 @@ describe("restTools()", () => {
       const key = sent[0]!.headers.get("idempotency-key");
       if (given) expect(key).toBe(given);
       else expect(key).toMatch(/^[0-9a-f-]{36}$/);
-      expect(error.code).toBe("unavailable");
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
       expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
       expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
       expect(sent).toHaveLength(1);
@@ -716,7 +750,11 @@ describe("restTools()", () => {
       });
     }) as typeof fetch;
     const app = createTestConnecta({
-      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      connectors: [
+        tracksEveryRequest(
+          apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
+        ),
+      ],
       logger: silentLogger,
     });
     try {
@@ -751,7 +789,11 @@ describe("restTools()", () => {
 
   it("INV-9: rejects a 256-character idempotency key per the write schema before dispatch", async () => {
     const app = createTestConnecta({
-      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      connectors: [
+        tracksEveryRequest(
+          apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
+        ),
+      ],
       logger: silentLogger,
     });
     try {

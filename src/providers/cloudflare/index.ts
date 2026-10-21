@@ -20,6 +20,7 @@ import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../prov
 import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
 import { restTools } from "../_shared/rest/tools.js";
 import { CLOUDFLARE_API_BASE, cloudflareRest, type CloudflareKeyAuth, type CloudflarePin } from "./rest.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export { CLOUDFLARE_API_BASE } from "./rest.js";
 export type { CloudflarePin } from "./rest.js";
@@ -320,30 +321,32 @@ function cloudflareKey(
       zoneId,
       pin,
     });
-    return apiConnector(id, {
-      ...provider.connectorOptions,
-      title: options.title ?? (auth === "globalApiKey" ? "Cloudflare (Global API Key)" : "Cloudflare"),
-      description: `Cloudflare v4 API over REST (${auth === "globalApiKey" ? "Global API Key" : "API token"}${pin ? ", pinned" : ""}) — ${purpose}`,
-      credential: auth === "globalApiKey" ? GLOBAL_API_KEY_CREDENTIAL : API_TOKEN_CREDENTIAL,
-      ...(auth === "globalApiKey"
-        ? { testCredentials: rest.testCredentials }
-        : { testCredential: rest.testCredential }),
-      callAdmission: admissionPolicy(maxConcurrency),
-      usageGuide: {
-        content: keyUsageGuide(auth, {
-          purpose,
-          ...(accountId ? { accountId } : {}),
-          ...(zoneId ? { zoneId } : {}),
-          ...(pin ? { pin } : {}),
-          ...(options.instructions !== undefined ? { instructions: options.instructions } : {}),
-        }),
-        summary:
-          auth === "globalApiKey"
-            ? "GLOBAL API KEY: the user's whole estate, limited by pin. Search operations, read details, then read or write."
-            : "Scoped API token over REST. Search operations, read details, then read or write; uploads and GraphQL are named tools.",
-      },
-      tools: [...restTools(rest.vendor), ...rest.tools],
-    });
+    return tracksEveryRequest(
+      apiConnector(id, {
+        ...provider.connectorOptions,
+        title: options.title ?? (auth === "globalApiKey" ? "Cloudflare (Global API Key)" : "Cloudflare"),
+        description: `Cloudflare v4 API over REST (${auth === "globalApiKey" ? "Global API Key" : "API token"}${pin ? ", pinned" : ""}) — ${purpose}`,
+        credential: auth === "globalApiKey" ? GLOBAL_API_KEY_CREDENTIAL : API_TOKEN_CREDENTIAL,
+        ...(auth === "globalApiKey"
+          ? { testCredentials: rest.testCredentials }
+          : { testCredential: rest.testCredential }),
+        callAdmission: admissionPolicy(maxConcurrency),
+        usageGuide: {
+          content: keyUsageGuide(auth, {
+            purpose,
+            ...(accountId ? { accountId } : {}),
+            ...(zoneId ? { zoneId } : {}),
+            ...(pin ? { pin } : {}),
+            ...(options.instructions !== undefined ? { instructions: options.instructions } : {}),
+          }),
+          summary:
+            auth === "globalApiKey"
+              ? "GLOBAL API KEY: the user's whole estate, limited by pin. Search operations, read details, then read or write."
+              : "Scoped API token over REST. Search operations, read details, then read or write; uploads and GraphQL are named tools.",
+        },
+        tools: [...restTools(rest.vendor), ...rest.tools],
+      }),
+    );
   };
 }
 

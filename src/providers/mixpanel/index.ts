@@ -7,6 +7,7 @@ import { PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../../connectors/option-shapes
 import { defineProvider, type ProviderContext } from "../../provider.js";
 import { apiConnector } from "../../connectors/api-connector.js";
 import { mixpanelRest, MIXPANEL_API_ADMISSION } from "./rest.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export type MixpanelRegion = "us" | "eu" | "in";
 
@@ -522,25 +523,27 @@ function mixpanelApi(id: string, options: MixpanelApiOptions, provider: Provider
   const region = options.region ?? "us";
   const rest = mixpanelRest(region, options.defaultProjectId);
   const instructions = options.instructions?.trim();
-  return apiConnector(id, {
-    ...provider.connectorOptions,
-    title: options.title ?? `Mixpanel API (${region})`,
-    description: `Mixpanel service-account REST APIs (${region} residency): ${options.purpose}`,
-    credential: {
-      label: "Mixpanel service account",
-      description:
-        "username:secret from Mixpanel organization settings. Import requires Owner or Admin on the target project.",
-      placeholder: "username:secret",
-    },
-    testCredential: rest.testCredential,
-    callAdmission: options.callAdmission === undefined ? MIXPANEL_API_ADMISSION : options.callAdmission,
-    usageGuide: {
-      content: `# Mixpanel API usage\n\nService-account REST, ${region} residency. Account purpose: ${options.purpose}\n\nDefault project: ${options.defaultProjectId ?? "none; supply project_id"}.${skill.fragments.api}${instructions ? `\n## ${skill.instructionsHeading}\n\n${instructions}\n` : ""}`,
-      summary: `${REGION_COPY[region]} residency, service-account REST. Raw export, user activity, profiles, reports and event import.`,
-      required: true,
-    },
-    tools: rest.tools,
-  });
+  return tracksEveryRequest(
+    apiConnector(id, {
+      ...provider.connectorOptions,
+      title: options.title ?? `Mixpanel API (${region})`,
+      description: `Mixpanel service-account REST APIs (${region} residency): ${options.purpose}`,
+      credential: {
+        label: "Mixpanel service account",
+        description:
+          "username:secret from Mixpanel organization settings. Import requires Owner or Admin on the target project.",
+        placeholder: "username:secret",
+      },
+      testCredential: rest.testCredential,
+      callAdmission: options.callAdmission === undefined ? MIXPANEL_API_ADMISSION : options.callAdmission,
+      usageGuide: {
+        content: `# Mixpanel API usage\n\nService-account REST, ${region} residency. Account purpose: ${options.purpose}\n\nDefault project: ${options.defaultProjectId ?? "none; supply project_id"}.${skill.fragments.api}${instructions ? `\n## ${skill.instructionsHeading}\n\n${instructions}\n` : ""}`,
+        summary: `${REGION_COPY[region]} residency, service-account REST. Raw export, user activity, profiles, reports and event import.`,
+        required: true,
+      },
+      tools: rest.tools,
+    }),
+  );
 }
 
 /** @deprecated Read `mixpanel.definition.classify` instead. Kept for existing imports. */

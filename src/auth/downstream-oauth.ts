@@ -17,9 +17,9 @@ import {
   type RemoteOAuthClient,
 } from "./downstream-client-metadata.js";
 import { SentSecrets } from "../sent-secrets.js";
-import { ConnectorCallError } from "../errors.js";
-import { attachOAuthPartition, oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
-import { inheritOAuthSealer } from "../oauth-sealing.js";
+import { ConnectorCallError, resendAdvice } from "../errors.js";
+import { oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
+import { deriveContext } from "../derived-context.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import { detach, fromSignal, runEdge } from "../runtime/run.js";
 import {
@@ -42,6 +42,7 @@ import {
   type RefreshResponseOutcome,
 } from "./oauth-token-response.js";
 import { deleteV2Keys, discoveryIssuer, readV2Grant, type MigratedGrantBody } from "./oauth-v2-migration.js";
+import { keepErrorName } from "../redaction-identity.js";
 
 /** RFC 6749 section 3.3: one or more scope tokens, separated by single spaces. */
 const OAUTH_SCOPE = /^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/;
@@ -55,19 +56,13 @@ export function assertOAuthScope(connectorId: string, scope: string | undefined)
 
 /**
  * The context an explicit authorization start runs under: allowed to begin
- * consent, with a request scope of its own, carrying the registry's sealer and
- * owner partition across the copy. Only `startAuth` builds one; status reads
- * and calls never do, which is what keeps them from starting authorization.
+ * consent, in the same request scope, and derived so the registry's sealer,
+ * owner partition, and every other call-state entry carry across the copy.
+ * Only `startAuth` builds one; status reads and calls never do, which is what
+ * keeps them from starting authorization.
  */
 export function authorizingContext(ctx: ConnectorContext): ConnectorContext {
-  return attachOAuthPartition(
-    inheritOAuthSealer(ctx, {
-      ...ctx,
-      requestScope: ctx.requestScope ?? ctx,
-      allowAuthorization: true,
-    }),
-    oauthPartitionFor(ctx),
-  );
+  return deriveContext(ctx, { allowAuthorization: true });
 }
 
 /**
@@ -84,6 +79,7 @@ export class OAuthCallbackClaimedError extends ConnectorCallError {
     this.name = "OAuthCallbackClaimedError";
   }
 }
+keepErrorName(OAuthCallbackClaimedError, "OAuthCallbackClaimedError");
 
 /** A local destination guard proved that no OAuth HTTP request left. */
 export class OAuthRequestNotSentError extends ConnectorCallError {}
@@ -1181,9 +1177,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** The fixed, retryable failure of a flow a later reset superseded. */
   private flowSuperseded(): ConnectorCallError {
-    return new ConnectorCallError(
-      "unavailable",
-      `Connector "${this.connectorId}" authorization changed while this request was in flight; try again.`,
+    return resendAdvice(
+      new ConnectorCallError(
+        "unavailable",
+        `Connector "${this.connectorId}" authorization changed while this request was in flight.`,
+      ),
+      "; try again",
     );
   }
 
@@ -1192,18 +1191,21 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * attached. Retryable: the grant it held is untouched.
    */
   private credentialWriteError(): ConnectorCallError {
-    return new ConnectorCallError(
-      "unavailable",
-      `Connector "${this.connectorId}" could not store its OAuth credentials; try again shortly.`,
+    return resendAdvice(
+      new ConnectorCallError("unavailable", `Connector "${this.connectorId}" could not store its OAuth credentials.`),
+      "; try again shortly",
     );
   }
 
   /** @internal Other requests kept refreshing faster than this one could join. */
   refreshContended(): ConnectorCallError {
     this.recordRefreshFailure({ kind: "contended" });
-    return new ConnectorCallError(
-      "unavailable",
-      `Connector "${this.connectorId}" could not refresh its OAuth grant while other requests were; retry.`,
+    return resendAdvice(
+      new ConnectorCallError(
+        "unavailable",
+        `Connector "${this.connectorId}" could not refresh its OAuth grant while other requests were.`,
+      ),
+      "; retry",
     );
   }
 
@@ -1294,8 +1296,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ]) {
       if (typeof value === "string") secrets.secret(value);
     }
-    if (body.client?.value.client_secret) secrets.add(body.client.value.client_id);
-    if (this.clientOptions?.client?.clientSecret) secrets.add(this.clientOptions.client.clientId);
+    if (body.client?.value.client_secret) secrets.identifier(body.client.value.client_id);
+    if (this.clientOptions?.client?.clientSecret) secrets.identifier(this.clientOptions.client.clientId);
     const urls: string[] = [];
     const collect = (item: unknown): void => {
       if (typeof item === "string") {
@@ -1309,7 +1311,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     collect(value);
     if (
       [secrets, this.clientOptions?.secrets].some(
-        (source) => source && (source.redact(value) !== value || urls.some((url) => source.containsUrl(url))),
+        (source) => source && (source.changes(value) || urls.some((url) => source.containsUrl(url))),
       )
     ) {
       throw new ConnectorCallError(

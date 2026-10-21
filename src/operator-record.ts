@@ -48,6 +48,8 @@
 // boundary removes credentials used by the upstream request from those answers, including
 // allowed diagnostics, tool results and nested error causes/data (INV-5).
 
+import { carryProviderFailure } from "./provider-call.js";
+import { followRedactedCopies, keepErrorName } from "./redaction-identity.js";
 import {
   classificationCode,
   ConnectorCallError,
@@ -126,7 +128,10 @@ const STATES: ReadonlySet<string> = new Set([...STATUS_STATES, "failed"]);
 
 /** Inbound denial facts, never identity text or provider diagnostics. */
 export type AuthDenialReason =
+  | "authentication_abandoned_saturated"
+  | "authentication_busy"
   | "authentication_failed"
+  | "authentication_unreachable"
   | "authorization_header_invalid"
   | "token_type_mismatch"
   | "oauth_verification_failed"
@@ -148,7 +153,10 @@ export type AuthDenialReason =
   | "not_pool_member";
 
 const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
+  "authentication_abandoned_saturated",
+  "authentication_busy",
   "authentication_failed",
+  "authentication_unreachable",
   "authorization_header_invalid",
   "token_type_mismatch",
   "oauth_verification_failed",
@@ -203,6 +211,8 @@ export function labelErrorClass(ctor: { readonly prototype: object }, label: str
   if (!LABEL_RE.test(label)) throw new TypeError(`Invalid error class label "${label}"`);
   labels.set(ctor.prototype, label);
   labelNames.add(label);
+  // A label is a literal and the class's own name, so redaction keeps it as its instances' name.
+  keepErrorName(ctor, label);
 }
 
 for (const [ctor, label] of [
@@ -307,7 +317,7 @@ function defined<K extends string, V>(key: K, value: V | undefined): { [P in K]?
  * Facts attached to failures by identity, never as properties: nothing about
  * the failure's own shape changes, and nothing a caller can see grows.
  */
-const attached = new WeakMap<object, CarriedFacts>();
+const attached = followRedactedCopies(new WeakMap<object, CarriedFacts>());
 
 /** Note what connecta knows about `failure` for any record made of it later. */
 export function attachFailureFacts<T>(failure: T, facts: FailureFacts): T {
@@ -319,6 +329,7 @@ export function attachFailureFacts<T>(failure: T, facts: FailureFacts): T {
 
 /** The facts and class label of `from`, kept for `to` (its classified form, say). */
 export function carryFailureFacts<T>(from: unknown, to: T): T {
+  carryProviderFailure(from, to);
   if (to === null || typeof to !== "object") return to;
   const facts = from !== null && typeof from === "object" ? attached.get(from) : undefined;
   const errorClass = errorLabel(from);
@@ -376,7 +387,7 @@ export interface FailureRecord {
   readonly errno?: string;
 }
 
-const built = new WeakSet<object>();
+const built = followRedactedCopies(new WeakSet<object>());
 
 function count(value: unknown, max: number): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max
@@ -419,7 +430,7 @@ function checkedSubject(subject: FailureSubject): object {
  * identity. A plain object is read as one only when registered here: a thrown
  * object shaped like a classification is just a thrown object.
  */
-const classifications = new WeakSet<object>();
+const classifications = followRedactedCopies(new WeakSet<object>());
 
 /** Vouch for `details` as a classification connecta itself computed. */
 export function classifiedFailure<T extends CallErrorDetails>(details: T): T {
@@ -474,6 +485,8 @@ export function failureRecord(subject: FailureSubject, failure?: unknown): Failu
  * reviewed line here, never a string assembled at the call site.
  */
 export type FailureEvent =
+  | "Authentication admission refused"
+  | "Authentication released after its pending work became unreachable"
   | "negotiation cache read failed"
   | "negotiation cache write failed"
   | "pool tool grant is unreachable"
@@ -568,7 +581,7 @@ interface OwnStatus {
   readonly failure?: unknown;
 }
 
-const ownStatuses = new WeakMap<object, OwnStatus>();
+const ownStatuses = followRedactedCopies(new WeakMap<object, OwnStatus>());
 
 function snapshot(status: ConnectorStatus, failure?: unknown): OwnStatus {
   return {

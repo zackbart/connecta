@@ -56,7 +56,10 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { deriveContext } from "../../derived-context.js";
+import { sensitiveFieldsOption, unprojectedResults } from "../_shared/sensitive-fields.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -69,6 +72,7 @@ import type {
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** Tithe.ly's two published v1 endpoints, one per environment. */
 export const TITHELY_API_BASE_URLS = {
@@ -131,6 +135,16 @@ export interface TithelyOptions {
   defaultPageSize?: number;
   /** API base override for a proxy or test double; replaces the environment's endpoint. */
   baseUrl?: string;
+  /**
+   * Whether results may carry {@link TITHELY_SENSITIVE_FIELDS}: an
+   * organization's payout `bank` (bank name and account last four) and
+   * `legal` contact (name and date of birth). `"drop"` (default) removes them
+   * wherever they appear in every result: the named tools, `raw: true`,
+   * `tithely_api_get`, and `tithely_api_mutate` replies. `"return"` lets
+   * `raw: true` and the hatches return Tithe.ly's records untouched. Only
+   * deployment code decides; no tool argument can.
+   */
+  sensitiveFields?: "drop" | "return";
 }
 
 type JsonRecord = Record<string, any>;
@@ -245,10 +259,13 @@ function tithelyFailure(status: number, headers: Headers, payload: unknown): Con
   const detail = detailFor(payload, status);
   if (status === 429) {
     const wait = retryAfterMs(headers);
-    return new ConnectorCallError(
-      "rate_limited",
-      `${detail} Tithe.ly publishes no rate limit; wait before retrying, and add a callAdmission budget if this recurs.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${detail} Tithe.ly publishes no rate limit. Add a callAdmission budget if this recurs.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      " Wait before retrying.",
     );
   }
   if (status === 401) {
@@ -299,10 +316,13 @@ function tithelyFailure(status: number, headers: Headers, payload: unknown): Con
 function inBandFailure(payload: unknown): ConnectorCallError | undefined {
   const status = asRecord(payload)["status"];
   if (status === undefined || status === "success") return undefined;
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `${detailFor(payload, 200)} (status "${String(status)}"). Tithe.ly reports declined payments, unknown ids, and rejected arguments all this way, without a code; read the reason before retrying.`,
-    { retryable: false },
+  return resendAdvice(
+    new ConnectorCallError(
+      "connector_call_failed",
+      `${detailFor(payload, 200)} (status "${String(status)}"). Tithe.ly reports declined payments, unknown ids, and rejected arguments all this way, without a code.`,
+      { retryable: false },
+    ),
+    "; read the reason before retrying",
   );
 }
 
@@ -320,7 +340,11 @@ async function callTithely(send: GuardedTransport, request: GuardedRequest, ctx:
   return await send(request, ctx, async (response) => {
     const parsed = await response.jsonResult();
     if (!response.ok) {
-      throw tithelyFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
+      throw tithelyFailure(
+        response.status,
+        response.headers,
+        redactBeforeCut(ctx, "value" in parsed ? parsed.value : undefined),
+      );
     }
     if (!("value" in parsed)) {
       throw new ConnectorCallError(
@@ -329,9 +353,12 @@ async function callTithely(send: GuardedTransport, request: GuardedRequest, ctx:
         { retryable: false },
       );
     }
-    const refused = inBandFailure(parsed.value);
+    // Projections parse amounts and times from strings: they read the redacted body, so no
+    // normalized number can show part of a value redaction would have caught.
+    const value = redactBeforeCut(ctx, parsed.value);
+    const refused = inBandFailure(value);
     if (refused) throw refused;
-    return parsed.value;
+    return value;
   });
 }
 
@@ -408,10 +435,16 @@ function projectFunds(organization: JsonRecord): JsonRecord[] {
 }
 
 /**
- * Deliberately omits `bank` (payout bank name and account last four) and
- * `legal` (the legal contact's name and date of birth). Neither answers a
- * giving question, and both are exactly what should not leak into a
- * transcript; `raw: true` returns them for the operator who asks.
+ * The organization fields every result drops by default, by name and at any
+ * depth: `bank` (payout bank name and account last four) and `legal` (the
+ * legal contact's name and date of birth). Neither answers a giving question,
+ * and both are exactly what should not leak into a transcript.
+ */
+export const TITHELY_SENSITIVE_FIELDS: readonly string[] = ["bank", "legal"];
+
+/**
+ * Omits {@link TITHELY_SENSITIVE_FIELDS}. `raw: true` returns them only
+ * where the deployment sets `sensitiveFields: "return"`.
  */
 function projectOrganization(value: unknown): JsonRecord {
   const organization = asRecord(value);
@@ -640,7 +673,8 @@ function namedInput(properties: Record<string, JsonSchema>, required: string[]):
 
 const RAW_PROPERTY: JsonSchema = {
   type: "boolean",
-  description: "Return Tithe.ly's untouched records instead of the lean projection.",
+  description:
+    "Return Tithe.ly's records instead of the lean projection. The guide says whether bank and legal details stay dropped.",
 };
 
 const CURSOR_PROPERTY: JsonSchema = {
@@ -866,31 +900,37 @@ function pairs(value: unknown): Record<string, string> {
   return out;
 }
 
-const UNTOUCHED_RESULT: JsonSchema = {
+const HATCH_RESULT: JsonSchema = {
   type: "object",
-  properties: { result: { description: "Tithe.ly's untouched response body, or null when empty." } },
+  properties: {
+    result: {
+      description: "Tithe.ly's response body, less the sensitive fields this connection drops, or null when empty.",
+    },
+  },
   required: ["result"],
 };
 
 // --- Tools ------------------------------------------------------------------------
 
-function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
+function tools(send: GuardedTransport, defaultPageSize: number, sensitiveFields: "drop" | "return"): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
   const destructive = { readOnlyHint: false, destructiveHint: true } as const;
   const limit = limitProperty(defaultPageSize);
   const raw = (args: JsonRecord) => args["raw"] === true;
+  const unprojected = unprojectedResults(sensitiveFields, TITHELY_SENSITIVE_FIELDS);
   return [
     {
       name: "tithely_api_get",
       description:
-        "Call any Tithe.ly v1 GET endpoint and return its untouched response. Prefer named reads: raw organization records include bank last-4 and legal-contact DOB.",
+        "Call any Tithe.ly v1 GET endpoint and return its response, less the sensitive fields this connection drops. Prefer named reads.",
       annotations: readOnly,
       inputSchema: namedInput({ path: PATH_PROPERTY, query: QUERY_PROPERTY }, ["path"]),
-      outputSchema: UNTOUCHED_RESULT,
+      outputSchema: HATCH_RESULT,
       handler: async (args, ctx) => ({
         result:
-          (await callTithely(send, { method: "GET", path: String(args["path"]), query: pairs(args["query"]) }, ctx)) ??
-          null,
+          unprojected(
+            await callTithely(send, { method: "GET", path: String(args["path"]), query: pairs(args["query"]) }, ctx),
+          ) ?? null,
       }),
     },
     {
@@ -912,27 +952,29 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         },
         ["method", "path"],
       ),
-      outputSchema: UNTOUCHED_RESULT,
+      outputSchema: HATCH_RESULT,
       handler: async (args, ctx) => {
         const form = pairs(args["form"]);
         const hasForm = Object.keys(form).length > 0;
         return {
           result:
-            (await callTithely(
-              send,
-              {
-                method: args["method"],
-                path: String(args["path"]),
-                query: pairs(args["query"]),
-                ...(hasForm
-                  ? {
-                      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                      rawBody: new URLSearchParams(form).toString(),
-                    }
-                  : {}),
-              },
-              ctx,
-            )) ?? null,
+            unprojected(
+              await callTithely(
+                send,
+                {
+                  method: args["method"],
+                  path: String(args["path"]),
+                  query: pairs(args["query"]),
+                  ...(hasForm
+                    ? {
+                        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                        rawBody: new URLSearchParams(form).toString(),
+                      }
+                    : {}),
+                },
+                ctx,
+              ),
+            ) ?? null,
         };
       },
     },
@@ -952,7 +994,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           args,
           defaultPageSize,
         );
-        return { organizations: raw(args) ? rows : rows.map(projectOrganization), page };
+        return { organizations: raw(args) ? unprojected(rows) : rows.map(projectOrganization), page };
       },
     },
     {
@@ -969,7 +1011,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           ctx,
         );
         const record = entity(payload, "organization_id");
-        return raw(args) ? record : projectOrganization(record);
+        return raw(args) ? unprojected(record) : projectOrganization(record);
       },
     },
     {
@@ -996,7 +1038,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       handler: async (args, ctx) => {
         const path = args["scope"] === "api" ? "/accounts-list" : "/accounts-list-all";
         const { rows, page } = await listPage(send, ctx, path, "account_id", args, defaultPageSize);
-        return { accounts: raw(args) ? rows : rows.map(projectAccountSummary), page };
+        return { accounts: raw(args) ? unprojected(rows) : rows.map(projectAccountSummary), page };
       },
     },
     {
@@ -1013,7 +1055,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           ctx,
         );
         const record = entity(payload, "account_id");
-        return raw(args) ? record : projectAccount(record);
+        return raw(args) ? unprojected(record) : projectAccount(record);
       },
     },
     {
@@ -1066,7 +1108,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           created_after: after,
           created_before: before,
         });
-        return { charges: raw(args) ? rows : rows.map(projectCharge), page };
+        return { charges: raw(args) ? unprojected(rows) : rows.map(projectCharge), page };
       },
     },
     {
@@ -1089,7 +1131,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           ctx,
         );
         const record = entity(payload, "charge_id");
-        return raw(args) ? record : projectCharge(record);
+        return raw(args) ? unprojected(record) : projectCharge(record);
       },
     },
     {
@@ -1125,7 +1167,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           defaultPageSize,
           scopeFilters(args, "recurring gifts"),
         );
-        return { recurringCharges: raw(args) ? rows : rows.map(projectRecurring), page };
+        return { recurringCharges: raw(args) ? unprojected(rows) : rows.map(projectRecurring), page };
       },
     },
     {
@@ -1152,7 +1194,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           ctx,
         );
         const record = entity(payload, "recurring_id");
-        return raw(args) ? record : projectRecurring(record);
+        return raw(args) ? unprojected(record) : projectRecurring(record);
       },
     },
     {
@@ -1173,7 +1215,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           ctx,
         );
         const rows = asArray(asRecord(payload)["data"]);
-        return { paymentMethods: raw(args) ? rows : rows.map(projectPaymentMethod) };
+        return { paymentMethods: raw(args) ? unprojected(rows) : rows.map(projectPaymentMethod) };
       },
     },
   ];
@@ -1181,17 +1223,26 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
 
 // --- Guide ------------------------------------------------------------------------
 
-function usageGuide(purpose: string, environment: TithelyEnvironment, instructions: string | undefined): string {
+function usageGuide(
+  purpose: string,
+  environment: TithelyEnvironment,
+  sensitiveFields: "drop" | "return",
+  instructions: string | undefined,
+): string {
   const accountInstructions = instructions?.trim();
   const where =
     environment === "live"
       ? "Live Tithe.ly (tithe.ly): real donors and real money."
       : "Test Tithe.ly (tithelydev.com): a test account; no real money moves.";
+  const sensitive =
+    sensitiveFields === "return"
+      ? "  This connection returns them: `raw: true` and the hatches return Tithe.ly's full records.\n"
+      : "  Every result, `raw: true` and the hatches included, leaves them out.\n";
   return `# Tithe.ly giving usage
 
 ${where}
 
-Account purpose: ${purpose}${skill.fragments.guide_0}${
+Account purpose: ${purpose}${skill.fragments.guide_0}${sensitive}${skill.fragments.guide_1}${
     accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
@@ -1211,13 +1262,12 @@ async function testKeyPair(
     const payload = await callTithely(
       send,
       { method: "GET", path: "/organizations-list", query: { limit: 1 } },
-      {
-        ...ctx,
+      deriveContext(ctx, {
         credential: {
           get: async (field?: string) => (field ? (values[field] ?? null) : null),
           getAll: async () => values,
         },
-      },
+      }),
     );
     const first = asRecord(asArray(asRecord(payload)["data"])[0]);
     const name = text(first["name"]);
@@ -1239,7 +1289,7 @@ async function testKeyPair(
 /** The closed options tithely() accepts; see `assertKnownOptions`. */
 const TITHELY_OPTIONS = optionsOf<TithelyOptions>()({
   ...PROVIDER_COMMON,
-  ...keys("environment", "defaultPageSize", "baseUrl"),
+  ...keys("environment", "defaultPageSize", "baseUrl", "sensitiveFields"),
 });
 
 /** A maintained Tithe.ly giving connection over the v1 REST API. */
@@ -1269,27 +1319,30 @@ function tithelyConnector(id: string, options: TithelyOptions): Connector {
   if (!Number.isInteger(defaultPageSize) || defaultPageSize < 1 || defaultPageSize > MAX_PAGE_SIZE) {
     throw new Error(`tithely() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
   }
+  const sensitiveFields = sensitiveFieldsOption("tithely", options.sensitiveFields);
   const send = tithelyTransport(options.baseUrl?.trim() || TITHELY_API_BASE_URLS[environment], operatorKeyPair);
   const live = environment === "live";
-  return api(id, {
-    ...defined({
-      authScope: options.authScope,
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
+  return tracksEveryRequest(
+    api(id, {
+      ...defined({
+        authScope: options.authScope,
+        callAdmission: options.callAdmission,
+        maxResultBytes: options.maxResultBytes,
+      }),
+      title: options.title ?? (live ? "Tithe.ly Giving" : "Tithe.ly Giving (test)"),
+      description: live
+        ? `Tithe.ly giving — live donors and real money — ${purpose}`
+        : `Tithe.ly giving (test environment, no real money) — ${purpose}`,
+      credential: KEY_PAIR_CREDENTIAL,
+      testCredentials: (values, ctx) => testKeyPair(send, environment, values, ctx),
+      usageGuide: {
+        content: usageGuide(purpose, environment, sensitiveFields, options.instructions),
+        summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, cursor paging, and the form-encoded write hatch.`,
+        // Required: the reduction rule for donor data and the write map behind
+        // the mutate hatch live only here. No schema can carry either.
+        required: true,
+      },
+      tools: tools(send, defaultPageSize, sensitiveFields),
     }),
-    title: options.title ?? (live ? "Tithe.ly Giving" : "Tithe.ly Giving (test)"),
-    description: live
-      ? `Tithe.ly giving — live donors and real money — ${purpose}`
-      : `Tithe.ly giving (test environment, no real money) — ${purpose}`,
-    credential: KEY_PAIR_CREDENTIAL,
-    testCredentials: (values, ctx) => testKeyPair(send, environment, values, ctx),
-    usageGuide: {
-      content: usageGuide(purpose, environment, options.instructions),
-      summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, cursor paging, and the form-encoded write hatch.`,
-      // Required: the reduction rule for donor data and the write map behind
-      // the mutate hatch live only here. No schema can carry either.
-      required: true,
-    },
-    tools: tools(send, defaultPageSize),
-  });
+  );
 }

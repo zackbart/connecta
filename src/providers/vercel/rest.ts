@@ -5,13 +5,14 @@
 // environment variables, bounded logs, raw-byte uploads, teams).
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { guardedFetch, retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { deriveContext } from "../../derived-context.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
+import { redactBeforeCut } from "../../sent-secrets.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type Operation, type RestMethod } from "../_shared/rest/operation-index.js";
 import {
   callRest,
   restCall,
-  unknownOutcome,
   restTransport,
   type RestCall,
   type RestPage,
@@ -36,12 +37,6 @@ const READ_CAP_MS = 60_000;
 const MAX_LOG_BYTES = 1024 * 1024;
 /** Characters kept from one log line; the rest is marked truncated. */
 const MAX_LOG_TEXT = 4_000;
-/**
- * Uploads named by their content, so repeating one stores the same bytes:
- * Remote Cache artifacts by the hash in the path, deployment files by the
- * SHA-1 sent as `x-vercel-digest` (Vercel answers "already uploaded").
- */
-const CONTENT_ADDRESSED: ReadonlySet<string> = new Set(["PUT /v8/artifacts/{hash}", "POST /v2/files"]);
 /** Most raw upload bytes, after base64 decoding. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
@@ -132,10 +127,13 @@ function vercelFailure(status: number, headers: Headers, payload: unknown, famil
     : (code ? `Vercel ${code}: ${message}` : message).slice(0, 1_000);
   if (status === 429) {
     const wait = resetAfterMs(headers);
-    return new ConnectorCallError(
-      "rate_limited",
-      `${detail} Vercel meters endpoints separately; wait for the reported reset before retrying this operation.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${detail} Vercel meters endpoints separately.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      "; wait for the reported reset before retrying this operation",
     );
   }
   if (status === 401) {
@@ -603,11 +601,17 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
     }
     return await logs({ method: "GET", path: call.path, query, prefixOnly: true }, ctx, async (response) => {
       if (!response.ok) {
-        throw vercelFailure(response.status, response.headers, await failureBody(response), family(call));
+        throw vercelFailure(
+          response.status,
+          response.headers,
+          redactBeforeCut(ctx, await failureBody(response)),
+          family(call),
+        );
       }
       const { bytes, truncated } = await response.prefix(MAX_LOG_BYTES);
+      // Whole rows, redacted before `clamp` cuts their text.
       const rows = completeRows(new TextDecoder().decode(bytes)).map((row) =>
-        SAFETY.redact(row, call.method, call.op.path),
+        redactBeforeCut(ctx, SAFETY.redact(row, call.method, call.op.path)),
       );
       return { rows, stopped: truncated ? "bytes" : (stopped ?? "end") };
     });
@@ -1061,60 +1065,58 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
         for (const [name, value] of Object.entries(call.query)) {
           if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") query[name] = value;
         }
-        // A keyless write whose request may have reached Vercel has an unknown
-        // outcome (INV-9): never advertised as retryable, except a
-        // content-addressed upload, where repeating it stores the same bytes.
-        const repeatable = CONTENT_ADDRESSED.has(`${call.method} ${call.op.path}`);
-        let responded = false;
-        try {
-          return await transport(
-            {
-              method: call.method,
-              path: call.path,
-              query,
-              headers: {
-                "Content-Type":
-                  typeof args["contentType"] === "string" ? args["contentType"] : "application/octet-stream",
-                ...(digest ? { "x-vercel-digest": digest } : {}),
-              },
-              rawBody: bytes,
+        // A failed upload that may have left is an unknown outcome, direct
+        // or served: a content address is an operation hint, not an
+        // idempotency key, and grants no retry credit (INV-9).
+        return await transport(
+          {
+            method: call.method,
+            path: call.path,
+            query,
+            headers: {
+              "Content-Type":
+                typeof args["contentType"] === "string" ? args["contentType"] : "application/octet-stream",
+              ...(digest ? { "x-vercel-digest": digest } : {}),
             },
-            ctx,
-            async (response) => {
-              responded = true;
-              if (!response.ok) {
-                throw vercelFailure(response.status, response.headers, await failureBody(response), family(call));
-              }
-              let body: string;
+            rawBody: bytes,
+          },
+          ctx,
+          async (response) => {
+            if (!response.ok) {
+              throw vercelFailure(
+                response.status,
+                response.headers,
+                redactBeforeCut(ctx, await failureBody(response)),
+                family(call),
+              );
+            }
+            let body: string;
+            try {
+              body = await response.text();
+            } catch (error) {
+              if (error instanceof ConnectorCallError) throw error;
+              // Sent, answered, unread: whether the upload took effect is unknown (INV-9).
+              throw new ConnectorCallError(
+                "connector_call_failed",
+                "Vercel answered the upload, but its response could not be read, so whether it took effect is unknown. Check the target before repeating it.",
+                { retryable: false },
+              );
+            }
+            // Only JSON comes back, made value-safe; other bodies are described, never echoed.
+            let data: unknown = null;
+            if (body !== "") {
               try {
-                body = await response.text();
-              } catch (error) {
-                if (error instanceof ConnectorCallError) throw error;
-                // Sent, answered, unread: whether the upload took effect is unknown (INV-9).
-                throw new ConnectorCallError(
-                  "connector_call_failed",
-                  "Vercel answered the upload, but its response could not be read, so whether it took effect is unknown. Check the target before repeating it.",
-                  { retryable: false },
-                );
+                data = SAFETY.redact(JSON.parse(body), call.method, call.op.path);
+              } catch {
+                data = {
+                  contentType: response.headers.get("content-type") ?? "",
+                  bytes: new TextEncoder().encode(body).length,
+                };
               }
-              // Only JSON comes back, made value-safe; other bodies are described, never echoed.
-              let data: unknown = null;
-              if (body !== "") {
-                try {
-                  data = SAFETY.redact(JSON.parse(body), call.method, call.op.path);
-                } catch {
-                  data = {
-                    contentType: response.headers.get("content-type") ?? "",
-                    bytes: new TextEncoder().encode(body).length,
-                  };
-                }
-              }
-              return { status: response.status, data, ...(digest ? { digest } : {}) };
-            },
-          );
-        } catch (error) {
-          throw repeatable ? error : unknownOutcome(vendor, error, responded);
-        }
+            }
+            return { status: response.status, data, ...(digest ? { digest } : {}) };
+          },
+        );
       },
     },
   ];
@@ -1125,10 +1127,13 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
     async testCredential(value, ctx) {
       const token = value.trim();
       try {
-        const { data } = await callRest(vendor, restCall(vendor, "GET", "/v2/user"), {
-          ...ctx,
-          credential: { get: async () => token, getAll: async () => ({ value: token }) },
-        });
+        const { data } = await callRest(
+          vendor,
+          restCall(vendor, "GET", "/v2/user"),
+          deriveContext(ctx, {
+            credential: { get: async () => token, getAll: async () => ({ value: token }) },
+          }),
+        );
         const payload = record(data);
         const user = record(payload["user"] ?? payload);
         const identity = text(user["username"]) ?? text(user["email"]) ?? text(user["name"]) ?? text(user["id"]);

@@ -4,6 +4,7 @@ import { ConnectorCallError } from "./errors.js";
 import { provideCallAdmissionProgram, provideCallBudgetCharge, startCallAdmission } from "./runtime/call-admission.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
 import type { ConnectorCallAdmissionInput, ConnectorCallAdmissionPolicy, ConnectorCallAdmissionRule } from "./types.js";
+import { keepErrorName } from "./redaction-identity.js";
 
 const DEFAULT_MAX_QUEUE_SIZE = 32;
 const DEFAULT_QUEUE_TIMEOUT_MS = 5_000;
@@ -31,6 +32,7 @@ export class CallAdmissionError extends ConnectorCallError {
     this.name = "CallAdmissionError";
   }
 }
+keepErrorName(CallAdmissionError, "CallAdmissionError");
 
 export function isCallAdmissionError(error: unknown): error is CallAdmissionError {
   return error instanceof CallAdmissionError;

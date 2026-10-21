@@ -3,7 +3,8 @@
 // read-only POSTs and refusals, failure mapping, cursors, and two named tools.
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { deriveContext } from "../../derived-context.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult } from "../../types.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
 import {
@@ -178,17 +179,21 @@ function stripeFailure(status: number, headers: Headers, body: unknown, withheld
     if (code === "lock_timeout") {
       // Stripe did not process the request (docs.stripe.com/rate-limits#object-lock-timeouts):
       // a definite conflict, safe to retry once the other request finishes.
-      return new ConnectorCallError(
-        "conflict",
-        `${detail} Another request is changing this object and Stripe did not process this one; retry after it finishes. This is a lock conflict, not a rate limit.`,
-        { retryable: true, retryAfterMs: 1_000 },
+      return resendAdvice(
+        new ConnectorCallError(
+          "conflict",
+          `${detail} Another request is changing this object and Stripe did not process this one. This is a lock conflict, not a rate limit.`,
+          { retryable: true, retryAfterMs: 1_000 },
+        ),
+        " Retry after it finishes.",
       );
     }
     const reason = headers.get("stripe-rate-limited-reason");
-    return new ConnectorCallError(
-      "rate_limited",
-      `${detail}${reason ? ` Limited by ${reason}.` : ""} Back off before retrying.`,
-      { retryAfterMs: retryAfterMs(headers) ?? 1_000 },
+    return resendAdvice(
+      new ConnectorCallError("rate_limited", `${detail}${reason ? ` Limited by ${reason}.` : ""}`, {
+        retryAfterMs: retryAfterMs(headers) ?? 1_000,
+      }),
+      " Back off before retrying.",
     );
   }
   if (status === 401) {
@@ -427,10 +432,13 @@ export function stripeRest(mode: StripeMode, connectedAccount: string | undefine
       const problem = stripeKeyProblem(key, mode);
       if (problem) return { ok: false, message: problem };
       try {
-        const { data } = await callRest(vendor, restCall(vendor, "GET", "/v1/account"), {
-          ...ctx,
-          credential: { get: async () => key, getAll: async () => ({ value: key }) },
-        });
+        const { data } = await callRest(
+          vendor,
+          restCall(vendor, "GET", "/v1/account"),
+          deriveContext(ctx, {
+            credential: { get: async () => key, getAll: async () => ({ value: key }) },
+          }),
+        );
         const account = record(data);
         const name = text(record(account["business_profile"])["name"]);
         return {

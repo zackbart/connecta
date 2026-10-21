@@ -4,6 +4,7 @@
 import type { ExecutorAdmissionErrorCode } from "./executor-admission.js";
 import type { JsonSchema } from "./types.js";
 import { redactCallArguments } from "./argument-redaction.js";
+import { followRedactedCopies } from "./redaction-identity.js";
 
 /**
  * Machine-readable classification of a failed connector tool call.
@@ -276,7 +277,11 @@ function boundedValidation(details: ArgumentValidationDetails | undefined): Argu
 
 /** Optional transport diagnostics; never a URL path or raw runtime message. */
 interface UnavailableDetails {
-  /** Guest program diagnostics; returned to the agent, never operator records. */
+  /**
+   * An error class label: a guest program's, or the class of the caller's own
+   * abort reason behind a direct write whose outcome is unknown. Returned to
+   * the agent, never operator records.
+   */
   name?: string;
   line?: number | null;
   hint?: string;
@@ -318,6 +323,9 @@ function networkCode(value: unknown): string | undefined {
   return typeof value === "string" && value.length <= 32 && NETWORK_ERROR_CODES.has(value) ? value : undefined;
 }
 
+/** An error class label, as `errorLabel` reports one. */
+const ERROR_CLASS = /^[A-Z][A-Za-z]{0,63}$/;
+
 function sanitizedUnavailableDetails(details: UnavailableDetails | undefined): UnavailableDetails | undefined {
   if (!details) return undefined;
   let host: string | undefined;
@@ -331,7 +339,10 @@ function sanitizedUnavailableDetails(details: UnavailableDetails | undefined): U
     }
   }
   const code = networkCode(details.code);
-  return host || code ? { ...(host ? { host } : {}), ...(code ? { code } : {}) } : undefined;
+  const name = typeof details.name === "string" && ERROR_CLASS.test(details.name) ? details.name : undefined;
+  return host || code || name
+    ? { ...(name ? { name } : {}), ...(host ? { host } : {}), ...(code ? { code } : {}) }
+    : undefined;
 }
 
 /** Runtime fields only: provider prose cannot supply an errno or a deadline. */
@@ -480,13 +491,23 @@ export class ConnectorCallError extends Error {
   /** Bounded schema findings for `invalid_args`; never submitted values. */
   readonly validation: ArgumentValidationDetails | undefined;
   readonly repair: ArgumentRepairDetails | undefined;
-  /** Sanitized transport diagnostics for `unavailable` only. */
+  /**
+   * Sanitized transport diagnostics, for `unavailable` and for a write whose
+   * outcome is unknown (a timeout's errno, an abort's class).
+   */
   readonly details: UnavailableDetails | undefined;
   /**
    * For `conflict` only: where each thing the write touched stands now, e.g.
    * `{ revision: 12, view: 7 }`. Bounded to 20 whole-number entries.
    */
   readonly current: Readonly<Record<string, number>> | undefined;
+  /**
+   * `"unknown"` when the write this call sent may have taken effect, whatever
+   * `code` says: an authorization verdict reached after the downstream already
+   * had the write (a 401, then a failed renewal) is still an unknown outcome
+   * (INV-9). Undefined when the code alone tells the outcome.
+   */
+  readonly writeOutcome: "unknown" | undefined;
 
   constructor(
     code: ConnectorCallErrorCode,
@@ -499,6 +520,7 @@ export class ConnectorCallError extends Error {
       repair?: ArgumentRepairDetails;
       details?: UnavailableDetails;
       current?: Readonly<Record<string, number>>;
+      writeOutcome?: "unknown";
     } = {},
   ) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
@@ -506,10 +528,12 @@ export class ConnectorCallError extends Error {
     this.code = code;
     this.retryable = opts.retryable ?? RETRYABLE_BY_CODE[code];
     this.retryAfterMs = normalizeRetryAfterMs(opts.retryAfterMs);
-    this.details = code === "unavailable" ? sanitizedUnavailableDetails(opts.details) : undefined;
+    this.details =
+      code === "unavailable" || opts.writeOutcome === "unknown" ? sanitizedUnavailableDetails(opts.details) : undefined;
     this.validation = code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
     this.repair = code === "invalid_args" ? boundedRepair(opts.repair) : undefined;
     this.current = code === "conflict" ? boundedCurrent(opts.current) : undefined;
+    this.writeOutcome = opts.writeOutcome === "unknown" ? "unknown" : undefined;
   }
 }
 
@@ -547,6 +571,11 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
   recovery?: AuthRecoveryMode;
   /** An auth failure followed a write's downstream send. Reconcile before retry. */
   reconciliationRequired?: true;
+  /**
+   * The write this call sent may have taken effect, whatever `code` says (see
+   * {@link ConnectorCallError.writeOutcome}). Check its target before repeating it.
+   */
+  writeOutcome?: "unknown";
   /** The single model-facing entry point for every credential class. */
   nextAction?:
     | {
@@ -610,7 +639,10 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
     args?: unknown;
     argsOmitted?: true;
     argsRedacted?: true;
-    /** Facts the connector recorded before dispatch, such as a generated `idempotencyKey`. */
+    /**
+     * Facts the connector recorded before dispatch, such as a generated
+     * `idempotencyKey`: diagnostics. `retry` says when reusing the key is safe.
+     */
     recovery?: Readonly<Record<string, string>>;
   };
   /** Explicit retry guidance; recovery never retries or mutates by itself. */
@@ -626,8 +658,103 @@ export function framingError(code: ClassificationCode, message: string): CallErr
   };
 }
 
-/** Typed connector verdicts and runtime facts only. Prose never changes a verdict. */
+// Advice to send a call again, kept beside its failure and never inside the
+// failure's message. See resendAdvice.
+const resendAdvices = followRedactedCopies(new WeakMap<object, string>());
+
+/**
+ * Attach advice to send the call again (a rate limit's " Back off before
+ * retrying.", a token error's ", then retry authorization") to `error` as a
+ * segment of its own: `error.message` never contains it. It holds for a read
+ * and a known refusal, so output composes it ({@link withResendAdvice}) only
+ * there, after the outcome is decided. No redaction or rewording of the
+ * message can then hide it from removal on a write whose outcome is unknown
+ * (INV-9). A segment that opens a sentence (" Wait…") follows the message;
+ * any other is a clause, placed before the message's closing period.
+ */
+export function resendAdvice<T extends object>(error: T, advice: string): T {
+  resendAdvices.set(error, advice);
+  return error;
+}
+
+/** The resend advice attached to `from`, if any. */
+export function resendAdviceOf(from: unknown): string | undefined {
+  return from !== null && typeof from === "object" ? resendAdvices.get(from) : undefined;
+}
+
+// Advice that reusing an idempotency key cannot repeat the write, kept apart
+// from the failure's message and its other resend advice. See keyResendAdvice.
+const keyAdvices = followRedactedCopies(new WeakMap<object, KeyResendAdvice>());
+export interface KeyResendAdvice {
+  /** The key the advice names, as it was sent. */
+  key: string;
+  advice: string;
+}
+
+/**
+ * Attach advice that reusing `key` with the same arguments cannot repeat the
+ * write, a segment of its own like {@link resendAdvice}. It holds only where
+ * that key protects the whole logical call (`keyProtectsLogicalCall`): one
+ * boundary entered, one write sent, carrying `key`. Attach it only once the
+ * call's ledger shows a dispatched request carrying `key`: a key generated
+ * but never sent protects nothing. Only the invocation can see the whole
+ * call, so only it composes the advice; a direct caller reads the key from
+ * the message, where it stays as a diagnostic.
+ */
+export function keyResendAdvice<T extends object>(error: T, key: string, advice: string): T {
+  keyAdvices.set(error, { key, advice });
+  return error;
+}
+
+/** The key-reuse advice attached to `from`, if any. */
+export function keyResendAdviceOf(from: unknown): KeyResendAdvice | undefined {
+  return from !== null && typeof from === "object" ? keyAdvices.get(from) : undefined;
+}
+
+/**
+ * Keep `from`'s resend advice, key-reuse advice included, on `to`, a copy or
+ * rewording of it (redaction, a provider's recovery words). A write already
+ * marked unknown never takes it.
+ */
+export function carryResendAdvice(from: unknown, to: unknown): void {
+  if (!(to instanceof Error) || (to as { writeOutcome?: unknown }).writeOutcome === "unknown") return;
+  const advice = resendAdviceOf(from);
+  const keyed = keyResendAdviceOf(from);
+  if (advice !== undefined && !resendAdvices.has(to)) resendAdvices.set(to, advice);
+  if (keyed !== undefined && !keyAdvices.has(to)) keyAdvices.set(to, keyed);
+}
+
+/** `message` with resend `advice` composed in. Only output calls this. */
+export function withResendAdvice(message: string, advice: string | undefined): string {
+  if (advice === undefined) return message;
+  return /^ [A-Z]/.test(advice) || !message.endsWith(".") ? message + advice : `${message.slice(0, -1)}${advice}.`;
+}
+
+/**
+ * Typed connector verdicts and runtime facts only. Prose never changes a
+ * verdict. The message carries the error's resend advice unless its write's
+ * outcome is unknown. This is a direct caller's view, outside any logical
+ * call: key-reuse advice is here only because the one boundary that sent the
+ * keyed request attached it to its own failure, and any boundary above it
+ * finalizes the write as unknown. An invocation composes advice itself.
+ */
 export function classifyCallError(
+  err: unknown,
+  fallbackCode: ClassificationCode = "connector_call_failed",
+): CallErrorDetails {
+  const details = classifyWithoutAdvice(err, fallbackCode);
+  if (details.writeOutcome !== "unknown") {
+    details.message = withResendAdvice(details.message, keyResendAdviceOf(err)?.advice);
+    details.message = withResendAdvice(details.message, resendAdviceOf(err));
+  }
+  return details;
+}
+
+/**
+ * {@link classifyCallError} without the resend advice, for a caller that
+ * decides the outcome first and composes the advice only where it holds.
+ */
+export function classifyWithoutAdvice(
   err: unknown,
   fallbackCode: ClassificationCode = "connector_call_failed",
 ): CallErrorDetails {
@@ -641,6 +768,7 @@ export function classifyCallError(
       ...(err.repair ? { repair: err.repair } : {}),
       ...(err.details ? { details: err.details } : {}),
       ...(err.current ? { current: err.current } : {}),
+      ...(err.writeOutcome ? { writeOutcome: err.writeOutcome } : {}),
     };
   }
   if (err instanceof WithheldTextError) {

@@ -1,4 +1,4 @@
-import { withDeadline } from "../timeout.js";
+import { withAuthenticationDeadline } from "../auth-admission.js";
 import { authorizationCredential } from "../inbound-credential.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 import { validIdentityReference } from "../identity.js";
@@ -43,11 +43,7 @@ export function cloudflareAccessAuth(): InboundAuth {
 
       let identity: Record<string, unknown> | undefined;
       try {
-        identity = await withDeadline(() => access.getIdentity(), {
-          timeoutMs: 5000,
-          signal: request.signal,
-          timeoutError: new Error("Access identity lookup timed out"),
-        });
+        identity = await withAuthenticationDeadline(request, () => access.getIdentity());
       } catch {
         return {
           ok: false,

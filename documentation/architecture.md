@@ -128,10 +128,44 @@ An admitted non-preflight `/mcp` request then takes five steps in
    `-32601`; anything else takes a permit then, so the header alone bypasses
    nothing. Auth and classification share the configured request lifetime.
    Other requests take one permit from the deployment-wide pool, taken before
-   auth so an unauthenticated flood costs a permit rather than a Clerk lookup,
+   auth so an unauthenticated flood costs a request permit before an auth lookup,
    and held until the response _body_ completes, the caller leaves, or its
    configured lifetime ends, not until the handler returns.
-2. **Authorize.** `/agent/<pool>` consults only the built-in `cta_` adapter
+2. **Authorize.** Every adapter invocation passes the independent fixed
+   16-active-authorization bound in `src/auth-admission.ts`, including header-named
+   listens, SDK-owned auth, agent-token storage, and operator/connection routes
+   outside the MCP pool. Shared state is counters and bounded plain charge
+   records, never request I/O; there is no queue or shared promise. Saturation
+   returns retryable 503 `authentication_busy` with `Retry-After: 1` and a
+   checked payload-free log. Each request releases exactly once after the
+   adapter and its cancellation cleanup settle; abort alone does not release
+   capacity. At its hard deadline plus one second of grace, unfinished work
+   moves to a separate allowance of 16 abandoned operations, or stays active
+   while that allowance is full. A full allowance refuses all new work, logged
+   as `authentication_abandoned_saturated`; only a charge's end decrements it
+   and promotes an overdue active charge. A charge ends exactly once, through a
+   released state in its plain record: on settlement, or when the collector
+   frees its token. That token is an object held only by the closures
+   attached to the adapter promise and the registered native operations (plus
+   the deadline timer and the request's lifetime entry, which refers to the
+   lifetime through a `WeakRef`, because workerd keeps a `Request` and its
+   WeakMap entries alive past its invocation). A module-level
+   `FinalizationRegistry` holds the record, never the token, so a freed token
+   proves nothing can settle the charge; the next admission logs
+   `authentication_unreachable`. Without `FinalizationRegistry` (workerd
+   without `enable_weak_ref` before 2025-05-05) only settlement releases.
+   Health exposes both counters and `unreachableRelease`. Access
+   and agent verification race five-second deadlines while registering their
+   uncancellable native work with the invocation's charge. The request's
+   `ctx.waitUntil` keeps that same settlement continuation runnable on Worker
+   disconnects. No other request touches its promise, signal or I/O. Clerk
+   uses a client per authorization, with its signal and a ten-second deadline
+   across verification, JWKS, handshakes, session refresh, domain and gate
+   lookups. The SDK transport buffers at most 1 MiB, closes every upstream body,
+   and makes no JWKS retries; no live response escapes to an SDK clone. No current adapter exposes a cheap,
+   fully authenticated cache hit, so the entire adapter invocation counts.
+   [Authentication capacity](./auth.md#authentication-capacity-and-ingress-limiting)
+   lists exemptions and ingress requirements. `/agent/<pool>` consults only the built-in `cta_` adapter
    (`authorizeAgent`), never with the runtime context that carries
    `ctx.access`. Human endpoints refuse a `cta_` token before recognition or
    storage, and never ask the `cta_` adapter. A provider's
@@ -363,6 +397,32 @@ not proof that workerd cancelled an old stream. A still-live request reaches
 the same hard deadline and is aborted in its own context.
 Cloudflare documents the flag in its
 [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
+
+### Authentication release by collection on workerd
+
+Measured on 2026-10-20 with workerd 1.20260722.1 (Miniflare 4.20260722.0),
+compatibility date `2025-01-01`:
+
+- `FinalizationRegistry` and `WeakRef` are undefined without
+  `enable_weak_ref`; the flag's default-on date is 2025-05-05.
+- With `enable_weak_ref` and `enable_request_signal`, an object reachable only
+  through a fetch continuation is finalized once its invocation ends and
+  workerd cancels the fetch; while the invocation runs it is not. Pending
+  timers and listeners on the request's signal do not keep it.
+- Strong values in a WeakMap keyed by a `Request` (even one the handler
+  created), properties set on a `Request`, and WeakMap values keyed by its
+  `Headers`, `ctx` or `env` stay reachable after the invocation ends. The
+  lifetime registry in `src/auth-admission.ts` therefore stores `WeakRef`s.
+- No `gc()` is exposed. Allocating large arrays (32 × 1 MiB per request)
+  triggers collections, but the most recent unreachable object often survives
+  them; V8 in this build scans the native stack conservatively. The inspector's
+  precise `HeapProfiler.collectGarbage` freed it.
+- In the vitest-pool-workers harness, an isolate that had already collected
+  one scenario's cancelled work sometimes kept a later scenario's cancelled
+  work reachable through 400 rounds of pressure; standalone Miniflare never
+  did. `test/auth-admission-binding.test.ts` gives each collection scenario a
+  fresh isolate and requires two of four sentinels collected before asserting
+  that live charges stayed counted.
 
 A second production run on the same date tested the request bound at 2,000 ms.
 All twelve raw-stream and MCP cases passed with both flag configurations. Live
@@ -829,17 +889,188 @@ auth headers, raw confidential OAuth client IDs and secrets, and outbound
 bearer tokens join the set, including tokens rotated during a call. Token and
 revocation requests register client credentials before dispatch, decoding OAuth
 Basic form components so a raw echo is covered too. Public client IDs remain
-visible. Before any diagnostic is truncated or returned, the
-agent boundary replaces these values and their auth prefixes, mixed JSON
-escapes, URL encodings, and base64/base64url forms with `[redacted]`. Final
-transports register sensitive headers and query values after assembling the
-request; custom API handlers use `ctx.fetch`. Values shorter than eight
+visible. Redaction replaces these values and their auth prefixes, mixed JSON
+escapes, URL encodings, and base64/base64url forms with `[redacted]`.
+
+Every redaction is one pass over a text projection of the whole value: string
+and number leaves in serialization order, nested JSON strings parsed into their
+own leaves, and errors' own fields (non-enumerable diagnostics and causes
+included). The joined projection is matched once, raw and through each JSON
+decoding layer, so a form split across adjacent leaves is found; each match is
+replaced only in the leaves it touches, so public runs, links, annotations and
+container shapes stay. The walk reads every field once, from its descriptor, and
+returns what it checked. A caller's container stands only as verified plain
+data: prototype `Object.prototype`, `Array.prototype` or `null`, no `toJSON` on
+its chain, no symbol-keyed field, every field a data property it read (an
+array's holes read through its prototypes), and nothing in it changed. Anything
+else is a copy of writable, configurable data properties, so a frozen input
+never throws, and every value returned is JSON data, a fresh built-in
+`Uint8Array`, or an error copy: an error always, as its own class, with its
+stack and every accessor its class defines read once into checked fields, its
+`toJSON` shadowed unread and no function in a field; an object of another class
+as plain data; an array that is not plain as a plain array of its indices; a
+`String`, `Number` or `Boolean` wrapper as its primitive; a `toJSON` result,
+called once and checked; a function or symbol as the placeholder; a typed array,
+`DataView` or `ArrayBuffer` as a fresh `Uint8Array` of its bytes, which are
+checked as bytes and, with the elements it held, as the numbers JSON shows for
+them. The type table is in [auth.md](./auth.md). An own accessor is
+never invoked: an object's copy leaves it out, an array index holds the
+placeholder. A change copies the containers on its path on first write, so a
+caller's value is never mutated. An array's non-index fields are never read:
+JSON, which every exit and executor marshals with, never serializes them.
+Facts kept beside a value by identity (failure facts, classifications, statuses,
+Google's reasons and outcomes) register with `redaction-identity.ts` and follow
+its copies, arrays' included.
+One checker, `checked()`, matches every output-bound string under the whole
+lattice: the projection's leaves as one lane, and alone each object key,
+scalar, cursor claim, encoding Connecta produces and structural field;
+provider lanes and bounded reads call it too. Its matching steps run nowhere
+else. Only fixed
+words are kept whatever was sent: envelope keys, MCP and JSON-RPC member names
+and tag values, booleans under outcome names, and on an error its
+classification code and a name its class is registered with in
+`redaction-identity.ts` (the built-in errors, `DOMException`, and Connecta's
+and the pinned MCP SDK's own classes, each with literals beside the class); a
+number or string under any name is matched like any other, and any other error
+name is a projection leaf like any field, joined with its neighbours, and
+withheld whole as `[redacted]` when the lane changes any part of it, keeping
+the copy's class. An accessor an error's chain defines is held on its copy under its
+checked name. Exact relay states and connect links
+Connecta mints and authenticates are kept whole: they hold only sealed state or
+Connecta's own facts. Serialized JSON whose keys, syntax and leaves together
+hold a run of a form that no single leaf holds is withheld whole.
+
+The guarantee: **no caller-visible text holds a registered form whole, nor any
+run of K = 8 consecutive UTF-16 units of a registered form of a value at least K
+long, in the raw text or any JSON-decoded layer; text cut where the cut can end
+inside a form loses that unfinished tail, however short.** Registered forms are
+the raw value, its URL/form encodings (either percent hex case), base64 and
+base64url, and the `Bearer `/`token ` framings. The framing words are public, so
+no indexed run starts inside them; a run reaching K units of the value is
+indexed from the value's own forms, and an echo carrying the framing is
+replaced with it. A private value of one to three units is matched only as a
+whole field value (a leaf, key, number, boolean or decoded view equal to one of
+its forms); one of four to seven units also as a substring of payload text,
+numbers, keys and decoded views; one of K or more also by every K-unit run.
+Pieces shorter than K are found only where they are adjacent: in the joined
+projection or one provider lane (one Slides shape's text runs, one Notion
+rich-text array, one Docs document). Non-adjacent pieces shorter than K, such as
+two seven-unit halves of a value in two Slides shapes, survive: they are
+indistinguishable from ordinary text without redacting ordinary words. Runs of
+K-1 units survive away from a cut. Values derived by an unregistered encoding
+(a date from a timestamp, say) are outside the guarantee, as is a later read of
+a Proxy, which only in-process code can build.
+
+Payload passes run where downstream or guest data enters: the connector's
+result and errors, the invocation's raw reply, executor outcomes and logs,
+emits, and resource and skill reads. The agent boundary (`redactAgentOutput`,
+every meta-tool exit and the MCP route) repeats every check except short
+private values, which would rewrite Connecta's own ids, counts and addresses;
+payload passes already removed them. Identifiers sent beside a credential — a
+confidential client's ID, a Basic username beside a password of at least eight
+characters, and credential-slot fields named as identifiers (`…Id`, `user`,
+`username`, `login`, `email`, `public…`) — are matched whole only: consent URLs
+and vendor metadata carry their parts by design. Continuation cursors sent as
+query parameters (`pageToken`, `next_token`, `continuationToken`, `syncToken`)
+are public result state and are not registered. Header values a connector
+adds to token requests are registered under any name, except values equal to
+Connecta's own public ones (`Accept: application/json` and maintained
+providers' media types, in `PUBLIC_TOKEN_REQUEST_HEADERS`).
+
+K = 8 equals the credential floor, so exactly the short private values are
+whole-only. It keeps ordinary words, dates and counts out of the index: a public
+run must repeat eight consecutive units of one form to match, so high-entropy
+credentials and private values produce no measured false positives (a 200 KB
+corpus of documents, logs, JSON and URLs is unchanged). Values that embed
+ordinary text do suppress it wherever it recurs within the same request: a
+password holding the word `resource`, a token holding a vendor's name, a
+credential that is a URL, or a PEM key's armor. Base64 forms reach K at six
+bytes of the value. The index stores two independent 32-bit polynomial hashes
+per run (at most 524,288 distinct runs, a table at most half full), so a false
+match is vanishingly rare and only redacts more; index and scan are linear in
+the registered forms and the scanned text, whatever the number of values. A
+64 Ki-bit bitmap of the runs' first hashes rejects nearly every text position
+in one load, so only a candidate computes its second hash. A pass over a large
+body costs about what the per-leaf matcher it replaced did
+(`scripts/bench-sent-secrets.mjs` compares builds); declared binary content
+costs more, since it is decoded and checked as bytes as well as its base64 text.
+
+Unchecked content is withheld rather than weakening the guarantee: past the
+index's capacity, or under a private value too large to register, every leaf of
+K units or more and every run of adjacent shorter leaves reaching K; a cycle, an
+accessor, a container past depth 512, and a container past the node budget,
+withheld whole and never serialized. Leaves too large to match joined within the call's work budget are
+matched alone, in order, withholding one that does not fit, and every seam
+between kept leaves is matched 512 units deep on each side. Text that still
+holds escapes after eight decoding layers withholds the leaves holding them.
+
+Declared binary content (Drive `format: "base64"` content, MCP image/audio
+`data`, resource `blob`, and a REST body's `base64` beside its `contentType`)
+is decoded and checked as bytes, as UTF-8 when a registered form is not ASCII,
+as its base64 text, and through any base64 the bytes carry, so an echo at any
+byte alignment is found. Decoded views take payload text's short-value rules. A
+match withholds the whole field as the base64 of `[redacted]`, never partially
+scrubbed bytes; content that is not valid base64 as it stands still gets every
+text view. Base64 or base64url in any string, key or declared field is decoded
+in each of its text views: raw, one layer of JSON escapes decoded, percent
+escapes decoded, and the form decoding (a `+` as a space, generated whenever
+a `+` appears). A view that
+is wholly base64 is decoded from six units; a run inside one from six units
+when payload rules apply and a four-to-seven-unit private value is registered,
+otherwise from eleven. A run of L units decodes to floor(3L/4) bytes, so a piece of
+p bytes at alignment a needs L >= ceil(4(a + p)/3), least at a = 0: the smallest
+piece matched is a short value's four bytes (6) or a K-unit run's eight (11).
+Decoded content is searched for further base64 three encodings deep. The
+decoded views are matched together as one lane, each run decoded once per call
+however many leaves repeat it, and a match only decoding reveals withholds the
+leaf as `[redacted]`. Every decode is charged to the call's work budget, and a
+leaf it cannot check is withheld. Two text decodes chained, base64 glued to
+preceding alphabet units with no separator, HTML entities, compression and
+custom alphabets are outside the guarantee (`auth.md`, INV-5 output redaction
+limits). Content found clean at least 4,096 units long is remembered for the
+request until its set changes, so later passes do not decode it again.
+
+Every base64 or base64url encoding Connecta returns goes through
+`encodeForAgent`: Drive and Gmail downloads, REST bodies, and every page
+cursor. It checks the content before encoding and encodes `[redacted]` instead
+on a match. Cursors are built from already-redacted values, not sealed: a
+provider has no deployment key, and a sealed vendor token would still be the
+vendor's text. A vendor page token is redacted where it is placed, so one that
+echoes a sent value fails on the next page instead of carrying it; a revision or
+id the cursor only compares becomes its digest when it holds a sent value
+(Slides states, Forms revisions and anchors), and a vendor page id a cursor
+names (Slides slides and notes pages) is redacted. Before encoding, every
+string in a cursor's claims is checked under payload rules, since each
+downstream value a cursor holds is a string, and its whole text and encoding
+under the boundary's, so Connecta's own keys and counts never meet short
+private values. A cursor checked so is remembered as clean; one that holds a
+match encodes `[redacted]`.
+
+Text Connecta or a provider cuts short, trims, normalizes or extracts from is
+redacted whole against the request's set, private arguments included, first
+(`redactBeforeCut`, and `clampText` in the Workspace products): a cut leaves a
+remnant shorter than K that no later pass can see, and a normalized number may
+no longer hold the form at all (Drive size strings, Breeze amounts and dates).
+Provider text lanes that the projection does not see as adjacent are matched
+joined (`SentSecrets.parts`): Docs text runs across links and paragraphs, with
+index previews checked again after whitespace collapses; Notion rich text
+wherever it appears, in both `plain_text` and `text.content`; and Slides raw
+text runs, which carry style between them. Text read only up to a bound, or that
+a vendor stopped listing, also loses any suffix that begins a registered form
+(`redactBoundedRead`). Complete forms and open-tail prefixes are matched against
+the original text and merged before replacement. Each decoded layer sets aside
+its own incomplete trailing JSON escape, so a later layer cannot conceal an open
+tail. Only the uncertain suffix changes; checked earlier rich-text runs retain
+their links and annotations. Text-offset cursors bind the redacted
+representation as well as the vendor revision; changed secret sets that change
+that representation refuse continuation with a restart instruction.
+
+Final transports register sensitive headers and query values after assembling
+the request; custom API handlers use `ctx.fetch`. Values shorter than eight
 characters do not enter the matcher, including Basic usernames, passwords
 and explicitly secret fields such as `client_secret`. Configured short
 credentials produce one payload-free warning per connector; use secrets of
-at least eight characters. Encoded and JSON-escaped echoes of registered
-credentials follow the same redaction rules. Connecta's own messages
-never quote a credential.
+at least eight characters. Connecta's own messages never quote a credential.
 Core uncertainty and retry envelopes share one schema-filtered argument snapshot,
 captured before dispatch and byte budgeting. `writeOnly: true` omits values of
 every length, including nested properties, array items and prefixes, local
@@ -1027,12 +1258,27 @@ PRs: onto the kit with unchanged output, then onto the standard surface.
 landed each step, and this section describes their current shapes.
 `test/provider-standard.node.test.ts` holds every other provider folder to the
 standard, and `test/provider-conventions.test.ts` checks the surface rules on
-both runtimes.
+both runtimes. `providers:generate` writes the standard's derived parts and
+refuses a provider past step 1 that breaks the `drift.json` rules, or one past
+step 2 that breaks the guide rules: `drift.json` version 2's `generated` block
+(operations from the kit's `ProviderKitFacts`, hosted names from the reviewed
+classification, evidence digests), and a guide's `## Conventions`, rendered
+from the definition's declarations into `skill.generated.ts`.
+`ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
+with the definition's `blocks`. `providers:check` reads both record versions,
+reports a manifest operation no endpoint row records at the provider's level,
+and lists manual checks last verified more than 180 days ago. Its offline
+record validator, `scripts/drift-validate.mjs`, also gates `providers:generate`
+and the standard suite, so a record they accept is one `providers:check` reads.
 
 The generic REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `pnpm run providers:spec` compiles offline from the
-provider's pinned `openapi.source.json` into `openapi.generated.ts`.
+provider's pin (`evidence/openapi.json`; `openapi.source.json` until its step 1)
+into `openapi.generated.ts`. A `vendored: true` pin compiles the reviewed
+conversion in `evidence/openapi.document.json` instead of fetching, and the
+generated header records that document's digest beside the pin's, so the
+offline freshness check sees a changed conversion.
 Each call is matched to an operation and checked against its parameters before
 transport; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
 its handler, since classification is per tool name. Vendors configure only a
@@ -1072,12 +1318,14 @@ every vendor ships one reviewed table through one mechanism
    signing, webhooks, drains, transfer, claim, and invite codes). It is the
    union of the detectors Cloudflare and Vercel shipped first, and
    deliberately over-inclusive. `providers:spec` writes
-   `value-safety.candidates.json` beside the index when the source record sets
+   `evidence/value-safety.json` (`value-safety.candidates.json` until the
+   provider's step 1) when the source record sets
    `options.valueSafety` (vendor `operationWords`; Stripe's `expansions: false`
    skips id-or-object expansions, which are their own operations' candidates),
    stamped with the pinned digest, the detector format, and its options. The
    file is test evidence and never ships.
-2. **One reviewed verdict per candidate**, in the vendor's `value-safety.ts`:
+2. **One reviewed verdict per candidate**, in the vendor's `safety.ts`
+   (`value-safety.ts` until its step 1):
    `refuse` (the generic tools refuse it before transport, naming the
    operation and the reason), `redact` (reviewed field paths), or `safe`, each
    with a reason. Paths are dot paths into the data a tool returns: a list on
@@ -1203,13 +1451,15 @@ spec: every `redact` path and `keep` must name something the operation's
 response schema can return (through `options.valueSafety.dataRoot` for an
 envelope such as Cloudflare's `result`), and every resource rule path
 something the resource's schema can return. It stamps the paths that resolve
-into the candidates file and fails on the rest, unless
-`value-safety.absent.json` acknowledges them (shared verdicts applied to
-operations whose schema lacks a path, or fields a schema leaves undeclared;
-such paths still apply at runtime).
+into the candidates file and fails on the rest, unless the table's `absent`
+field (`value-safety.absent.json` until the provider's step 1) acknowledges
+them with a reason (shared verdicts applied to operations whose schema lacks a
+path, or fields a schema leaves undeclared; such paths still apply at
+runtime).
 
 `test/fixtures/value-safety.ts` is the shared harness each vendor's
-`value-safety.node.test.ts` runs; `reviewProblems` is pure, and
+`value-safety.node.test.ts` (`provider.safety.node.test.ts` after its step 1)
+runs; `reviewProblems` is pure, and
 `test/value-safety-harness.node.test.ts` proves wrong paths fail it. It fails
 on candidates from another pin, format, or option set; an unreviewed
 candidate; a verdict for an operation the index lacks; a table path the stamp
@@ -1307,6 +1557,204 @@ claims and fail closed when absent, and nothing it persists carries safety.
 Phase 2's deployment-level classifier overrides, keyed by connector id and
 tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
 regardless of wrapping.
+
+#### Characterization goldens
+
+Every maintained provider with an `api()` surface has goldens under
+`test/goldens/<provider>/`: the oracle a provider migration must match byte
+for byte. `catalog.json` holds the connector metadata, the rendered guide,
+and each tool's name, description, schemas, and annotations. `calls.json`
+holds at least one fixture call per tool, then an echo call: the exact
+requests sent (method, URL, sorted headers, body), grouped into causal
+steps, and the agent-visible outcome. `failures.json` drives one read and
+one write through 400, 401, 403, 404, 409, 422, 429 (with `retry-after`)
+and 500 responses, a 401 whose message echoes every sent secret, a refused
+connection, and a transport timeout (a `TimeoutError` after the request
+left). `setup.json`, for a provider whose spec completes an OAuth consent,
+holds the consent's steps. Calls run through `Registry` and
+`InvocationService` with a real credential vault, so the outcome is what
+`call_tool` returns before MCP rendering.
+
+`test/goldens/<provider>/spec.ts` says only how to build the provider and
+which calls to make, including an `echo` call whose vendor reply carries the
+text the harness passes. `test/goldens/harness.ts` owns everything else:
+
+- The fake network records each request as `new Request(input, init)`
+  builds it, so `init.headers` replaces a Request's headers as Fetch does,
+  and a body gets its implied `content-type`. Form bodies are recorded as
+  fields when they re-encode to the exact bytes sent; FormData as its parts,
+  with the runtime's boundary as `<boundary>`. A JSON body is recorded as
+  `json` alone only when it is exactly that value's compact serialization;
+  any other spacing, key order, or escape also keeps the exact `text`.
+- A step loop drives each scenario under fake timers. It drains microtasks,
+  fires timers due now synchronously, and waits for request construction and
+  counted real work to finish. Newly waiting requests form one step, sorted
+  by method, URL, headers, and exact body. The loop releases **one answer at
+  a time**, running to quiescence after each. Previously recorded requests
+  keep release priority over new requests. Every capture runs twice: canonical
+  cohort release order and reverse cohort release order, each with its own
+  fresh module graph, clock, network and cache namespace. Queue replies are
+  assigned in canonical request order in both runs; only answer delivery
+  changes. Steps remain readable admission cohorts, not simultaneous answers.
+  Both orders must match the oracle. Identical observations collapse to one
+  row; differing reverse observations appear in `variants`, each with
+  `order: "reverse"`, complete `steps`, optional `waitedMs`, and `result`.
+  Setup uses the same rule, with `{ steps, variants }` only when orders differ.
+  This bounded two-order model deliberately does not enumerate all interleavings.
+- Every request records integer `after`: the number of answers delivered
+  when the provider called fetch, before harness jitter or body inspection.
+  It identifies a prefix of that run's release sequence; it includes auxiliary
+  requests and resets for setup and invocation. The canonical run releases
+  each cohort forwards, the reverse run backwards, with older cohorts first.
+  For concurrent A and B, C awaiting only B and C awaiting both have canonical
+  `after: 2`, but reverse `after: 1` and `after: 2` respectively. The differing
+  variant preserves that dependency. One integer per request keeps frontiers
+  linear, including a 300-page sequential call. A write sent before login and
+  a write duplicated concurrently or sequentially also differ.
+- Distinct queued replies for indistinguishable concurrent requests are a
+  fixture authoring error: the harness rejects them with a diagnostic. Use
+  identical replies or a request discriminator the provider controls. The
+  arrival order of identical requests cannot assign distinct responses.
+- `test/goldens/setup.ts` installs source dispatchers before a golden test
+  file imports any provider, connector or Effect module. `vi.resetModules()`
+  and dynamic imports refresh those graphs for each capture and release order.
+  The dispatchers retain their identity across captures: saved and prebound
+  functions, and functions captured by Effect, still consult the current
+  capture. Their defining prototypes are wrapped too. Native implementations
+  remain private to the source controller; outside captures the dispatchers
+  delegate unchanged, preserving Vitest's real clocks and runner timeouts.
+- The supported asynchronous model is explicit: fake fetch answers; fake
+  timeout, interval and immediate timers, including `AbortSignal.timeout`; Web Crypto's promise-returning
+  subtle methods; Request/Response/Blob body reads (`arrayBuffer`, `blob`,
+  `bytes`, `formData`, `json`, `text`, where present); default stream-reader
+  `read`/`cancel` and stream `cancel`/`pipeTo`; and promises/`queueMicrotask` chains rooted in those sources or
+  synchronous work. Effect's scheduler and sleeps use the same microtasks
+  and fake timers. A synchronous TextDecoderStream pipeline is supported.
+  Timer delays must coerce to finite nonnegative integer milliseconds within
+  the signed 32-bit timer range; other delays poison the capture. This keeps
+  Date and nanosecond clocks integral. New host asynchronous sources must be
+  registered and counted before use.
+  Native CompressionStream/DecompressionStream, `scheduler.wait`, and
+  native socket/worker/event-source constructors are rejected explicitly,
+  including when their errors are swallowed by a provider. CompressionStream
+  async iteration bypasses the reader-method spy and cannot establish
+  quiescence. No golden may silently bless that path.
+- A no-stimulus audit follows declared quiescence: request, counted-work,
+  timer, or call-settlement progress before an answer or clock tick fails
+  with an unsupported-source diagnostic. Waiting without a request, counted
+  work, or fake timer also fails. The audit is a secondary assertion: source
+  control starts at module load, and supported host promises and microtasks
+  are counted from entry through completion. Quiescence requires zero active
+  counted work, zero queued controlled microtasks, and no due timers; future
+  virtual timers are explicit harness stimuli. Unregistered native producers
+  are unavailable or throw, including saved constructors and swallowed errors.
+  `process.nextTick`, `process.uptime`, `Atomics.waitAsync`, native messaging
+  constructors, and performance timeline methods are unsupported. The
+  test-only `golden-source-boundary` transform rejects Node host-module imports
+  in provider graphs and rejects lazy module loading during scenario work,
+  before either can capture native references or schedule uncounted I/O. Only
+  the harness's fresh-graph loading phase admits test fixture imports.
+  Invalid captures cancel and drain their concurrent fake requests.
+- The network answers in zero virtual time. Before advancing to the next
+  timer, the loop requires eight quiet real event-loop turns and an audit.
+  A row records nonzero `waitedMs`, the virtual time spent on provider
+  timers. Elapsed-time readings count only those timers. A timer of 0 ms
+  set outside a timer callback is due at once and stays in the current
+  cohort. Unjoined timers at completion fail. Since `AbortSignal.timeout`
+  cannot be cancelled, remaining signal deadlines fire during teardown, outside
+  `waitedMs`; any resulting request or result mutation fails. Every successful
+  drive and scenario boundary has zero outstanding controlled work and timers.
+- Auxiliary routes answer token exchanges and other requests that are not
+  the tool's own, and are recorded by name with headers and body. A JWT in a
+  header or field is recorded as its decoded header and claims, with
+  `<signature>` for the per-run signature.
+- `setup` runs before each scenario; its requests must be identical in
+  every scenario and are recorded once.
+- Determinism: a fresh fake clock per scenario (timers, `Date`, and
+  `performance`, and Node `process.hrtime`/`hrtime.bigint`, starting at
+  2026-01-02T03:04:05Z), counted
+  `crypto.randomUUID`, and fixed `crypto.getRandomValues` and `Math.random`,
+  all restarted per scenario. `create(scenario)` receives a slug unique in
+  the process: the scenario name plus a per-capture suffix the goldens never
+  show. Load-time hrtime dispatchers also control Effect wall and monotonic
+  nanoseconds on the virtual clock. Default-date Intl formatting also reads
+  the virtual wall clock.
+  A process-wide cache (Google's delegated tokens) never carries
+  over from an earlier scenario or capture.
+- Secrets: every credential field and secret becomes `<secret:field>`, with
+  HTTP Basic shown decoded. Before that placeholdering, the harness fails
+  the capture if any secret reaches a caller-visible result (INV-5). The
+  guard decodes the result itself: JSON escapes, percent escapes in either
+  hex case, and base64 or base64url at any alignment, up to three layers
+  deep. It also finds any start of a secret that reaches 12 characters past
+  its public framing, so a truncated echo is a leak. Framing is a PEM armor
+  line and the DER structure that opens every key of its type (tags,
+  lengths, version, algorithm identifier), which guides and example keys
+  print. A later fragment, a shorter one in any encoding, or a secret with
+  its case changed is not detected. A base64 run is decoded only from 11
+  characters (8 bytes), shorter than the base64 of any start the guard
+  looks for.
+- The echo call carries every secret not listed in `unsent` in each
+  encoding redaction covers: raw, percent-encoded with upper- and lowercase
+  hex, base64, unpadded base64url, and `\uXXXX` escapes with upper- and
+  lowercase hex, plus the base64 of each `basic` pair. Every sent secret
+  contains `/`, `+`, and `=`, so its percent and base64url forms differ from
+  its raw and base64 forms. The `401 echo` case echoes the raw secrets only.
+  Some providers cap a vendor message before redaction sees it (Google at
+  500 characters), and a cut through a secret would leak its start.
+
+Object keys keep the order the provider produced. A migration changes the
+provider, never the spec or harness.
+
+`test/goldens.test.ts` compares on both Vitest projects and fails if a
+provider folder is neither covered nor listed as remote-MCP-only, a tool
+has no call, or a golden file is missing or extra. It never writes.
+`test/goldens-harness.test.ts` proves the harness catches the mutations it
+exists for: Authorization moved onto a Request that `init.headers`
+replaces, an emptied, respaced, or reordered Infisical login body, a write
+sent before the login is answered, a write sent twice at once or in turn,
+and sent-secret redaction disabled or missing its percent, base64, or
+base64url forms. It checks the leak guard against each encoding directly
+and against PEM framing. A Planning Center request delayed by its
+provider's own 0, 1, 5, or 50 ms timer must give one capture under seven
+schedules. It also captures every spec twice in one process with seeded
+scheduling jitter (requests delayed by microtasks, timers due now, and real
+work before request inspection; both answer orders tested independently) with
+committed seeds 1 and 2 (`CONNECTA_GOLDENS_SEEDS=3,7` adds seeds) and compares every file for every spec
+with the stored goldens. Partial-dependency mutations run under ten seeds,
+and saved immediate/timeout/abort-timeout, Effect scheduler, prebound crypto,
+prebound performance/Date/hrtime, module freshness, runner timing, unsupported
+sources, ambiguous replies, and cross-capture nanoseconds run on both projects.
+CI uses two characterization tiers. Every PR runs byte comparisons of every
+provider on both runtimes: Node captures fresh forward and reverse module graphs;
+Workers captures a fresh canonical graph and compares only the stored canonical
+observations. Projection removes variants only at harness observation positions,
+never from vendor results or schemas. Both tiers retain load-time source controls
+and runtime-independent mutation/source checks; always runs one seed per check.
+The reverse-only C-awaits-B-versus-both mutation runs on Node in always and on
+both runtimes in full. Planning-only PRs run these suites too.
+
+The full tier repeats all provider captures and the complete jitter matrix on
+both runtimes, including Workers reverse order. It runs on every main push and
+on PRs changing provider, connector, HTTP, storage, golden/harness, fixture,
+Vitest, dependency or selector inputs. The selector derives transitive core
+imports using TypeScript parsing and module resolution. Unknown paths or
+dependencies and classifier errors select full; every step-1 provider migration
+selects full. The `changes` job exports `goldens` to both runtime jobs through
+`CONNECTA_GOLDENS_TIER`. Only `always` reduces the tier; local unset/invalid
+values run full, retaining the complete `pnpm run check` gate.
+
+JWT fixture specs import fixed, public throwaway RSA PEM keys, with an
+import/sign/verify self-test. This avoids expensive key generation on every
+fresh module evaluation without changing characterized JWT claims or bytes.
+The harness never caches evaluated module graphs. Global controls prohibit
+`it.concurrent`; parallelism must use isolated files/workers. Transformed code
+may be cached.
+
+`pnpm run goldens:update [provider...]` rewrites the named goldens (all
+when none are named) on Node; it is not part of `check`. A PR
+that changes agent-facing output on purpose regenerates the affected goldens
+and says why in its description; any other golden diff is a regression.
 
 ## Optional deployment modules
 
@@ -1658,6 +2106,232 @@ compiling and configuring the real thing.
 - **Route order is behavior.** Moving a mutation route below the wildcard
   `OPTIONS` opts it into CORS preflight; reordering admission after auth makes
   the cheapest possible attack the most expensive request.
+- **Call state rides beside the context, keyed on the object.** The caller
+  (`src/connector-caller.ts`), admission permit (`src/call-admission-context.ts`),
+  recovery facts (`src/call-recovery.ts`), sent secrets (`src/sent-secrets.ts`),
+  the call's classification (`src/call-classification.ts`), the OAuth sealer and
+  owner partition, and catalog-cache policy live in side tables keyed on the
+  `ConnectorContext`. A `{ ...ctx }` copy is a new key and starts without any of
+  them. In-repo code copies a context only through `deriveContext`
+  (`src/derived-context.ts`): every table resolves the copy to its origin, so
+  state recorded through either object reaches the other, and the copy keeps the
+  request scope. `api()` hands handlers such a copy and never mutates the
+  registry's context (`test/derived-context.test.ts`). A deployment handler that
+  spreads its context still loses this state; decision 0009 (B.1) replaces the
+  tables with `Context` services.
+- **A write leaves once (INV-9).** `src/write-outcome.ts` owns the shared rules
+  every transport applies to a write: `unknownOutcome` turns a retryable
+  failure that may follow the downstream acting (a 5xx, a gateway's 502 to
+  504, a lost connection or reply) into a non-retryable `connector_call_failed`,
+  and `unsentAfterUnauthorized` reports a write answered 401, which is never
+  resent whatever credential renewal meets. Both mark the error
+  `writeOutcome: "unknown"`, which `classifyWriteOutcome` honors before any
+  refusal provenance, so an authorization verdict reached after the write left still
+  counts as unknown in program write accounting (`src/program-writes.ts`),
+  whose result is then that verdict with its handoff, caught or not.
+  `remoteMcp()` classifies by the invocation's verdict
+  (`src/call-classification.ts`), falling back to `classifyTool`, and holds a
+  write to one send per logical call, never per JSON-RPC message: `callTool`
+  puts a dispatch record on the `tools/call` params under a symbol key (spread
+  copies it; `JSON.stringify` drops it), the transport's `send` refuses a
+  second message for that call whatever its id, and the tracked fetch refuses
+  a second request within one message (the SDK's resend after a 401 or a
+  step-up, a redirect hop) and fails a write answered with a redirect. Both
+  layers refuse a missing record unless the active calls for that tool are
+  all reads; catalog hints cannot overrule a served write verdict. Tracking
+  loss gives a non-retryable unknown outcome, never a fresh write attempt. A write
+  always gives the SDK a tool definition, so `callTool` never relists and
+  resends it after a `HeaderMismatch` answer. `api()` OAuth
+  (`src/auth/static-oauth.ts`), the Google Workspace client, and Infisical
+  apply the same one-send rule to credential recovery. All maintained API
+  provider failure mappers run inside `guardedFetch`. Each `api()` entry owns
+  a fresh request ledger (`src/provider-call.ts`) on its derived handler context;
+  further `deriveContext` copies share that ledger without sharing it with
+  concurrent calls. Every guarded request records dispatch, response status,
+  and provider-declared auxiliary status. Plain handler fetches and OAuth
+  resource sends record their dispatch too; OAuth credential checks precede
+  the resource dispatch record. Token exchanges, GitHub installation
+  and repository binding lookups, token minting, and Cloudflare zone-ownership
+  pin lookups are auxiliary: they cannot perform the logical resource write.
+  No transport rejection proves a dispatched write unsent, whatever errno it
+  names. One `fetch` call can hide several attempts: Node's fetch sends a
+  request again after a 421 (even under `redirect: "manual"`) and after an
+  HTTP/2 `REFUSED_STREAM`, both of which servers define as not processed, and
+  an operator-installed dispatcher such as undici's `RetryAgent` can retry
+  further. A refusal on the last attempt says nothing about the earlier ones,
+  so connecta never reports a transport-failed write as known failed. A write
+  is a known failure only on refusal provenance recorded where the evidence is
+  observed, never inferred from an error code: (a) the ledger proves it never
+  left, or (b) the downstream served an HTTP refusal, a 4xx other than 408
+  (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`), under the
+  provider's existing served classification (Notion's write 409 is a
+  `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
+  (b) for the ledger and for a transport outside one: a refusing status the
+  provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so
+  only a genuine idempotency key keeps such a direct write's retry. A 408 is a
+  timeout, and a 2xx followed by a mapper, parser, or output-validation
+  failure may have applied. `classifyWriteOutcome` counts a
+  dispatched write `failed` only with that provenance (`answered`, or the
+  error's private known-failure mark); a bare `rate_limited`,
+  `invalid_args`, or `conflict` code is `unknown`. A downstream tool's
+  `isError` is a read's answer only: for a write it arrives over a 2xx after
+  the handler ran, so it is unknown and non-retryable, and its text stays.
+  Refusal evidence holds only for its whole logical call. The invocation
+  opens one per dispatch (`openLogicalCall` in `src/provider-call.ts`), and
+  every `api()` and `remoteMcp()` `callTool` entered beneath it joins it
+  (`enterProviderBoundary`). A served write's mark stands
+  (`knownForLogicalCall`) only when at most one boundary was entered and the
+  invocation invoked that boundary object with its own `callTool`, or a
+  maintained connector object declared to delegate each call to one boundary
+  (`delegatesEachCall`, GitHub) with its declared function. Identities are
+  captured, never read back: the invocation reads the connector and its
+  `callTool` once and invokes that function with `Reflect.apply`, never
+  through the function's own `call` or `apply` property; each boundary
+  records its object with the published function when it is built
+  (`providerBoundary`) and names that object, from its closure, on entry;
+  and a delegator is declared at construction. A connector that reassigns
+  `callTool` mid-call, or a copy (`{ ...boundary }`, `Object.assign`) that
+  shares a boundary's or delegator's function, borrows no standing;
+  `defineProvider`'s inheriting stamp keeps its connector's
+  (`aliasCallIdentity`). A boundary marks a write known only when
+  every request it dispatched is proven unapplied, so the rule reads: known
+  only if every request the logical call dispatched is proven unapplied and
+  the failing request carries the refusal. A custom connector that composes
+  calls, or that could send around them, never inherits an inner verdict; the
+  invocation withdraws the mark and the write is unknown.
+  Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
+  validation, `remoteMcp()`'s allowlist, connect, and any failure before its
+  `tools/call` is sent, and GitHub's hosted target check and token mint.
+  `remoteMcp()` applies the rule to direct and served writes alike: once
+  `dispatch.sent`, a JSON-RPC error (`-32602` included), an unreadable result,
+  or a failed output validation is unknown; only an HTTP 4xx (not 408) on the
+  request is a refusal. A downstream's `input_required` is no proof either: a
+  handler asks for input from inside its run, so a write's unsupported
+  suspension (`src/invocation.ts`) and a direct write's failed relay
+  (`src/downstream-input.ts`) are unknown and say to reconcile, not resend.
+  The invocation finalizes every served write `classifyWriteOutcome` calls
+  unknown before it adds advice: `retryable: false`, `writeOutcome:
+  "unknown"`, and no grant-then-retry or correct-and-retry text, so a custom
+  connector's code cannot advertise a retry. Advice to send again (a rate
+  limit's "back off before retrying", a token or OAuth preflight's "then
+  retry authorization") is a segment of its own, attached with
+  `resendAdvice` in `src/errors.ts` where it is written and never part of
+  the error's message. Output composes it only once the outcome allows it:
+  `classifyCallError` for a direct caller, unless the write is already
+  unknown, and the invocation after its verdict (it classifies with
+  `classifyWithoutAdvice`). So no redaction of a private argument, no
+  wrapper's rewording, and no preflight failure after an earlier dispatch
+  can leave it on an unknown write, while a read and a known refusal keep it.
+  Key-reuse advice ("reuse this key", "cannot repeat the write") needs more:
+  proof that its key protects the whole logical call
+  (`keyProtectsLogicalCall`). Every resource request dispatched under the
+  logical call, from any ledger, is recorded on it once per dispatch with
+  its method and the genuine key it carried (`ProviderRequest.key`, set by
+  `callRest` only for a key fetch sends as given). The advice stands only when
+  exactly one boundary was entered, the invocation's object owns it as for
+  `knownForLogicalCall`, that boundary tracks every request, and exactly one
+  dispatched request was a write, carrying the named key; a request counts as
+  a read only by its recorded GET or HEAD (`readMethod`). A composite, a
+  wrapper, a second write, an earlier unrelated key, or a call interrupted
+  after two dispatches gets no such advice; the key stays a diagnostic, in
+  the message and `uncertainCall.recovery`. The REST write tool's
+  generated-key advice is a segment of its own (`keyResendAdvice`), which the
+  invocation composes only under that proof and `classifyCallError` composes
+  for a direct caller of the one boundary that sent the key.
+  An authorization or credential handoff on an
+  unknown write says to re-read the target before any fresh call instead of
+  "retry the original call" (`src/authorization-handoff.ts`). Owning transport attempts is planned for decision 0009's B.2
+  guarded `HttpClient`. Reads keep their retry advice. Every maintained
+  provider declares (`tracksEveryRequest`) that its handlers send only through
+  channels the ledger records; for an undeclared `api()` handler an empty
+  ledger is no evidence, so its served write fails unknown once the handler
+  has run. When the handler settles, `api()` closes the ledger before any
+  decision: a resource request still waiting to leave (a sibling reading its
+  credential) is refused before its credential read and again before send,
+  and one in flight already counts as dispatched.
+  `providerCallFailure` in `src/write-outcome.ts` finalizes the call once at the
+  `api()` boundary, including handler-thrown typed errors. For a served write,
+  no resource dispatch keeps the failure's own advice. A vendor's own 4xx
+  refusal (a 4xx other than 408) is a known failure only when no other
+  resource request was dispatched. Refusal provenance travels with the error independently of its
+  code or wording, so a generic `connector_call_failed` refusal still counts
+  as failed in program write accounting. Every other possibly executing
+  failure is non-retryable with `writeOutcome: "unknown"`; authorization codes
+  keep their handoff. The existing special handling of write 401s remains.
+  A later refusal cannot make an earlier successful request safe to repeat.
+  Provider recovery wrappers change wording through helpers that preserve
+  verdicts and provenance; Google also retains its response phases and reasons.
+  No operation hint (a whole-resource `PUT`, fixed cells, a content address)
+  grants retry credit, direct or served. A served write requires
+  reconciliation even with an idempotency key; direct transport calls
+  without a served verdict can still prove repeatability, but only with a
+  genuine key sent to a vendor that honors it (Stripe today, through
+  `idempotencyHeader`): the REST write tool refuses an `idempotencyKey` that fetch
+  would send empty after trimming or would not send at all (CR, LF, NUL, any
+  other control character but tab, DEL, or a code point past Latin-1), as
+  `invalid_args` before recovery is recorded, and `callRest` marks a request
+  repeatable only for a key fetch sends as given.
+  `providerCallFailure` (`src/write-outcome.ts`) is the one finalizer for a
+  direct write's failure: the `api()` handler boundary, a guarded transport
+  outside a call ledger, and every `remoteMcp().callTool()` write, direct or
+  served (with its `tools/call` dispatch record as the ledger and the
+  endpoint's HTTP status as the served verdict) all hand it every write
+  failure. Guarded transports
+  inside a call (`ctx.fetch`, the shared REST layer, Google) defer to the
+  `api()` boundary. No identity passthrough or code filter runs ahead of it
+  for a direct write. It recognizes every timeout and abort before any code
+  filter: the caller's own signal (an `AbortSignal.timeout` included, and
+  however the runtime's fetch reports it), an SDK or connecta deadline
+  (`code: "timeout"`, an HTTP 408), and a timeout errno. Without a genuine
+  key, such a write is unknown and non-retryable: a timeout keeps its code
+  and `details.code`; the caller's abort becomes `timeout` or
+  `connector_call_failed` with its reason as `cause` (a redacted copy of the
+  same class where output redaction applies, as on `remoteMcp()`) and its
+  class and code in `details`. No invocation exists to report it as
+  `write_outcome_unknown`. The caller's own abort reason still passes by
+  identity for a read and for a served call, whose timeout passes through
+  unchanged for the invocation to report.
+  The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
+  provider/tool in both runtimes, fails on missing provider/tool examples or a
+  dispatched failure bypassing the helper, and covers served write/read
+  overrides with HTTP 503 and a connection reset after send. Local metadata
+  tools prove zero sends; composite calls prove each distinct request leaves
+  once. The round-5 cases additionally cover Docs creation with initial text,
+  composite success followed by refusal, GitHub preflight failures, typed
+  handler errors after successful sends, Forms cursor conflicts after 200,
+  generic-code vendor refusals, auxiliary failures after resource dispatch,
+  redaction of refusal errors, and concurrent direct-call ledger isolation.
+  The round-6 cases cover a composite write's early refusal while siblings
+  await credentials or are in flight, requests started after the call ended,
+  connect-phase errnos with each body kind (all unknown for a write, and a
+  direct read stays retryable), a request aborted with a refusal-shaped
+  reason, an errno outside fetch's network error, and
+  undeclared handlers whose untracked send precedes a typed failure. Each
+  catalog case also checks that the ledger recorded every resource request
+  the network saw, and the inventory that every API connector declares it.
+  `test/write-evidence.test.ts` uses real refused, reset, and held sockets on
+  both runtimes: a refused write is unknown and a refused read retryable,
+  including a write aborted with another fetch's real refusal as its reason
+  after the server read its body; `test/write-evidence.node.test.ts` covers a
+  Planning Center POST that undici resends after a 421 to a closed listener, a
+  DELETE that a `RetryAgent` resends after a reset, and a streamed body and a
+  `Blob` with an overridden `stream()` that undici partly sends before its
+  producer fails. Each has the server holding the write and reports unknown.
+  Additional tests:
+  `test/remote-mcp-write-once.test.ts` (real SDK transport),
+  `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each
+  provider's `INV-9` tests.
+- **Plain `ctx.fetch` is not confined to an origin, by design.** In an `api()`
+  handler it is the global `fetch` plus sent-secret registration. It carries no
+  grant: only `ctx.oauth.fetch` attaches the OAuth token, and only to
+  `apiOrigins`, and every maintained provider sends through a guarded transport
+  confined to its base URL. A custom handler is deployment code, which owns its
+  destinations (goal 4); no agent program reaches `ctx.fetch`, so INV-3 holds
+  below the sandbox, and a credential a handler sends is redacted from what the
+  agent sees (INV-5). Confining it would need a declared origin list on every
+  `api()` connector and would break handlers that follow a URL their API
+  returned, such as a signed download. `test/api-oauth.test.ts` pins that the
+  plain fetch carries no grant.
 - **`close()` is idempotent and ordered.** Both admission pools, then the
   connector limiters, then the executor; Node's `listen()` calls it on
   SIGTERM/SIGINT.
