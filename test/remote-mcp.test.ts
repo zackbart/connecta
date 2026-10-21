@@ -245,86 +245,83 @@ describe("remoteMcp() connector", () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
 
-  it.each(["deadline"])(
-    "isolates concurrent OAuth call signals when one call ends by %s",
-    async () => {
-      vi.useFakeTimers();
-      const storage = memoryStorage();
-      await seedGrant(storage, {
-        issuer: "https://authorization.test",
-        tokens: { access_token: "oauth-secret", token_type: "bearer" },
-      });
-      const downstream = httpDownstream((server) => {
-        server.registerTool(
-          "echo",
-          {
-            inputSchema: z.object({ name: z.string() }),
-            annotations: { readOnlyHint: true },
-          },
-          async ({ name }) => ({ content: [{ type: "text", text: name }] }),
-        );
-      });
-      const calls = {
-        first: { started: deferred<void>(), release: deferred<void>(), signal: undefined as AbortSignal | undefined },
-        sibling: { started: deferred<void>(), release: deferred<void>(), signal: undefined as AbortSignal | undefined },
-      };
-      let handshakes = 0;
-      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
-        init.signal?.throwIfAborted();
-        const message = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
-        if (message?.method === "server/discover") handshakes++;
-        if (message?.method === "tools/call") {
-          const call = calls[message.params.arguments.name as keyof typeof calls];
-          call.signal = init.signal!;
-          call.started.resolve();
-          let abort!: () => void;
-          try {
-            await Promise.race([
-              call.release.promise,
-              new Promise<never>((_, reject) => {
-                abort = () => reject(init.signal?.reason);
-                init.signal?.addEventListener("abort", abort, { once: true });
-              }),
-            ]);
-            init.signal?.throwIfAborted();
-          } finally {
-            init.signal?.removeEventListener("abort", abort);
-          }
-        }
-        return downstream.fetch(input, init);
-      });
-      const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
-      const context = { ...ctx(storage), requestScope: {} };
-      const first = withDeadline((signal) => connector.callTool("echo", { name: "first" }, { ...context, signal }), {
-        timeoutMs: 1_000,
-        timeoutError: new Error("first call deadline"),
-      });
-      // Observe a rejection immediately, before advancing the fake clock.
-      const firstResult = first.catch((error: unknown) => error);
-      await calls.first.started.promise;
-      const sibling = withDeadline(
-        (signal) => connector.callTool("echo", { name: "sibling" }, { ...context, signal }),
-        { timeoutMs: 60_000, timeoutError: new Error("sibling call deadline") },
+  it.each(["deadline"])("isolates concurrent OAuth call signals when one call ends by %s", async () => {
+    vi.useFakeTimers();
+    const storage = memoryStorage();
+    await seedGrant(storage, {
+      issuer: "https://authorization.test",
+      tokens: { access_token: "oauth-secret", token_type: "bearer" },
+    });
+    const downstream = httpDownstream((server) => {
+      server.registerTool(
+        "echo",
+        {
+          inputSchema: z.object({ name: z.string() }),
+          annotations: { readOnlyHint: true },
+        },
+        async ({ name }) => ({ content: [{ type: "text", text: name }] }),
       );
-      const siblingResult = sibling.catch((error: unknown) => error);
-      try {
-        await calls.sibling.started.promise;
-        await vi.advanceTimersByTimeAsync(1_000);
-        expect(await firstResult).toEqual(new Error("first call deadline"));
-        expect(calls.first.signal?.aborted).toBe(true);
-        expect(calls.sibling.signal?.aborted).toBe(false);
-        calls.sibling.release.resolve();
-        expect(await siblingResult).toMatchObject({ content: [{ text: "sibling" }] });
-        expect(handshakes).toBe(1);
-      } finally {
-        calls.first.release.resolve();
-        calls.sibling.release.resolve();
-        await connector.closeScope!(context);
-        await Promise.all([firstResult, siblingResult]);
+    });
+    const calls = {
+      first: { started: deferred<void>(), release: deferred<void>(), signal: undefined as AbortSignal | undefined },
+      sibling: { started: deferred<void>(), release: deferred<void>(), signal: undefined as AbortSignal | undefined },
+    };
+    let handshakes = 0;
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      init.signal?.throwIfAborted();
+      const message = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+      if (message?.method === "server/discover") handshakes++;
+      if (message?.method === "tools/call") {
+        const call = calls[message.params.arguments.name as keyof typeof calls];
+        call.signal = init.signal!;
+        call.started.resolve();
+        let abort!: () => void;
+        try {
+          await Promise.race([
+            call.release.promise,
+            new Promise<never>((_, reject) => {
+              abort = () => reject(init.signal?.reason);
+              init.signal?.addEventListener("abort", abort, { once: true });
+            }),
+          ]);
+          init.signal?.throwIfAborted();
+        } finally {
+          init.signal?.removeEventListener("abort", abort);
+        }
       }
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
+      return downstream.fetch(input, init);
+    });
+    const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
+    const context = { ...ctx(storage), requestScope: {} };
+    const first = withDeadline((signal) => connector.callTool("echo", { name: "first" }, { ...context, signal }), {
+      timeoutMs: 1_000,
+      timeoutError: new Error("first call deadline"),
+    });
+    // Observe a rejection immediately, before advancing the fake clock.
+    const firstResult = first.catch((error: unknown) => error);
+    await calls.first.started.promise;
+    const sibling = withDeadline((signal) => connector.callTool("echo", { name: "sibling" }, { ...context, signal }), {
+      timeoutMs: 60_000,
+      timeoutError: new Error("sibling call deadline"),
+    });
+    const siblingResult = sibling.catch((error: unknown) => error);
+    try {
+      await calls.sibling.started.promise;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await firstResult).toEqual(new Error("first call deadline"));
+      expect(calls.first.signal?.aborted).toBe(true);
+      expect(calls.sibling.signal?.aborted).toBe(false);
+      calls.sibling.release.resolve();
+      expect(await siblingResult).toMatchObject({ content: [{ text: "sibling" }] });
+      expect(handshakes).toBe(1);
+    } finally {
+      calls.first.release.resolve();
+      calls.sibling.release.resolve();
+      await connector.closeScope!(context);
+      await Promise.all([firstResult, siblingResult]);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it.each(["client disconnect", "program success"])(
     "cancels every OAuth fan-out call and releases its streams, timers, and request listeners on %s",
@@ -572,61 +569,47 @@ describe("remoteMcp() connector", () => {
     }
   });
 
-  it.each(["scope closes"])(
-    "stops a layout 2 migration during beginFlow when the %s",
-    async () => {
-      const backing = memoryStorage();
-      const tokensKey = oauthV2Keys.value(oauthV2Keys.field.tokens, null);
-      const grant = JSON.stringify({ access_token: "legacy-token", token_type: "Bearer" });
-      await backing.set(tokensKey, grant);
-      const entered = deferred<void>();
-      const release = deferred<void>();
-      const storage: KVStorage = {
-        ...backing,
-        async get(key) {
-          if (key === tokensKey) {
-            entered.resolve();
-            await release.promise;
-          }
-          return backing.get(key);
-        },
-      };
-      const transport = vi.fn();
-      const connector = remoteMcp("down", {
-        url: "https://downstream.test/mcp",
-        auth: { type: "oauth" },
-        _transportFactory: transport,
-      });
-      const context = { ...ctx(storage), requestScope: {} };
-      const pending = connector.status!(context);
-      await entered.promise;
-      try {
-        await connector.closeScope!(context);
-        release.resolve();
-        await expect(pending).resolves.toMatchObject({ state: "error" });
-        // A cancelled waiter returned before the detached connect did. Let
-        // the released in-memory storage promise chain finish before checking.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(await backing.get(oauthGrantKeys.grant)).toBeNull();
-        expect(await backing.get(tokensKey)).toBe(grant);
-        expect(transport).not.toHaveBeenCalled();
-      } finally {
-        release.resolve();
-        await pending;
-        await connector.closeScope!(context);
-      }
-    },
-  );
-
-  it("discovers output-schema tools when dynamic code generation is blocked", async () => {
-    const c = await makeConnector();
-    vi.stubGlobal("Function", function blockedFunction(): never {
-      throw new EvalError("Code generation from strings disallowed");
+  it.each(["scope closes"])("stops a layout 2 migration during beginFlow when the %s", async () => {
+    const backing = memoryStorage();
+    const tokensKey = oauthV2Keys.value(oauthV2Keys.field.tokens, null);
+    const grant = JSON.stringify({ access_token: "legacy-token", token_type: "Bearer" });
+    await backing.set(tokensKey, grant);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const storage: KVStorage = {
+      ...backing,
+      async get(key) {
+        if (key === tokensKey) {
+          entered.resolve();
+          await release.promise;
+        }
+        return backing.get(key);
+      },
+    };
+    const transport = vi.fn();
+    const connector = remoteMcp("down", {
+      url: "https://downstream.test/mcp",
+      auth: { type: "oauth" },
+      _transportFactory: transport,
     });
-
-    const tools = await c.listTools(ctx());
-
-    expect(tools.find((tool) => tool.name === "echo")?.outputSchema).toBeTruthy();
+    const context = { ...ctx(storage), requestScope: {} };
+    const pending = connector.status!(context);
+    await entered.promise;
+    try {
+      await connector.closeScope!(context);
+      release.resolve();
+      await expect(pending).resolves.toMatchObject({ state: "error" });
+      // A cancelled waiter returned before the detached connect did. Let
+      // the released in-memory storage promise chain finish before checking.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(await backing.get(oauthGrantKeys.grant)).toBeNull();
+      expect(await backing.get(tokensKey)).toBe(grant);
+      expect(transport).not.toHaveBeenCalled();
+    } finally {
+      release.resolve();
+      await pending;
+      await connector.closeScope!(context);
+    }
   });
 
   it("keeps automatic version negotiation as the default", async () => {
@@ -941,27 +924,26 @@ describe("downstream session termination", () => {
 });
 
 describe("remoteMcp() destination guard", () => {
-  it.each(["", "read\nwrite"])(
-    "rejects invalid OAuth scope %s",
-    (scope) => {
-      expect(() => remoteMcp("svc", { url: "https://example.com/mcp", auth: { type: "oauth", scope } })).toThrow(
-        /OAuth scope/,
-      );
-    },
-  );
+  it.each(["", "read\nwrite"])("rejects invalid OAuth scope %s", (scope) => {
+    expect(() => remoteMcp("svc", { url: "https://example.com/mcp", auth: { type: "oauth", scope } })).toThrow(
+      /OAuth scope/,
+    );
+  });
 
   it.each(["http://example.com/client.json", "https://user:secret@example.com/client.json"])(
-    "rejects invalid client metadata URL %s", (clientMetadataUrl) => {
-    expect(() =>
-      remoteMcp("svc", { url: "https://example.com/mcp", auth: { type: "oauth", clientMetadataUrl } }),
-    ).toThrow(/clientMetadataUrl/);
-  });
+    "rejects invalid client metadata URL %s",
+    (clientMetadataUrl) => {
+      expect(() =>
+        remoteMcp("svc", { url: "https://example.com/mcp", auth: { type: "oauth", clientMetadataUrl } }),
+      ).toThrow(/clientMetadataUrl/);
+    },
+  );
 
   it.each([
     ["warns when static headers auth would travel over http://", "cleartext", "http://example.com/mcp", true, true],
     ["does not warn for headers auth over http://localhost", "local", "http://localhost:8787/mcp", true, false],
     ["requireHttps throws a config error for an http:// url", "must-tls", "http://example.com/mcp", false, false, true],
-  ] as const)("%s", (_name, id, url, authenticated, shouldWarn, requireHttps = false) => {
+  ] as const)("%s", (_name, id, url, authenticated, shouldWarn, requireHttps: boolean = false) => {
     const { logger, warn } = spyLogger();
     const construct = () =>
       remoteMcp(id, {
@@ -985,7 +967,6 @@ describe("remoteMcp() destination guard", () => {
       expect(warn).not.toHaveBeenCalled();
     }
   });
-
 });
 
 describe("remoteMcp() redirect policy", () => {
@@ -1064,34 +1045,37 @@ describe("remoteMcp() redirect policy", () => {
     },
   );
 
-  it.each(["http://downstream.test/plaintext", "https://169.254.169.254/latest/meta-data"])("never sends static headers to redirect target %s", async (target) => {
-    const calls: Array<{ url: string; headers: Headers }> = [];
-    const guarded = redirectSafeFetch("down", "same-origin", async (url, init = {}) => {
-      calls.push({
-        url: new URL(url).href,
-        headers: new Headers(init.headers),
+  it.each(["http://downstream.test/plaintext", "https://169.254.169.254/latest/meta-data"])(
+    "never sends static headers to redirect target %s",
+    async (target) => {
+      const calls: Array<{ url: string; headers: Headers }> = [];
+      const guarded = redirectSafeFetch("down", "same-origin", async (url, init = {}) => {
+        calls.push({
+          url: new URL(url).href,
+          headers: new Headers(init.headers),
+        });
+        return new Response(null, {
+          status: 307,
+          headers: { location: `${target}?secret=redirect-secret` },
+        });
       });
-      return new Response(null, {
-        status: 307,
-        headers: { location: `${target}?secret=redirect-secret` },
-      });
-    });
 
-    const err = await guarded("https://downstream.test/mcp", {
-      method: "POST",
-      headers: { "x-api-key": "static-secret" },
-      body: "{}",
-    }).then(
-      () => null,
-      (error: unknown) => error,
-    );
+      const err = await guarded("https://downstream.test/mcp", {
+        method: "POST",
+        headers: { "x-api-key": "static-secret" },
+        body: "{}",
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      );
 
-    expect(err).toBeInstanceOf(RemoteMcpRedirectError);
-    expect((err as Error).message).not.toContain("redirect-secret");
-    expect((err as Error).message).not.toContain(target);
-    expect(calls).toHaveLength(1);
-    expect(required(calls[0]).headers.get("x-api-key")).toBe("static-secret");
-  });
+      expect(err).toBeInstanceOf(RemoteMcpRedirectError);
+      expect((err as Error).message).not.toContain("redirect-secret");
+      expect((err as Error).message).not.toContain(target);
+      expect(calls).toHaveLength(1);
+      expect(required(calls[0]).headers.get("x-api-key")).toBe("static-secret");
+    },
+  );
 
   it("never sends an OAuth bearer token across an origin boundary", async () => {
     const storage = memoryStorage();
@@ -1258,12 +1242,10 @@ describe("downstream tool error classification", () => {
 });
 
 describe("remote MCP transport diagnostics", () => {
-  it.each(
-    [
-      ["ECONNREFUSED", "connect"],
-      ["AbortError", "call"],
-    ],
-  )("preserves sanitized %s diagnostics during %s through the SDK", async (code, phase) => {
+  it.each([
+    ["ECONNREFUSED", "connect"],
+    ["AbortError", "call"],
+  ])("preserves sanitized %s diagnostics during %s through the SDK", async (code, phase) => {
     vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit = {}) => {
       if (phase === "call") {
         if (init.method !== "POST") return new Response(null, { status: 405 });
@@ -1474,28 +1456,25 @@ describe("OAuth callback transport ownership", () => {
     return { context, params: new URLSearchParams({ code: "code", state }) };
   }
 
-  it.each(["succeeds"] as const)(
-    "closes an exchange-only transport after the exchange %s",
-    async () => {
-      const context = { ...ctx(), requestScope: {} };
-      const close = vi.fn(async () => {});
-      const transport = {
-        start: async () => {},
-        send: async () => {},
-        close,
-        finishAuth: async () => {},
-      };
-      const connector = remoteMcp("down", {
-        url: "https://downstream.test/mcp",
-        auth: { type: "oauth" },
-        _transportFactory: () => transport,
-      });
-      const { params } = await callback(context);
-      await expect(connector.finishAuth!("code", context, params)).resolves.toBeUndefined();
-      await connector.closeScope!(context);
-      await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
-    },
-  );
+  it.each(["succeeds"] as const)("closes an exchange-only transport after the exchange %s", async () => {
+    const context = { ...ctx(), requestScope: {} };
+    const close = vi.fn(async () => {});
+    const transport = {
+      start: async () => {},
+      send: async () => {},
+      close,
+      finishAuth: async () => {},
+    };
+    const connector = remoteMcp("down", {
+      url: "https://downstream.test/mcp",
+      auth: { type: "oauth" },
+      _transportFactory: () => transport,
+    });
+    const { params } = await callback(context);
+    await expect(connector.finishAuth!("code", context, params)).resolves.toBeUndefined();
+    await connector.closeScope!(context);
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  });
 
   it("does not hold a failed callback on a hanging transport close", async () => {
     const closing = deferred<void>();

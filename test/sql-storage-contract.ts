@@ -92,6 +92,25 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect(await a.compareAndSet("holder", null, "fresh", { ttlSeconds: 120 })).toBe(true);
   });
 
+  it("shares one table between stores over the same database", async () => {
+    const db = await open();
+    const first = db.storage();
+    const second = db.storage();
+    const claims = await Promise.all(
+      Array.from({ length: 20 }, (_, i) => (i % 2 ? first : second).compareAndSet("claim", null, `owner-${i}`)),
+    );
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await second.get("claim")).toBe(await first.get("claim"));
+  });
+
+  it("refuses a stored value holding NUL that is not UTF-8 instead of reading it wrong", async () => {
+    const db = await open();
+    const storage = db.storage();
+    await storage.set("bad", "placeholder");
+    await db.exec("UPDATE connecta_kv SET value = CAST(x'ff00' AS TEXT) WHERE key = ?", "bad");
+    await expect(storage.get("bad")).rejects.toThrow(new TypeError('the stored value of "bad" is not valid UTF-8'));
+  });
+
   it("round-trips get, set, delete, and a sorted list", async () => {
     const storage = (await open()).storage();
     await storage.set("conn:b:token", "2");

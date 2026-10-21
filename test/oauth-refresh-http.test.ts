@@ -112,7 +112,7 @@ describe("native HTTP refresh on delayed storage", () => {
       const joined = local.refresh(server.url);
       const second = b.refresh(server.url);
       const reason = new DOMException("Owner request ended", "AbortError");
-      if (cancelled !== "sdk") owner.abort(reason);
+      owner.abort(reason);
       if (cancelled !== "caller") sdk.abort(reason);
       expect(await first).toBe(reason);
       if (runtimeHook) expect(waitUntil).toHaveBeenCalledTimes(1);

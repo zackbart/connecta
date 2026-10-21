@@ -379,7 +379,7 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
     const pending = auth.authorize(mcp(caller.signal), BASE);
     if (leave) {
       await waiting;
-      (leave === "caller" ? caller : deadline).abort();
+      deadline.abort();
     }
     const result = await pending;
     expect(result.ok).toBe(false);

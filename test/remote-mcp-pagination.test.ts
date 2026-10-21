@@ -403,7 +403,6 @@ describe("tool metadata across a paginated catalog", () => {
 });
 
 describe("paginated catalogs through the discovery path", () => {
-
   it("INV-8: never exposes a partial catalog or stale fallback when a later page fails", async () => {
     let breakLaterPages = false;
     const { connector } = fixture(threePages(), {

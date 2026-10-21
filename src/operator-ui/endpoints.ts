@@ -298,15 +298,3 @@ export function matrixCellLabel(connector: string, column: Pick<MatrixColumn, "p
       : `${cell.coverage.granted} of ${cell.coverage.total} live tools`;
   return `${where}: ${what}${column.readOnly ? ", read-only" : ""}`;
 }
-
-/** The connector's subject for the matrix's Runs as column: the /mcp cell, else its first pool's. */
-export function connectorRunsAs(contract: OperatorUiContractV2, connectorId: string): OperatorRunsAs | null {
-  const cells = contract.matrix.filter((cell) => cell.connectorId === connectorId);
-  const root = cells.find((cell) => cell.pool === null);
-  if (root) return root.runsAs;
-  for (const pool of contract.pools) {
-    const cell = cells.find((c) => c.pool === pool.name);
-    if (cell) return cell.runsAs;
-  }
-  return null;
-}

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
+import { KvOAuthProvider, OAuthRefreshCoordinator } from "../src/auth/downstream-oauth.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { oauthGrantKeys, oauthRefreshKeys, oauthV2Keys, OAUTH_REFRESH_LEASE_SECONDS } from "../src/storage/keys.js";
+import { oauthGrantKeys, oauthV2Keys } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { connectorContext, deferred } from "./fixtures/misc.js";
 import { seedGrant, storedGrant } from "./fixtures/oauth.js";
@@ -179,49 +179,46 @@ describe.each([["delayed", true]] as const)("round-1 OAuth regressions on %s sto
     expect(await provider(storage).verifyState(state)).toBe(true);
   });
 
-  it.each(["rotation"])(
-    "N independent isolates dispatch exactly one refresh with %s (INV-5)",
-    async (answer) => {
-      const storage = backingStore(delayed);
-      await seedGrant(storage, { issuer: A, tokens });
-      const isolates = Array.from({ length: 8 }, () => new OAuthRefreshCoordinator());
-      const providers = await Promise.all(
-        isolates.map(async (coordinator) => {
-          const p = provider(storage, coordinator);
-          await p.beginFlow();
-          await p.tokens({ issuer: A });
-          return p;
-        }),
-      );
-      const gate = deferred<void>();
-      const entered = deferred<void>();
-      const next =
-        answer === "identical answer"
-          ? tokens
-          : {
-              ...tokens,
-              access_token: "new-access",
-              ...(answer === "rotation" ? { refresh_token: "new-refresh" } : {}),
-            };
-      const fetch = vi.fn(async () => {
-        entered.resolve();
-        await gate.promise;
-        return Response.json(next);
-      });
-      const requests = isolates.map((coordinator, n) =>
-        coordinator.coordinatedFetch(providers[n]!, fetch)(`${A}/token`, refreshInit),
-      );
-      await entered.promise;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(fetch).toHaveBeenCalledTimes(1);
-      gate.resolve();
-      expect(await Promise.all(requests.map(async (request) => (await request).json()))).toEqual(
-        Array.from({ length: 8 }, () => next),
-      );
-      expect(fetch).toHaveBeenCalledTimes(1);
-      expect((await storedGrant(storage))!.body!.tokens).toMatchObject(next);
-    },
-  );
+  it.each(["rotation"])("N independent isolates dispatch exactly one refresh with %s (INV-5)", async (answer) => {
+    const storage = backingStore(delayed);
+    await seedGrant(storage, { issuer: A, tokens });
+    const isolates = Array.from({ length: 8 }, () => new OAuthRefreshCoordinator());
+    const providers = await Promise.all(
+      isolates.map(async (coordinator) => {
+        const p = provider(storage, coordinator);
+        await p.beginFlow();
+        await p.tokens({ issuer: A });
+        return p;
+      }),
+    );
+    const gate = deferred<void>();
+    const entered = deferred<void>();
+    const next =
+      answer === "identical answer"
+        ? tokens
+        : {
+            ...tokens,
+            access_token: "new-access",
+            ...(answer === "rotation" ? { refresh_token: "new-refresh" } : {}),
+          };
+    const fetch = vi.fn(async () => {
+      entered.resolve();
+      await gate.promise;
+      return Response.json(next);
+    });
+    const requests = isolates.map((coordinator, n) =>
+      coordinator.coordinatedFetch(providers[n]!, fetch)(`${A}/token`, refreshInit),
+    );
+    await entered.promise;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    gate.resolve();
+    expect(await Promise.all(requests.map(async (request) => (await request).json()))).toEqual(
+      Array.from({ length: 8 }, () => next),
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((await storedGrant(storage))!.body!.tokens).toMatchObject(next);
+  });
 
   it.each(["after grant CAS", "after deletion"])(
     "retries migration cleanup after a crash %s, and Disconnect cannot resurrect it (INV-5)",

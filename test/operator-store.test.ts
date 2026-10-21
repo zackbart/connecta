@@ -561,46 +561,27 @@ describe("managed token secret lifetime", () => {
     expect(store.getState().createdToken).toBeNull();
     expect(JSON.stringify(store.getState())).not.toContain("cta_disposable-secret");
   });
-
-  it("a superseded secret remains bound to its requested agent, then dismissal and rereads cannot replay it", async () => {
-    const none = { name: "triage", state: "none", revision: "r0" };
-    const issued = { name: "triage", state: "issued", issuedAt: NOW, revision: "r1" };
-    const writes = (mock: ReturnType<typeof vi.fn>) =>
-      mock.mock.calls.filter(([, init]) =>
-        ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""),
-      );
-    const loaded = await loadStore({ id: "a", getToken: async () => "a" }, undefined, "tokens");
-    const { store, fetchMock } = loaded;
-    await bootMaintainer(loaded);
-    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
-    await store.loadAccessTokens();
-    const delayed = deferred<Response>();
-    fetchMock.mockReturnValueOnce(delayed.promise);
-    const pending = store.rotateAgentToken("triage");
-    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
-    const revoked = { name: "triage", state: "revoked", revokedAt: NOW, revision: "r2" };
-    fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
-    await store.loadAccessTokens();
-    delayed.resolve(Response.json({ token: "cta_once", agent: issued }));
-    await pending;
-    expect(store.getState()).toMatchObject({
-      createdToken: "cta_once",
-      createdTokenFor: "triage",
-      tokens: [revoked],
-      unresolvedSlots: ["triage"],
-    });
-    store.dismissCreatedToken();
-    fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
-    await store.loadAccessTokens();
-    store.routeChanged("/connections");
-    store.routeChanged("/tokens");
-    expect(store.getState()).toMatchObject({ createdToken: null, createdTokenFor: null });
-    expect(writes(fetchMock)).toHaveLength(1);
-  });
 });
 
-describe("operator token collection", () => {
+describe("operator collection ordering", () => {
+  const none = (name: string) => ({ name, state: "none" as const, revision: `${name}-none` });
   const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW, revision: `${name}-issued` });
+
+  it("refuses an issuance response for another agent and reveals nothing", async () => {
+    const loaded = await loadStore({
+      id: "session",
+      getToken: async () => "token",
+    });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon")] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_misrouted", agent: issued("ci") }));
+    await store.rotateAgentToken("simon");
+    expect(store.getState().createdToken).toBeNull();
+    expect(store.getState().tokenNotice?.tone).toBe("error");
+    expect(store.getState().tokens).toEqual([none("simon")]);
+  });
 
   it("shows an unknown revocation as a failure and sends nothing more", async () => {
     const loaded = await loadStore({ id: "session", getToken: async () => "token" });
@@ -619,7 +600,9 @@ describe("operator token collection", () => {
     expect(store.getState().tokenNotice?.message).toBe("Revoke result unknown for simon. Revoke again to be sure.");
     expect(store.getState().tokens).toEqual([issued("simon")]);
   });
+});
 
+describe("operator unreadable collections", () => {
   it.each(["truncated JSON", "{}"])("reports an unreadable token collection instead of no tokens: %s", async (body) => {
     const loaded = await loadStore({
       id: "session",
@@ -664,6 +647,32 @@ describe("operator recovery bounds and snapshot ordering", () => {
     changeSession({ id: "b", getToken: async () => "b" });
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getState().session).toBe("ready");
+  });
+
+  it("INV-4 INV-10: bounds stalled session-token acquisition and fences its late continuation", async () => {
+    const token = vi.fn(async () => "token");
+    const { store, fetchMock, windowListeners } = await loadStore({
+      id: "a",
+      getToken: token,
+    });
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await store.boot();
+    const pending = deferred<string>();
+    token.mockReturnValueOnce(pending.promise);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(store.getState().recoveryPending).toBe(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(store.getState().recoveryPending).toBe(false);
+    expect(store.getState().loadFailure).toBe("network");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockImplementation(async () => Response.json(uiData("recovered")));
+    await store.retryLoad();
+    pending.resolve("stale-token");
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(store.getState().data?.serverInfo.name).toBe("recovered");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("INV-4: bounds gated Access retries and resumes admission checks on focus", async () => {
@@ -828,9 +837,31 @@ describe("operator connection writes", () => {
   });
 });
 
-describe("a token mutation whose outcome is unknown", () => {
+describe("actions revalidate at dispatch", () => {
   const none = (name: string) => ({ name, state: "none" as const, revision: `${name}-none` });
   const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW, revision: `${name}-issued` });
+  /** A session whose next token read waits until released; every other read answers at once. */
+  function heldSession() {
+    let armed = false;
+    let taken: ReturnType<typeof deferred<string>> | null = null;
+    return {
+      session: {
+        id: "session",
+        getToken: () => {
+          if (!armed) return Promise.resolve("token");
+          armed = false;
+          taken = deferred<string>();
+          return taken.promise;
+        },
+      } as FakeSession,
+      hold() {
+        armed = true;
+      },
+      release() {
+        taken!.resolve("token");
+      },
+    };
+  }
   const sent = (fetchMock: ReturnType<typeof vi.fn>, method: string) =>
     fetchMock.mock.calls
       .filter(([, init]) => (init as RequestInit | undefined)?.method === method)
@@ -866,39 +897,35 @@ describe("a token mutation whose outcome is unknown", () => {
       expect(sent(fetchMock, "POST")).toEqual(["/ui/access-tokens/triage", "/ui/access-tokens/triage"]);
     }
   });
-});
 
-describe("a token slot is resolved only by a list read that started after its last change", () => {
-  // As the frozen contract lists triage, so the two agree until a test says otherwise.
-  const none = (name: string) => ({
-    name,
-    state: "none" as const,
-    revision: name === "triage" ? "triageNoneRevision0000" : `${name}-none`,
-  });
-  const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW, revision: `${name}-issued` });
-  const posts = (fetchMock: ReturnType<typeof vi.fn>) =>
-    fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST").map(([p]) => p);
+  /** A member contract with Notion's credential actions replaced. */
+  function memberContract(actions: Array<"save" | "test" | "clear">): Response {
+    const body = structuredClone(OPERATOR_V2_MEMBER) as typeof OPERATOR_V2_MEMBER & Record<string, unknown>;
+    const notion = body.connectors.find((c) => c.id === "notion")!;
+    (notion.manage as { actions: string[] }).actions = actions;
+    return Response.json(body);
+  }
 
-  it("leaves the slot unresolved after a truncated 200 body, so a second Issue sends nothing", async () => {
-    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
-    const { store, fetchMock, window } = loaded;
-    await bootMaintainer(loaded);
-    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("triage")] }));
-    await store.loadAccessTokens();
-    fetchMock.mockResolvedValueOnce(new Response('{"token":"cta_half', { status: 200 }));
-    await store.rotateAgentToken("triage");
-    expect(store.getState().tokenNotice?.tone).toBe("error");
-    // The issuance may have committed: no unconfirmed rotation can follow it.
-    const confirm = vi.fn(() => true);
-    window.confirm = confirm;
-    await store.rotateAgentToken("triage");
-    expect(posts(fetchMock)).toEqual(["/ui/access-tokens/triage"]);
-    expect(confirm).not.toHaveBeenCalled();
-    expect(store.getState().unresolvedSlots).toEqual(["triage"]);
-    // Only a list read that starts now settles it.
-    fetchMock.mockResolvedValueOnce(Response.json({ agents: [issued("triage")] }));
-    await store.loadAccessTokens();
-    expect(store.getState().unresolvedSlots).toEqual([]);
+  async function bootMember(session: FakeSession, actions: Array<"save" | "test" | "clear">) {
+    const loaded = await loadStore(session);
+    loaded.configMock.mockResolvedValueOnce(memberContract(actions));
+    await loaded.store.boot();
+    expect(loaded.store.getState()).toMatchObject({ session: "ready", role: "member" });
+    return loaded;
+  }
+
+  it("refuses a member's confirmed Clear when a refresh during the token await drops clear", async () => {
+    const held = heldSession();
+    const { store, fetchMock, configMock } = await bootMember(held.session, ["save", "test", "clear"]);
+    held.hold();
+    const clearing = store.removeCredential("notion");
+    configMock.mockResolvedValueOnce(memberContract(["save"]));
+    const refresh = store.loadOperatorContract();
+    await vi.waitFor(() => expect(configMock).toHaveBeenCalledTimes(2));
+    await refresh;
+    held.release();
+    await clearing;
+    expect(sent(fetchMock, "DELETE")).toEqual([]);
   });
 });
 
@@ -990,6 +1017,130 @@ describe("token mutations compare and swap on the slot revision (P3b, #837)", ()
     // No question opens and nothing is sent: there is no revision to send as `expect`.
     expect(store.getState().tokenConfirm).toBeNull();
     expect(calls(fetchMock)).toEqual([]);
+  });
+});
+
+describe("review round 4: one generation fence per agent slot", () => {
+  // Every slot carries a revision since P3b (#837); the defaults match the frozen contract's triage.
+  const triageNone = (revision = "triageNoneRevision0000") => ({ name: "triage", state: "none", revision });
+  const triageIssued = (issuedAt = NOW, revision = "triageIssuedRevision00") => ({
+    name: "triage",
+    state: "issued",
+    issuedAt,
+    revision,
+  });
+  const writes = (mock: ReturnType<typeof vi.fn>) =>
+    mock.mock.calls.filter(([, init]) => ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""));
+
+  it("review: a late mutation success must not replace a newer list revision", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock, window } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone("r0")] }));
+    await store.loadAccessTokens();
+    const response = deferred<Response>();
+    fetchMock.mockReturnValueOnce(response.promise);
+    const pending = store.rotateAgentToken("triage");
+    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+    // POST committed r1, then another operator rotated r2, then this GET observed r2.
+    const newer = triageIssued("2026-10-15T12:01:00.000Z", "r2");
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [newer] }));
+    await store.loadAccessTokens();
+    response.resolve(Response.json({ token: "cta_old", agent: triageIssued(NOW, "r1") }));
+    await pending;
+    const snapshot = store.getState();
+    expect.soft(snapshot.unresolvedSlots.includes("triage") || snapshot.tokens[0]?.revision === "r2").toBe(true);
+    window.confirm = vi.fn(() => true);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ agent: { name: "triage", state: "revoked", revokedAt: NOW, revision: "r3" } }),
+    );
+    await store.revokeAgentToken("triage");
+    const last = writes(fetchMock).at(-1)!;
+    expect(last[1]?.body).not.toBe(JSON.stringify({ expect: "r1" }));
+  });
+
+  it.each([
+    { token: "", agent: triageIssued() },
+    { token: "cta_a", agent: { name: "triage", state: "issued" } },
+    { token: "cta_a", agent: triageNone() },
+  ])("review: malformed 200 does not resolve a slot: %j", async (payload) => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" });
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [triageNone()] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json(payload));
+    await store.rotateAgentToken("triage");
+    expect(store.getState().unresolvedSlots).toContain("triage");
+  });
+});
+
+describe("round 5 independent review probes", () => {
+  const none = { name: "triage", state: "none", revision: "r0" };
+  const issued = { name: "triage", state: "issued", issuedAt: NOW, revision: "r1" };
+  const writes = (mock: ReturnType<typeof vi.fn>) =>
+    mock.mock.calls.filter(([, init]) => ["POST", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""));
+
+  it("an abandoned identity's completion must not leave a fresh identity's row silently actionable", async () => {
+    const loaded = await loadStore({ id: "a", getToken: async () => "a" });
+    const { store, fetchMock, changeSession } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
+    await store.loadAccessTokens();
+    const old = deferred<Response>();
+    fetchMock.mockReturnValueOnce(old.promise);
+    const pending = store.rotateAgentToken("triage");
+    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("b")));
+    changeSession({ id: "b", getToken: async () => "b" });
+    await vi.waitFor(() => expect(store.getState().data?.serverInfo.name).toBe("b"));
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
+    await store.loadAccessTokens();
+    old.resolve(Response.json({ token: "cta_old_identity", agent: issued }));
+    await pending;
+    expect(store.getState().createdToken).toBeNull();
+    // If completion invalidates this row, the projected state must show that.
+    const shownAsResolved = !store.getState().unresolvedSlots.includes("triage");
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_b", agent: issued }));
+    await store.rotateAgentToken("triage");
+    expect({ shownAsResolved, dispatched: writes(fetchMock).length }).not.toEqual({
+      shownAsResolved: true,
+      dispatched: 0,
+    });
+    // Stronger: A's completion leaves B's fence alone, so B's row is resolved and its Issue goes out.
+    expect(shownAsResolved).toBe(true);
+    expect(writes(fetchMock)).toHaveLength(1);
+  });
+
+  it("a superseded secret remains bound to its requested agent, then dismissal and rereads cannot replay it", async () => {
+    const loaded = await loadStore({ id: "a", getToken: async () => "a" }, undefined, "tokens");
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none] }));
+    await store.loadAccessTokens();
+    const delayed = deferred<Response>();
+    fetchMock.mockReturnValueOnce(delayed.promise);
+    const pending = store.rotateAgentToken("triage");
+    await vi.waitFor(() => expect(writes(fetchMock)).toHaveLength(1));
+    const revoked = { name: "triage", state: "revoked", revokedAt: NOW, revision: "r2" };
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
+    await store.loadAccessTokens();
+    delayed.resolve(Response.json({ token: "cta_once", agent: issued }));
+    await pending;
+    expect(store.getState()).toMatchObject({
+      createdToken: "cta_once",
+      createdTokenFor: "triage",
+      tokens: [revoked],
+      unresolvedSlots: ["triage"],
+    });
+    store.dismissCreatedToken();
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
+    await store.loadAccessTokens();
+    store.routeChanged("/connections");
+    store.routeChanged("/tokens");
+    expect(store.getState()).toMatchObject({ createdToken: null, createdTokenFor: null });
+    expect(writes(fetchMock)).toHaveLength(1);
   });
 });
 

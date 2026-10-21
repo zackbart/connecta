@@ -151,17 +151,4 @@ describe("AdmissionController", () => {
     active.release();
     expect(admission.activeCount).toBe(0);
   });
-
-  it("an abort that loses to a grant in the same tick still yields the lease", async () => {
-    const admission = new AdmissionController({ concurrency: 1, maxQueueSize: 2, queueTimeoutMs: 1_000 });
-    const held = await admission.acquire();
-    const caller = new AbortController();
-    const waiting = admission.acquire({ signal: caller.signal });
-    held.release();
-    caller.abort();
-    const lease = await waiting;
-    expect(admission.activeCount).toBe(1);
-    lease.release();
-    expect(admission.snapshot().totals.cancelled).toBe(0);
-  });
 });

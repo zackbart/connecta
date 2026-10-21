@@ -11,7 +11,7 @@ import type { ConnectaConfigDescription } from "../describe-config.js";
 type Sources = Readonly<Record<string, "default" | "config">>;
 
 /** How a value reads: bytes as KB or MB, durations in their largest whole unit, counts with separators. */
-export type ValueFormat = "bytes" | "ms" | "seconds" | "days" | "count" | "toggle" | "text";
+type ValueFormat = "bytes" | "ms" | "seconds" | "days" | "count" | "toggle" | "text";
 
 /** Icon names the tiles draw; app/icons.tsx defines each one. */
 type ConfigIcon = "lock" | "activity" | "key" | "shield" | "box" | "plug" | "globe" | "user" | "users" | "book";
@@ -114,7 +114,7 @@ function formatBytes(bytes: number): string {
 }
 
 /** The exact count behind a rounded size, for a tooltip. */
-export function exactBytes(bytes: number): string {
+function exactBytes(bytes: number): string {
   return `${bytes.toLocaleString("en-US")} bytes`;
 }
 
@@ -135,7 +135,7 @@ function formatMs(ms: number): string {
 }
 
 /** Format one value. Booleans read On or Off, never true or false; null reads None. */
-export function formatValue(value: unknown, format: ValueFormat): string {
+function formatValue(value: unknown, format: ValueFormat): string {
   if (value === null || value === undefined) return "None";
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (Array.isArray(value))
@@ -158,7 +158,7 @@ export function formatValue(value: unknown, format: ValueFormat): string {
 const UNIT_SUFFIX = /(Ms|Seconds|Bytes|Days)$/;
 
 /** The format a key's name implies: `probeTimeoutMs` is a duration, `maxStashBytes` a size. */
-export function inferFormat(key: string, value: unknown): ValueFormat {
+function inferFormat(key: string, value: unknown): ValueFormat {
   if (typeof value === "boolean") return "toggle";
   if (typeof value !== "number") return "text";
   const unit = UNIT_SUFFIX.exec(key)?.[1];
@@ -174,7 +174,7 @@ export function inferFormat(key: string, value: unknown): ValueFormat {
 }
 
 /** `maxStashEntries` reads "Max stash entries"; a unit suffix drops because the value carries it. */
-export function humanizeKey(key: string): string {
+function humanizeKey(key: string): string {
   // A word with two capitals is an acronym (OAuth, URL) and keeps its case.
   const words = key
     .replace(UNIT_SUFFIX, "")

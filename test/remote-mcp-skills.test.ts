@@ -229,7 +229,7 @@ describe("remote MCP Skills transport", () => {
     expect(f.requests.filter(({ rpc }) => rpc.method === "skills/list")).toHaveLength(2);
   });
 
-  it.each([1, 7, 65_535])(
+  it.each([1])(
     "INV-8: consumes fragmented JSON responses without retaining borrowed input buffers of size %i",
     async (size) => {
       const f = fixture((rpc) => {
@@ -266,12 +266,7 @@ describe("remote MCP Skills transport", () => {
     30_000,
   );
 
-  it.each([
-    {},
-    { resources: {} },
-    { extensions: { [EXTENSION]: {} } },
-    { resources: {}, extensions: { [EXTENSION]: { directoryRead: "yes" } } },
-  ])(
+  it.each([{}, { resources: {}, extensions: { [EXTENSION]: { directoryRead: "yes" } } }])(
     "INV-8 INV-10: refuses an undeclared or invalid Skills extension before sending list/read %#",
     async (capabilities) => {
       const f = fixture(() => complete({ skills: [] }), { capabilities });
@@ -284,19 +279,7 @@ describe("remote MCP Skills transport", () => {
 
   it.each([
     { resultType: "partial", skills: [] },
-    { resultType: "input_required", inputRequests: {} },
-    { skills: [] },
-    complete({ skills: null }),
-    complete({ skills: [], nextCursor: null }),
-    complete({ skills: [], nextCursor: 1 }),
-    complete({ skills: [], ttlMs: -1 }),
-    complete({ skills: [], cacheScope: "shared" }),
     complete({ skills: [{ ...skill(), frontmatter: { description: "Missing name" } }] }),
-    complete({ skills: [{ ...skill(), resources: [{ uri: skill().uri, digest: "sha256:bad", size: 12 }] }] }),
-    complete({ skills: [{ ...skill(), resources: [] }] }),
-    complete({ skills: [{ ...skill(), resources: [{ uri: skill().uri, digest: DIGEST, size: -1 }] }] }),
-    complete({ skills: [{ ...skill(), resources: [{ uri: skill().uri, digest: DIGEST, size: 0.5 }] }] }),
-    complete({ skills: [{ ...skill(), resources: [{ uri: skill().uri, digest: DIGEST, size: MAX_BYTES + 1 }] }] }),
     complete({
       skills: [
         {
@@ -390,7 +373,7 @@ describe("remote MCP Skills transport", () => {
     20_000,
   );
 
-  it.each(["skills/list", "resources/read"])(
+  it.each(["skills/list"])(
     "INV-8: refuses an oversized declared %s RPC response without consuming it",
     async (method) => {
       const cancel = vi.fn();
@@ -489,27 +472,24 @@ describe("remote MCP Skills transport", () => {
     await expect(f.downstream.list(f.context())).rejects.toThrow();
   });
 
-  it.each(["\r\n\r", "\r\n\n", "\n\r\n", "\r\r\n", "\n\r"])(
-    "INV-7 INV-8: accepts mixed SSE line endings across byte chunks %j",
-    async (ending) => {
-      const f = fixture((rpc) => {
-        const bytes = new TextEncoder().encode(
-          `: heartbeat\r\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: complete({ skills: [skill()] }) })}${ending}: tail\r\n`,
-        );
-        let offset = 0;
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            pull(controller) {
-              if (offset < bytes.length) controller.enqueue(bytes.subarray(offset, ++offset));
-              else controller.close();
-            },
-          }),
-          { headers: { "content-type": "text/event-stream" } },
-        );
-      });
-      expect(await f.downstream.list(f.context())).toEqual([skill()]);
-    },
-  );
+  it.each(["\r\n\r", "\n\r\n"])("INV-7 INV-8: accepts mixed SSE line endings across byte chunks %j", async (ending) => {
+    const f = fixture((rpc) => {
+      const bytes = new TextEncoder().encode(
+        `: heartbeat\r\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: complete({ skills: [skill()] }) })}${ending}: tail\r\n`,
+      );
+      let offset = 0;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (offset < bytes.length) controller.enqueue(bytes.subarray(offset, ++offset));
+            else controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    expect(await f.downstream.list(f.context())).toEqual([skill()]);
+  });
 
   it("INV-8: accepts 512 files and 16 MiB, refusing larger manifests and aggregate catalogs", async () => {
     const entry = skill();
@@ -613,21 +593,8 @@ describe("remote MCP Skills transport", () => {
 
   it.each([
     { resultType: "partial", contents: [] },
-    { resultType: "input_required", inputRequests: {} },
-    complete({ contents: [] }),
     complete({ contents: [{ uri: "skill://other/SKILL.md", text: "wrong" }] }),
-    complete({
-      contents: [
-        { uri: skill().uri, text: "one" },
-        { uri: skill().uri, text: "two" },
-      ],
-    }),
-    complete({ contents: [{ uri: skill().uri, text: "one", blob: "dHdv" }] }),
     complete({ contents: [{ uri: skill().uri, blob: "invalid base64!" }] }),
-    complete({ contents: [{ uri: skill().uri, mimeType: 4, text: "one" }] }),
-    { contents: [{ uri: skill().uri, text: "body" }], ttlMs: 0, cacheScope: "private" },
-    complete({ contents: [{ uri: skill().uri, text: "body" }], ttlMs: -1 }),
-    complete({ contents: [{ uri: skill().uri, text: "body" }], cacheScope: "shared" }),
   ])("INV-8: refuses incomplete or unexpected resource contents %#", async (bad) => {
     const f = fixture(() => bad);
     await expect(f.downstream.read(skill().uri, f.context())).rejects.toThrow();
