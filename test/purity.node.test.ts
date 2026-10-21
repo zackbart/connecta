@@ -55,8 +55,19 @@ function resolveToTs(fromFile: string, spec: string): string {
   throw new Error(`Cannot resolve "${spec}" imported from ${fromFile}`);
 }
 
-/** BFS over the relative-import graph starting at `entry`. */
+const graphs = new Map<string, Set<string>>();
+
+/** BFS over the relative-import graph starting at `entry`, walked once per entry. */
 function importGraph(entry: string): Set<string> {
+  let graph = graphs.get(entry);
+  if (!graph) {
+    graph = walkImports(entry);
+    graphs.set(entry, graph);
+  }
+  return graph;
+}
+
+function walkImports(entry: string): Set<string> {
   const visited = new Set<string>();
   const queue = [entry];
   while (queue.length) {
@@ -307,6 +318,26 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
       for (const spec of allSpecifiers(sourceOf(file))) {
         if (!isEffectSpecifier(spec)) continue;
         expect(ROOT_EFFECT_ALLOWED.has(spec), `${file} is reachable from index.ts and imports ${spec}`).toBe(true);
+      }
+    }
+  });
+
+  it("keeps the provider kit out of the root graph", () => {
+    // Its Schema, Stream, and HTTP modules cost about 116 KB gzip, far past
+    // the root cap's headroom; a deployment pays it through a provider entry
+    // (decisions/0010-effect-provider-kit.md).
+    const kit = join(SRC, "http") + "/";
+    for (const file of importGraph(ENTRY)) expect(file.startsWith(kit), `index.ts reaches ${file}`).toBe(false);
+  });
+
+  it("confines Effect's unstable area modules to the kit's transport and vendor modules", () => {
+    // effect/http and effect/http-api can change within 4.x; an upgrade that
+    // moves them should touch these three files and nothing else.
+    const allowed = new Set(["client.ts", "oauth.ts", "vendor.ts"].map((name) => join(SRC, "http", name)));
+    for (const file of everySource) {
+      for (const spec of allSpecifiers(sourceOf(file))) {
+        if (!spec.startsWith("effect/")) continue;
+        expect(allowed.has(file), `${file} imports ${spec}`).toBe(true);
       }
     }
   });
