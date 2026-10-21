@@ -629,6 +629,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Infisical returned HTTP 400. Check the named tool's arguments.",
@@ -699,21 +700,10 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "auth_required",
-            "message": "Infisical returned HTTP 401. An operator must replace invalid or revoked machine identity credentials in this connection.",
+            "code": "connector_call_failed",
+            "message": "Infisical answered this write with HTTP 401. The credential is renewed for the next call, but the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
-            "connector": "infisical",
-            "operation": "infisical.create_secret",
-            "recovery": "unavailable",
-            "reconciliationRequired": true,
-            "nextAction": {
-              "tool": "authorize_connector",
-              "arguments": {
-                "connector": "infisical"
-              },
-              "operatorHandoff": "Give the URL and instructions it returns to the operator."
-            },
-            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -761,6 +751,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Infisical returned HTTP 403. An operator must add the machine identity to the project or widen its role for this environment and path.",
@@ -824,6 +815,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "not_found",
             "message": "Infisical returned HTTP 404. Confirm the project ID with list_projects, the environment slug, and the path with list_folders.",
@@ -875,6 +867,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Infisical returned HTTP 409. Check the named tool's arguments.",
@@ -926,6 +919,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Infisical returned HTTP 422. Check the named tool's arguments.",
@@ -977,6 +971,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "Infisical returned HTTP 429. Wait before retrying.",
@@ -1030,9 +1025,10 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "unavailable",
-            "message": "Infisical returned HTTP 500. Infisical is failing upstream.",
-            "retryable": true
+            "code": "connector_call_failed",
+            "message": "Infisical returned HTTP 500. Infisical is failing upstream. Whether the write took effect at Infisical is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1099,21 +1095,10 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "auth_required",
-            "message": "Infisical returned HTTP 401. An operator must replace invalid or revoked machine identity credentials in this connection.",
+            "code": "connector_call_failed",
+            "message": "Infisical answered this write with HTTP 401. The credential is renewed for the next call, but the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
-            "connector": "infisical",
-            "operation": "infisical.create_secret",
-            "recovery": "unavailable",
-            "reconciliationRequired": true,
-            "nextAction": {
-              "tool": "authorize_connector",
-              "arguments": {
-                "connector": "infisical"
-              },
-              "operatorHandoff": "Give the URL and instructions it returns to the operator."
-            },
-            "retry": "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1162,13 +1147,10 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "unavailable",
-            "message": "Could not reach the Infisical API.",
-            "retryable": true,
-            "details": {
-              "host": "https://app.infisical.com",
-              "code": "ECONNREFUSED"
-            }
+            "code": "connector_call_failed",
+            "message": "Could not reach the Infisical API. Whether the write took effect at Infisical is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1227,6 +1209,7 @@
               "stage": "downstream",
               "elapsedMs": 0
             },
+            "writeOutcome": "unknown",
             "connector": "infisical",
             "operation": "infisical.create_secret",
             "uncertainCall": {

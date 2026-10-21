@@ -1,5 +1,5 @@
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { attachFailureFacts } from "../../operator-record.js";
 import type { ConnectorContext } from "../../types.js";
 import { appJwt, privateKeyDer } from "./key.js";
@@ -102,9 +102,10 @@ export class AppAuth {
     };
   }
 
-  async json(request: GuardedRequest, bearer: string, ctx: ConnectorContext): Promise<unknown> {
+  /** `write` sends the request once: a failure that may follow the change is not retryable. */
+  async json(request: GuardedRequest, bearer: string, ctx: ConnectorContext, write = false): Promise<unknown> {
     ctx.signal?.throwIfAborted();
-    const transport = guardedFetch({
+    const guarded = guardedFetch({
       provider: "GitHub",
       baseUrl: "https://api.github.com",
       maxResponseBytes: 4 * 1024 * 1024,
@@ -115,7 +116,7 @@ export class AppAuth {
       },
       authenticate: () => ({ Authorization: `Bearer ${bearer}` }),
     });
-    return transport(request, ctx, async (response) => {
+    return guarded({ classification: write ? "write" : "read", ...request }, ctx, async (response) => {
       if (!response.ok) {
         // Dispose of the body without interpreting error text or Content-Type.
         await response.prefix(0);
@@ -137,22 +138,22 @@ export class AppAuth {
               : status >= 500
                 ? "unavailable"
                 : "connector_call_failed";
-        throw attachFailureFacts(
-          new ConnectorCallError(
-            code,
-            rate
-              ? "GitHub rate limit reached. Honor the retry timing before trying again."
-              : code === "auth_required"
-                ? "Verify the GitHub App key, installation, repository selection and required permissions."
-                : code === "conflict"
-                  ? "GitHub rejected a stale version. Read the current state before resubmitting."
-                  : status === 404
-                    ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
-                    : "The GitHub API request failed; downstream error text is withheld.",
-            { retryable: rate || status >= 500, ...(rate && wait !== undefined ? { retryAfterMs: wait } : {}) },
-          ),
-          { httpStatus: status },
+        const failure = new ConnectorCallError(
+          code,
+          rate
+            ? "GitHub rate limit reached."
+            : code === "auth_required"
+              ? "Verify the GitHub App key, installation, repository selection and required permissions."
+              : code === "conflict"
+                ? "GitHub rejected a stale version. Read the current state."
+                : status === 404
+                  ? "GitHub returned 404; the resource may be absent or inaccessible to this installation."
+                  : "The GitHub API request failed; downstream error text is withheld.",
+          { retryable: rate || status >= 500, ...(rate && wait !== undefined ? { retryAfterMs: wait } : {}) },
         );
+        if (rate) resendAdvice(failure, " Honor the retry timing before trying again.");
+        else if (code === "conflict") resendAdvice(failure, " before resubmitting");
+        throw attachFailureFacts(failure, { httpStatus: status });
       }
       const parsed = await response.jsonResult();
       ctx.signal?.throwIfAborted();
@@ -197,7 +198,7 @@ export class AppAuth {
     let found: Installation | undefined;
     for (let page = 1; page <= 20; page++) {
       const data = await this.json(
-        { method: "GET", path: "/app/installations", query: { per_page: 100, page } },
+        { auxiliary: true, method: "GET", path: "/app/installations", query: { per_page: 100, page } },
         jwt,
         ctx,
       );
@@ -274,7 +275,7 @@ export class AppAuth {
     for (let page = 1; page <= 100; page++) {
       const data = record(
         await this.json(
-          { method: "GET", path: "/installation/repositories", query: { per_page: 100, page } },
+          { auxiliary: true, method: "GET", path: "/installation/repositories", query: { per_page: 100, page } },
           resolver,
           ctx,
         ),
@@ -415,6 +416,7 @@ export class AppAuth {
       response = record(
         await this.json(
           {
+            auxiliary: true,
             method: "POST",
             path: `/app/installations/${installation.id}/access_tokens`,
             body: { permissions: permissionSet, ...(repositorySet ? { repository_ids: repositorySet } : {}) },

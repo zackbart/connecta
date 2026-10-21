@@ -23,6 +23,7 @@ import { buildSandboxProviders } from "../../execute.js";
 import { silentLogger } from "../../../test/helpers.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { negotiationKeys, responseCacheKeys } from "../../storage/keys.js";
+import { classifyWriteOutcome } from "../../write-outcome.js";
 
 function value(result: any): any {
   return result.structuredContent;
@@ -575,6 +576,58 @@ describe("GitHub App provider", () => {
     expect(fixture.requests).toHaveLength(before);
   });
 
+  it.each([
+    [
+      "an unreviewed argument",
+      "create_or_update_file",
+      { owner: "acme", repo: "one", path: "a", content: "x", message: "m", branch: "main", sha: "a", extra: 1 },
+    ],
+    [
+      "an unconfigured owner",
+      "create_or_update_file",
+      { owner: "elsewhere", repo: "one", path: "a", content: "x", message: "m", branch: "main" },
+    ],
+    ["an unreviewed method", "issue_write", { owner: "acme", repo: "one", method: "lock", title: "t" }],
+    [
+      "a workflow file without workflow scope",
+      "push_files",
+      {
+        owner: "acme",
+        repo: "one",
+        branch: "main",
+        message: "m",
+        files: [{ path: ".github/workflows/ci.yml", content: "x" }],
+      },
+    ],
+  ])(
+    "INV-9: a hosted write's target check refuses %s before any token mint or send, a known failure",
+    async (_label, name, args) => {
+      const fixture = apiFixture();
+      const error = await connection()
+        .callTool(name, args, context())
+        .then(
+          () => {
+            throw new Error("expected a refusal");
+          },
+          (failure: unknown) => failure,
+        );
+      expect(error).toMatchObject({ code: "invalid_args" });
+      expect(fixture.fetchStub).not.toHaveBeenCalled();
+      expect(fixture.tokens).toHaveLength(0);
+      // Ledger provenance: nothing left, so the write is a known failure.
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("failed");
+      // Served, GitHub delegates each call, so its own refusal still stands
+      // for the whole logical call (round 13).
+      const registry = makeRegistry([connection()]);
+      const served = await new InvocationService(
+        registry,
+        new CatalogService(registry, "https://connecta.test"),
+      ).invoke(`github.${name}`, args, { source: "call_destructive_tool" });
+      expect(served).toMatchObject({ ok: false, dispatched: true, answered: true, error: { code: "invalid_args" } });
+      expect(classifyWriteOutcome(served)).toBe("failed");
+    },
+  );
+
   it("INV-10: exposes secret-free mixed scope discovery and lazily pages only the selected owner", async () => {
     const fixture = apiFixture();
     const connector = connection();
@@ -936,6 +989,23 @@ describe("GitHub App provider", () => {
       );
     },
   );
+
+  it("INV-9: a REST write's 5xx is an unknown outcome, never retryable; a read's stays unavailable", async () => {
+    const fixture = apiFixture();
+    fixture.respond((request) =>
+      request.url.pathname === "/repos/acme/one/releases" && request.method === "POST"
+        ? new Response(SENTINEL, { status: 502 })
+        : undefined,
+    );
+    await expect(
+      connection().callTool("create_release", { owner: "acme", repo: "one", tag_name: "v1" }, context()),
+    ).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      message: expect.stringContaining("Whether the write took effect at GitHub is unknown"),
+    });
+    expect(fixture.requests.filter((request) => request.url.pathname === "/repos/acme/one/releases")).toHaveLength(1);
+  });
 
   it("INV-6: permission 403 with unused rate budget is auth failure and evicts its token", async () => {
     const fixture = apiFixture();

@@ -1,6 +1,7 @@
 import { remoteMcp } from "../../connectors/remote-mcp.js";
 import { array, keys, optionsOf } from "../../config-schema.js";
 import { ConnectorCallError } from "../../errors.js";
+import { delegatesEachCall, knownProviderFailure } from "../../provider-call.js";
 import { redactSentSecrets } from "../../sent-secrets.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
 import type { Connector, ConnectorContext, ToolClassification } from "../../types.js";
@@ -55,6 +56,9 @@ export const github = defineProvider<GitHubOptions>({
     const policy = new ScopePolicy(parseScopes(options.scopes));
     const auth = new AppAuth(options.app, policy);
     const rest = restConnector(id, auth, policy);
+    // Delegation invokes these captured functions with Reflect.apply, never
+    // through a property or a function's own `call`.
+    const restCall = rest.callTool;
     const usageGuide = provider.usageGuide({
       context: [`Act as the GitHub App. Reachable configuration: ${policy.summary()}.`, `Purpose: ${options.purpose}`],
       summary: "GitHub App scopes, installation routing, confined search and workflow-file limits.",
@@ -101,7 +105,8 @@ export const github = defineProvider<GitHubOptions>({
             fields: [{ name: "privateKey", label: "Private key PEM", inputType: "password" as const }],
           }
         : undefined;
-    return {
+    // Each call goes to one hosted or REST boundary, whose verdict stands.
+    return delegatesEachCall({
       id,
       title: options.title ?? "GitHub",
       kind: "mcp",
@@ -143,18 +148,30 @@ export const github = defineProvider<GitHubOptions>({
       },
       async callTool(name, args, ctx, callOptions) {
         if (Object.hasOwn(HOSTED_ROUTES, name)) {
-          const route = hostedTarget(name, args, policy);
-          const token = await auth.repo(route.target, route.permissions, ctx);
-          return withHosted(token, ctx, (client) => client.callTool(name, args, ctx, callOptions));
+          // The argument, scope, method, and workflow checks, then the
+          // installation-token mint, all before the write's tools/call
+          // exists: their refusals are known failures (ledger provenance).
+          let token: string;
+          try {
+            const route = hostedTarget(name, args, policy);
+            token = await auth.repo(route.target, route.permissions, ctx);
+          } catch (error) {
+            throw knownProviderFailure(error);
+          }
+          return withHosted(token, ctx, (client) =>
+            Reflect.apply(client.callTool, client, [name, args, ctx, callOptions]),
+          );
         }
         if (!Object.hasOwn(CLASSIFICATION.tools, name))
-          throw new ConnectorCallError("invalid_args", "This GitHub tool is not in the reviewed allowlist.");
-        const result = await rest.callTool(name, args, ctx, callOptions);
+          throw knownProviderFailure(
+            new ConnectorCallError("invalid_args", "This GitHub tool is not in the reviewed allowlist."),
+          );
+        const result = await Reflect.apply(restCall, rest, [name, args, ctx, callOptions]);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       },
       async status() {
         return { state: "ok", message: "GitHub App configured; installation access is resolved lazily on use." };
       },
-    };
+    });
   },
 });

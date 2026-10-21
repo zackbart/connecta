@@ -5,6 +5,7 @@
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { chargeConnectorCall } from "../../call-admission-context.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
+import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
 import { redactBeforeCut } from "../../sent-secrets.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
@@ -592,12 +593,16 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     if (owner === undefined) {
       chargeLookup(ctx);
       await chargeConnectorCall(ctx);
-      owner = await send({ method: "GET", path: `/zones/${encodeURIComponent(zone)}` }, ctx, async (response) => {
-        const body = await response.jsonResult().catch(() => ({ value: undefined }));
-        const value = "value" in body ? body.value : undefined;
-        if (!response.ok) throw failureFor(response.status, response.headers, redactBeforeCut(ctx, value));
-        return text(record(record(record(value)["result"])["account"])["id"]) ?? "";
-      });
+      owner = await send(
+        { auxiliary: true, method: "GET", path: `/zones/${encodeURIComponent(zone)}` },
+        ctx,
+        async (response) => {
+          const body = await response.jsonResult().catch(() => ({ value: undefined }));
+          const value = "value" in body ? body.value : undefined;
+          if (!response.ok) throw failureFor(response.status, response.headers, redactBeforeCut(ctx, value));
+          return text(record(record(record(value)["result"])["account"])["id"]) ?? "";
+        },
+      );
       if (owner) owners.set(zone, owner);
     }
     if (!owner || !pinnedAccounts?.has(owner)) pinRefusal(`Zone ${zone}`);
@@ -873,13 +878,13 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     }
   };
 
-  const withValues = (ctx: ConnectorContext, values: Record<string, string>): ConnectorContext => ({
-    ...ctx,
-    credential: {
-      get: async (field?: string) => (field ? (values[field] ?? null) : (values["value"] ?? null)),
-      getAll: async () => values,
-    },
-  });
+  const withValues = (ctx: ConnectorContext, values: Record<string, string>): ConnectorContext =>
+    deriveContext(ctx, {
+      credential: {
+        get: async (field?: string) => (field ? (values[field] ?? null) : (values["value"] ?? null)),
+        getAll: async () => values,
+      },
+    });
 
   const credentialTest = async (ctx: ConnectorContext): Promise<CredentialTestResult> => {
     try {

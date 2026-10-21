@@ -14,12 +14,15 @@ export { classifyWriteOutcome } from "./write-outcome.js";
 export const DEFAULT_MAX_WRITES = CONFIG_DEFAULTS.execute.maxWrites;
 
 type WriteDeadline = Pick<NonNullable<CallErrorDetails["details"]>, "operation" | "stage" | "elapsedMs" | "deadlineMs">;
+/** An authorization verdict a write met after it left: the grant still needs recovery. */
+type WriteHandoff = Pick<CallErrorDetails, "code" | "connector" | "recovery" | "nextAction" | "retry">;
 type WriteCompletion =
   | WriteState
   | {
       state: "unknown";
-      uncertainCall: NonNullable<CallErrorDetails["uncertainCall"]>;
+      uncertainCall?: NonNullable<CallErrorDetails["uncertainCall"]>;
       deadline?: WriteDeadline;
+      handoff?: WriteHandoff;
     };
 
 /** What a dispatched write's outcome says about whether it landed. */
@@ -34,28 +37,37 @@ export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompleti
           ...(outcome.answered !== undefined ? { answered: outcome.answered } : {}),
         },
   );
-  return state === "unknown" && !outcome.ok && outcome.error.uncertainCall
-    ? {
-        state,
-        uncertainCall: outcome.error.uncertainCall,
-        ...(outcome.error.details?.stage !== undefined
-          ? {
-              deadline: {
-                ...(outcome.error.details.operation !== undefined
-                  ? { operation: outcome.error.details.operation }
-                  : {}),
-                stage: outcome.error.details.stage,
-                ...(outcome.error.details.elapsedMs !== undefined
-                  ? { elapsedMs: outcome.error.details.elapsedMs }
-                  : {}),
-                ...(outcome.error.details.deadlineMs !== undefined
-                  ? { deadlineMs: outcome.error.details.deadlineMs }
-                  : {}),
-              },
-            }
-          : {}),
-      }
-    : state;
+  if (state !== "unknown" || outcome.ok) return state;
+  const { error } = outcome;
+  const handoff: WriteHandoff | undefined =
+    (error.code === "auth_required" || error.code === "downstream_oauth_required") &&
+    error.nextAction &&
+    "tool" in error.nextAction &&
+    error.nextAction.tool === "authorize_connector"
+      ? {
+          code: error.code,
+          ...(error.connector !== undefined ? { connector: error.connector } : {}),
+          ...(error.recovery !== undefined ? { recovery: error.recovery } : {}),
+          nextAction: error.nextAction,
+          ...(error.retry !== undefined ? { retry: error.retry } : {}),
+        }
+      : undefined;
+  if (!error.uncertainCall && !handoff) return state;
+  return {
+    state,
+    ...(error.uncertainCall ? { uncertainCall: error.uncertainCall } : {}),
+    ...(error.uncertainCall && error.details?.stage !== undefined
+      ? {
+          deadline: {
+            ...(error.details.operation !== undefined ? { operation: error.details.operation } : {}),
+            stage: error.details.stage,
+            ...(error.details.elapsedMs !== undefined ? { elapsedMs: error.details.elapsedMs } : {}),
+            ...(error.details.deadlineMs !== undefined ? { deadlineMs: error.details.deadlineMs } : {}),
+          },
+        }
+      : {}),
+    ...(handoff ? { handoff } : {}),
+  };
 }
 
 type WriteCounts = { succeeded: number; failed: number; unknown: number };
@@ -75,6 +87,7 @@ export class ProgramWrites {
   private readonly uncertainCalls: NonNullable<CallErrorDetails["uncertainCall"]>[] = [];
   private uncertainCallsTruncated = false;
   private readonly deadlines: WriteDeadline[] = [];
+  private handoff: WriteHandoff | undefined;
 
   /** Whether the program has settled: a write gated now is not sent. */
   get isClosed(): boolean {
@@ -103,9 +116,12 @@ export class ProgramWrites {
       recorded = true;
       const state = typeof completion === "string" ? completion : completion.state;
       if (typeof completion !== "string") {
-        if (this.uncertainCalls.length < 10) this.uncertainCalls.push(completion.uncertainCall);
-        else this.uncertainCallsTruncated = true;
+        if (completion.uncertainCall) {
+          if (this.uncertainCalls.length < 10) this.uncertainCalls.push(completion.uncertainCall);
+          else this.uncertainCallsTruncated = true;
+        }
         if (completion.deadline && this.deadlines.length < 10) this.deadlines.push(completion.deadline);
+        this.handoff ??= completion.handoff;
       }
       this.states.push(state);
       this.inFlight.delete(settled);
@@ -128,11 +144,17 @@ export class ProgramWrites {
       unknown: this.states.filter((state) => state === "unknown").length,
     };
     if (writes.unknown > 0) {
+      // Caught or not, an authorization verdict a write met after it left is
+      // the result, as a direct call reports it: its code and handoff, never
+      // retryable, with the write's outcome unknown.
+      const handoff = this.handoff;
       return errorEnvelope({
-        code: "write_outcome_unknown",
-        message:
-          "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call.",
+        code: handoff?.code ?? "write_outcome_unknown",
+        message: handoff
+          ? "A write this program sent failed authorization after it left, so whether it took effect is unknown, and that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it, and give nextAction to the operator to recover the connector. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call."
+          : "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call.",
         retryable: false,
+        ...(handoff ? { ...handoff, reconciliationRequired: true, writeOutcome: "unknown" } : {}),
         ...(this.deadlines.length > 0 ? { details: this.deadlines[0] } : {}),
         ...(this.deadlines.length > 1 ? { timeouts: this.deadlines } : {}),
         ...(this.uncertainCalls.length === 1

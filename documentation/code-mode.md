@@ -574,7 +574,7 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 | `invalid_args`               | arguments or discovery bounds were rejected                                                                                                                                                           | false         |
 | `not_found`                  | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap                      | false         |
 | `conflict`                   | the write named a base version someone else already moved past; nothing changed. `details.current` says where things stand (at most 20 whole-number entries) — re-read, reapply, retry with that base | false         |
-| `input_required_unsupported` | a downstream asked for input; use `nextAction` for the equivalent direct call                                                                                                                         | false         |
+| `input_required_unsupported` | a downstream asked for input; a read gets `nextAction` for the equivalent direct call, a write is an unknown outcome (`writeOutcome: "unknown"`) to reconcile before any fresh call                   | false         |
 | `rate_limited`               | the downstream reported a rate limit                                                                                                                                                                  | true          |
 | `unavailable`                | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose                     | true          |
 | `timeout`                    | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs                                                                                                          | per operation |
@@ -1071,8 +1071,11 @@ write makes the run fail `write_outcome_unknown` with
 `writes: { succeeded, failed, unknown }`, regardless of its return value.
 A failed program that already wrote carries those counts on its error. No
 write is automatically retried, including an ambiguous timeout. A downstream
-refusal or a tool's `isError` can establish failure; a timeout or an unanswered
-transport failure leaves the outcome unknown.
+refusal can establish failure only when it covers the whole call: a request
+connecta never sent, or an HTTP 4xx refusal (not 408) of the only request the
+call dispatched. A write's `isError`, a timeout, an unanswered transport
+failure, and a custom connector that composed several calls leave the outcome
+unknown.
 
 **W10.** `execute.maxWrites`, default 10, bounds a program's writes in
 addition to the host-call budget. It is checked after argument validation and

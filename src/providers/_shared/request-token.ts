@@ -1,4 +1,5 @@
 /** In-memory tokens and credential-bound login flights shared only inside one request. */
+import { deriveContext } from "../../derived-context.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext } from "../../types.js";
 
@@ -37,7 +38,7 @@ export function requestTokenCache(source: (ctx: ConnectorContext) => Promise<Tok
     );
     const flight: Flight = { controller, waiters: 0, settled: false, promise: Promise.resolve("") };
     flight.promise = auth
-      .mint({ ...ctx, signal: controller.signal })
+      .mint(deriveContext(ctx, { signal: controller.signal }))
       .then((minted) => {
         // An abandoned login must not seed a token after cancellation.
         controller.signal.throwIfAborted();

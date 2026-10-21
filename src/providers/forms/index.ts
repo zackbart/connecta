@@ -31,6 +31,7 @@ import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -39,6 +40,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
@@ -1031,8 +1033,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           // it, or a reply that broke: the form may exist, and there is no
           // form id to re-read. Another create would make a second one, so
           // say where to look first. The shared verdict (not retryable)
-          // stands. No Forms write is sent as idempotent: a create, a batch,
-          // and an info update are each not safe to send twice blind.
+          // stands: a create, a batch, and an info update are each not safe
+          // to send twice blind.
           // Any phase that is neither "never sent" nor "explicitly refused"
           // is uncertain, so a phase the shared layer adds later is too.
           const outcome = googleOutcomeOf(error);
@@ -1042,10 +1044,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             outcome.phase !== "refused" &&
             outcome.phase !== "before-send"
           ) {
-            throw new ConnectorCallError(
-              error.code,
+            throw googleFailureMessage(
+              error,
               `${error.message} create_form makes a new form on every call: look for "${args["documentTitle"] ?? args["title"]}" in the user's Drive, or ask them, before creating it again.`,
-              { retryable: false, cause: error },
             );
           }
           throw error;
@@ -1457,21 +1458,23 @@ function formsConnector(id: string, options: FormsOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Forms",
+        description: `Google Forms as the signed-in Workspace user: read and edit forms, read responses — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary: "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
+          // Required: whose forms they are, that Drive lists them, and the
+          // revision-checked edit sequence are conventions no schema can carry.
+          required: true,
+        },
+        tools: tools(client),
       }),
-      title: options.title ?? "Google Forms",
-      description: `Google Forms as the signed-in Workspace user: read and edit forms, read responses — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary: "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
-        // Required: whose forms they are, that Drive lists them, and the
-        // revision-checked edit sequence are conventions no schema can carry.
-        required: true,
-      },
-      tools: tools(client),
-    }),
+    ),
   );
 }

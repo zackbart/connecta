@@ -36,6 +36,7 @@ import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -44,6 +45,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 import { encodeForAgent, redactBeforeCut, redactBoundedRead, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
@@ -838,20 +840,11 @@ async function adding<T>(work: () => Promise<T>, check: string): Promise<T> {
       outcome.phase !== "refused" &&
       outcome.phase !== "before-send"
     ) {
-      throw new ConnectorCallError(error.code, `${error.message} ${check}`, { retryable: false, cause: error });
+      throw googleFailureMessage(error, `${error.message} ${check}`);
     }
     throw error;
   }
 }
-
-/**
- * Writes safe to send twice: each sets fixed values — a name, a description,
- * the trashed flag, a role, the whole content — so a second identical request
- * leaves the file as the first did, and a 5xx stays a retryable outage. Never
- * a create, copy, share, permission delete, or move, whose second send makes a
- * second thing, fails differently, or acts on parents the first send changed.
- */
-const IDEMPOTENT = { idempotent: true } as const;
 
 const CHECK_CREATED =
   "Find it with search_files or list_folder_items before creating it again: a second call makes a second one.";
@@ -902,8 +895,8 @@ function media(args: JsonRecord): { bytes: Uint8Array; type: string } | undefine
 
 /**
  * One `multipart/related` body: the metadata as JSON, then the media. Built
- * whole as bytes, never a stream, so the shared client's single 401 replay
- * can send it again unchanged.
+ * whole as bytes, never a stream: the shared client refuses a body it could
+ * not send twice, though it never resends an upload, which is a write.
  */
 function multipart(
   metadata: JsonRecord,
@@ -1154,7 +1147,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     fileId: string,
     body: JsonRecord,
     query: Record<string, string | undefined> = {},
-    options: { idempotent?: true } = {},
   ) =>
     projectFile(
       ctx,
@@ -1166,7 +1158,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           body,
         },
         ctx,
-        options,
       ),
       fileId,
     );
@@ -1603,8 +1594,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
               rawBody: content.bytes as BodyInit,
             },
             ctx,
-            // The whole content, replaced: a second send leaves the same file.
-            IDEMPOTENT,
           ),
           String(args["fileId"]),
         );
@@ -1623,13 +1612,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         if (args["name"] === undefined && args["description"] === undefined) {
           throw new ConnectorCallError("invalid_args", "Pass name, description, or both.");
         }
-        return patch(
-          ctx,
-          args["fileId"],
-          compact({ name: args["name"], description: args["description"] }),
-          {},
-          IDEMPOTENT,
-        );
+        return patch(ctx, args["fileId"], compact({ name: args["name"], description: args["description"] }));
       },
     },
     {
@@ -1711,7 +1694,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       annotations: destructive,
       inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
       outputSchema: FILE_SCHEMA,
-      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: true }, {}, IDEMPOTENT),
+      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: true }),
     },
     {
       name: "restore_file",
@@ -1721,7 +1704,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       annotations: additive,
       inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
       outputSchema: FILE_SCHEMA,
-      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: false }, {}, IDEMPOTENT),
+      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: false }),
     },
     {
       name: "share_file",
@@ -1840,7 +1823,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
               body: { role: args["role"] },
             },
             ctx,
-            IDEMPOTENT,
           ),
           String(args["permissionId"]),
         ),
@@ -1986,22 +1968,24 @@ function driveConnector(id: string, options: DriveOptions): Connector {
   const upload = googleWorkspaceClient({ ...shared, baseUrl: uploadBaseUrl(baseUrl) });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Drive",
+        description: `Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
+          // Required: whose Drive it is, the first-sheet CSV, and what
+          // update_file_content replaces are conventions no schema can carry.
+          required: true,
+        },
+        tools: guarded(tools(client, upload)),
       }),
-      title: options.title ?? "Google Drive",
-      description: `Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
-        // Required: whose Drive it is, the first-sheet CSV, and what
-        // update_file_content replaces are conventions no schema can carry.
-        required: true,
-      },
-      tools: guarded(tools(client, upload)),
-    }),
+    ),
   );
 }

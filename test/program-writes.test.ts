@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
 import { createExecuteTool } from "../src/execute.js";
 import { classifyWriteOutcome } from "../src/program-writes.js";
 import { api } from "../src/connectors/api.js";
@@ -61,6 +62,8 @@ interface WorldOptions {
   inputSchema?: JsonSchema;
   readOnly?: boolean;
   maxWrites?: number;
+  /** The tracker stands for a boundary, so its own refusal marks hold (round 13). */
+  provesRefusals?: boolean;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
   read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
 }
@@ -105,6 +108,7 @@ function world(options: WorldOptions = {}) {
       return { ok: true };
     },
   };
+  if (options.provesRefusals) delegatesEachCall(tracker);
   const registry = makeRegistry([reader, tracker], { storage: memoryStorage() });
   const activity: ActivityRequestContext = {
     recordTool: recordToolActivity,
@@ -387,11 +391,13 @@ describe("writable-endpoint programs (#706, #820)", () => {
     async (state) => {
       const w = world({
         readOnly: false,
+        provesRefusals: true,
         read: () => {
           throw new ConnectorCallError("not_found", "Read refused");
         },
         write: () => {
-          if (state === "failed") throw new ConnectorCallError("invalid_args", "Write refused");
+          // A refusal the connector proved: an error code alone is no evidence.
+          if (state === "failed") throw knownProviderFailure(new ConnectorCallError("invalid_args", "Write refused"));
           if (state === "unknown") throw new ConnectorCallError("timeout", "No write response");
           return { ok: true };
         },
@@ -596,24 +602,41 @@ describe("writable-endpoint programs (#706, #820)", () => {
 });
 
 describe("write outcomes", () => {
-  it("classifies a write's outcome by what is known", () => {
+  it("INV-9: classifies a write's outcome by what is known", () => {
     const table: Array<[Parameters<typeof classifyWriteOutcome>[0], string]> = [
       [{ ok: true, dispatched: true }, "ok"],
       [{ ok: false, dispatched: false, error: { code: "timeout" } }, "failed"],
       [{ ok: false, dispatched: true, error: { code: "timeout" } }, "unknown"],
-      [{ ok: false, dispatched: true, answered: true, error: { code: "timeout" } }, "unknown"],
       [{ ok: false, dispatched: true, error: { code: "cancelled" } }, "unknown"],
-      [{ ok: false, dispatched: true, answered: true, error: { code: "unavailable" } }, "unknown"],
+      // Refusal provenance (`answered`: the ledger proved it unsent, a served
+      // 4xx other than 408 refused it, or the tool answered isError) decides,
+      // whatever the code: a pre-dispatch deadline or connect failure applied
+      // nothing.
+      [{ ok: false, dispatched: true, answered: true, error: { code: "timeout" } }, "failed"],
+      [{ ok: false, dispatched: true, answered: true, error: { code: "unavailable" } }, "failed"],
       [{ ok: false, dispatched: true, answered: true, error: { code: "connector_call_failed" } }, "failed"],
+      [{ ok: false, dispatched: true, answered: true, error: { code: "rate_limited" } }, "failed"],
       // A typed error after the request went out (an oversized body, a
       // refused redirect) is not an answer: the write may have landed.
       [{ ok: false, dispatched: true, answered: false, error: { code: "connector_call_failed" } }, "unknown"],
-      [{ ok: false, dispatched: true, answered: false, error: { code: "not_found" } }, "failed"],
-      [{ ok: false, dispatched: true, answered: false, error: { code: "invalid_args" } }, "failed"],
-      [{ ok: false, dispatched: true, answered: true, error: { code: "rate_limited" } }, "failed"],
-      // A stale base is a verdict: the connector refused before changing anything.
-      [{ ok: false, dispatched: true, answered: false, error: { code: "conflict" } }, "failed"],
+      // Nor is a refusal code by itself (round 11): a mapper, parser, or
+      // output validator can throw it after the write applied.
+      [{ ok: false, dispatched: true, answered: false, error: { code: "not_found" } }, "unknown"],
+      [{ ok: false, dispatched: true, answered: false, error: { code: "invalid_args" } }, "unknown"],
+      [{ ok: false, dispatched: true, answered: false, error: { code: "rate_limited" } }, "unknown"],
+      [{ ok: false, dispatched: true, answered: false, error: { code: "conflict" } }, "unknown"],
       [{ ok: false, dispatched: true, error: { code: "result_processing_failed" } }, "ok"],
+      // An authorization verdict reached after the write left (a 401, then a
+      // failed renewal) keeps its code, but the connector says the write's
+      // outcome is unknown, and that wins over the refusal.
+      [
+        { ok: false, dispatched: true, error: { code: "downstream_oauth_required", writeOutcome: "unknown" } },
+        "unknown",
+      ],
+      [{ ok: false, dispatched: true, error: { code: "auth_required", writeOutcome: "unknown" } }, "unknown"],
+      [{ ok: false, dispatched: true, error: { code: "auth_required" } }, "unknown"],
+      [{ ok: false, dispatched: true, answered: true, error: { code: "auth_required" } }, "failed"],
+      [{ ok: false, dispatched: false, error: { code: "auth_required", writeOutcome: "unknown" } }, "failed"],
     ];
     for (const [outcome, expected] of table) {
       expect(classifyWriteOutcome(outcome), JSON.stringify(outcome)).toBe(expected);

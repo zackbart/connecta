@@ -1,0 +1,1478 @@
+{
+  "breeze": {
+    "breeze_api_get": {
+      "path": "/people/157857",
+      "query": [
+        {
+          "name": "details",
+          "value": 1
+        }
+      ]
+    },
+    "breeze_api_mutate": {
+      "path": "/giving/delete",
+      "query": [
+        {
+          "name": "payment_id",
+          "value": "56789123"
+        }
+      ]
+    },
+    "get_account_summary": {},
+    "list_people": {
+      "tagId": "16681",
+      "filter": {
+        "2000138015": "226-227"
+      },
+      "limit": 2,
+      "cursor": "40"
+    },
+    "get_person": {
+      "personId": "157857"
+    },
+    "list_profile_fields": {},
+    "list_tags": {
+      "folderId": "77"
+    },
+    "list_events": {
+      "start": "2025-03-01",
+      "end": "2025-03-31",
+      "calendarId": "1553",
+      "limit": 1
+    },
+    "list_calendars": {},
+    "list_attendance": {
+      "instanceId": "3778451",
+      "includeNames": true
+    },
+    "list_forms": {},
+    "list_form_fields": {
+      "formId": "15326"
+    },
+    "list_form_entries": {
+      "formId": "15326",
+      "includeResponses": true
+    },
+    "list_volunteers": {
+      "instanceId": "123456"
+    },
+    "list_volunteer_roles": {
+      "instanceId": "123456"
+    },
+    "list_account_log": {
+      "action": "person_updated",
+      "start": "2025-08-01",
+      "includeDetails": true,
+      "limit": 1
+    },
+    "list_contributions": {
+      "start": "2022-01-01",
+      "end": "2022-06-30",
+      "fundIds": [
+        "28",
+        "29"
+      ],
+      "batchNumbers": [
+        "144"
+      ]
+    },
+    "list_funds": {},
+    "add_person": {
+      "firstName": "Jiminy",
+      "lastName": "Cricket",
+      "fields": [
+        {
+          "fieldId": "1508481877",
+          "type": "email",
+          "details": {
+            "address": "jiminy@example.com"
+          }
+        }
+      ]
+    },
+    "update_person": {
+      "personId": "12345678",
+      "fields": [
+        {
+          "fieldId": "2000138811",
+          "type": "radio",
+          "response": "459"
+        }
+      ]
+    },
+    "assign_tag": {
+      "personId": "157857",
+      "tagId": "16681"
+    },
+    "unassign_tag": {
+      "personId": "157857",
+      "tagId": "16681"
+    },
+    "record_check_in": {
+      "personId": "157857",
+      "instanceId": "40984"
+    }
+  },
+  "ccb": {
+    "get_me": {},
+    "list_individuals": {
+      "query": "hop",
+      "includeInactive": true,
+      "page": 2,
+      "perPage": 50
+    },
+    "get_individual": {
+      "individualId": 42
+    },
+    "list_families": {
+      "lastName": "Hop"
+    },
+    "get_family": {
+      "familyId": 9,
+      "includeInactive": true
+    },
+    "list_groups": {
+      "name": "Tuesday",
+      "campusId": 1
+    },
+    "get_group": {
+      "groupId": 5
+    },
+    "list_group_members": {
+      "groupId": 5,
+      "status": "leader"
+    },
+    "list_individual_groups": {
+      "individualId": 42,
+      "includeInactive": false
+    },
+    "list_events": {
+      "name": "Small Group",
+      "range": "PAST"
+    },
+    "get_event": {
+      "eventId": 12,
+      "occurrence": "2026-09-27",
+      "withAttendance": true
+    },
+    "get_event_attendance": {
+      "eventId": 12,
+      "occurrence": "2026-09-27"
+    },
+    "list_event_attendees": {
+      "eventId": 12,
+      "occurrence": "20260927"
+    },
+    "list_forms": {
+      "status": "ACTIVE"
+    },
+    "list_form_responses": {
+      "formId": 31
+    },
+    "list_processes": {
+      "status": "ACTIVE",
+      "managedByMe": true
+    },
+    "list_queues": {
+      "processId": 8
+    },
+    "list_queue_individuals": {
+      "status": "IN_PROCESS",
+      "assignment": "ASSIGNED_TO_ME"
+    },
+    "list_scheduling_categories": {
+      "search": "Worship"
+    },
+    "list_schedules": {
+      "categoryId": 3,
+      "after": "2026-09-01"
+    },
+    "list_individual_assignments": {
+      "individualId": 42,
+      "startDate": "2026-10-01",
+      "endDate": "2026-10-31"
+    },
+    "list_individual_notes": {
+      "individualId": 42,
+      "context": "GENERAL"
+    },
+    "get_giving_metrics": {
+      "familyId": 9,
+      "start": "2026-01-01",
+      "end": "2026-09-30"
+    },
+    "list_individual_pledges": {
+      "individualId": 42
+    },
+    "ccb_api_get": {
+      "path": "/church/membership_types",
+      "query": {
+        "per_page": 50
+      }
+    },
+    "ccb_api_search": {
+      "domain": "individuals",
+      "body": {
+        "configuration": {
+          "columns": [
+            "name"
+          ]
+        },
+        "filters": {
+          "name": "Ada"
+        }
+      },
+      "perPage": 100
+    },
+    "ccb_api_mutate": {
+      "method": "POST",
+      "path": "/individuals/42/notes",
+      "body": {
+        "note": "Visited"
+      }
+    }
+  },
+  "cloudflare": {
+    "cloudflare_api_search": {
+      "query": "dns records",
+      "method": "PATCH",
+      "limit": 2
+    },
+    "cloudflare_api_details": {
+      "method": "GET",
+      "path": "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
+      "param": "type"
+    },
+    "cloudflare_api_read": {
+      "path": "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records",
+      "query": {
+        "type": "A",
+        "per_page": 2
+      },
+      "select": [
+        "id",
+        "ttl"
+      ]
+    },
+    "cloudflare_api_write": {
+      "method": "PATCH",
+      "path": "/zones/023e105f4ecef8ad9ca31a8372d0c353/dns_records/r1",
+      "body": {
+        "ttl": 300
+      }
+    },
+    "verify_credential": {},
+    "list_accounts": {
+      "perPage": 5
+    },
+    "list_zones": {
+      "name": "example.com",
+      "status": "active",
+      "accountId": "0123456789abcdef0123456789abcdef"
+    },
+    "graphql_query": {
+      "query": "query Daily($zone: String!) { viewer { zones(filter: { zoneTag: $zone }) { httpRequests1dGroups(limit: 1) { dimensions { date } sum { requests } } } } }",
+      "variables": {
+        "zone": "023e105f4ecef8ad9ca31a8372d0c353"
+      },
+      "operationName": "Daily"
+    },
+    "cloudflare_api_upload": {
+      "method": "PUT",
+      "path": "/accounts/0123456789abcdef0123456789abcdef/workers/scripts/hello",
+      "parts": [
+        {
+          "name": "metadata",
+          "text": "{\"main_module\":\"index.js\"}",
+          "contentType": "application/json"
+        },
+        {
+          "name": "index.js",
+          "text": "export default { fetch() { return new Response('hi'); } }",
+          "fileName": "index.js",
+          "contentType": "application/javascript+module"
+        }
+      ]
+    }
+  },
+  "docs": {
+    "get_document": {
+      "documentId": "doc-1"
+    },
+    "create_document": {
+      "title": "Minutes"
+    },
+    "append_text": {
+      "documentId": "doc-1",
+      "text": "\nAction items follow.",
+      "tabId": "t.child",
+      "requiredRevisionId": "rev-1"
+    },
+    "insert_text": {
+      "documentId": "doc-1",
+      "index": 23,
+      "text": "Note: "
+    },
+    "replace_all_text": {
+      "documentId": "doc-1",
+      "find": "\\bQ(\\d)\\b",
+      "replaceWith": "Quarter",
+      "matchCase": true,
+      "regex": true,
+      "tabIds": [
+        "t.0"
+      ]
+    },
+    "batch_update_document": {
+      "documentId": "doc-1",
+      "requiredRevisionId": "rev-2",
+      "requests": [
+        {
+          "deleteContentRange": {
+            "range": {
+              "startIndex": 5,
+              "endIndex": 9
+            }
+          }
+        },
+        {
+          "createNamedRange": {
+            "name": "agenda",
+            "range": {
+              "startIndex": 1,
+              "endIndex": 4
+            }
+          }
+        }
+      ]
+    }
+  },
+  "drive": {
+    "search_files": {
+      "query": "name contains 'budget'",
+      "orderBy": "modifiedTime desc",
+      "limit": 5
+    },
+    "list_folder_items": {
+      "folderId": "folder-1"
+    },
+    "get_file": {
+      "fileId": "f1"
+    },
+    "get_file_content": {
+      "fileId": "d1"
+    },
+    "list_permissions": {
+      "fileId": "f1",
+      "limit": 50
+    },
+    "list_shared_drives": {
+      "query": "name contains 'Fin'"
+    },
+    "create_folder": {
+      "name": "Elders",
+      "parentId": "folder-1"
+    },
+    "create_file": {
+      "name": "notes.md",
+      "parentId": "folder-1",
+      "content": "# Notes \u2014 caf\u00e9",
+      "mimeType": "text/markdown"
+    },
+    "update_file_content": {
+      "fileId": "f5",
+      "content": "new text",
+      "mimeType": "text/plain"
+    },
+    "update_file": {
+      "fileId": "f1",
+      "name": "Budget (final)",
+      "description": "Approved budget"
+    },
+    "move_file": {
+      "fileId": "f1",
+      "folderId": "new-1"
+    },
+    "copy_file": {
+      "fileId": "f1",
+      "name": "Budget copy",
+      "parentId": "folder-2"
+    },
+    "trash_file": {
+      "fileId": "f1"
+    },
+    "restore_file": {
+      "fileId": "f1"
+    },
+    "share_file": {
+      "fileId": "f1",
+      "type": "user",
+      "role": "writer",
+      "emailAddress": "bob@example.com"
+    },
+    "update_permission": {
+      "fileId": "f1",
+      "permissionId": "p1",
+      "role": "reader"
+    },
+    "delete_permission": {
+      "fileId": "f1",
+      "permissionId": "anyoneWithLink"
+    }
+  },
+  "forms": {
+    "get_form": {
+      "formId": "form-1"
+    },
+    "create_form": {
+      "title": "Volunteer roster",
+      "documentTitle": "Roster"
+    },
+    "list_responses": {
+      "formId": "form-1",
+      "submittedAfter": "2026-09-30T00:00:00Z",
+      "limit": 5
+    },
+    "get_response": {
+      "formId": "form-1",
+      "responseId": "r1"
+    },
+    "update_form_info": {
+      "formId": "form-1",
+      "title": "Retreat 2026",
+      "description": "Bring a coat.",
+      "requiredRevisionId": "00000042"
+    },
+    "batch_update_form": {
+      "formId": "form-1",
+      "requiredRevisionId": "00000043",
+      "requests": [
+        {
+          "createItem": {
+            "item": {
+              "title": "Phone number",
+              "questionItem": {
+                "question": {
+                  "required": true,
+                  "textQuestion": {}
+                }
+              }
+            },
+            "location": {
+              "index": 0
+            }
+          }
+        },
+        {
+          "deleteItem": {
+            "location": {
+              "index": 4
+            }
+          }
+        },
+        {
+          "updateSettings": {
+            "settings": {
+              "quizSettings": {
+                "isQuiz": true
+              }
+            },
+            "updateMask": "quizSettings.isQuiz"
+          }
+        }
+      ]
+    }
+  },
+  "github": {
+    "list_scopes": {},
+    "search_scoped": {
+      "terms": "widget",
+      "kind": "repositories"
+    },
+    "create_release": {
+      "owner": "other",
+      "repo": "one",
+      "tag_name": "v1.2.0",
+      "name": "Release v1.2.0",
+      "draft": true
+    },
+    "update_release": {
+      "owner": "acme",
+      "repo": "one",
+      "release_id": 501,
+      "draft": false
+    },
+    "delete_release": {
+      "owner": "other",
+      "repo": "one",
+      "release_id": 501
+    },
+    "merge_pull_request": {
+      "owner": "other",
+      "repo": "one",
+      "pull_number": 7,
+      "sha": "6dcb09b5b57875f334f61aebed695e2e4193db5e"
+    }
+  },
+  "gmail": {
+    "search_threads": {
+      "query": "from:bob newer_than:7d",
+      "limit": 5,
+      "includeSpamTrash": true
+    },
+    "get_thread": {
+      "threadId": "t1"
+    },
+    "get_message": {
+      "messageId": "m2",
+      "maxBodyChars": 11
+    },
+    "get_attachment": {
+      "messageId": "m1",
+      "partId": "1"
+    },
+    "list_labels": {},
+    "list_drafts": {
+      "query": "subject:elders",
+      "limit": 3
+    },
+    "get_draft": {
+      "draftId": "d1"
+    },
+    "create_draft": {
+      "to": [
+        "Bob Elder <bob@example.com>",
+        "carol@example.com"
+      ],
+      "cc": [
+        "Smith, Dana <dana@example.com>"
+      ],
+      "subject": "R\u00e9union des anciens",
+      "body": "Bonjour \u00e0 tous,\n\u00c0 mardi.",
+      "htmlBody": "<p>Bonjour \u00e0 tous</p>"
+    },
+    "update_draft": {
+      "draftId": "d1",
+      "body": "Revised text.",
+      "cc": []
+    }
+  },
+  "infisical": {
+    "list_projects": {},
+    "list_folders": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "path": "/apps/"
+    },
+    "list_secrets": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "secretPath": "/apps",
+      "tagSlugs": [
+        "web",
+        "api"
+      ]
+    },
+    "get_secret": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "secretName": "API_KEY",
+      "secretPath": "/apps",
+      "version": 3
+    },
+    "create_secret": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "secretName": "API_KEY",
+      "secretValue": "new-crm-api-value-456",
+      "secretPath": "/apps",
+      "secretComment": "Issued for crm",
+      "type": "shared"
+    },
+    "update_secret": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "secretName": "API_KEY",
+      "secretPath": "/apps",
+      "secretValue": "rotated-crm-api-value-789",
+      "newSecretName": "CRM_API_KEY"
+    },
+    "delete_secret": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "secretName": "API_KEY",
+      "secretPath": "/apps"
+    },
+    "create_folder": {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "environment": "prod",
+      "name": "db",
+      "path": "/apps",
+      "description": "Database secrets"
+    }
+  },
+  "mixpanel": {
+    "mixpanel_api_search": {
+      "query": "retention",
+      "limit": 3
+    },
+    "mixpanel_api_details": {
+      "method": "GET",
+      "path": "/api/query/insights"
+    },
+    "mixpanel_api_read": {
+      "path": "/api/query/insights",
+      "project_id": 99,
+      "query": {
+        "bookmark_id": 7
+      },
+      "select": [
+        "series"
+      ]
+    },
+    "list_projects": {},
+    "export_events": {
+      "from_date": "2025-12-01",
+      "to_date": "2025-12-31",
+      "event": [
+        "Signed Up",
+        "Viewed Page"
+      ],
+      "time_in_ms": true
+    },
+    "get_profile_activity": {
+      "from_date": "2025-12-01",
+      "to_date": "2025-12-31",
+      "distinct_id": "alice",
+      "project_id": 99
+    },
+    "query_profiles": {
+      "project_id": 99,
+      "workspace_id": 3,
+      "distinct_ids": [
+        "alice"
+      ],
+      "output_properties": [
+        "$email"
+      ],
+      "where": "properties[\"$first_name\"]==\"Alice\""
+    },
+    "get_insights_report": {
+      "bookmark_id": 11
+    },
+    "get_funnel_report": {
+      "funnel_id": 12,
+      "from_date": "2025-12-01",
+      "to_date": "2025-12-31"
+    },
+    "query_retention": {
+      "from_date": "2025-12-01",
+      "to_date": "2025-12-31",
+      "born_event": "Signup",
+      "event": "Purchase",
+      "retention_type": "birth",
+      "unit": "week"
+    },
+    "import_events": {
+      "project_id": 99,
+      "events": [
+        {
+          "event": "Signup",
+          "properties": {
+            "time": 1767225600,
+            "distinct_id": "91304156-cafc-4673-a237-623d1129c801",
+            "$insert_id": "29fc2962-6d9c-455d-95ad-95b84f09b9e4",
+            "Referred by": "Friend"
+          }
+        }
+      ]
+    }
+  },
+  "notion": {
+    "notion_api_search": {
+      "query": "query data source",
+      "limit": 3
+    },
+    "notion_api_details": {
+      "method": "PATCH",
+      "path": "/v1/pages/page-1"
+    },
+    "notion_api_read": {
+      "path": "/v1/users",
+      "query": {
+        "page_size": 1
+      }
+    },
+    "notion_api_write": {
+      "method": "PATCH",
+      "path": "/v1/pages/page-1",
+      "body": {
+        "in_trash": true
+      }
+    },
+    "integration_search": {
+      "query": "review",
+      "object_type": "page",
+      "sort": "last_edited_desc"
+    },
+    "integration_get_page": {
+      "page_id": "page-1"
+    },
+    "integration_get_page_content": {
+      "block_id": "page-1"
+    },
+    "integration_get_data_source_schema": {
+      "data_source_id": "ds-1"
+    },
+    "integration_query_data_source": {
+      "data_source_id": "ds-1",
+      "filter": {
+        "property": "Status",
+        "status": {
+          "equals": "In progress"
+        }
+      },
+      "sorts": [
+        {
+          "property": "Due",
+          "direction": "ascending"
+        }
+      ],
+      "properties": [
+        "Name",
+        "Status"
+      ]
+    },
+    "integration_create_page": {
+      "parent_data_source_id": "ds-1",
+      "title": "New row",
+      "title_property": "Name",
+      "properties": {
+        "Status": {
+          "status": {
+            "name": "Todo"
+          }
+        }
+      },
+      "markdown": "# Body",
+      "icon": "\ud83d\ude80"
+    },
+    "integration_append_blocks": {
+      "block_id": "page-1",
+      "checklist": [
+        "Book venue",
+        "Send invites"
+      ],
+      "position": "after_block",
+      "after_block_id": "b3"
+    }
+  },
+  "overflow": {
+    "overflow_api_get": {
+      "path": "/refunds/9910f34fd5061afeec3eab01",
+      "query": [
+        {
+          "name": "statusBucket[]",
+          "value": "PENDING"
+        },
+        {
+          "name": "statusBucket[]",
+          "value": "FAILED"
+        },
+        {
+          "name": "limit",
+          "value": 5
+        }
+      ]
+    },
+    "overflow_api_mutate": {
+      "method": "POST",
+      "path": "/subscriptions",
+      "body": {
+        "donorId": "6710f34fd5061afeec3eab50",
+        "amount": 25,
+        "frequency": "monthly",
+        "campaignId": "7710f34fd5061afeec3eab78"
+      }
+    },
+    "list_contributions": {
+      "statusBucket": [
+        "PENDING",
+        "CONFIRMED"
+      ],
+      "locationIds": [
+        "6710f34fd5061afeec3eab58"
+      ],
+      "minimumUpdatedDate": "2025-01-01",
+      "campaignId": "7710f34fd5061afeec3eab78"
+    },
+    "get_contribution": {
+      "contributionId": "6710f34fd5061afeec3eab57"
+    },
+    "list_deposits": {
+      "types": [
+        "AUTOMATED"
+      ],
+      "reconciled": false,
+      "minimumAmountInCents": 1000,
+      "sortDirection": "ASC"
+    },
+    "get_deposit": {
+      "depositId": "8810f34fd5061afeec3eab67"
+    },
+    "get_deposit_summary": {
+      "depositId": "8810f34fd5061afeec3eab67"
+    },
+    "list_refunds": {
+      "contributionId": "6710f34fd5061afeec3eab57",
+      "sortDirection": "DESC"
+    },
+    "list_chargebacks": {
+      "minimumUpdatedDate": "2025-01-01",
+      "limit": 10
+    },
+    "list_donors": {
+      "sortBy": "totalContributionsCount",
+      "sortDirection": "DESC"
+    },
+    "get_donor": {
+      "donorId": "6710f34fd5061afeec3eab50"
+    },
+    "list_subscriptions": {
+      "donorId": "6710f34fd5061afeec3eab50",
+      "status": [
+        "active",
+        "paused"
+      ]
+    },
+    "list_payment_methods": {
+      "donorId": "6710f34fd5061afeec3eab50",
+      "showExpired": true
+    },
+    "list_campaigns": {
+      "parentCampaignId": "7710f34fd5061afeec3eab78",
+      "search": "Mission"
+    },
+    "list_locations": {
+      "sortBy": "name"
+    },
+    "list_tap_events": {
+      "groupIds": [
+        "6710f34fd5061afeec3eab58"
+      ],
+      "startDate": "2026-05-01"
+    },
+    "list_webhooks": {
+      "status": "enabled"
+    },
+    "list_webhook_event_logs": {
+      "webhookId": "6710f34fd5061afeec3eab99",
+      "status": "failed"
+    }
+  },
+  "planning-center": {
+    "pco_api_get": {
+      "path": "/publishing/v2/episodes",
+      "query": [
+        {
+          "name": "where[title]",
+          "value": "Easter"
+        },
+        {
+          "name": "per_page",
+          "value": 5
+        }
+      ]
+    },
+    "pco_api_mutate": {
+      "method": "POST",
+      "path": "/giving/v2/batches",
+      "body": {
+        "data": {
+          "type": "Batch",
+          "attributes": {
+            "description": "Sunday offering"
+          }
+        }
+      }
+    },
+    "get_me": {},
+    "search_people": {
+      "search": "alice",
+      "status": "active",
+      "updatedSince": "2026-01-01",
+      "order": "-updated_at",
+      "perPage": 1
+    },
+    "get_person": {
+      "personId": "7"
+    },
+    "create_person": {
+      "firstName": "Bob",
+      "lastName": "Jones",
+      "birthdate": "1990-04-12",
+      "membership": "Visitor",
+      "child": false
+    },
+    "update_person": {
+      "personId": "9",
+      "status": "inactive",
+      "nickname": null
+    },
+    "add_person_email": {
+      "personId": "9",
+      "address": "bob@example.com",
+      "primary": true
+    },
+    "add_person_phone_number": {
+      "personId": "9",
+      "number": "555-0199"
+    },
+    "list_lists": {
+      "name": "Volunteers%",
+      "order": "name"
+    },
+    "list_list_people": {
+      "listId": "3"
+    },
+    "run_list": {
+      "listId": "3"
+    },
+    "list_workflows": {},
+    "list_workflow_cards": {
+      "workflowId": "5",
+      "stage": "ready",
+      "overdue": true
+    },
+    "add_workflow_card": {
+      "workflowId": "5",
+      "personId": "9",
+      "assigneeId": "1"
+    },
+    "apply_workflow_card_action": {
+      "personId": "7",
+      "cardId": "88",
+      "action": "snooze",
+      "snoozeDays": 15
+    },
+    "add_workflow_card_note": {
+      "personId": "7",
+      "cardId": "88",
+      "note": "Left a voicemail."
+    },
+    "list_person_notes": {
+      "personId": "7"
+    },
+    "add_person_note": {
+      "personId": "7",
+      "note": "Called to check in.",
+      "noteCategoryId": "41"
+    },
+    "list_person_field_data": {
+      "personId": "7"
+    },
+    "list_forms": {},
+    "list_form_submissions": {
+      "formId": "4",
+      "submittedAfter": "2026-01-01"
+    },
+    "list_service_types": {},
+    "list_plans": {
+      "serviceTypeId": "10"
+    },
+    "get_plan": {
+      "serviceTypeId": "10",
+      "planId": "20"
+    },
+    "list_teams": {
+      "serviceTypeId": "10"
+    },
+    "list_person_schedules": {
+      "personId": "7"
+    },
+    "schedule_plan_person": {
+      "serviceTypeId": "10",
+      "planId": "20",
+      "personId": "9",
+      "teamId": "40",
+      "teamPositionName": "Bass"
+    },
+    "add_plan_item": {
+      "serviceTypeId": "10",
+      "planId": "20",
+      "title": "Amazing Grace",
+      "songId": "30",
+      "arrangementId": "31",
+      "length": 240
+    },
+    "list_songs": {
+      "title": "Amazing%",
+      "order": "title"
+    },
+    "list_song_arrangements": {
+      "songId": "30"
+    },
+    "list_groups": {
+      "name": "Young%",
+      "archived": "include"
+    },
+    "list_group_memberships": {
+      "groupId": "8",
+      "role": "leader"
+    },
+    "add_group_member": {
+      "groupId": "8",
+      "personId": "9"
+    },
+    "list_group_events": {
+      "groupId": "8",
+      "startsAfter": "2026-01-01",
+      "startsBefore": "2026-02-01"
+    },
+    "list_check_in_events": {},
+    "list_check_in_event_periods": {
+      "eventId": "2",
+      "startsAfter": "2025-12-01"
+    },
+    "list_check_ins": {
+      "eventId": "2",
+      "serviceAfter": "2025-12-28",
+      "serviceBefore": "2025-12-29",
+      "kind": "guest"
+    },
+    "list_calendar_event_instances": {
+      "startsAfter": "2026-01-01",
+      "startsBefore": "2026-01-08"
+    },
+    "list_signups": {},
+    "list_signup_attendees": {
+      "signupId": "1801",
+      "status": "active"
+    },
+    "list_donations": {
+      "receivedAfter": "2025-12-01",
+      "fundId": "61",
+      "succeededOnly": true
+    },
+    "list_funds": {},
+    "list_batches": {
+      "status": "committed"
+    },
+    "list_pledge_campaigns": {},
+    "list_pledges": {
+      "pledgeCampaignId": "2001"
+    },
+    "list_recurring_donations": {
+      "status": "active"
+    },
+    "list_webhook_subscriptions": {}
+  },
+  "sheets": {
+    "get_spreadsheet": {
+      "spreadsheetId": "sheet-budget-1"
+    },
+    "get_values": {
+      "spreadsheetId": "sheet-budget-1",
+      "ranges": [
+        "Summary!A1:C3",
+        "'Q3 Budget'!B:B"
+      ],
+      "valueRenderOption": "UNFORMATTED_VALUE",
+      "dateTimeRenderOption": "FORMATTED_STRING"
+    },
+    "update_values": {
+      "spreadsheetId": "sheet-budget-1",
+      "range": "Summary!A1",
+      "values": [
+        [
+          "Item",
+          "=SUM(B2:B9)"
+        ],
+        [
+          null,
+          ""
+        ]
+      ],
+      "valueInputOption": "USER_ENTERED"
+    },
+    "batch_update_values": {
+      "spreadsheetId": "sheet-budget-1",
+      "valueInputOption": "RAW",
+      "data": [
+        {
+          "range": "A!A1",
+          "values": [
+            [
+              1,
+              true
+            ]
+          ]
+        },
+        {
+          "range": "B!A1",
+          "values": [
+            [
+              "x"
+            ],
+            [
+              "y"
+            ]
+          ]
+        }
+      ]
+    },
+    "append_values": {
+      "spreadsheetId": "sheet-budget-1",
+      "range": "'Q3 Budget'!A:D",
+      "values": [
+        [
+          "2026-10-06",
+          "Rent",
+          1200,
+          "paid"
+        ]
+      ],
+      "valueInputOption": "USER_ENTERED"
+    },
+    "clear_values": {
+      "spreadsheetId": "sheet-budget-1",
+      "ranges": [
+        "A!A1:B9",
+        "B!C:C"
+      ]
+    },
+    "create_spreadsheet": {
+      "title": "Attendance 2026",
+      "sheetTitles": [
+        "Sundays",
+        "Midweek"
+      ]
+    },
+    "add_sheet": {
+      "spreadsheetId": "sheet-budget-1",
+      "title": "Q4",
+      "index": 2,
+      "rowCount": 100,
+      "columnCount": 6
+    },
+    "batch_update_spreadsheet": {
+      "spreadsheetId": "sheet-budget-1",
+      "requests": [
+        {
+          "deleteDimension": {
+            "range": {
+              "sheetId": 7,
+              "dimension": "ROWS",
+              "startIndex": 3,
+              "endIndex": 9
+            }
+          }
+        },
+        {
+          "duplicateSheet": {
+            "sourceSheetId": 0,
+            "newSheetName": "Copy of Summary"
+          }
+        }
+      ]
+    }
+  },
+  "slides": {
+    "get_presentation": {
+      "presentationId": "deck1"
+    },
+    "get_page": {
+      "presentationId": "deck1",
+      "pageObjectId": "s2"
+    },
+    "list_layouts": {
+      "presentationId": "deck1"
+    },
+    "list_comments": {
+      "presentationId": "deck1"
+    },
+    "get_slide_thumbnail": {
+      "presentationId": "deck1",
+      "slideObjectId": "g1a2b3c_0:4",
+      "size": "MEDIUM"
+    },
+    "create_presentation": {
+      "title": "Staff meeting"
+    },
+    "create_slide": {
+      "presentationId": "deck1",
+      "layout": "TITLE_AND_BODY",
+      "insertionIndex": 1
+    },
+    "replace_all_text": {
+      "presentationId": "deck1",
+      "replacements": [
+        {
+          "find": "{{date}}",
+          "replace": "April 20"
+        },
+        {
+          "find": "easter",
+          "replace": "Easter",
+          "matchCase": false
+        }
+      ],
+      "slideObjectIds": [
+        "p",
+        "s2"
+      ],
+      "requiredRevisionId": "rev-1"
+    },
+    "create_comment": {
+      "presentationId": "deck1",
+      "objectId": "body",
+      "textRange": {
+        "startIndex": 0,
+        "endIndex": 11
+      },
+      "content": "Bigger?",
+      "assigneeEmail": "bob@example.com"
+    },
+    "create_comment_reply": {
+      "presentationId": "deck1",
+      "commentId": "c1",
+      "content": "Done"
+    },
+    "update_comment_thread": {
+      "presentationId": "deck1",
+      "commentId": "c1",
+      "status": "RESOLVED"
+    },
+    "update_comment_post": {
+      "presentationId": "deck1",
+      "commentId": "c1",
+      "postId": "p1",
+      "content": "Smaller?"
+    },
+    "delete_comment": {
+      "presentationId": "deck1",
+      "commentId": "c1"
+    },
+    "delete_comment_reply": {
+      "presentationId": "deck1",
+      "commentId": "c1",
+      "postId": "p2"
+    },
+    "batch_update_presentation": {
+      "presentationId": "deck1",
+      "requiredRevisionId": "rev-2",
+      "requests": [
+        {
+          "insertText": {
+            "objectId": "title",
+            "text": "Hello",
+            "insertionIndex": 0
+          }
+        },
+        {
+          "createShape": {
+            "shapeType": "TEXT_BOX",
+            "elementProperties": {
+              "pageObjectId": "p"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "stripe": {
+    "stripe_api_search": {
+      "query": "refund",
+      "method": "POST",
+      "limit": 3
+    },
+    "stripe_api_details": {
+      "method": "GET",
+      "path": "/v1/payment_intents/pi_123",
+      "param": "expand"
+    },
+    "stripe_api_read": {
+      "path": "/v1/charges",
+      "query": {
+        "customer": "cus_1",
+        "expand": [
+          "data.customer"
+        ],
+        "created": {
+          "gte": 10
+        },
+        "limit": 2
+      },
+      "select": [
+        "data.id",
+        "data.amount"
+      ]
+    },
+    "stripe_api_write": {
+      "method": "POST",
+      "path": "/v1/customers/cus_1",
+      "body": {
+        "email": "alice@example.com",
+        "metadata": {
+          "tier": "gold",
+          "stale": ""
+        },
+        "invoice_settings": {
+          "custom_fields": [
+            {
+              "name": "PO",
+              "value": "42"
+            }
+          ],
+          "default_payment_method": null
+        },
+        "preferred_locales": []
+      }
+    },
+    "get_stripe_account_info": {},
+    "get_balance_summary": {}
+  },
+  "tithely": {
+    "tithely_api_get": {
+      "path": "/payment-methods/pm_9",
+      "query": [
+        {
+          "name": "account_id",
+          "value": "user_jane"
+        }
+      ]
+    },
+    "tithely_api_mutate": {
+      "method": "POST",
+      "path": "/charges",
+      "form": [
+        {
+          "name": "account_id",
+          "value": "user_jane"
+        },
+        {
+          "name": "pm_id",
+          "value": "pm_9"
+        },
+        {
+          "name": "organization_id",
+          "value": "org_1"
+        },
+        {
+          "name": "amount",
+          "value": 2555
+        },
+        {
+          "name": "giving_type",
+          "value": "Tithe"
+        }
+      ]
+    },
+    "list_organizations": {
+      "limit": 5
+    },
+    "get_organization": {
+      "organizationId": "org_1"
+    },
+    "list_accounts": {},
+    "get_account": {
+      "accountId": "user_jane"
+    },
+    "list_charges": {
+      "organizationId": "org_1",
+      "limit": 1,
+      "createdAfter": "2026-01-01"
+    },
+    "get_charge": {
+      "chargeId": "ch_1"
+    },
+    "list_recurring_charges": {
+      "organizationId": "org_1"
+    },
+    "get_recurring_charge": {
+      "recurringId": "rc_1"
+    },
+    "list_payment_methods": {
+      "accountId": "user_jane"
+    }
+  },
+  "vercel": {
+    "vercel_api_search": {
+      "query": "project env",
+      "method": "PATCH",
+      "limit": 2
+    },
+    "vercel_api_details": {
+      "method": "GET",
+      "path": "/v7/deployments",
+      "param": "until"
+    },
+    "vercel_api_read": {
+      "path": "/v7/deployments",
+      "query": {
+        "projectId": "web",
+        "limit": 2
+      },
+      "select": [
+        "deployments.uid",
+        "deployments.state"
+      ]
+    },
+    "vercel_api_write": {
+      "method": "PATCH",
+      "path": "/v9/projects/web",
+      "body": {
+        "framework": "nextjs"
+      }
+    },
+    "list_teams": {
+      "limit": 5
+    },
+    "list_project_env_vars": {
+      "projectId": "web app",
+      "gitBranch": "main"
+    },
+    "upsert_project_env_var": {
+      "projectId": "web",
+      "teamId": null,
+      "key": "TOKEN",
+      "value": "golden-env-value",
+      "type": "sensitive",
+      "targets": [
+        "preview"
+      ],
+      "upsert": false
+    },
+    "update_project_env_var": {
+      "projectId": "web",
+      "envVarId": "env_2",
+      "targets": [
+        "preview",
+        "development"
+      ],
+      "comment": "Rotated"
+    },
+    "delete_project_env_var": {
+      "projectId": "web",
+      "envVarId": "env_2"
+    },
+    "get_deployment_build_logs": {
+      "deploymentId": "dpl_1",
+      "direction": "backward",
+      "limit": 50
+    },
+    "get_runtime_logs": {
+      "projectId": "web",
+      "deploymentId": "dpl_1",
+      "waitMs": 1000,
+      "levels": [
+        "error"
+      ]
+    },
+    "vercel_api_upload": {
+      "method": "POST",
+      "path": "/v2/files",
+      "base64Body": "aGVsbG8="
+    }
+  }
+}

@@ -51,12 +51,16 @@
  *    admitted identity to a Workspace address in `subject`. Give each pool
  *    agents use an `owner`, the address they act as there.
  */
+import { carryFailureFacts } from "../../../operator-record.js";
 import { followRedactedCopies } from "../../../redaction-identity.js";
 import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
+import { callClassification } from "../../../call-classification.js";
+import { providerRequests } from "../../../provider-call.js";
+import { providerCallFailure, providerFailureMessage, unsentAfterUnauthorized } from "../../../write-outcome.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
-import { ConnectorCallError } from "../../../errors.js";
+import { ConnectorCallError, resendAdvice } from "../../../errors.js";
 import { redactBeforeCut } from "../../../sent-secrets.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
 import { isWorkspaceAddress } from "../../../workspace-address.js";
@@ -311,19 +315,29 @@ export function googleReasonsOf(error: unknown): readonly string[] {
  *   reply could not be used. A write probably applied.
  * - `redirected`: Google answered 3xx, which is never followed. It shows
  *   neither that a write applied nor that it did not: outcome unknown.
- * - `server-error`: Google answered a non-idempotent write with a 5xx,
- *   whatever reason it named. It may have committed before failing, so the
- *   outcome is unknown.
- * - `refused`: Google answered with a 4xx, or a read or idempotent write
- *   with a 5xx. Nothing to repeat blindly: a 4xx applied nothing, and a
- *   repeated read or idempotent write is harmless.
+ * - `server-error`: Google answered a write with a 5xx, whatever reason it
+ *   named. It may have committed before failing, so the outcome is unknown.
+ *   No operation hint makes it repeatable: only an idempotency key the
+ *   vendor honors does, and Google takes none.
+ * - `refused`: Google answered with a 4xx, or a read with a 5xx. Nothing to
+ *   repeat blindly: a 4xx applied nothing, and a repeated read is harmless.
+ * - `unauthorized`: Google answered a write with 401, and it was not sent
+ *   again (INV-9). A server may act on a request before it rejects the
+ *   token, so the outcome is unknown.
  */
 interface GoogleOutcome {
   /** Whether the request left connecta for Google's API. */
   readonly dispatched: boolean;
   /** The HTTP status Google answered with, when one arrived. */
   readonly status?: number;
-  readonly phase: "before-send" | "awaiting-response" | "reading-body" | "redirected" | "server-error" | "refused";
+  readonly phase:
+    | "before-send"
+    | "awaiting-response"
+    | "reading-body"
+    | "redirected"
+    | "server-error"
+    | "refused"
+    | "unauthorized";
 }
 
 /** What one attempt saw, as it happened. */
@@ -334,7 +348,7 @@ interface SendFacts {
   headers?: Headers;
   /** Google answered with an error status, which the mapper classified. */
   refused?: boolean;
-  /** Google answered a non-idempotent write with a 5xx. */
+  /** Google answered a write with a 5xx. */
   serverError?: boolean;
 }
 
@@ -353,6 +367,14 @@ function outcome<T>(error: T, facts: GoogleOutcome): T {
  */
 export function googleOutcomeOf(error: unknown): GoogleOutcome | undefined {
   return error !== null && typeof error === "object" ? googleOutcomes.get(error) : undefined;
+}
+
+/** Product recovery words must preserve the shared verdict and provenance. */
+export function googleFailureMessage(error: ConnectorCallError, message: string): ConnectorCallError {
+  const copy = providerFailureMessage(error, message);
+  googleReasons.set(copy, googleReasonsOf(error));
+  const facts = googleOutcomeOf(error);
+  return facts ? outcome(copy, facts) : copy;
 }
 
 function apiFailure(
@@ -411,10 +433,13 @@ function classifyApiFailure(
     reasons.has("RATE_LIMIT_EXCEEDED")
   ) {
     const wait = retryAfterMs(headers);
-    return new ConnectorCallError(
-      "rate_limited",
-      `${detail} Google meters this API per user and per project; wait before retrying.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${detail} Google meters this API per user and per project.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      "; wait before retrying",
     );
   }
   if (reasons.has("insufficientPermissions") || reasons.has("ACCESS_TOKEN_SCOPE_INSUFFICIENT")) {
@@ -453,9 +478,12 @@ function classifyApiFailure(
     (status === 400 || status === 409) &&
     (precondition || ABORTED_REASONS.some((reason) => reasons.has(reason)))
   ) {
-    return new ConnectorCallError(
-      "conflict",
-      `${provider} refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.`,
+    return resendAdvice(
+      new ConnectorCallError(
+        "conflict",
+        `${provider} refused the write because the item changed after the revision it named.`,
+      ),
+      " Re-read it for the current revision, reapply the change, and retry.",
     );
   }
   if (status === 403) {
@@ -563,12 +591,14 @@ interface GoogleReadOptions extends GoogleRequestOptions {
 /**
  * A product's request path to its API, as the calling user. Every method
  * resolves the subject once per call context, sends the cached or a freshly
- * minted token, maps Google's failures by what the caller does next, and
- * answers a 401 with one fresh token and one replay — safe for a write too,
- * since a 401 is a refusal before the request did anything. Because of that
- * replay a `rawBody` must be sendable twice: a `ReadableStream` is refused
- * with a `TypeError` before any request; strings, bytes, Blobs, FormData, and
- * URLSearchParams are fine.
+ * minted token, and maps Google's failures by what the caller does next. A
+ * 401 drops the token it refused. The served classification decides whether
+ * to replay, falling back to GET as a read only when no verdict exists. A
+ * read is then sent once more with a fresh token; a write never is (INV-9),
+ * since a server may act on a request before it rejects the token, so its outcome is unknown and the next call mints
+ * the fresh token. Because of the read's replay a `rawBody` must be sendable
+ * twice: a `ReadableStream` is refused with a `TypeError` before any request;
+ * strings, bytes, Blobs, FormData, and URLSearchParams are fine.
  */
 export interface GoogleWorkspaceClient {
   /** One JSON request; the parsed body, `undefined` for an empty one. */
@@ -607,13 +637,6 @@ interface GoogleRequestOptions {
    * like a product switched off for the user.
    */
   revisionGuarded?: boolean;
-  /**
-   * Sending this write twice leaves the same state as sending it once — a
-   * PUT of a whole resource, a Sheets `values.update` of fixed cells. Only
-   * then does a 5xx on a write stay a retryable `unavailable`; otherwise its
-   * outcome is unknown and it is not retried. Reads are always idempotent.
-   */
-  idempotent?: boolean;
 }
 
 /** The token the API refused, carried out of the mapper for one replay. */
@@ -696,27 +719,40 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
    * repeat and keeps its retryable classification.
    */
   /**
-   * A 5xx answering a write that is not idempotent. Google can fail after a
-   * change commits, so "unavailable, retry" would invite a duplicate insert
-   * or a second draft: the outcome is unknown and the write is not retried,
-   * whatever reason the 5xx names. Its reasons stay readable beside it.
+   * A 5xx answering a write. Google can fail after a change commits, so
+   * "unavailable, retry" would invite a duplicate insert or a second draft:
+   * the outcome is unknown and the write is not retried, whatever reason the
+   * 5xx names. Its reasons stay readable beside it.
    */
   function serverErrorOnWrite(
     mapped: ConnectorCallError,
     status: number,
     method: string,
-    requestOptions: GoogleRequestOptions,
+    ctx: ConnectorContext,
   ): ConnectorCallError | undefined {
     // Any 5xx, whatever reason it names: a quota reason on a 503 does not
     // prove the write was turned away before it committed. Only a 429, or a
     // 4xx naming a quota, is a rejection that applied nothing.
-    if (status < 500 || method === "GET" || requestOptions.idempotent === true) {
-      return undefined;
-    }
+    if (status < 500) return undefined;
+    const decision = providerCallFailure(ctx, { title: provider }, mapped, {
+      dispatched: true,
+      status,
+      fallback: method === "GET" ? "read" : "write",
+    });
+    const collecting = providerRequests(ctx) !== undefined;
+    if (collecting) {
+      if (!isWrite(method, ctx)) return undefined;
+    } else if (!(decision instanceof ConnectorCallError) || decision.writeOutcome !== "unknown") return undefined;
     const unknown = new ConnectorCallError(
       "connector_call_failed",
       `${provider} answered HTTP ${status} after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it.`,
-      { retryable: false, cause: mapped },
+      {
+        // Already the unknown-outcome advice: a ledger's later decision must
+        // not read it as a retryable failure and append its own.
+        retryable: false,
+        ...(collecting ? {} : { writeOutcome: "unknown" as const }),
+        cause: mapped,
+      },
     );
     const reasons = googleReasons.get(mapped);
     if (reasons) googleReasons.set(unknown, reasons);
@@ -726,14 +762,14 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   // The errors built below keep no cause: a stream's or parser's error can
   // quote the body it failed on, and the phase and status already say what
   // happened (#695).
-  function settled(
+  function settledFailure(
     error: unknown,
     facts: SendFacts,
     method: string,
     ctx: ConnectorContext,
     requestOptions: GoogleRequestOptions,
   ): unknown {
-    const write = method !== "GET";
+    const write = isWrite(method, ctx);
     const status = facts.status;
     if (facts.serverError) {
       return outcome(error, { dispatched: true, phase: "server-error", ...(status === undefined ? {} : { status }) });
@@ -746,7 +782,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     // still says what to do next.
     if (status !== undefined && status >= 400 && !ctx.signal?.aborted) {
       const mapped = apiFailure(failure, status, facts.headers ?? new Headers(), undefined, requestOptions, ctx);
-      const unknown = serverErrorOnWrite(mapped, status, method, requestOptions);
+      const unknown = serverErrorOnWrite(mapped, status, method, ctx);
       return unknown
         ? outcome(unknown, { dispatched: true, status, phase: "server-error" })
         : outcome(mapped, { dispatched: true, status, phase: "refused" });
@@ -758,7 +794,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       const phase: GoogleOutcome["phase"] =
         status === undefined
           ? "awaiting-response"
-          : status >= 500 && write && requestOptions.idempotent !== true
+          : status >= 500 && write
             ? "server-error"
             : status >= 400
               ? "refused"
@@ -808,6 +844,33 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     return outcome(mapped, { dispatched: true, status, phase: "reading-body" });
   }
 
+  function settled(
+    error: unknown,
+    facts: SendFacts,
+    method: string,
+    ctx: ConnectorContext,
+    requestOptions: GoogleRequestOptions,
+  ): unknown {
+    const mapped = carryFailureFacts(error, settledFailure(error, facts, method, ctx, requestOptions));
+    const decision = providerCallFailure(ctx, { title: provider }, mapped, {
+      dispatched: facts.dispatched,
+      ...(facts.status === undefined ? {} : { status: facts.status }),
+      fallback: method === "GET" ? "read" : "write",
+    });
+    if (decision instanceof ConnectorCallError && mapped instanceof ConnectorCallError && decision !== mapped) {
+      googleReasons.set(decision, googleReasonsOf(mapped));
+      const facts = googleOutcomeOf(mapped);
+      if (facts) return outcome(decision, facts);
+    }
+    return decision;
+  }
+
+  // The served verdict takes precedence even when a write uses GET or a read
+  // uses POST. Direct requests without a verdict fall back to the method.
+  function isWrite(method: string, ctx: ConnectorContext): boolean {
+    return (callClassification(ctx) ?? (method === "GET" ? "read" : "write")) === "write";
+  }
+
   async function call<T>(
     request: GuardedRequest,
     ctx: ConnectorContext,
@@ -815,9 +878,9 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     read: (response: ReadableResponse) => Promise<T>,
     requestOptions: GoogleRequestOptions = {},
   ): Promise<T> {
-    // A 401 is answered by sending the same request again, so its body must
-    // survive being sent twice. A stream is consumed by the first send; it
-    // is a provider's wiring mistake, refused before anything leaves.
+    // A read's 401 is answered by sending the same request again, so its body
+    // must survive being sent twice. A stream is consumed by the first send;
+    // it is a provider's wiring mistake, refused before anything leaves.
     if (typeof ReadableStream !== "undefined" && request.rawBody instanceof ReadableStream) {
       throw outcome(
         new TypeError(
@@ -826,7 +889,10 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         { dispatched: false, phase: "before-send" },
       );
     }
-    const headed: GuardedRequest = { ...request, headers: { Accept: accept, ...request.headers } };
+    const headed: GuardedRequest = {
+      ...request,
+      headers: { Accept: accept, ...request.headers },
+    };
     for (let attempt = 0; ; attempt += 1) {
       const facts: SendFacts = { dispatched: false };
       let delegated: DelegatedTokenRequest;
@@ -856,7 +922,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
             const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions, ctx);
-            const unknown = serverErrorOnWrite(mapped, response.status, headed.method, requestOptions);
+            const unknown = serverErrorOnWrite(mapped, response.status, headed.method, ctx);
             if (unknown) {
               facts.serverError = true;
               throw unknown;
@@ -867,18 +933,30 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
           return await read(response);
         });
       } catch (error) {
-        // Every 401 Google sent earns the refresh and the one replay, whether
-        // its body was read or failed the transport's checks first: what the
-        // status said about the token does not depend on the body.
-        // A caller that has left gets neither: the 401 it saw is reported as
-        // it was, and no new token is minted for a request nobody awaits.
-        const failed = error instanceof TokenRejected ? error.failure : error;
+        // Every 401 Google sent drops the token it refused, and earns a read
+        // the one replay, whether its body was read or failed the transport's
+        // checks first: what the status said about the token does not depend
+        // on the body. A caller that has left gets neither: the 401 it saw is
+        // reported as it was, and no new token is minted for a request nobody
+        // awaits.
+        const failed = error instanceof TokenRejected ? carryFailureFacts(error, error.failure) : error;
         const unauthorized = !ctx.signal?.aborted && (error instanceof TokenRejected || facts.status === 401);
         if (!unauthorized) throw settled(failed, facts, headed.method, ctx, requestOptions);
         // Only the token this request carried; a newer one stays.
         await forgetDelegatedToken(delegated, token);
         if (attempt > 0 || ctx.signal?.aborted) {
           throw settled(failed, facts, headed.method, ctx, requestOptions);
+        }
+        // A write is never sent again (INV-9). The next call mints the fresh
+        // token, so a deliberate repeat finds it.
+        if (isWrite(headed.method, ctx)) {
+          const refusal =
+            failed instanceof ConnectorCallError && failed.code === "auth_required"
+              ? failed
+              : apiFailure(failure, 401, facts.headers ?? new Headers(), undefined, requestOptions, ctx);
+          const unknown = unsentAfterUnauthorized(provider, refusal);
+          googleReasons.set(unknown, googleReasonsOf(refusal));
+          throw outcome(unknown, { dispatched: true, status: 401, phase: "unauthorized" });
         }
       }
     }

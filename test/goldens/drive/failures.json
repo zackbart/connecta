@@ -924,6 +924,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Google Drive: Golden 400 failure",
@@ -993,67 +994,6 @@
                 }
               }
             }
-          ],
-          [
-            {
-              "after": 2,
-              "auxiliary": "token",
-              "method": "POST",
-              "url": "https://oauth2.googleapis.com/token",
-              "headers": {
-                "accept": "application/json",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                  ],
-                  [
-                    "assertion",
-                    {
-                      "jwt": {
-                        "header": {
-                          "alg": "RS256",
-                          "typ": "JWT"
-                        },
-                        "claims": {
-                          "iss": "drive-write-401@project.iam.gserviceaccount.com",
-                          "sub": "alice@example.com",
-                          "scope": "https://www.googleapis.com/auth/drive",
-                          "aud": "https://oauth2.googleapis.com/token",
-                          "iat": 1767323045,
-                          "exp": 1767326645
-                        },
-                        "signature": "<signature>"
-                      }
-                    }
-                  ]
-                ]
-              }
-            }
-          ],
-          [
-            {
-              "after": 3,
-              "method": "POST",
-              "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-              "headers": {
-                "accept": "application/json",
-                "authorization": "Bearer <secret:accessToken>",
-                "content-type": "application/json"
-              },
-              "body": {
-                "json": {
-                  "name": "Elders",
-                  "mimeType": "application/vnd.google-apps.folder",
-                  "parents": [
-                    "folder-1"
-                  ]
-                }
-              }
-            }
           ]
         ],
         "result": {
@@ -1063,6 +1003,7 @@
             "code": "auth_required",
             "message": "Google Drive: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "files",
             "operation": "files.create_folder",
             "recovery": "unavailable",
@@ -1145,6 +1086,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "provider_permission_denied",
             "message": "Google Drive: Golden 403 failure This account does not have the permission on this item that the action needs — it may be shared view-only, or not shared with this user. Its owner can grant more.",
@@ -1222,6 +1164,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Google Drive: Golden 404 failure The id is unknown or not visible to this account; Google does not distinguish them.",
@@ -1296,6 +1239,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Google Drive: Golden 409 failure",
@@ -1370,6 +1314,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Google Drive: Golden 422 failure",
@@ -1444,6 +1389,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "Google Drive: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
@@ -1522,7 +1468,8 @@
           "error": {
             "code": "connector_call_failed",
             "message": "Google Drive answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it. Find it with search_files or list_folder_items before creating it again: a second call makes a second one.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1588,67 +1535,6 @@
                 }
               }
             }
-          ],
-          [
-            {
-              "after": 2,
-              "auxiliary": "token",
-              "method": "POST",
-              "url": "https://oauth2.googleapis.com/token",
-              "headers": {
-                "accept": "application/json",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                  ],
-                  [
-                    "assertion",
-                    {
-                      "jwt": {
-                        "header": {
-                          "alg": "RS256",
-                          "typ": "JWT"
-                        },
-                        "claims": {
-                          "iss": "drive-write-401-echo@project.iam.gserviceaccount.com",
-                          "sub": "alice@example.com",
-                          "scope": "https://www.googleapis.com/auth/drive",
-                          "aud": "https://oauth2.googleapis.com/token",
-                          "iat": 1767323045,
-                          "exp": 1767326645
-                        },
-                        "signature": "<signature>"
-                      }
-                    }
-                  ]
-                ]
-              }
-            }
-          ],
-          [
-            {
-              "after": 3,
-              "method": "POST",
-              "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cparents%2CdriveId%2Csize%2CmodifiedTime%2CwebViewLink%2Ctrashed%2Cowners%28emailAddress%29%2CshortcutDetails%28targetId%2CtargetMimeType%29",
-              "headers": {
-                "accept": "application/json",
-                "authorization": "Bearer <secret:accessToken>",
-                "content-type": "application/json"
-              },
-              "body": {
-                "json": {
-                  "name": "Elders",
-                  "mimeType": "application/vnd.google-apps.folder",
-                  "parents": [
-                    "folder-1"
-                  ]
-                }
-              }
-            }
           ]
         ],
         "result": {
@@ -1658,6 +1544,7 @@
             "code": "auth_required",
             "message": "Google Drive: Golden 401 failure: rejected [redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "files",
             "operation": "files.create_folder",
             "recovery": "unavailable",
@@ -1743,7 +1630,8 @@
           "error": {
             "code": "connector_call_failed",
             "message": "Google Drive was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Find it with search_files or list_folder_items before creating it again: a second call makes a second one.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1817,7 +1705,8 @@
           "error": {
             "code": "connector_call_failed",
             "message": "Google Drive was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Find it with search_files or list_folder_items before creating it again: a second call makes a second one.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       }

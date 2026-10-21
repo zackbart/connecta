@@ -1355,6 +1355,33 @@ a dispatched record. The refresh HTTP request and response body have a
 backoff. A waiter deadline returns retryable `unavailable`, keeps the grant,
 and starts no consent. It never permits resending a spent token.
 
+A `remoteMcp()` write the downstream answered with HTTP 401 is never sent
+again (INV-9). The SDK still refreshes the grant, and connecta stops its
+resend before it leaves, so any fresh call after the target is reconciled uses
+the fresh token. The call
+fails with a non-retryable `connector_call_failed` whose outcome is unknown.
+If the refresh fails instead, an authorization verdict stays
+`downstream_oauth_required` (never retryable, `reconciliationRequired` and
+`writeOutcome: "unknown"` for a dispatched write) and anything else, a waiter
+deadline included, is the same unknown outcome. A read is refreshed and sent
+once more. The invocation's
+classification decides; a direct call outside one uses the dispatched
+definition, a reviewed write verdict, or the tool's hints, and fails closed as
+a write.
+
+A remote MCP tool call that loses its internal dispatch record is refused
+before sending unless active calls for that tool prove it is a read. A
+write or an unproven call fails non-retryable with `writeOutcome: "unknown"`:
+tracking loss cannot establish whether an earlier message already sent it.
+
+Google Workspace and Infisical also use the invocation's served classification
+before considering the HTTP method. A write-classified GET is never replayed
+after a 401; a read-classified POST may replay once. Without a served verdict,
+these transports use GET as read and other methods as write. Google drops the
+rejected token for the next deliberate call and retains `auth_required` with
+`writeOutcome: "unknown"` and the operator handoff. Infisical renews the login
+for a later call and preserves any authorization verdict from that renewal.
+
 One preparation deadline covers initial epoch and grant reads, claim acquisition,
 dispatch preparation, and local joiners waiting for a grant commit. Cancellation
 before sending settles the local flight without awaiting cleanup storage. An
@@ -2348,10 +2375,25 @@ owner's access token as `Authorization: Bearer` with these rules:
   untrusted response URLs. Return redirects unfollowed; handlers cannot set `Authorization`.
 - On 401, recover exactly once using an already rotated token or one coalesced
   refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
-  owner is cancelled after the answer. Replay once; stream bodies are refused.
+  owner is cancelled after the answer. A read-classified call replays once;
+  stream bodies are refused.
+- A write-classified call never replays (INV-9). The served classification
+  decides, deployment `classification` first and otherwise the rule the
+  registry applies to the tool's hints (a contradictory `readOnlyHint: true`
+  with `destructiveHint: true` is a write), never the HTTP method: a write sent
+  with GET is not resent, and a read sent with POST is. After the recovery,
+  the call fails with a non-retryable `connector_call_failed` whose outcome is
+  unknown, and the renewed grant serves any fresh call the agent makes after
+  reconciling the target.
+- Whatever that recovery meets, a write's failure is never retryable. An
+  authorization verdict, such as a [dead refresh](#refresh-failures) or a
+  refresh lost after it was sent, stays `downstream_oauth_required`, which the
+  invocation marks `reconciliationRequired`. Anything else (a disconnect or
+  reset racing the refresh, a storage or contention failure) is the same
+  unknown-outcome `connector_call_failed`.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
   `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
-  return retryable `unavailable`. Latch second 401s for the request scope,
+  return retryable `unavailable` for a read. Latch second 401s for the request scope,
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.
 - The answer's `.text()` and `.json()`, clones' too, decode its bytes as UTF-8, so

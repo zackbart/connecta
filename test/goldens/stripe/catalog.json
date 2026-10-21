@@ -255,7 +255,7 @@
     },
     {
       "name": "stripe_api_write",
-      "description": "Call a Stripe API write (POST, DELETE); method and path are stated for approval. Checked against the pinned index first. Pass idempotencyKey to retry safely.",
+      "description": "Call a Stripe API write (POST, DELETE); method and path are stated for approval. Checked against the pinned index first. Pass idempotencyKey to retry a POST safely; a DELETE sends no key.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -288,7 +288,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 255,
-            "description": "Reuse to retry this exact write; one is generated and returned when omitted."
+            "description": "Reuse to retry this exact POST; one is generated and returned when omitted."
           },
           "select": {
             "type": "array",

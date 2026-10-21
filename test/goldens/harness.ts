@@ -309,7 +309,14 @@ function respond(reply: StubResponse): Response {
   return new Response(status === 204 || status === 304 ? null : text, { status, headers });
 }
 
-/** A runtime-shaped transport failure: what a refused connection rejects with. */
+/**
+ * A refused connection as Node's undici reports it: a network-error
+ * `TypeError` wrapping a connect-phase errno, with no answer. It proves
+ * nothing about a write, since fetch can hide earlier attempts behind it, so
+ * every golden write's network row is an unknown outcome; a read's stays
+ * retryable. The synthetic errno also appears on Workers, so the goldens stay
+ * identical across runtimes.
+ */
 function networkFailure(): Error {
   return new TypeError("fetch failed", {
     cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),

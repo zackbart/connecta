@@ -48,6 +48,7 @@
 // boundary removes credentials used by the upstream request from those answers, including
 // allowed diagnostics, tool results and nested error causes/data (INV-5).
 
+import { carryProviderFailure } from "./provider-call.js";
 import { followRedactedCopies, keepErrorName } from "./redaction-identity.js";
 import {
   classificationCode,
@@ -328,6 +329,7 @@ export function attachFailureFacts<T>(failure: T, facts: FailureFacts): T {
 
 /** The facts and class label of `from`, kept for `to` (its classified form, say). */
 export function carryFailureFacts<T>(from: unknown, to: T): T {
+  carryProviderFailure(from, to);
   if (to === null || typeof to !== "object") return to;
   const facts = from !== null && typeof from === "object" ? attached.get(from) : undefined;
   const errorClass = errorLabel(from);

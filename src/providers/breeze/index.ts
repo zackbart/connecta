@@ -60,12 +60,14 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { deriveContext } from "../../derived-context.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { redactBeforeCut } from "../../sent-secrets.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** Every church's API lives at `https://<subdomain>.breezechms.com/api`. */
 export const BREEZE_HOST_SUFFIX = ".breezechms.com";
@@ -193,10 +195,13 @@ function breezeFailure(status: number, headers: Headers, text: string): Connecto
   const detail = bodyDetail(text);
   if (status === 429) {
     const wait = retryAfterMs(headers);
-    return new ConnectorCallError(
-      "rate_limited",
-      `Breeze is throttling requests (HTTP 429).${detail} Breeze publishes no limit; slow the fan-out before retrying.`,
-      wait === undefined ? {} : { retryAfterMs: wait },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `Breeze is throttling requests (HTTP 429).${detail} Breeze publishes no limit.`,
+        wait === undefined ? {} : { retryAfterMs: wait },
+      ),
+      "; slow the fan-out before retrying",
     );
   }
   // Breeze keys are account-wide with no scopes, so a 401/403 is the key
@@ -267,10 +272,13 @@ function reportedFailure(payload: unknown, ctx: ConnectorContext): ConnectorCall
     "no detail";
   // Breeze uses the same envelope for a rejected argument and a missing
   // record, so the code stays the honest generic one and the message says so.
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `Breeze reported a failure: ${message}. Breeze does not say whether an argument or a record is at fault; re-check ids with the list tools before retrying.`,
-    { retryable: false },
+  return resendAdvice(
+    new ConnectorCallError(
+      "connector_call_failed",
+      `Breeze reported a failure: ${message}. Breeze does not say whether an argument or a record is at fault.`,
+      { retryable: false },
+    ),
+    "; re-check ids with the list tools before retrying",
   );
 }
 
@@ -308,7 +316,7 @@ function requireTrue(payload: unknown, action: string): void {
   if (payload === false) {
     throw new ConnectorCallError(
       "connector_call_failed",
-      `Breeze answered false to ${action}. Breeze gives no reason; confirm the ids with their list tools before retrying.`,
+      `Breeze answered false to ${action}. Breeze gives no reason; check the target and confirm the ids with their list tools before any fresh call.`,
       { retryable: false },
     );
   }
@@ -368,6 +376,20 @@ const READ_ENDPOINTS: ReadonlyMap<string, readonly string[]> = new Map([
 
 /** A Breeze path: lowercase segments of letters, digits, and underscores. */
 const PATH_PATTERN = /^(\/[a-z0-9_]+)+\/?$/;
+
+/**
+ * `/events/calendars/list` answers each calendar's private iCal feed address,
+ * which reads the calendar without a key, and its embed key. Neither hatch
+ * returns them, any more than `list_calendars` does.
+ */
+function withoutCalendarFeeds(path: string, body: unknown): unknown {
+  if (path !== "/events/calendars/list" || !Array.isArray(body)) return body;
+  return body.map((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+    const { address: _address, embed_key: _embedKey, ...calendar } = row as JsonRecord;
+    return calendar;
+  });
+}
 
 function normalizedPath(raw: unknown): string {
   const path = typeof raw === "string" ? raw : "";
@@ -613,7 +635,7 @@ const PATH_PROPERTY: JsonSchema = {
 
 const RESULT_SCHEMA: JsonSchema = {
   type: "object",
-  properties: { result: { description: "Breeze's untouched response." } },
+  properties: { result: { description: "Breeze's response, less calendar feed addresses and embed keys." } },
   required: ["result"],
 };
 
@@ -741,12 +763,20 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
     ctx: ConnectorContext,
     options?: { raw?: boolean },
   ) => callBreeze(send, { method: "GET", path, query }, ctx, options);
+  // Breeze writes are GETs too, so the tool, not the method, says which
+  // requests must be sent once.
+  const write = (
+    path: string,
+    query: NonNullable<GuardedRequest["query"]>,
+    ctx: ConnectorContext,
+    options?: { raw?: boolean },
+  ) => callBreeze(send, { method: "GET", path, query, classification: "write" }, ctx, options);
 
   return [
     {
       name: "breeze_api_get",
       description:
-        "Call a reviewed Breeze read endpoint and return its untouched response. Refuses every path and parameter not on the read allowlist, since Breeze writes are GETs too.",
+        "Call a reviewed Breeze read endpoint and return its response as sent, less calendar feed addresses. Refuses every path and parameter not on the read allowlist, since Breeze writes are GETs too.",
       annotations: readOnly,
       inputSchema: namedInput({ path: PATH_PROPERTY, query: QUERY_PROPERTY }, ["path"]),
       outputSchema: RESULT_SCHEMA,
@@ -761,19 +791,20 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             `breeze_api_get refuses ${stray.join(", ")} on ${path}; its reviewed parameters are ${allowed.join(", ") || "none"}. Use breeze_api_mutate for anything else.`,
           );
         }
-        return { result: await get(path, query, ctx, { raw: true }) };
+        return { result: withoutCalendarFeeds(path, await get(path, query, ctx, { raw: true })) };
       },
     },
     {
       name: "breeze_api_mutate",
       description:
-        "Call any Breeze API endpoint, including writes and undocumented routes, and return its untouched response. The approval-gated hatch; Breeze takes writes as GET query parameters.",
+        "Call any Breeze API endpoint, including writes and undocumented routes, and return its response as sent, less calendar feed addresses. The approval-gated hatch; Breeze takes writes as GET query parameters.",
       annotations: destructive,
       inputSchema: namedInput({ path: PATH_PROPERTY, query: QUERY_PROPERTY }, ["path"]),
       outputSchema: RESULT_SCHEMA,
-      handler: async (args, ctx) => ({
-        result: await get(normalizedPath(args["path"]), queryPairs(args["query"]), ctx, { raw: true }),
-      }),
+      handler: async (args, ctx) => {
+        const path = normalizedPath(args["path"]);
+        return { result: withoutCalendarFeeds(path, await write(path, queryPairs(args["query"]), ctx, { raw: true })) };
+      },
     },
     {
       name: "get_account_summary",
@@ -1521,7 +1552,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       ),
       outputSchema: PERSON_SCHEMA,
       handler: async (args, ctx) => {
-        const payload = await get(
+        const payload = await write(
           "/people/add",
           {
             first: args["firstName"],
@@ -1550,7 +1581,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: PERSON_SCHEMA,
       handler: async (args, ctx) => {
         const fields = fieldsJson(args["fields"]);
-        const payload = await get("/people/update", { person_id: args["personId"], fields_json: fields }, ctx);
+        const payload = await write("/people/update", { person_id: args["personId"], fields_json: fields }, ctx);
         requireTrue(payload, "the person update");
         const person = Array.isArray(payload) ? payload[0] : payload;
         return asRecord(person)["id"] ? projectPerson(person) : { id: String(args["personId"]) };
@@ -1568,7 +1599,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: WROTE_SCHEMA("assigned"),
       handler: async (args, ctx) => {
         requireTrue(
-          await get("/tags/assign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
+          await write("/tags/assign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
           "the tag assignment",
         );
         return { assigned: true };
@@ -1585,7 +1616,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: WROTE_SCHEMA("unassigned"),
       handler: async (args, ctx) => {
         requireTrue(
-          await get("/tags/unassign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
+          await write("/tags/unassign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
           "the tag removal",
         );
         return { unassigned: true };
@@ -1600,7 +1631,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: WROTE_SCHEMA("checkedIn"),
       handler: async (args, ctx) => {
         requireTrue(
-          await get(
+          await write(
             "/events/attendance/add",
             {
               person_id: args["personId"],
@@ -1669,56 +1700,58 @@ function breezeConnector(id: string, options: BreezeOptions): Connector {
   }
   const send = breezeTransport(subdomain);
 
-  return api(id, {
-    ...defined({
-      authScope: options.authScope,
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
-    }),
-    title: options.title ?? `Breeze ChMS (${subdomain})`,
-    description: `Breeze ChMS church database at ${subdomain}${BREEZE_HOST_SUFFIX}: ${purpose}`,
-    credential: {
-      label: "Breeze API key",
-      description: `The church's API key from Breeze → Extensions → API (https://${subdomain}${BREEZE_HOST_SUFFIX}/extensions/api). It has no scopes: it reaches the whole account, giving included. The connector sends it only to ${subdomain}${BREEZE_HOST_SUFFIX}.`,
-      placeholder: "Paste Breeze API key",
-    },
-    testCredential: async (value, ctx) => {
-      try {
-        const account = asRecord(
-          await callBreeze(
-            send,
-            { method: "GET", path: "/account/summary" },
-            { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
-          ),
-        );
-        const reported = typeof account["subdomain"] === "string" ? account["subdomain"].toLowerCase() : undefined;
-        if (reported && reported !== subdomain) {
+  return tracksEveryRequest(
+    api(id, {
+      ...defined({
+        authScope: options.authScope,
+        callAdmission: options.callAdmission,
+        maxResultBytes: options.maxResultBytes,
+      }),
+      title: options.title ?? `Breeze ChMS (${subdomain})`,
+      description: `Breeze ChMS church database at ${subdomain}${BREEZE_HOST_SUFFIX}: ${purpose}`,
+      credential: {
+        label: "Breeze API key",
+        description: `The church's API key from Breeze → Extensions → API (https://${subdomain}${BREEZE_HOST_SUFFIX}/extensions/api). It has no scopes: it reaches the whole account, giving included. The connector sends it only to ${subdomain}${BREEZE_HOST_SUFFIX}.`,
+        placeholder: "Paste Breeze API key",
+      },
+      testCredential: async (value, ctx) => {
+        try {
+          const account = asRecord(
+            await callBreeze(
+              send,
+              { method: "GET", path: "/account/summary" },
+              deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
+            ),
+          );
+          const reported = typeof account["subdomain"] === "string" ? account["subdomain"].toLowerCase() : undefined;
+          if (reported && reported !== subdomain) {
+            return {
+              ok: false,
+              message: `The key belongs to ${reported}${BREEZE_HOST_SUFFIX}, not ${subdomain}${BREEZE_HOST_SUFFIX}.`,
+            };
+          }
+          return {
+            ok: true,
+            message: `Authenticated to ${String(account["name"] ?? "the church account")} (${subdomain}${BREEZE_HOST_SUFFIX}).`,
+          };
+        } catch (error) {
           return {
             ok: false,
-            message: `The key belongs to ${reported}${BREEZE_HOST_SUFFIX}, not ${subdomain}${BREEZE_HOST_SUFFIX}.`,
+            message: error instanceof ConnectorCallError ? error.message : "Breeze rejected the key.",
           };
         }
-        return {
-          ok: true,
-          message: `Authenticated to ${String(account["name"] ?? "the church account")} (${subdomain}${BREEZE_HOST_SUFFIX}).`,
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof ConnectorCallError ? error.message : "Breeze rejected the key.",
-        };
-      }
-    },
-    usageGuide: {
-      content: usageGuide(subdomain, purpose, options.instructions),
-      summary:
-        "Sensitive church data, fieldId decoding, two id kinds, undocumented giving reads, and endpoint-split hatches.",
-      // Required because correct use rests on conventions no schema carries:
-      // person details are keyed by profile fieldId, filters and multiple-
-      // choice values are option ids joined by '-', and the giving reads ride
-      // undocumented endpoints whose failures mean something different.
-      required: true,
-    },
-    tools: tools(send, defaultPageSize),
-  });
+      },
+      usageGuide: {
+        content: usageGuide(subdomain, purpose, options.instructions),
+        summary:
+          "Sensitive church data, fieldId decoding, two id kinds, undocumented giving reads, and endpoint-split hatches.",
+        // Required because correct use rests on conventions no schema carries:
+        // person details are keyed by profile fieldId, filters and multiple-
+        // choice values are option ids joined by '-', and the giving reads ride
+        // undocumented endpoints whose failures mean something different.
+        required: true,
+      },
+      tools: tools(send, defaultPageSize),
+    }),
+  );
 }

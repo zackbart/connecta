@@ -177,7 +177,11 @@ export default defineConfig({
             CONNECTA_GOLDENS_SEEDS: process.env.CONNECTA_GOLDENS_SEEDS ?? "",
           },
           setupFiles: ["./test/goldens/setup.ts"],
-          globalSetup: ["./test/fixtures/oauth-http-server.ts", "./test/fixtures/auth-admission-server.ts"],
+          globalSetup: [
+            "./test/fixtures/oauth-http-server.ts",
+            "./test/fixtures/transport-evidence-server.ts",
+            "./test/fixtures/auth-admission-server.ts",
+          ],
           include: TEST_INCLUDE,
           exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
         },
@@ -255,6 +259,7 @@ export default defineConfig({
           globalSetup: [
             "./test/fixtures/oauth-http-server.ts",
             "./test/fixtures/clerk-backend-server.ts",
+            "./test/fixtures/transport-evidence-server.ts",
             "./test/fixtures/auth-admission-server.ts",
           ],
           include: TEST_INCLUDE,

@@ -1,9 +1,10 @@
+import { contextKey } from "./derived-context.js";
 import type { ConnectorContext } from "./types.js";
 
 // Registry-owned identity for downstream credential coordination. Storage
 // wrappers are rebuilt per context, and epochs can be identical across owners.
 // Keep this beside the context rather than widening the public connector API.
-const partitions = new WeakMap<ConnectorContext, object>();
+const partitions = new WeakMap<object, object>();
 const activeWork = new WeakMap<object, number>();
 
 export function retainOAuthPartition(partition: object | undefined): () => void {
@@ -44,10 +45,10 @@ export function oauthPartitionIdle(partition: object): boolean {
 }
 
 export function attachOAuthPartition(ctx: ConnectorContext, partition: object | undefined): ConnectorContext {
-  if (partition) partitions.set(ctx, partition);
+  if (partition) partitions.set(contextKey(ctx), partition);
   return ctx;
 }
 
 export function oauthPartitionFor(ctx: ConnectorContext): object | undefined {
-  return partitions.get(ctx);
+  return partitions.get(contextKey(ctx));
 }

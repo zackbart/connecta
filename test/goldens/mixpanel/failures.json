@@ -343,6 +343,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Mixpanel returned HTTP 400. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
@@ -380,6 +381,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
@@ -429,6 +431,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "provider_permission_denied",
             "message": "Mixpanel refused access. Check the service account's project membership, data sensitivity and role; import needs Owner or Admin.",
@@ -469,6 +472,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Mixpanel returned HTTP 404. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
@@ -506,6 +510,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Mixpanel returned HTTP 409. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
@@ -543,6 +548,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Mixpanel returned HTTP 422. Check the documented parameters, project access and region. Import failures can partially ingest valid records; inspect the target before repeating.",
@@ -580,6 +586,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "Mixpanel's project API budget is spent; respect the retry window.",
@@ -620,8 +627,9 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Mixpanel returned HTTP 500. Whether the write took effect at Mixpanel is unknown: it carried no idempotency key, so check the target before repeating it.",
-            "retryable": false
+            "message": "Mixpanel returned HTTP 500. Whether the write took effect at Mixpanel is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -655,6 +663,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
@@ -705,13 +714,10 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "unavailable",
-            "message": "Could not reach the Mixpanel API.",
-            "retryable": true,
-            "details": {
-              "host": "https://api.mixpanel.com",
-              "code": "ECONNREFUSED"
-            }
+            "code": "connector_call_failed",
+            "message": "Could not reach the Mixpanel API. Whether the write took effect at Mixpanel is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -756,6 +762,7 @@
               "stage": "downstream",
               "elapsedMs": 0
             },
+            "writeOutcome": "unknown",
             "connector": "analytics",
             "operation": "analytics.import_events",
             "uncertainCall": {

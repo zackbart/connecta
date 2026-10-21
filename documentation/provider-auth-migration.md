@@ -84,7 +84,8 @@ or a generated one as `Idempotency-Key` and return it (DELETE sends none).
 Caller-supplied keys may contain up to 255 characters. An ambiguous POST write
 also returns the key in `uncertainCall.recovery.idempotencyKey`, including when
 the call deadline interrupts it. See [argument recovery](./meta-tools.md#argument-recovery)
-before retrying.
+before retrying: a custom connector that wraps or composes Stripe calls gets
+the key as a diagnostic only, never advice to reuse it.
 Every request, v1 and v2, sends `Stripe-Version: 2026-09-30.endive`, the
 version of the pinned index, whatever the account's default API version, so
 response shapes and accepted parameters follow that version. Check fields

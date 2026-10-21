@@ -76,9 +76,10 @@ export default defineGoldenSpec({
   provider: "notion",
   create: () => notion("workspace", { auth: { type: "token" }, purpose: "Team knowledge base" }),
   credential: "golden-notion-token/123+456=",
+  // 409 carries the code Notion documents for it, conflict_error (#902).
   failureReply: (status, message) => ({
     status,
-    body: { object: "error", status, code: `golden_${status}`, message },
+    body: { object: "error", status, code: status === 409 ? "conflict_error" : `golden_${status}`, message },
   }),
   calls: [
     { tool: "notion_api_search", args: { query: "query data source", limit: 3 } },

@@ -554,7 +554,7 @@ describe("editing a document", () => {
     const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
       (error) => error,
     );
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure).toMatchObject({ code: "invalid_args", retryable: false, writeOutcome: "unknown" });
     expect(failure.message).toContain("Created document new-1");
     expect(failure.message).toContain("add the text with append_text on new-1");
   });
@@ -824,16 +824,18 @@ describe("failures, mapped to what the caller does next (H11)", () => {
       expect(failure.message, name).not.toMatch(/nothing was applied/i);
     }
 
-    // A revision makes the repeat safe to offer; without one there is none.
+    // A revision is a precondition, not an idempotency key: no repeat is
+    // offered with one or without one (INV-9, round 13).
     const guarded = await call(connection(), "append_text", {
       documentId: "d",
       text: "x",
       requiredRevisionId: "r",
     }).catch((error) => error);
-    expect(guarded.message).toContain("same requiredRevisionId is safe");
     const bare = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
-    expect(bare.message).toContain("can duplicate it");
-    expect(bare.message).not.toContain("is safe");
+    for (const failure of [guarded, bare]) {
+      expect(failure.message).toContain("can duplicate it");
+      expect(failure.message).not.toContain("is safe");
+    }
   });
 
   it("keeps a 4xx refusal as mapped: nothing applied, nothing uncertain", async () => {
@@ -899,7 +901,11 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
       (error) => error,
     );
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure).toMatchObject({
+      code: _kind === "an explicit 4xx refusal" ? "invalid_args" : "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
     expect(failure.message).toContain(`Created document new-1, but ${says}`);
     expect(failure.message).toContain(advice);
     expect(failure.message).toContain("Do not create it again");

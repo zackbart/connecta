@@ -3,14 +3,16 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import type { ApiOAuthConfig, ApiOptions } from "../src/connectors/api.js";
 import { CredentialVault } from "../src/credentials.js";
+import { recordRecovery } from "../src/call-recovery.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { createExecuteTool } from "../src/execute.js";
 import { identityStorageKey } from "../src/identity.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthFlowKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
-import { createTestConnecta, makeRegistry } from "./helpers.js";
-import { deferred } from "./fixtures/misc.js";
+import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { CLERK_OPTIONS } from "./fixtures/ui.js";
 import { PUBLIC_TOKEN_REQUEST_HEADERS } from "../src/auth/static-oauth.js";
 import { CCB_MEDIA_TYPE } from "../src/providers/ccb/index.js";
@@ -901,6 +903,210 @@ describe("api() oauth refresh", () => {
   });
 });
 
+describe("api() oauth replay is for reads only", () => {
+  /** Tools whose classification the HTTP method does not reveal. */
+  const tools: ApiOptions["tools"] = [
+    {
+      name: "post_note",
+      description: "Write a note",
+      annotations: { readOnlyHint: false },
+      async handler(_args, ctx) {
+        return (await ctx.oauth!.fetch(`${API}/notes`, { method: "POST", body: "{}" })).json();
+      },
+    },
+    {
+      name: "trigger",
+      description: "Start an export with GET, as some APIs write",
+      annotations: { readOnlyHint: false },
+      async handler(_args, ctx) {
+        return (await ctx.oauth!.fetch(`${API}/exports/start`)).json();
+      },
+    },
+    {
+      name: "search",
+      description: "Search with POST, a read",
+      annotations: { readOnlyHint: true },
+      async handler(_args, ctx) {
+        return (await ctx.oauth!.fetch(`${API}/search`, { method: "POST", body: "{}" })).json();
+      },
+    },
+    {
+      name: "purge",
+      description: "Hints that contradict each other, which classify as a write",
+      annotations: { readOnlyHint: true, destructiveHint: true },
+      async handler(_args, ctx) {
+        return (await ctx.oauth!.fetch(`${API}/purge`, { method: "POST", body: "{}" })).json();
+      },
+    },
+  ];
+  const refreshes = (provider: Provider) =>
+    provider.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token").length;
+
+  it.each([
+    ["post_note", "POST"],
+    ["trigger", "GET"],
+    ["purge", "POST"],
+  ])("INV-1 INV-9: never resends %s, a write sent with %s, after a 401, and renews the grant", async (tool) => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ tools });
+    const registry = makeRegistry([connector]);
+    const ctx = () => registry.contextFor("ccb", BASE);
+    await authorize(connector, ctx, provider);
+    provider.expireAccess();
+
+    const { classified } = await failure(connector.callTool(tool, {}, ctx()));
+    expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(classified.message).toContain("was not sent again");
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+    expect(refreshes(provider)).toBe(1);
+
+    // A deliberate repeat is one new call, on the renewed grant.
+    expect(await connector.callTool(tool, {}, ctx())).toEqual({ owner: "alice" });
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1", "Bearer access-alice-2"]);
+  });
+
+  it.each(["dead grant", "token endpoint outage", "token endpoint unreachable", "operator disconnect"] as const)(
+    "INV-9: a write's 401 stays an unknown outcome, never retryable, when recovery meets a %s",
+    async (recovery) => {
+      const provider = fakeProvider();
+      const connector = ccb({ tools });
+      const registry = makeRegistry([connector]);
+      const ctx = () => registry.contextFor("ccb", BASE);
+      install(provider);
+      await authorize(connector, ctx, provider);
+      provider.expireAccess();
+      if (recovery === "dead grant") provider.control.refresh = "dead";
+      if (recovery === "token endpoint outage") provider.control.refresh = "outage";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+          if (recovery === "token endpoint unreachable" && String(input) === TOKEN)
+            throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+          const response = await provider.fetchStub(input, init);
+          // The operator disconnects while the write's 401 is on its way back.
+          if (recovery === "operator disconnect" && String(input).startsWith(API))
+            await connector.disconnectAuth!(ctx());
+          return response;
+        }),
+      );
+
+      const mt = createMetaTools(registry, BASE);
+      const { error } = JSON.parse((await mt.callDestructiveTool({ address: "ccb.post_note" })).content[0]!.text) as {
+        error: { code: string; retryable: boolean; message: string };
+      };
+      if (recovery !== "operator disconnect") {
+        // An authorization verdict keeps its handoff, and a dispatched write's is never retryable.
+        expect(error).toMatchObject({
+          code: "downstream_oauth_required",
+          retryable: false,
+          reconciliationRequired: true,
+          writeOutcome: "unknown",
+          nextAction: { tool: "authorize_connector" },
+        });
+      } else {
+        expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+        // The reset fenced the grant mid-refresh: no verdict, and nothing to retry.
+        expect(error.message).toBe(
+          `Connector "ccb"'s API answered this write with HTTP 401. Renewing the credential failed (unavailable), ` +
+            "and the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
+        );
+      }
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+    },
+  );
+
+  it.each([true, false])(
+    "INV-9: a program whose write met a 401 and a dead grant reports it unknown, keeping its recovery facts and handoff (caught: %s)",
+    async (caught) => {
+      const provider = fakeProvider();
+      const keyed: ApiOptions["tools"][number] = {
+        name: "post_keyed_note",
+        description: "Write a note under a key the handler chose",
+        annotations: { readOnlyHint: false },
+        async handler(_args, ctx) {
+          recordRecovery(ctx, { idempotencyKey: "note-key-1" });
+          return (await ctx.oauth!.fetch(`${API}/notes`, { method: "POST", body: "{}" })).json();
+        },
+      };
+      const connector = ccb({ tools: [...tools, keyed] });
+      const registry = makeRegistry([connector]);
+      const ctx = () => registry.contextFor("ccb", BASE);
+      install(provider);
+      await authorize(connector, ctx, provider);
+      provider.expireAccess();
+      provider.control.refresh = "dead";
+      const execute = createExecuteTool(
+        registry,
+        BASE,
+        scriptedExecutor(async (fns) => {
+          try {
+            await fns.call!("ccb.post_keyed_note", {});
+          } catch (error) {
+            if (!caught) throw error;
+          }
+          return "done";
+        }),
+        silentLogger,
+        undefined,
+        { readOnly: false },
+      );
+      const result = (await execute({ code: "async () => null" })).structuredContent as Record<string, unknown>;
+      expect(result.result).toBeUndefined();
+      expect(result.error).toMatchObject({
+        code: "downstream_oauth_required",
+        retryable: false,
+        writeOutcome: "unknown",
+        writes: { succeeded: 0, failed: 0, unknown: 1 },
+        uncertainCall: { address: "ccb.post_keyed_note", recovery: { idempotencyKey: "note-key-1" } },
+        reconciliationRequired: true,
+        connector: "ccb",
+        nextAction: { tool: "authorize_connector", arguments: { connector: "ccb" } },
+      });
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+    },
+  );
+
+  it("INV-9: refreshes and replays a read sent with POST once", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ tools });
+    const registry = makeRegistry([connector]);
+    const ctx = () => registry.contextFor("ccb", BASE);
+    await authorize(connector, ctx, provider);
+    provider.expireAccess();
+
+    expect(await connector.callTool("search", {}, ctx())).toEqual({ owner: "alice" });
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1", "Bearer access-alice-2"]);
+  });
+
+  it("INV-1 INV-9: deployment classification, not the annotation, decides whether a call may be resent", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ tools });
+    const registry = makeRegistry([connector], { classification: { ccb: { search: "write", post_note: "read" } } });
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+    const mt = createMetaTools(registry, BASE);
+
+    provider.expireAccess();
+    const refused = JSON.parse((await mt.callDestructiveTool({ address: "ccb.search" })).content[0]!.text) as {
+      ok: boolean;
+      error: { code: string; retryable: boolean };
+    };
+    expect(refused.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+
+    provider.expireAccess();
+    const replayed = JSON.parse((await mt.callTool({ address: "ccb.post_note" })).content[0]!.text) as unknown;
+    expect(replayed).toMatchObject({ owner: "alice" });
+    expect(provider.apiAuthorizations).toEqual([
+      "Bearer access-alice-1",
+      "Bearer access-alice-2",
+      "Bearer access-alice-3",
+    ]);
+  });
+});
+
 describe("api() oauth access boundaries", () => {
   it("sends the token only to a declared origin, and lets no handler set Authorization", async () => {
     const provider = fakeProvider();
@@ -935,6 +1141,47 @@ describe("api() oauth access boundaries", () => {
     const shadowed = await failure(exfiltrate.callTool("shadow", {}, registry.contextFor("ccb", BASE)));
     expect(shadowed.classified.message).toContain("may not set Authorization");
     expect(provider.apiAuthorizations).toEqual([]);
+  });
+
+  it("INV-3 INV-5: plain ctx.fetch carries no grant, even to an API origin, and its sent credentials are redacted", async () => {
+    const provider = fakeProvider();
+    const elsewhere: Array<string | null> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.origin !== "https://files.example") return provider.fetchStub(input, init);
+        elsewhere.push(new Headers(init.headers).get("x-api-key"));
+        return new Response(`echo ${new Headers(init.headers).get("x-api-key")}`);
+      }),
+    );
+    const connector = api("ccb", {
+      oauth: OAUTH,
+      tools: [
+        {
+          name: "plain",
+          description: "Use the handler's own fetch",
+          annotations: { readOnlyHint: true },
+          handler: async (_args, ctx) => ({
+            api: (await ctx.fetch(`${API}/me`)).status,
+            files: await (
+              await ctx.fetch("https://files.example/report", { headers: { "X-Api-Key": "handler-key-0123456789" } })
+            ).text(),
+          }),
+        },
+      ],
+    });
+    const registry = makeRegistry([connector]);
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+
+    const result = (await connector.callTool("plain", {}, registry.contextFor("ccb", BASE))) as {
+      api: number;
+      files: string;
+    };
+    expect(result.api).toBe(401);
+    expect(provider.apiAuthorizations).toEqual([""]);
+    expect(elsewhere).toEqual(["handler-key-0123456789"]);
+    expect(result.files).not.toContain("handler-key-0123456789");
   });
 
   it("gives handlers no oauth accessor on a connector without oauth", async () => {
@@ -1084,9 +1331,16 @@ describe("api() oauth reset and disconnect", () => {
     expect(await connector.verifyState!(first.searchParams.get("state"), callback)).toBe(true);
     await connector.startAuth!(ctx(), { force: true });
     const exchanges = provider.tokenRequests.length;
-    await expect(
-      connector.finishAuth!(code, callback, new URLSearchParams({ code, state: first.searchParams.get("state")! })),
-    ).rejects.toThrow(/authorization changed .* try again/);
+    const superseded = await connector.finishAuth!(
+      code,
+      callback,
+      new URLSearchParams({ code, state: first.searchParams.get("state")! }),
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    // Its advice to try again is a segment of its own, composed at output.
+    expect(classifyCallError(superseded).message).toMatch(/authorization changed .* try again/);
     expect(provider.tokenRequests.length).toBe(exchanges);
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });

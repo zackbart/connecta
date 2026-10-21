@@ -24,9 +24,10 @@
 
 ## Sensitive data stays out of results
 
-Projections drop allergies, giving numbers and dates, attendance prayer
-requests and leader notes, and form payment details; `raw: true` returns
-CCB's full row. Notes, pledges, giving metrics, background checks, and
+Allergies, giving numbers and dates, attendance prayer requests and leader
+notes, and form payment details are sensitive fields. Projections always
+drop them; Raw access below says whether `raw: true` and the hatches do
+too. Notes, pledges, giving metrics, background checks, and
 financial settings are pastoral or financial: read them inside
 `execute_code` and return only the reduced answer the task needs.
 

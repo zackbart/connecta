@@ -531,7 +531,46 @@ describe("downstream input relay", () => {
     expect(flow.call).toHaveBeenCalledTimes(4);
   });
 
-  it("INV-2 INV-4: programs retain input_required_unsupported with the equivalent direct call", async () => {
+  it("INV-9: a direct write's suspension that cannot be relayed is unknown and never told to start over", async () => {
+    const write = { name: "call_destructive_tool", args: { address: "service.write", args: { id: 1 } } };
+    const blocked = setup({ vault: false });
+    const unsupported = (await blocked.rpc(write)).result.structuredContent.error;
+    expect(unsupported).toMatchObject({
+      code: "input_required_unsupported",
+      retryable: false,
+      writeOutcome: "unknown",
+      message: expect.stringContaining("check its target before any fresh call"),
+    });
+    expect(blocked.call).toHaveBeenCalledOnce();
+    expect((await setup({ vault: false }).rpc()).result.structuredContent.error.writeOutcome).toBeUndefined();
+
+    for (const [opts, address] of [
+      [write, "service.write"],
+      [{}, "service.read"],
+    ] as const) {
+      const flow = setup({ repeat: true });
+      let result = (await flow.rpc(opts)).result;
+      for (let round = 0; round < 3; round++)
+        result = (
+          await flow.rpc({
+            ...opts,
+            state: result.requestState,
+            responses: { [Object.keys(result.inputRequests)[0]!]: { action: "accept" } },
+          })
+        ).result;
+      const limit = result.structuredContent.error;
+      expect(limit).toMatchObject({ code: "input_required_round_limit", retryable: false });
+      if (address === "service.write") {
+        expect(limit.writeOutcome).toBe("unknown");
+        expect(limit.message).not.toContain("Start a new direct request");
+      } else {
+        expect(limit.writeOutcome).toBeUndefined();
+        expect(limit.message).toContain("Start a new direct request");
+      }
+    }
+  });
+
+  it("INV-2 INV-4 INV-9: programs retain a read's input_required_unsupported and count a suspended write unknown", async () => {
     for (const write of [false, true]) {
       const flow = setup({ programWrite: write });
       const result = (
@@ -541,13 +580,17 @@ describe("downstream input relay", () => {
           args: { code: `return await connecta.call('service.${write ? "write" : "read"}', { id: 1 });` },
         })
       ).result;
-      expect(result.structuredContent.error).toMatchObject({
-        code: "input_required_unsupported",
-        nextAction: {
-          tool: write ? "call_destructive_tool" : "call_tool",
-          arguments: { address: `service.${write ? "write" : "read"}`, args: { id: 1 } },
-        },
-      });
+      // A handler asks for input from inside its run, so a suspended write
+      // may have applied: never pointed at a resend.
+      expect(result.structuredContent.error).toMatchObject(
+        write
+          ? { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } }
+          : {
+              code: "input_required_unsupported",
+              nextAction: { tool: "call_tool", arguments: { address: "service.read", args: { id: 1 } } },
+            },
+      );
+      if (write) expect(JSON.stringify(result)).not.toContain("call_destructive_tool");
       expect(JSON.stringify(result)).not.toContain(OPAQUE);
       expect(JSON.stringify(result)).not.toContain("Pick a name");
     }

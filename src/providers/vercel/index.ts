@@ -17,6 +17,7 @@ import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../prov
 import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
 import { restTools } from "../_shared/rest/tools.js";
 import { VERCEL_API_BASE_URL, vercelRest } from "./rest.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export { VERCEL_API_BASE_URL } from "./rest.js";
 /** Vercel's official hosted MCP endpoint. */
@@ -295,24 +296,27 @@ function vercelToken(id: string, options: Readonly<VercelTokenOptions>, provider
   const teamId = typeof options.teamId === "string" ? options.teamId.trim() || undefined : undefined;
   const baseUrl = options.baseUrl ?? VERCEL_API_BASE_URL;
   const rest = vercelRest({ baseUrl, teamId });
-  return apiConnector(id, {
-    ...provider.connectorOptions,
-    title: options.title ?? "Vercel",
-    description: `Vercel account and deployments: ${options.purpose}`,
-    credential: {
-      label: "Vercel access token",
-      description:
-        "Access token from Vercel Account Settings → Tokens. Choose the personal account or team scope this deployment needs and set an expiration date. The connector never sends it anywhere except api.vercel.com or the configured baseUrl proxy.",
-      placeholder: "Paste Vercel access token",
-    },
-    testCredential: rest.testCredential,
-    usageGuide: {
-      content: tokenUsageGuide(options.purpose, teamId, options.instructions),
-      summary: "One access token over REST: search operations, read details, then read or write. Value-safe env vars.",
-      required: true,
-    },
-    tools: [...restTools(rest.vendor), ...rest.tools],
-  });
+  return tracksEveryRequest(
+    apiConnector(id, {
+      ...provider.connectorOptions,
+      title: options.title ?? "Vercel",
+      description: `Vercel account and deployments: ${options.purpose}`,
+      credential: {
+        label: "Vercel access token",
+        description:
+          "Access token from Vercel Account Settings → Tokens. Choose the personal account or team scope this deployment needs and set an expiration date. The connector never sends it anywhere except api.vercel.com or the configured baseUrl proxy.",
+        placeholder: "Paste Vercel access token",
+      },
+      testCredential: rest.testCredential,
+      usageGuide: {
+        content: tokenUsageGuide(options.purpose, teamId, options.instructions),
+        summary:
+          "One access token over REST: search operations, read details, then read or write. Value-safe env vars.",
+        required: true,
+      },
+      tools: [...restTools(rest.vendor), ...rest.tools],
+    }),
+  );
 }
 
 /**

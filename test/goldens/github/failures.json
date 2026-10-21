@@ -1781,6 +1781,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "The GitHub API request failed; downstream error text is withheld.",
@@ -1930,6 +1931,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
@@ -2091,6 +2093,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
@@ -2252,6 +2255,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "GitHub returned 404; the resource may be absent or inaccessible to this installation.",
@@ -2401,6 +2405,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "conflict",
             "message": "GitHub rejected a stale version. Read the current state before resubmitting.",
@@ -2550,6 +2555,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "The GitHub API request failed; downstream error text is withheld.",
@@ -2699,6 +2705,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "GitHub rate limit reached. Honor the retry timing before trying again.",
@@ -2850,9 +2857,10 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "unavailable",
-            "message": "The GitHub API request failed; downstream error text is withheld.",
-            "retryable": true
+            "code": "connector_call_failed",
+            "message": "The GitHub API request failed; downstream error text is withheld. Whether the write took effect at GitHub is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -2998,6 +3006,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "auth_required",
             "message": "Verify the GitHub App key, installation, repository selection and required permissions.",
@@ -3160,13 +3169,10 @@
           "ok": false,
           "dispatched": true,
           "error": {
-            "code": "unavailable",
-            "message": "Could not reach the GitHub API.",
-            "retryable": true,
-            "details": {
-              "host": "https://api.github.com",
-              "code": "ECONNREFUSED"
-            }
+            "code": "connector_call_failed",
+            "message": "Could not reach the GitHub API. Whether the write took effect at GitHub is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -3323,6 +3329,7 @@
               "stage": "downstream",
               "elapsedMs": 0
             },
+            "writeOutcome": "unknown",
             "connector": "github",
             "operation": "github.create_release",
             "uncertainCall": {

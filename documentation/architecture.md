@@ -2106,6 +2106,232 @@ compiling and configuring the real thing.
 - **Route order is behavior.** Moving a mutation route below the wildcard
   `OPTIONS` opts it into CORS preflight; reordering admission after auth makes
   the cheapest possible attack the most expensive request.
+- **Call state rides beside the context, keyed on the object.** The caller
+  (`src/connector-caller.ts`), admission permit (`src/call-admission-context.ts`),
+  recovery facts (`src/call-recovery.ts`), sent secrets (`src/sent-secrets.ts`),
+  the call's classification (`src/call-classification.ts`), the OAuth sealer and
+  owner partition, and catalog-cache policy live in side tables keyed on the
+  `ConnectorContext`. A `{ ...ctx }` copy is a new key and starts without any of
+  them. In-repo code copies a context only through `deriveContext`
+  (`src/derived-context.ts`): every table resolves the copy to its origin, so
+  state recorded through either object reaches the other, and the copy keeps the
+  request scope. `api()` hands handlers such a copy and never mutates the
+  registry's context (`test/derived-context.test.ts`). A deployment handler that
+  spreads its context still loses this state; decision 0009 (B.1) replaces the
+  tables with `Context` services.
+- **A write leaves once (INV-9).** `src/write-outcome.ts` owns the shared rules
+  every transport applies to a write: `unknownOutcome` turns a retryable
+  failure that may follow the downstream acting (a 5xx, a gateway's 502 to
+  504, a lost connection or reply) into a non-retryable `connector_call_failed`,
+  and `unsentAfterUnauthorized` reports a write answered 401, which is never
+  resent whatever credential renewal meets. Both mark the error
+  `writeOutcome: "unknown"`, which `classifyWriteOutcome` honors before any
+  refusal provenance, so an authorization verdict reached after the write left still
+  counts as unknown in program write accounting (`src/program-writes.ts`),
+  whose result is then that verdict with its handoff, caught or not.
+  `remoteMcp()` classifies by the invocation's verdict
+  (`src/call-classification.ts`), falling back to `classifyTool`, and holds a
+  write to one send per logical call, never per JSON-RPC message: `callTool`
+  puts a dispatch record on the `tools/call` params under a symbol key (spread
+  copies it; `JSON.stringify` drops it), the transport's `send` refuses a
+  second message for that call whatever its id, and the tracked fetch refuses
+  a second request within one message (the SDK's resend after a 401 or a
+  step-up, a redirect hop) and fails a write answered with a redirect. Both
+  layers refuse a missing record unless the active calls for that tool are
+  all reads; catalog hints cannot overrule a served write verdict. Tracking
+  loss gives a non-retryable unknown outcome, never a fresh write attempt. A write
+  always gives the SDK a tool definition, so `callTool` never relists and
+  resends it after a `HeaderMismatch` answer. `api()` OAuth
+  (`src/auth/static-oauth.ts`), the Google Workspace client, and Infisical
+  apply the same one-send rule to credential recovery. All maintained API
+  provider failure mappers run inside `guardedFetch`. Each `api()` entry owns
+  a fresh request ledger (`src/provider-call.ts`) on its derived handler context;
+  further `deriveContext` copies share that ledger without sharing it with
+  concurrent calls. Every guarded request records dispatch, response status,
+  and provider-declared auxiliary status. Plain handler fetches and OAuth
+  resource sends record their dispatch too; OAuth credential checks precede
+  the resource dispatch record. Token exchanges, GitHub installation
+  and repository binding lookups, token minting, and Cloudflare zone-ownership
+  pin lookups are auxiliary: they cannot perform the logical resource write.
+  No transport rejection proves a dispatched write unsent, whatever errno it
+  names. One `fetch` call can hide several attempts: Node's fetch sends a
+  request again after a 421 (even under `redirect: "manual"`) and after an
+  HTTP/2 `REFUSED_STREAM`, both of which servers define as not processed, and
+  an operator-installed dispatcher such as undici's `RetryAgent` can retry
+  further. A refusal on the last attempt says nothing about the earlier ones,
+  so connecta never reports a transport-failed write as known failed. A write
+  is a known failure only on refusal provenance recorded where the evidence is
+  observed, never inferred from an error code: (a) the ledger proves it never
+  left, or (b) the downstream served an HTTP refusal, a 4xx other than 408
+  (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`), under the
+  provider's existing served classification (Notion's write 409 is a
+  `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
+  (b) for the ledger and for a transport outside one: a refusing status the
+  provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so
+  only a genuine idempotency key keeps such a direct write's retry. A 408 is a
+  timeout, and a 2xx followed by a mapper, parser, or output-validation
+  failure may have applied. `classifyWriteOutcome` counts a
+  dispatched write `failed` only with that provenance (`answered`, or the
+  error's private known-failure mark); a bare `rate_limited`,
+  `invalid_args`, or `conflict` code is `unknown`. A downstream tool's
+  `isError` is a read's answer only: for a write it arrives over a 2xx after
+  the handler ran, so it is unknown and non-retryable, and its text stays.
+  Refusal evidence holds only for its whole logical call. The invocation
+  opens one per dispatch (`openLogicalCall` in `src/provider-call.ts`), and
+  every `api()` and `remoteMcp()` `callTool` entered beneath it joins it
+  (`enterProviderBoundary`). A served write's mark stands
+  (`knownForLogicalCall`) only when at most one boundary was entered and the
+  invocation invoked that boundary object with its own `callTool`, or a
+  maintained connector object declared to delegate each call to one boundary
+  (`delegatesEachCall`, GitHub) with its declared function. Identities are
+  captured, never read back: the invocation reads the connector and its
+  `callTool` once and invokes that function with `Reflect.apply`, never
+  through the function's own `call` or `apply` property; each boundary
+  records its object with the published function when it is built
+  (`providerBoundary`) and names that object, from its closure, on entry;
+  and a delegator is declared at construction. A connector that reassigns
+  `callTool` mid-call, or a copy (`{ ...boundary }`, `Object.assign`) that
+  shares a boundary's or delegator's function, borrows no standing;
+  `defineProvider`'s inheriting stamp keeps its connector's
+  (`aliasCallIdentity`). A boundary marks a write known only when
+  every request it dispatched is proven unapplied, so the rule reads: known
+  only if every request the logical call dispatched is proven unapplied and
+  the failing request carries the refusal. A custom connector that composes
+  calls, or that could send around them, never inherits an inner verdict; the
+  invocation withdraws the mark and the write is unknown.
+  Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
+  validation, `remoteMcp()`'s allowlist, connect, and any failure before its
+  `tools/call` is sent, and GitHub's hosted target check and token mint.
+  `remoteMcp()` applies the rule to direct and served writes alike: once
+  `dispatch.sent`, a JSON-RPC error (`-32602` included), an unreadable result,
+  or a failed output validation is unknown; only an HTTP 4xx (not 408) on the
+  request is a refusal. A downstream's `input_required` is no proof either: a
+  handler asks for input from inside its run, so a write's unsupported
+  suspension (`src/invocation.ts`) and a direct write's failed relay
+  (`src/downstream-input.ts`) are unknown and say to reconcile, not resend.
+  The invocation finalizes every served write `classifyWriteOutcome` calls
+  unknown before it adds advice: `retryable: false`, `writeOutcome:
+  "unknown"`, and no grant-then-retry or correct-and-retry text, so a custom
+  connector's code cannot advertise a retry. Advice to send again (a rate
+  limit's "back off before retrying", a token or OAuth preflight's "then
+  retry authorization") is a segment of its own, attached with
+  `resendAdvice` in `src/errors.ts` where it is written and never part of
+  the error's message. Output composes it only once the outcome allows it:
+  `classifyCallError` for a direct caller, unless the write is already
+  unknown, and the invocation after its verdict (it classifies with
+  `classifyWithoutAdvice`). So no redaction of a private argument, no
+  wrapper's rewording, and no preflight failure after an earlier dispatch
+  can leave it on an unknown write, while a read and a known refusal keep it.
+  Key-reuse advice ("reuse this key", "cannot repeat the write") needs more:
+  proof that its key protects the whole logical call
+  (`keyProtectsLogicalCall`). Every resource request dispatched under the
+  logical call, from any ledger, is recorded on it once per dispatch with
+  its method and the genuine key it carried (`ProviderRequest.key`, set by
+  `callRest` only for a key fetch sends as given). The advice stands only when
+  exactly one boundary was entered, the invocation's object owns it as for
+  `knownForLogicalCall`, that boundary tracks every request, and exactly one
+  dispatched request was a write, carrying the named key; a request counts as
+  a read only by its recorded GET or HEAD (`readMethod`). A composite, a
+  wrapper, a second write, an earlier unrelated key, or a call interrupted
+  after two dispatches gets no such advice; the key stays a diagnostic, in
+  the message and `uncertainCall.recovery`. The REST write tool's
+  generated-key advice is a segment of its own (`keyResendAdvice`), which the
+  invocation composes only under that proof and `classifyCallError` composes
+  for a direct caller of the one boundary that sent the key.
+  An authorization or credential handoff on an
+  unknown write says to re-read the target before any fresh call instead of
+  "retry the original call" (`src/authorization-handoff.ts`). Owning transport attempts is planned for decision 0009's B.2
+  guarded `HttpClient`. Reads keep their retry advice. Every maintained
+  provider declares (`tracksEveryRequest`) that its handlers send only through
+  channels the ledger records; for an undeclared `api()` handler an empty
+  ledger is no evidence, so its served write fails unknown once the handler
+  has run. When the handler settles, `api()` closes the ledger before any
+  decision: a resource request still waiting to leave (a sibling reading its
+  credential) is refused before its credential read and again before send,
+  and one in flight already counts as dispatched.
+  `providerCallFailure` in `src/write-outcome.ts` finalizes the call once at the
+  `api()` boundary, including handler-thrown typed errors. For a served write,
+  no resource dispatch keeps the failure's own advice. A vendor's own 4xx
+  refusal (a 4xx other than 408) is a known failure only when no other
+  resource request was dispatched. Refusal provenance travels with the error independently of its
+  code or wording, so a generic `connector_call_failed` refusal still counts
+  as failed in program write accounting. Every other possibly executing
+  failure is non-retryable with `writeOutcome: "unknown"`; authorization codes
+  keep their handoff. The existing special handling of write 401s remains.
+  A later refusal cannot make an earlier successful request safe to repeat.
+  Provider recovery wrappers change wording through helpers that preserve
+  verdicts and provenance; Google also retains its response phases and reasons.
+  No operation hint (a whole-resource `PUT`, fixed cells, a content address)
+  grants retry credit, direct or served. A served write requires
+  reconciliation even with an idempotency key; direct transport calls
+  without a served verdict can still prove repeatability, but only with a
+  genuine key sent to a vendor that honors it (Stripe today, through
+  `idempotencyHeader`): the REST write tool refuses an `idempotencyKey` that fetch
+  would send empty after trimming or would not send at all (CR, LF, NUL, any
+  other control character but tab, DEL, or a code point past Latin-1), as
+  `invalid_args` before recovery is recorded, and `callRest` marks a request
+  repeatable only for a key fetch sends as given.
+  `providerCallFailure` (`src/write-outcome.ts`) is the one finalizer for a
+  direct write's failure: the `api()` handler boundary, a guarded transport
+  outside a call ledger, and every `remoteMcp().callTool()` write, direct or
+  served (with its `tools/call` dispatch record as the ledger and the
+  endpoint's HTTP status as the served verdict) all hand it every write
+  failure. Guarded transports
+  inside a call (`ctx.fetch`, the shared REST layer, Google) defer to the
+  `api()` boundary. No identity passthrough or code filter runs ahead of it
+  for a direct write. It recognizes every timeout and abort before any code
+  filter: the caller's own signal (an `AbortSignal.timeout` included, and
+  however the runtime's fetch reports it), an SDK or connecta deadline
+  (`code: "timeout"`, an HTTP 408), and a timeout errno. Without a genuine
+  key, such a write is unknown and non-retryable: a timeout keeps its code
+  and `details.code`; the caller's abort becomes `timeout` or
+  `connector_call_failed` with its reason as `cause` (a redacted copy of the
+  same class where output redaction applies, as on `remoteMcp()`) and its
+  class and code in `details`. No invocation exists to report it as
+  `write_outcome_unknown`. The caller's own abort reason still passes by
+  identity for a read and for a served call, whose timeout passes through
+  unchanged for the invocation to report.
+  The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
+  provider/tool in both runtimes, fails on missing provider/tool examples or a
+  dispatched failure bypassing the helper, and covers served write/read
+  overrides with HTTP 503 and a connection reset after send. Local metadata
+  tools prove zero sends; composite calls prove each distinct request leaves
+  once. The round-5 cases additionally cover Docs creation with initial text,
+  composite success followed by refusal, GitHub preflight failures, typed
+  handler errors after successful sends, Forms cursor conflicts after 200,
+  generic-code vendor refusals, auxiliary failures after resource dispatch,
+  redaction of refusal errors, and concurrent direct-call ledger isolation.
+  The round-6 cases cover a composite write's early refusal while siblings
+  await credentials or are in flight, requests started after the call ended,
+  connect-phase errnos with each body kind (all unknown for a write, and a
+  direct read stays retryable), a request aborted with a refusal-shaped
+  reason, an errno outside fetch's network error, and
+  undeclared handlers whose untracked send precedes a typed failure. Each
+  catalog case also checks that the ledger recorded every resource request
+  the network saw, and the inventory that every API connector declares it.
+  `test/write-evidence.test.ts` uses real refused, reset, and held sockets on
+  both runtimes: a refused write is unknown and a refused read retryable,
+  including a write aborted with another fetch's real refusal as its reason
+  after the server read its body; `test/write-evidence.node.test.ts` covers a
+  Planning Center POST that undici resends after a 421 to a closed listener, a
+  DELETE that a `RetryAgent` resends after a reset, and a streamed body and a
+  `Blob` with an overridden `stream()` that undici partly sends before its
+  producer fails. Each has the server holding the write and reports unknown.
+  Additional tests:
+  `test/remote-mcp-write-once.test.ts` (real SDK transport),
+  `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each
+  provider's `INV-9` tests.
+- **Plain `ctx.fetch` is not confined to an origin, by design.** In an `api()`
+  handler it is the global `fetch` plus sent-secret registration. It carries no
+  grant: only `ctx.oauth.fetch` attaches the OAuth token, and only to
+  `apiOrigins`, and every maintained provider sends through a guarded transport
+  confined to its base URL. A custom handler is deployment code, which owns its
+  destinations (goal 4); no agent program reaches `ctx.fetch`, so INV-3 holds
+  below the sandbox, and a credential a handler sends is redacted from what the
+  agent sees (INV-5). Confining it would need a declared origin list on every
+  `api()` connector and would break handlers that follow a URL their API
+  returned, such as a signed download. `test/api-oauth.test.ts` pins that the
+  plain fetch carries no grant.
 - **`close()` is idempotent and ordered.** Both admission pools, then the
   connector limiters, then the executor; Node's `listen()` calls it on
   SIGTERM/SIGINT.

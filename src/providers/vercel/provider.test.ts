@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, ConnectorContext, ToolDef } from "../../types.js";
 import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
-import { ConnectorCallError } from "../../errors.js";
+import { classifyCallError, ConnectorCallError } from "../../errors.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -1525,7 +1525,7 @@ describe("vercel() over an access token", () => {
     expect(sent).toHaveLength(2);
   });
 
-  it("INV-9: marks an upload's 5xx unknown and unretryable unless the upload is content-addressed", async () => {
+  it("INV-9: marks every upload's 5xx unknown and unretryable, a content-addressed one included", async () => {
     const connector = vercel("hosting", TOKEN);
     respond = () => Response.json({ error: { code: "internal_server_error", message: "upstream" } }, { status: 500 });
     const avatar = await refusal(
@@ -1536,11 +1536,13 @@ describe("vercel() over an access token", () => {
     const artifact = await refusal(
       call(connector, "vercel_api_upload", { method: "PUT", path: "/v8/artifacts/abc123", textBody: "artifact" }),
     );
-    expect(artifact).toMatchObject({ code: "unavailable", retryable: true });
+    // A content address is an operation hint, not an idempotency key, and
+    // grants no retry credit (#902 round 11).
+    expect(artifact).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
     const file = await refusal(
       call(connector, "vercel_api_upload", { method: "POST", path: "/v2/files", textBody: "x" }),
     );
-    expect(file).toMatchObject({ code: "unavailable", retryable: true });
+    expect(file).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
     expect(sent).toHaveLength(3);
   });
 
@@ -1566,7 +1568,7 @@ describe("vercel() over an access token", () => {
       respond = () => Response.json({ error: { code: "bad_request", message: "No." } }, { status, headers });
       const failure = await refusal(call(connector, "vercel_api_read", { path: "/v7/deployments" }));
       expect(failure.code, String(status)).toBe(code);
-      expect(failure.message).toContain(message);
+      expect(classifyCallError(failure).message).toContain(message);
       if (status === 429) expect(failure.retryAfterMs).toBeGreaterThan(0);
     }
   });

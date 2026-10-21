@@ -39,7 +39,8 @@ const ctxB = { issuer: "https://auth-b.example" };
 const BINDING = "same-config";
 const URL_CLIENT = `${BASE}/oauth-client.json`;
 const OTHER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
-const SUPERSEDED = /authorization changed while this request was in flight; try again/;
+// Its advice to try again is a separate segment, composed only at output.
+const SUPERSEDED = /authorization changed while this request was in flight\./;
 
 const tokens: OAuthTokens = {
   access_token: "secret-access",

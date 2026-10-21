@@ -49,6 +49,7 @@ import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import { RESULT_BUDGET_BYTES, clampRedactedText, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -57,6 +58,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 import { encodeForAgent, requestSentSecrets, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
 
 export type {
@@ -1236,10 +1238,7 @@ function afterUnknownCreate(error: unknown, lookFor: string): unknown {
   if (!(error instanceof ConnectorCallError) || !outcome?.dispatched || outcome.phase === "refused") {
     return error;
   }
-  return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, {
-    retryable: error.retryable,
-    cause: error,
-  });
+  return googleFailureMessage(error, `${error.message} ${lookFor}`);
 }
 
 /**
@@ -1746,10 +1745,9 @@ const COMMENTS_RAW: RawLayout = {
 /** A 403 on a comment read: what it most likely means, beside Google's words. */
 function commentAccess(error: unknown): unknown {
   if (!(error instanceof ConnectorCallError) || googleOutcomeOf(error)?.status !== 403) return error;
-  return new ConnectorCallError(
-    error.code,
+  return googleFailureMessage(
+    error,
     `${error.message} Reading comments needs comment access: an account that may only view the deck cannot read them.`,
-    { retryable: error.retryable, cause: error },
   );
 }
 
@@ -3259,22 +3257,24 @@ function slidesConnector(id: string, options: SlidesOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Slides",
+        description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
+          // Required: whose decks they are, that listing is Drive's, and the
+          // revision discipline on writes are conventions no schema can carry.
+          required: true,
+        },
+        tools: tools(client),
       }),
-      title: options.title ?? "Google Slides",
-      description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
-        // Required: whose decks they are, that listing is Drive's, and the
-        // revision discipline on writes are conventions no schema can carry.
-        required: true,
-      },
-      tools: tools(client),
-    }),
+    ),
   );
 }

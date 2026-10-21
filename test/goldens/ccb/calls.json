@@ -169,9 +169,7 @@
       "format": "json",
       "value": {
         "id": 42,
-        "name": "Grace Hopper",
-        "allergies": "peanuts",
-        "giving_number": "G-17"
+        "name": "Grace Hopper"
       }
     }
   },

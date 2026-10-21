@@ -4,6 +4,7 @@ import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -87,20 +88,24 @@ function fixture(
   const connector =
     kind === "mcp"
       ? remoteMcp("echo", { url: downstream.url })
-      : api("echo", {
-          tools: tools.map((tool) => ({
-            ...tool,
-            handler: async (args: unknown) => {
-              const text = echo(args);
-              if (error)
-                throw new ConnectorCallError("invalid_args", text, {
-                  cause: new Error(text),
-                  retryAfterMs: 100,
-                });
-              return boundary ? text : { text, echo: forms(privateValue(args)), padding };
-            },
-          })),
-        });
+      : // No I/O at all, so its ledger sees every request: a refusal it throws
+        // stays a known failure, and the program's error keeps its echo.
+        tracksEveryRequest(
+          api("echo", {
+            tools: tools.map((tool) => ({
+              ...tool,
+              handler: async (args: unknown) => {
+                const text = echo(args);
+                if (error)
+                  throw new ConnectorCallError("invalid_args", text, {
+                    cause: new Error(text),
+                    retryAfterMs: 100,
+                  });
+                return boundary ? text : { text, echo: forms(privateValue(args)), padding };
+              },
+            })),
+          }),
+        );
   return {
     connector,
     received,
@@ -131,10 +136,10 @@ it.each(["mcp", "api"] as const)(
       const args = { config: { password: value } };
       for (const failed of [false, true]) {
         source.fail(failed);
-        const check = (result: unknown) => {
+        const check = (result: unknown, echoed = true) => {
           const text = JSON.stringify(result);
           for (const form of forms(value)) expect(text).not.toContain(form);
-          expect(text).toContain("[redacted]");
+          if (echoed) expect(text).toContain("[redacted]");
         };
         for (const resultMode of ["mcp", "value"] as const) {
           const read = await meta.callTool({ address: "echo.read", args, resultMode });
@@ -181,7 +186,12 @@ it.each(["mcp", "api"] as const)(
           );
           const result = await run({ code: "async () => {}" });
           expect(result.isError === true).toBe(failed);
-          check(result);
+          // A write's isError is an unknown outcome (round 13), which replaces
+          // the program's result: no echo is left to redact.
+          const unknownWrite = failed && kind === "mcp" && tool === "write";
+          if (unknownWrite)
+            expect(result.structuredContent).toMatchObject({ error: { code: "write_outcome_unknown" } });
+          check(result, !unknownWrite);
         }
       }
     }

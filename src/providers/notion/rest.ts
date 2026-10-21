@@ -5,7 +5,8 @@
 // authoring its rich-text and block shapes.
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { deriveContext } from "../../derived-context.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
 import {
@@ -169,7 +170,13 @@ function retryGuidance(additional: unknown): string {
  * (`sanitizeLinks`, as on success), since a message can echo the Markdown it
  * rejected.
  */
-function notionFailure(status: number, headers: Headers, payload: unknown, withheld = false): ConnectorCallError {
+function notionFailure(
+  status: number,
+  headers: Headers,
+  payload: unknown,
+  withheld = false,
+  write = false,
+): ConnectorCallError {
   const body = isRecord(payload) ? payload : undefined;
   const code = typeof body?.["code"] === "string" ? body["code"] : undefined;
   const additional = body?.["additional_data"];
@@ -196,17 +203,24 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
       reason === "public_api_space_request_rate_limit"
         ? " The workspace's shared budget across all its connections is spent, and its window can exceed a minute."
         : " Notion allows each integration 180 requests a minute (600 on Business and Enterprise), and a separate budget shared by the whole workspace.";
-    return new ConnectorCallError(
-      "rate_limited",
-      `${labelled}${typeof reason === "string" ? ` (limit: ${reason})` : ""}${scope} Wait out the retry window.`,
-      { retryAfterMs: retryAfter ?? 1_000 },
+    return resendAdvice(
+      new ConnectorCallError(
+        "rate_limited",
+        `${labelled}${typeof reason === "string" ? ` (limit: ${reason})` : ""}${scope}`,
+        { retryAfterMs: retryAfter ?? 1_000 },
+      ),
+      " Wait out the retry window.",
     );
   }
   if (status === 529) {
     // Notion documents 529 alongside 429: back off and respect Retry-After.
-    return new ConnectorCallError("unavailable", `${labelled} Notion is overloaded; retry after the reported window.`, {
-      retryAfterMs: retryAfter ?? 5_000,
-    });
+    // A write it may have saved loses the advice (INV-9).
+    return resendAdvice(
+      new ConnectorCallError("unavailable", `${labelled} Notion is overloaded.`, {
+        retryAfterMs: retryAfter ?? 5_000,
+      }),
+      "; retry after the reported window",
+    );
   }
   if (status === 401) {
     return new ConnectorCallError(
@@ -235,6 +249,17 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
     return new ConnectorCallError("invalid_args", labelled);
   }
   if (status === 409) {
+    // Notion's conflict_error: the transaction could not be completed. Its
+    // documentation suggests retrying and says nothing about partial effects.
+    // By connecta's policy a write's 409 is a known, non-retryable refusal:
+    // re-read the target and decide, never repeat automatically.
+    if (write) {
+      return new ConnectorCallError(
+        "conflict",
+        `${labelled} Notion reported a conflicting transaction. Re-read the target and decide whether the write is still needed; do not repeat it automatically.`,
+        { retryable: false },
+      );
+    }
     return new ConnectorCallError(
       "unavailable",
       `${labelled} Notion reported a write conflict; this is safe to retry.`,
@@ -366,8 +391,8 @@ const VENDOR: RestVendor = {
       ? notionTransport()
       : `This operation is served from ${server}, which this connector does not reach.`;
   },
-  failure: (status, headers, payload, call) =>
-    notionFailure(status, headers, sanitizeLinks(payload), call ? SAFETY.withholdsErrors(call.op) : false),
+  failure: (status, headers, payload, call, write) =>
+    notionFailure(status, headers, sanitizeLinks(payload), call ? SAFETY.withholdsErrors(call.op) : false, write),
   readPosts: READ_POSTS,
   valueSafety: SAFETY,
   // Not an envelope to unwrap: page Markdown carries pre-signed file links
@@ -1382,7 +1407,7 @@ export function notionRest(defaultPageSize: number): NotionRest {
       // identifying the bot is the cheapest call that proves the token is live.
       try {
         const payload = await notion(
-          { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
+          deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
           "GET",
           "/v1/users/me",
         );

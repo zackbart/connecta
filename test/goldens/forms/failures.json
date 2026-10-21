@@ -933,6 +933,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Google Forms: Golden 400 failure",
@@ -1010,75 +1011,6 @@
                 }
               }
             }
-          ],
-          [
-            {
-              "after": 2,
-              "auxiliary": "token",
-              "method": "POST",
-              "url": "https://oauth2.googleapis.com/token",
-              "headers": {
-                "accept": "application/json",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                  ],
-                  [
-                    "assertion",
-                    {
-                      "jwt": {
-                        "header": {
-                          "alg": "RS256",
-                          "typ": "JWT"
-                        },
-                        "claims": {
-                          "iss": "forms-write-401@project.iam.gserviceaccount.com",
-                          "sub": "alice@example.com",
-                          "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                          "aud": "https://oauth2.googleapis.com/token",
-                          "iat": 1767323045,
-                          "exp": 1767326645
-                        },
-                        "signature": "<signature>"
-                      }
-                    }
-                  ]
-                ]
-              }
-            }
-          ],
-          [
-            {
-              "after": 3,
-              "method": "POST",
-              "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
-              "headers": {
-                "accept": "application/json",
-                "authorization": "Bearer <secret:accessToken>",
-                "content-type": "application/json"
-              },
-              "body": {
-                "json": {
-                  "requests": [
-                    {
-                      "updateFormInfo": {
-                        "info": {
-                          "title": "Retreat 2026"
-                        },
-                        "updateMask": "title"
-                      }
-                    }
-                  ],
-                  "writeControl": {
-                    "requiredRevisionId": "00000042"
-                  }
-                }
-              }
-            }
           ]
         ],
         "result": {
@@ -1088,6 +1020,7 @@
             "code": "auth_required",
             "message": "Google Forms: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "forms",
             "operation": "forms.update_form_info",
             "recovery": "unavailable",
@@ -1178,6 +1111,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "provider_permission_denied",
             "message": "Google Forms: Golden 403 failure Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.",
@@ -1263,6 +1197,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Google Forms: Golden 404 failure The id is unknown or not visible to this account; Google does not distinguish them.",
@@ -1345,6 +1280,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Google Forms: Golden 409 failure",
@@ -1427,6 +1363,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Google Forms: Golden 422 failure",
@@ -1509,6 +1446,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "Google Forms: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
@@ -1595,7 +1533,8 @@
           "error": {
             "code": "connector_call_failed",
             "message": "Google Forms answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1669,75 +1608,6 @@
                 }
               }
             }
-          ],
-          [
-            {
-              "after": 2,
-              "auxiliary": "token",
-              "method": "POST",
-              "url": "https://oauth2.googleapis.com/token",
-              "headers": {
-                "accept": "application/json",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                  ],
-                  [
-                    "assertion",
-                    {
-                      "jwt": {
-                        "header": {
-                          "alg": "RS256",
-                          "typ": "JWT"
-                        },
-                        "claims": {
-                          "iss": "forms-write-401-echo@project.iam.gserviceaccount.com",
-                          "sub": "alice@example.com",
-                          "scope": "https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly",
-                          "aud": "https://oauth2.googleapis.com/token",
-                          "iat": 1767323045,
-                          "exp": 1767326645
-                        },
-                        "signature": "<signature>"
-                      }
-                    }
-                  ]
-                ]
-              }
-            }
-          ],
-          [
-            {
-              "after": 3,
-              "method": "POST",
-              "url": "https://forms.googleapis.com/v1/forms/form-1:batchUpdate",
-              "headers": {
-                "accept": "application/json",
-                "authorization": "Bearer <secret:accessToken>",
-                "content-type": "application/json"
-              },
-              "body": {
-                "json": {
-                  "requests": [
-                    {
-                      "updateFormInfo": {
-                        "info": {
-                          "title": "Retreat 2026"
-                        },
-                        "updateMask": "title"
-                      }
-                    }
-                  ],
-                  "writeControl": {
-                    "requiredRevisionId": "00000042"
-                  }
-                }
-              }
-            }
           ]
         ],
         "result": {
@@ -1747,6 +1617,7 @@
             "code": "auth_required",
             "message": "Google Forms: Golden 401 failure: rejected [redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "forms",
             "operation": "forms.update_form_info",
             "recovery": "unavailable",
@@ -1840,7 +1711,8 @@
           "error": {
             "code": "connector_call_failed",
             "message": "Google Forms was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1922,7 +1794,8 @@
           "error": {
             "code": "connector_call_failed",
             "message": "Google Forms was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       }

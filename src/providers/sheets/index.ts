@@ -36,6 +36,7 @@ import { ConnectorCallError } from "../../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -45,6 +46,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 import { encodeForAgent, redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
@@ -444,7 +446,7 @@ async function uncertainWrite<T>(advice: string, write: () => Promise<T>): Promi
     if (!(error instanceof ConnectorCallError) || !outcome?.dispatched || outcome.phase === "refused") {
       throw error;
     }
-    throw new ConnectorCallError(error.code, `${error.message} ${advice}`, { retryable: false, cause: error });
+    throw googleFailureMessage(error, `${error.message} ${advice}`);
   }
 }
 
@@ -970,9 +972,6 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
             ctx,
-            // The same cells set to the same values twice is one write: a 5xx
-            // stays retryable.
-            { idempotent: true },
           ),
         );
         return {
@@ -1035,7 +1034,6 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
             ctx,
-            { idempotent: true },
           ),
         );
         return {
@@ -1074,8 +1072,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       handler: async (args, ctx) => {
         checkWriteSize([args["values"]]);
         const response = asRecord(
-          // Appending is not idempotent: a second call after one that landed
-          // adds the rows twice.
+          // A second call after one that landed adds the rows twice.
           await uncertainWrite(
             "Appending again would add the rows a second time if the first append landed: read the table with get_values and append only what is missing.",
             () =>
@@ -1131,8 +1128,6 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               body: { ranges: args["ranges"] },
             },
             ctx,
-            // Clearing fixed ranges twice clears them once.
-            { idempotent: true },
           ),
         );
         return {
@@ -1429,22 +1424,24 @@ function sheetsConnector(id: string, options: SheetsOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Sheets",
+        description: `Google Sheets as the signed-in Workspace user: read and write values in spreadsheets they can open, by id — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
+          // Required: whose spreadsheets they are, that Drive finds them, and what
+          // null and "" mean in a written row are conventions no schema carries.
+          required: true,
+        },
+        tools: tools(client),
       }),
-      title: options.title ?? "Google Sheets",
-      description: `Google Sheets as the signed-in Workspace user: read and write values in spreadsheets they can open, by id — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
-        // Required: whose spreadsheets they are, that Drive finds them, and what
-        // null and "" mean in a written row are conventions no schema carries.
-        required: true,
-      },
-      tools: tools(client),
-    }),
+    ),
   );
 }

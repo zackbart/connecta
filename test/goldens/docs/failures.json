@@ -931,6 +931,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Google Docs: Golden 400 failure",
@@ -1006,73 +1007,6 @@
                 }
               }
             }
-          ],
-          [
-            {
-              "after": 2,
-              "auxiliary": "token",
-              "method": "POST",
-              "url": "https://oauth2.googleapis.com/token",
-              "headers": {
-                "accept": "application/json",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                  ],
-                  [
-                    "assertion",
-                    {
-                      "jwt": {
-                        "header": {
-                          "alg": "RS256",
-                          "typ": "JWT"
-                        },
-                        "claims": {
-                          "iss": "docs-write-401@project.iam.gserviceaccount.com",
-                          "sub": "alice@example.com",
-                          "scope": "https://www.googleapis.com/auth/documents",
-                          "aud": "https://oauth2.googleapis.com/token",
-                          "iat": 1767323045,
-                          "exp": 1767326645
-                        },
-                        "signature": "<signature>"
-                      }
-                    }
-                  ]
-                ]
-              }
-            }
-          ],
-          [
-            {
-              "after": 3,
-              "method": "POST",
-              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-              "headers": {
-                "accept": "application/json",
-                "authorization": "Bearer <secret:accessToken>",
-                "content-type": "application/json"
-              },
-              "body": {
-                "json": {
-                  "requests": [
-                    {
-                      "insertText": {
-                        "text": "\nAction items follow.",
-                        "endOfSegmentLocation": {}
-                      }
-                    }
-                  ],
-                  "writeControl": {
-                    "requiredRevisionId": "rev-1"
-                  }
-                }
-              }
-            }
           ]
         ],
         "result": {
@@ -1080,8 +1014,9 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Docs: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "docs",
             "operation": "docs.append_text",
             "recovery": "unavailable",
@@ -1170,6 +1105,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "provider_permission_denied",
             "message": "Google Docs: Golden 403 failure Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.",
@@ -1253,6 +1189,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Google Docs: Golden 404 failure The id is unknown or not visible to this account; Google does not distinguish them.",
@@ -1333,6 +1270,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Google Docs: Golden 409 failure",
@@ -1413,6 +1351,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "invalid_args",
             "message": "Google Docs: Golden 422 failure",
@@ -1493,6 +1432,7 @@
         "result": {
           "ok": false,
           "dispatched": true,
+          "answered": true,
           "error": {
             "code": "rate_limited",
             "message": "Google Docs: Golden 429 failure Google meters this API per user and per project; wait before retrying.",
@@ -1576,8 +1516,9 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
-            "retryable": false
+            "message": "The outcome of this edit is unknown: Google Docs answered HTTP 500 after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1649,73 +1590,6 @@
                 }
               }
             }
-          ],
-          [
-            {
-              "after": 2,
-              "auxiliary": "token",
-              "method": "POST",
-              "url": "https://oauth2.googleapis.com/token",
-              "headers": {
-                "accept": "application/json",
-                "content-type": "application/x-www-form-urlencoded"
-              },
-              "body": {
-                "form": [
-                  [
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                  ],
-                  [
-                    "assertion",
-                    {
-                      "jwt": {
-                        "header": {
-                          "alg": "RS256",
-                          "typ": "JWT"
-                        },
-                        "claims": {
-                          "iss": "docs-write-401-echo@project.iam.gserviceaccount.com",
-                          "sub": "alice@example.com",
-                          "scope": "https://www.googleapis.com/auth/documents",
-                          "aud": "https://oauth2.googleapis.com/token",
-                          "iat": 1767323045,
-                          "exp": 1767326645
-                        },
-                        "signature": "<signature>"
-                      }
-                    }
-                  ]
-                ]
-              }
-            }
-          ],
-          [
-            {
-              "after": 3,
-              "method": "POST",
-              "url": "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
-              "headers": {
-                "accept": "application/json",
-                "authorization": "Bearer <secret:accessToken>",
-                "content-type": "application/json"
-              },
-              "body": {
-                "json": {
-                  "requests": [
-                    {
-                      "insertText": {
-                        "text": "\nAction items follow.",
-                        "endOfSegmentLocation": {}
-                      }
-                    }
-                  ],
-                  "writeControl": {
-                    "requiredRevisionId": "rev-1"
-                  }
-                }
-              }
-            }
           ]
         ],
         "result": {
@@ -1723,8 +1597,9 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Docs: Golden 401 failure: rejected [redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "message": "The outcome of this edit is unknown: Google Docs: Golden 401 failure: rejected [redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "docs",
             "operation": "docs.append_text",
             "recovery": "unavailable",
@@ -1815,8 +1690,9 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
-            "retryable": false
+            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },
@@ -1895,8 +1771,9 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
-            "retryable": false
+            "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       }

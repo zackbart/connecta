@@ -28,7 +28,7 @@ Planning Center Online church management — <!-- endfragment -->
 
 ## Results and paging
 
-- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the untouched JSON:API resources and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.
+- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the JSON:API resources as sent, and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.
 - Lists page by offset: `perPage` up to 100, then pass `page.nextOffset` back as `offset` while `page.hasMore` is true. `page.totalCount` answers "how many" without paging — request `perPage: 1`.
 - A bare date in a date filter is the organization's local day; pass a full timestamp for exact bounds. Name filters are exact; end one with `%` for a prefix match.
 <!-- endfragment -->
@@ -97,6 +97,7 @@ Planning Center Online church management — <!-- endfragment -->
 
 - `pco_api_get` reaches any GET; `pco_api_mutate` any POST, PATCH, or DELETE, always approval-gated. Paths start `/<app>/v2`, exactly as Planning Center documents them; the connector owns host, auth, content type, and the `X-PCO-API-Version` header.
 - Bodies are JSON:API documents: `{"data":{"type":"Email","attributes":{...}}}`. `null` clears an attribute; an omitted key is left alone.
+- Credentials never come back from any tool: a webhook subscription's signing secret (`authenticity_secret`, also in a create or `rotate_secret` reply) and an organization `secret`. An operator reads them in Planning Center.
 - Each product is pinned to a reviewed API version: <!-- endfragment -->
 
 <!-- fragment: pins -->
@@ -129,7 +130,7 @@ Planning Center Online church management — People, Services, Groups, Check-Ins
 
 ## Results and paging
 
-- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the untouched JSON:API resources and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.
+- Records keep Planning Center's own snake_case attribute names; a relationship appears as `<relationship>_id`. Pass `raw: true` for the JSON:API resources as sent, and `included`; `get_me` and `list_webhook_subscriptions` have no raw mode.
 - Lists page by offset: `perPage` up to 100, then pass `page.nextOffset` back as `offset` while `page.hasMore` is true. `page.totalCount` answers "how many" without paging — request `perPage: 1`.
 - A bare date in a date filter is the organization's local day; pass a full timestamp for exact bounds. Name filters are exact; end one with `%` for a prefix match.
 - `get_plan` fetches the plan, its items, and its team in one call and sets `itemsTruncated`/`teamMembersTruncated` past 100 rows; page the rest with `pco_api_get`.
@@ -148,6 +149,7 @@ Planning Center Online church management — People, Services, Groups, Check-Ins
 
 - `pco_api_get` reaches any GET; `pco_api_mutate` any POST, PATCH, or DELETE, always approval-gated. Paths start `/<app>/v2`, exactly as Planning Center documents them; the connector owns host, auth, content type, and the `X-PCO-API-Version` header.
 - Bodies are JSON:API documents: `{"data":{"type":"Email","attributes":{...}}}`. `null` clears an attribute; an omitted key is left alone.
+- Credentials never come back from any tool: a webhook subscription's signing secret (`authenticity_secret`, also in a create or `rotate_secret` reply) and an organization `secret`. An operator reads them in Planning Center.
 - Each product is pinned to a reviewed API version: people 2026-06-04, services 2018-11-01, groups 2023-07-10, check-ins 2025-05-28, calendar 2026-06-22, registrations 2025-05-01, giving 2019-10-18, publishing 2024-03-25, webhooks 2022-10-20, api 2026-09-24. Pass `version` only for an endpoint those versions lack.
 - Query parameters are name/value pairs with literal brackets: `where[status]`, `include`, `order`, `filter`, `fields[Person]`. Every list response's `meta` names the `can_query_by`, `can_order_by`, and `can_include` values for that endpoint; an unknown `where` key is ignored rather than refused.
 - File uploads go to a separate host (upload.planningcenteronline.com), which this connection does not reach.

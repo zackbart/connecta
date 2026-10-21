@@ -2,13 +2,14 @@
 // only; never part of a context's public shape, a failure record, storage, or a log. Web APIs only.
 import { classificationCode, ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
+import { contextKey } from "./derived-context.js";
 import { visitPrivateCallArguments } from "./argument-redaction.js";
 import { keptErrorName, redactedCopyOf } from "./redaction-identity.js";
 import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
-const contexts = new WeakMap<ConnectorContext, SentSecrets>();
+const contexts = new WeakMap<object, SentSecrets>();
 const requests = new WeakMap<object, SentSecrets>();
 const wrappedCredentials = new WeakSet<ConnectorContext>();
 const sensitiveName = /key|token|secret|password|auth|signature|session/i;
@@ -111,14 +112,14 @@ const FRAMING_KEYS = new Set(
     "blob annotations ok format valueFormat error code message stack name cause details retryable retryAfterMs " +
     "nextAction uncertainCall result logs failure inputRequests requestState method params mode requestedSchema url " +
     "jsonrpc id tools resources resourceTemplates uriTemplate contents prompts messages role arguments nextCursor " +
-    "title description inputSchema outputSchema size"
+    "title description inputSchema outputSchema size writeOutcome"
   ).split(" "),
 );
 const TAGS = new Set(
   (
     "type:text type:image type:audio type:resource type:resource_link format:json format:text format:paged " +
     "valueFormat:json valueFormat:text dev.connecta/format:json dev.connecta/format:text resultType:complete " +
-    "resultType:input_required mode:form mode:url method:elicitation/create jsonrpc:2.0"
+    "resultType:input_required mode:form mode:url method:elicitation/create jsonrpc:2.0 writeOutcome:unknown"
   ).split(" "),
 );
 // Outcome flags: a boolean under these names is kept, since a boolean carries one bit whatever
@@ -2294,10 +2295,10 @@ export class SentSecrets {
 }
 
 export function sentSecretsFor(ctx: ConnectorContext): SentSecrets {
-  let secrets = contexts.get(ctx);
+  let secrets = contexts.get(contextKey(ctx));
   if (!secrets) {
     secrets = new SentSecrets();
-    contexts.set(ctx, secrets);
+    contexts.set(contextKey(ctx), secrets);
   }
   sentSecretsForRequest(ctx.requestScope ?? ctx).include(secrets);
   return secrets;

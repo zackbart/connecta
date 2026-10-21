@@ -16,6 +16,7 @@ import {
   type Field,
 } from "./config-schema.js";
 import { reviewedClassification } from "./catalog-drift.js";
+import { aliasCallIdentity } from "./provider-call.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -494,6 +495,8 @@ function asProvider<O extends ProviderOptions, C extends Connector>(
     (options.readOnly === undefined || !ownReadOnly || ownReadOnly.configurable)
       ? connector
       : (Object.create(connector) as C);
+  // An inheriting stamp serves the connector itself, so it keeps its call identity.
+  if (stamped !== connector) aliasCallIdentity(stamped, connector);
   if (options.readOnly !== undefined) {
     Object.defineProperty(stamped, "readOnly", { value: options.readOnly, enumerable: true, configurable: true });
   }

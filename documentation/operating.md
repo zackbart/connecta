@@ -122,8 +122,8 @@ and status do not begin consent on their own. Follow
 [argument recovery](./meta-tools.md#argument-recovery) for the specific failure.
 
 A dispatched write is never automatically replayed. An ambiguous timeout may
-mean the provider applied it; inspect state or ask for the missing decision
-before issuing it again. [Retry semantics](./code-mode.md#retry-semantics) and
+mean the provider applied it; inspect state to check whether it took effect, or
+ask for the missing decision, before any fresh call. [Retry semantics](./code-mode.md#retry-semantics) and
 [writes](./code-mode.md#writes) describe program outcomes and write accounting.
 
 ## Contributor reference

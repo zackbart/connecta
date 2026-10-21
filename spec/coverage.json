@@ -663,7 +663,11 @@
         },
         {
           "file": "test/auth-elicitation-dispatch.test.ts",
-          "title": "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials"
+          "title": "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials (tracked: true)"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials (tracked: false)"
         },
         {
           "file": "test/downstream-input.test.ts",
@@ -679,7 +683,11 @@
         },
         {
           "file": "test/downstream-input.test.ts",
-          "title": "INV-2 INV-4: programs retain input_required_unsupported with the equivalent direct call"
+          "title": "INV-2 INV-4 INV-9: programs retain a read's input_required_unsupported and count a suspended write unknown"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-9: a direct write's suspension that cannot be relayed is unknown and never told to start over"
         },
         {
           "file": "test/downstream-input.test.ts",
@@ -699,7 +707,7 @@
         },
         {
           "file": "test/errors-repair.test.ts",
-          "title": "INV-5: input-required retry hints omit writeOnly arguments on read=false"
+          "title": "INV-5 INV-9: input-required retry hints omit writeOnly arguments, and a write gets none, on read=false"
         },
         {
           "file": "test/downstream-input.test.ts",

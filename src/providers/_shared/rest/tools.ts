@@ -29,6 +29,8 @@
 // such as an account pin), `result` (unwrap a vendor envelope), a reviewed
 // `headers` allowlist, and `textBodies`. Named tools reuse `restCall` and
 // `callRest` to share the same validation-free request path.
+import { callClassification } from "../../../call-classification.js";
+import { providerFailureMessage } from "../../../write-outcome.js";
 import type { ApiTool } from "../../../connectors/api-connector.js";
 import {
   guardedFetch,
@@ -37,7 +39,8 @@ import {
   type GuardedTransport,
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
-import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
+import { providerRequests } from "../../../provider-call.js";
+import { ConnectorCallError, keyResendAdvice, unavailableCallError } from "../../../errors.js";
 import { encodeForAgent, redactBeforeCut } from "../../../sent-secrets.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
@@ -102,9 +105,14 @@ export interface RestVendor {
    * origin), or a refusal that says where to go instead.
    */
   transport(server: string | undefined): GuardedTransport | string;
-  /** Map a failed response to what the caller does next (H11); `call` lets a vendor withhold text for secret families.
-   * `body` arrives with sent secrets already redacted, so a mapper may cut its prose short. */
-  failure(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError;
+  /**
+   * Map a failed response to what the caller does next (H11); `call` lets a
+   * vendor withhold text for secret families. `write` is the served verdict,
+   * else the operation's own, for a status whose advice differs by it.
+   * `body` arrives with sent secrets already redacted, so a mapper may cut its
+   * prose short.
+   */
+  failure(status: number, headers: Headers, body: unknown, call?: RestCall, write?: boolean): ConnectorCallError;
   /** Reviewed POSTs that only read; `_api_read` admits exactly these. */
   readonly readPosts?: readonly RestReadPost[];
   /**
@@ -166,6 +174,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function invalid(message: string): never {
   throw new ConnectorCallError("invalid_args", message);
+}
+
+/** A header value as fetch sends it: leading and trailing HTTP whitespace removed. */
+function sentValue(value: string): string {
+  return value.replace(/^[\t\n\r ]+|[\t\n\r ]+$/g, "");
+}
+
+/**
+ * Why fetch would not send `value` as a header value the vendor receives:
+ * blank once trimmed, or a byte fetch rejects (CR, LF, NUL, any other control
+ * character but tab, DEL, or a code point past Latin-1). Undici refuses the
+ * whole request for any of them; workerd at least for CR, LF and NUL.
+ */
+function unsendableKey(value: string): string | undefined {
+  const sent = sentValue(value);
+  if (sent === "") return "is blank; pass a key with at least one non-whitespace character";
+  if (!/^[\t\x20-\x7e\x80-\xff]*$/.test(sent))
+    return "contains a character an HTTP header cannot carry (a control character, or one past Latin-1); pass a printable key";
+  return undefined;
 }
 
 /**
@@ -285,40 +312,6 @@ async function successBody(
 }
 
 /**
- * Network failures that prove nothing was sent, but only when `fetch` itself
- * rejected before any response existed: no connection was ever established,
- * so the vendor cannot have acted. Once a response arrived, the same codes
- * while reading its body prove nothing of the kind.
- */
-const NEVER_CONNECTED: ReadonlySet<string> = new Set([
-  "ECONNREFUSED",
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "EAI_FAIL",
-  "EHOSTUNREACH",
-]);
-
-/**
- * A request that is not safe to repeat (a write without an idempotency key)
- * must never be advertised as retryable after it may have reached the vendor
- * (INV-9). Definite answers pass through: refusals and 4xx verdicts, a failure
- * proven to precede any connection, and timeouts, which the invocation layer
- * already reports as `write_outcome_unknown`. Exported so a named write tool
- * with its own transport (an upload) applies the same rule.
- */
-export function unknownOutcome(vendor: RestVendor, error: unknown, responded: boolean): unknown {
-  if (!(error instanceof ConnectorCallError) || error.code !== "unavailable" || !error.retryable) return error;
-  const code = error.details?.code;
-  if (code === "timeout" || (!responded && code !== undefined && NEVER_CONNECTED.has(code))) return error;
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `${error.message} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
-      "so check the target before repeating it.",
-    { retryable: false },
-  );
-}
-
-/**
  * Send one prepared call and read it into the envelope. No validation and no
  * refusal tables run here: the generic tools do both first, and named tools
  * build their calls from fixed operations. `visibleHeaders` carry values the
@@ -334,15 +327,23 @@ export async function callRest(
   if (typeof send === "string") invalid(send);
   await vendor.admit?.(call, ctx);
   const framing = vendor.encode ? vendor.encode(call) : defaultFraming(vendor, call);
-  // Safe to repeat: a read, or a write that carried the vendor's idempotency key.
   const header = vendor.idempotencyHeader?.toLowerCase();
-  const repeatable =
-    call.method === "GET" ||
-    call.method === "HEAD" ||
-    (vendor.readPosts ?? []).some(([method, path]) => method === call.method && path === call.op.path) ||
-    (header !== undefined && Object.keys(visibleHeaders).some((name) => name.toLowerCase() === header));
+  const idempotencyKey =
+    header === undefined
+      ? undefined
+      : Object.entries(visibleHeaders).find(
+          ([name, value]) => name.toLowerCase() === header && unsendableKey(value) === undefined,
+        )?.[1];
   const request: GuardedRequest = {
     method: call.method,
+    classification:
+      call.method === "GET" ||
+      call.method === "HEAD" ||
+      (vendor.readPosts ?? []).some(([method, path]) => method === call.method && path === call.op.path)
+        ? "read"
+        : "write",
+    // Only a key the vendor receives proves the write repeatable.
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     path: call.path,
     ...(framing.query ? { query: framing.query } : {}),
     ...(framing.headers ? { headers: framing.headers } : {}),
@@ -353,35 +354,28 @@ export async function callRest(
         ? { body: framing.body }
         : {}),
   };
-  // Set once a response exists: from then on the connection is proven, and no
-  // network failure means nothing was sent.
-  let responded = false;
-  try {
-    return await send(request, ctx, async (response) => {
-      responded = true;
-      // Mappers cut the vendor's prose short, so it is redacted whole first.
-      if (!response.ok)
-        throw vendor.failure(
-          response.status,
-          response.headers,
-          redactBeforeCut(ctx, await failureBody(response)),
-          call,
-        );
-      // HEAD answers with headers alone; they are its data.
-      const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
-      // Order: unwrap the vendor's envelope, then redact (every success, HEAD
-      // header data and named tools included), then cursors (and, in the
-      // tools, `select`). Cursors read the envelope when the vendor unwraps
-      // one, and the redacted body otherwise.
-      const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response, ctx) : body;
-      const data = vendor.valueSafety.redact(unwrapped, call.method, call.op.path);
-      const page = vendor.page?.(vendor.result ? body : data, call);
-      return { status: response.status, data, ...(page ? { page } : {}) };
-    });
-  } catch (error) {
-    // The whole transport call: connect/send failures, 5xx, and a lost body alike.
-    throw repeatable ? error : unknownOutcome(vendor, error, responded);
-  }
+  const write = (callClassification(ctx) ?? request.classification) === "write";
+  return await send(request, ctx, async (response) => {
+    // Mappers cut the vendor's prose short, so it is redacted whole first.
+    if (!response.ok)
+      throw vendor.failure(
+        response.status,
+        response.headers,
+        redactBeforeCut(ctx, await failureBody(response)),
+        call,
+        write,
+      );
+    // HEAD answers with headers alone; they are its data.
+    const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
+    // Order: unwrap the vendor's envelope, then redact (every success, HEAD
+    // header data and named tools included), then cursors (and, in the
+    // tools, `select`). Cursors read the envelope when the vendor unwraps
+    // one, and the redacted body otherwise.
+    const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response, ctx) : body;
+    const data = vendor.valueSafety.redact(unwrapped, call.method, call.op.path);
+    const page = vendor.page?.(vendor.result ? body : data, call);
+    return { status: response.status, data, ...(page ? { page } : {}) };
+  });
 }
 
 /** A HEAD response's headers as data, without cookies. */
@@ -521,6 +515,9 @@ export function restTools(vendor: RestVendor): ApiTool[] {
     op.method === "HEAD" ||
     readPosts.some(([method, path]) => method === op.method && path === op.path);
   const writeMethods = index.methods.filter((method) => method !== "GET" && method !== "HEAD");
+  // The methods an idempotency key is sent with: never DELETE (see the handler).
+  const keyed = vendor.idempotencyHeader ? writeMethods.filter((method) => method !== "DELETE") : [];
+  const keyedText = keyed.join(" or ");
   const head = index.methods.includes("HEAD");
   const readMethods = [...new Set(["GET", ...(head ? ["HEAD"] : []), ...readPosts.map(([method]) => method)])];
   const routeOf = (op: Operation) => (reads(op) ? tool("read") : tool("write"));
@@ -682,7 +679,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
       name: tool("write"),
       description:
         `Call a ${title} API write (${writeMethods.join(", ")}); method and path are stated for approval. ` +
-        `Checked against the pinned index first.${vendor.idempotencyHeader ? " Pass idempotencyKey to retry safely." : ""}`,
+        `Checked against the pinned index first.${keyed.length ? ` Pass idempotencyKey to retry a ${keyedText} safely${keyed.length < writeMethods.length ? "; a DELETE sends no key" : ""}.` : ""}`,
       annotations: DESTRUCTIVE,
       inputSchema: closed(
         {
@@ -700,7 +697,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
                   type: "string",
                   minLength: 1,
                   maxLength: IDEMPOTENCY_KEY_MAX_LENGTH,
-                  description: "Reuse to retry this exact write; one is generated and returned when omitted.",
+                  description: `Reuse to retry this exact ${keyedText}; one is generated and returned when omitted.`,
                 },
               }
             : {}),
@@ -738,6 +735,10 @@ export function restTools(vendor: RestVendor): ApiTool[] {
         index.check(call.op, call.query, call.body);
         const header = vendor.idempotencyHeader && call.method !== "DELETE" ? vendor.idempotencyHeader : undefined;
         const given = typeof args["idempotencyKey"] === "string" ? args["idempotencyKey"] : undefined;
+        // A blank key reaches the vendor empty, and one fetch cannot carry
+        // never leaves: neither proves that a retry cannot repeat the write.
+        const unsendable = given === undefined ? undefined : unsendableKey(given);
+        if (unsendable) invalid(`idempotencyKey ${unsendable}, or omit it.`);
         const key = header ? (given ?? crypto.randomUUID()) : undefined;
         // Recorded before dispatch: if the invocation deadline interrupts this
         // call, no failure of ours arrives, and the invocation returns the key
@@ -749,18 +750,18 @@ export function restTools(vendor: RestVendor): ApiTool[] {
         } catch (error) {
           // A generated key exists nowhere else, so a failure must carry it:
           // only that key lets the caller check or retry this exact write.
+          // The key stays in the message as a diagnostic; the advice to
+          // reuse it is a segment the invocation composes only where the key
+          // protects the whole logical call (keyResendAdvice), and exists
+          // only once the ledger shows a dispatched request carrying it.
           if (!key || given || !(error instanceof ConnectorCallError)) throw error;
-          throw new ConnectorCallError(
-            error.code,
-            `${error.message} ${header}: ${key}. Reusing it with the exact original arguments retries this write ` +
-              "without repeating it only while the vendor retains the key; after that, look the object up before retrying.",
-            {
-              retryable: error.retryable,
-              ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
-              ...(error.validation ? { validation: error.validation } : {}),
-              ...(error.repair ? { repair: error.repair } : {}),
-              ...(error.details ? { details: error.details } : {}),
-            },
+          const failure = providerFailureMessage(error, `${error.message} ${header}: ${key}.`);
+          if (!providerRequests(ctx)?.some((request) => request.dispatched && request.key === key)) throw failure;
+          throw keyResendAdvice(
+            failure,
+            key,
+            " Reusing it with the exact original arguments retries this write without repeating it only while " +
+              "the vendor retains the key; after that, look the object up before retrying.",
           );
         }
       },

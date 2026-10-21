@@ -26,10 +26,12 @@ import { skill } from "./skill.generated.js";
  */
 import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";
 import type { GuardedRequest } from "../../connectors/guarded-fetch.js";
+import { providerCallFailure } from "../../write-outcome.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../../types.js";
 import {
   googleOutcomeOf,
+  googleFailureMessage,
   GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
@@ -39,6 +41,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 import { requestSentSecrets, redactBeforeCut } from "../../sent-secrets.js";
 
 export type {
@@ -626,8 +629,17 @@ function revisionAfter(reply: JsonRecord, dropped: string[]): string | undefined
 }
 
 // No cause: what it would carry is a transport, stream, or parser error that can quote the reply (#695).
-function uncertain(message: string): ConnectorCallError {
-  return new ConnectorCallError("connector_call_failed", message, { retryable: false });
+function uncertain(message: string, ctx: ConnectorContext): unknown {
+  return providerCallFailure(
+    ctx,
+    { title: "Google Docs" },
+    new ConnectorCallError("connector_call_failed", message, { retryable: false }),
+    {
+      dispatched: true,
+      status: 200,
+      fallback: "write",
+    },
+  );
 }
 
 /**
@@ -638,15 +650,15 @@ function uncertain(message: string): ConnectorCallError {
  * - `not-sent` (`before-send`): nothing left connecta. Nothing happened.
  * - `refused`: Google answered with a 4xx. Nothing applied.
  * - `unknown`: sent, and no status came back (`awaiting-response`), Google
- *   answered a 5xx (`server-error`, whatever reason it carries), or Google
- *   redirected (`redirected`, never followed). It may or may not have applied.
+ *   answered a 5xx (`server-error`, whatever reason it carries), Google
+ *   redirected (`redirected`, never followed), or Google answered 401 and the
+ *   write was not sent again (`unauthorized`). It may or may not have applied.
  * - `probably-applied` (`reading-body`): Google answered 2xx and the reply
  *   could not be used — it broke off, overflowed the ceiling, or would not
  *   parse.
  *
- * "Nothing applied" is claimed only for an observed 4xx: `refused` can also
- * carry a 5xx on an idempotent write, and no Docs write is sent `idempotent`
- * — a create or an insert sent twice is two; replaceAllText can match its own
+ * "Nothing applied" is claimed only for an observed 4xx (`refused`), never
+ * for a write's 5xx — a create or an insert sent twice is two; replaceAllText can match its own
  * replacement; and a revision-guarded batch sent again after its first landed
  * is refused as `conflict`, whose advice to reapply the change would then
  * duplicate it. A failure the client did not classify is `unknown`, the
@@ -668,6 +680,7 @@ function writeOutcome(error: unknown): WriteOutcome {
     case "awaiting-response":
     case "server-error":
     case "redirected":
+    case "unauthorized":
     default:
       return "unknown";
   }
@@ -711,13 +724,14 @@ async function sendWrite(
     if (ctx.signal?.aborted) throw error;
     const outcome = writeOutcome(error);
     if (outcome === "not-sent" || outcome === "refused") throw error;
-    throw uncertain(outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error)));
+    const message = outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error));
+    throw error instanceof ConnectorCallError ? googleFailureMessage(error, message) : uncertain(message, ctx);
   }
   if (reply.text.trim() === "") return {};
   try {
     return asRecord(JSON.parse(reply.text));
   } catch {
-    throw uncertain(words.applied);
+    throw uncertain(words.applied, ctx);
   }
 }
 
@@ -750,12 +764,10 @@ async function batchUpdate(
     },
     requiredRevisionId !== undefined,
     {
+      // A requiredRevisionId is a precondition, not an idempotency key the
+      // vendor honors, so it grants no repeat (INV-9).
       unknown: (detail) =>
-        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.${
-          requiredRevisionId
-            ? " Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat."
-            : ""
-        }`,
+        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.`,
       applied:
         "Google Docs accepted this edit (HTTP 2xx), so it was applied, but its reply could not be read, so the new revisionId and any counts are unknown. Do not repeat it; re-read the document with get_document.",
     },
@@ -1211,7 +1223,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
         const dropped: string[] = [];
         // An id that could not be passed back is no id at all.
         const documentId = keptId(created["documentId"], "documentId", "documentId", dropped);
-        if (!documentId) throw uncertain(createdButUnknown);
+        if (!documentId) throw uncertain(createdButUnknown, ctx);
         let revisionId = keptId(created["revisionId"], "revisionId", "revisionId", dropped);
         if (typeof args["text"] === "string") {
           try {
@@ -1229,13 +1241,10 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             // an explicit refusal proves the text is absent; anything else
             // sends the caller to look before appending.
             const detail = detailOf(cause);
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              ["refused", "not-sent"].includes(writeOutcome(cause))
-                ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
-                : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`,
-              { retryable: false, cause },
-            );
+            const message = ["refused", "not-sent"].includes(writeOutcome(cause))
+              ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
+              : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`;
+            throw cause instanceof ConnectorCallError ? googleFailureMessage(cause, message) : uncertain(message, ctx);
           }
         }
         return compact({
@@ -1510,22 +1519,24 @@ function docsConnector(id: string, options: DocsOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Docs",
+        description: `Google Docs as the signed-in Workspace user: read, create, and edit documents by id — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
+          // Required: whose documents they are, that ids come from elsewhere, and
+          // that indexes shift and go stale are conventions no schema can carry.
+          required: true,
+        },
+        tools: tools(client),
       }),
-      title: options.title ?? "Google Docs",
-      description: `Google Docs as the signed-in Workspace user: read, create, and edit documents by id — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own Docs by id: readable text with edit indexes, append/insert/replace, raw batchUpdate.",
-        // Required: whose documents they are, that ids come from elsewhere, and
-        // that indexes shift and go stale are conventions no schema can carry.
-        required: true,
-      },
-      tools: tools(client),
-    }),
+    ),
   );
 }

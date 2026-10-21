@@ -5,7 +5,7 @@
   "description": "Church Community Builder (Pushpay ChMS) — Production church data, church-wide under one administrator-approved grant (System Auth), reads plus approval-gated writes: Pastoral care and group shepherding",
   "guide": {
     "summary": "Production CCB, church-wide: id resolution, sensitive data, paging, rate limits, hatches.",
-    "content": "# Church Community Builder (Pushpay ChMS)\n\nProduction church data, church-wide under one administrator-approved grant (System Auth), reads plus approval-gated writes: Pastoral care and group shepherding\n\n## Resolve ids before acting\n\n- Every record is addressed by an integer id. Read it from a list tool and\n  pass it back; never guess one. `list_individuals` finds people by partial\n  name, phone, or email; `familyId`, `groupId`, `eventId`, form, process,\n  queue, and category ids come from their own list tools.\n- Events are series with dated occurrences. `list_events` returns\n  `eventId` plus `occurrence`; the attendance tools need both.\n- Campus and membership-type ids resolve through `ccb_api_get` on\n  `/campuses` and `/church/membership_types`.\n\n## Sensitive data stays out of results\n\nProjections drop allergies, giving numbers and dates, attendance prayer\nrequests and leader notes, and form payment details; `raw: true` returns\nCCB's full row. Notes, pledges, giving metrics, background checks, and\nfinancial settings are pastoral or financial: read them inside\n`execute_code` and return only the reduced answer the task needs.\n\nGiving in v2 is counts per period (`get_giving_metrics`), pledges, scheduled\ngifts, and financial settings. Transactions, batches, and amounts per gift\nlive only in CCB's legacy v1 XML API, which this connector does not reach.\n\n## Paging\n\nLists take `page` (1-based) and `perPage` (25, 50, 75, or 100 only) and\nreturn `page.hasMore`, `page.nextPage`, and `page.total`. Field names are\nCCB's snake_case turned camelCase.\n\n## Rate limits\n\nCCB allows each endpoint about one call a second after a burst of 60, per API\nclient. This connector keeps a per-runtime 60-per-minute window per endpoint\n— an approximation, not an enforcement. `get_individual` (1/s),\n`list_schedules` (1 per 2 s), and individuals advanced search (1 per 5 s)\nallow no burst: page a list instead of looping a get, and space those calls.\nA `rate_limited` failure carries CCB's wait.\n\n## Raw access\n\n`ccb_api_get` reaches any GET path; `ccb_api_search` runs advanced searches,\nwhich CCB serves as POST but are reads. `ccb_api_mutate` reaches every POST, PUT, PATCH, and DELETE and always needs approval. Paths are below the API origin, such as `/church/membership_types`.\nGranted scopes: read:advanced_searches read:campuses read:church read:event_attendance read:events read:forms read:group_members read:groups read:individual_groups read:individual_notes read:individual_pledges read:individuals read:individuals_metrics read:process_queues read:queue_individuals read:scheduling write:event_attendance write:events write:form_responses write:group_members write:groups write:individual_groups write:individual_notes write:individuals write:notes write:queue_individuals write:scheduling. A call outside them fails with 403.\n"
+    "content": "# Church Community Builder (Pushpay ChMS)\n\nProduction church data, church-wide under one administrator-approved grant (System Auth), reads plus approval-gated writes: Pastoral care and group shepherding\n\n## Resolve ids before acting\n\n- Every record is addressed by an integer id. Read it from a list tool and\n  pass it back; never guess one. `list_individuals` finds people by partial\n  name, phone, or email; `familyId`, `groupId`, `eventId`, form, process,\n  queue, and category ids come from their own list tools.\n- Events are series with dated occurrences. `list_events` returns\n  `eventId` plus `occurrence`; the attendance tools need both.\n- Campus and membership-type ids resolve through `ccb_api_get` on\n  `/campuses` and `/church/membership_types`.\n\n## Sensitive data stays out of results\n\nAllergies, giving numbers and dates, attendance prayer requests and leader\nnotes, and form payment details are sensitive fields. Projections always\ndrop them; Raw access below says whether `raw: true` and the hatches do\ntoo. Notes, pledges, giving metrics, background checks, and\nfinancial settings are pastoral or financial: read them inside\n`execute_code` and return only the reduced answer the task needs.\n\nGiving in v2 is counts per period (`get_giving_metrics`), pledges, scheduled\ngifts, and financial settings. Transactions, batches, and amounts per gift\nlive only in CCB's legacy v1 XML API, which this connector does not reach.\n\n## Paging\n\nLists take `page` (1-based) and `perPage` (25, 50, 75, or 100 only) and\nreturn `page.hasMore`, `page.nextPage`, and `page.total`. Field names are\nCCB's snake_case turned camelCase.\n\n## Rate limits\n\nCCB allows each endpoint about one call a second after a burst of 60, per API\nclient. This connector keeps a per-runtime 60-per-minute window per endpoint\n— an approximation, not an enforcement. `get_individual` (1/s),\n`list_schedules` (1 per 2 s), and individuals advanced search (1 per 5 s)\nallow no burst: page a list instead of looping a get, and space those calls.\nA `rate_limited` failure carries CCB's wait.\n\n## Raw access\n\n`ccb_api_get` reaches any GET path; `ccb_api_search` runs advanced searches,\nwhich CCB serves as POST but are reads. `ccb_api_mutate` reaches every POST, PUT, PATCH, and DELETE and always needs approval. Paths are below the API origin, such as `/church/membership_types`. Every result, `raw: true` and the hatches included, leaves the sensitive fields out.\nGranted scopes: read:advanced_searches read:campuses read:church read:event_attendance read:events read:forms read:group_members read:groups read:individual_groups read:individual_notes read:individual_pledges read:individuals read:individuals_metrics read:process_queues read:queue_individuals read:scheduling write:event_attendance write:events write:form_responses write:group_members write:groups write:individual_groups write:individual_notes write:individuals write:notes write:queue_individuals write:scheduling. A call outside them fails with 403.\n"
   },
   "tools": [
     {
@@ -96,7 +96,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -206,7 +206,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -381,7 +381,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -533,7 +533,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -668,7 +668,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -763,7 +763,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -902,7 +902,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -1024,7 +1024,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -1153,7 +1153,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -1249,7 +1249,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -1359,7 +1359,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -1428,7 +1428,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -1535,7 +1535,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -1634,7 +1634,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -1754,7 +1754,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -1867,7 +1867,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -1976,7 +1976,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -2079,7 +2079,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -2188,7 +2188,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -2316,7 +2316,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -2433,7 +2433,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -2542,7 +2542,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [],
@@ -2613,7 +2613,7 @@
           },
           "raw": {
             "type": "boolean",
-            "description": "Return CCB's untouched rows, including the fields the projection drops."
+            "description": "Return CCB's rows instead of the lean projection. The guide says whether sensitive fields stay dropped."
           }
         },
         "required": [
@@ -2694,7 +2694,7 @@
     },
     {
       "name": "ccb_api_get",
-      "description": "Call any CCB v2 GET endpoint and return its untouched body. Use named reads first; they project and page for you.",
+      "description": "Call any CCB v2 GET endpoint and return its body, less the sensitive fields this connection drops. Use named reads first; they project and page.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2726,7 +2726,7 @@
         "type": "object",
         "properties": {
           "result": {
-            "description": "CCB's untouched response body, or null when empty."
+            "description": "CCB's response body, less the sensitive fields this connection drops, or null when empty."
           },
           "page": {
             "type": "object",
@@ -2759,7 +2759,7 @@
     },
     {
       "name": "ccb_api_search",
-      "description": "Run a CCB advanced search (POST /search/{domain}/results) and return untouched rows. Read-only; individuals allows one call per five seconds.",
+      "description": "Run a CCB advanced search (POST /search/{domain}/results) and return its rows, less dropped sensitive fields. Read-only; individuals allows one call per five seconds.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2798,7 +2798,7 @@
         "type": "object",
         "properties": {
           "result": {
-            "description": "CCB's untouched response body, or null when empty."
+            "description": "CCB's response body, less the sensitive fields this connection drops, or null when empty."
           },
           "page": {
             "type": "object",
@@ -2885,7 +2885,7 @@
         "type": "object",
         "properties": {
           "result": {
-            "description": "CCB's untouched response body, or null when empty."
+            "description": "CCB's response body, less the sensitive fields this connection drops, or null when empty."
           },
           "page": {
             "type": "object",
