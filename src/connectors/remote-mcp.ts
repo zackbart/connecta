@@ -112,7 +112,7 @@ import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./res
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
-import { unknownOutcome, unsentAfterUnauthorized } from "../write-outcome.js";
+import { providerCallFailure, unknownOutcome, unsentAfterUnauthorized } from "../write-outcome.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
@@ -3302,19 +3302,24 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         return result;
       } catch (err) {
+        const direct = write && callClassification(ctx) === undefined;
+        // The request's own abort reason passes by identity for a read or a
+        // served call. A direct write's is finalized below: it may have left.
+        const ownAbort = ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err);
+        if (ownAbort && !direct) throw err;
         // A grant revoked after connect surfaces here, not in ensureConnected.
-        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
         if (requiresAuthorization(err) && state.client === client) state.authRequired = true;
-        const failure =
-          err instanceof UnauthorizedError
+        const failure = ownAbort
+          ? err
+          : err instanceof UnauthorizedError
             ? carryFailureFacts(err, authRequiredError())
             : downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
         if (!write) throw failure;
         // A write that left is never advertised as safe to repeat (INV-9):
         // not after a 401, whatever the grant's recovery met; not after a
         // redirect or a further send stopped here; and not after a gateway's
-        // 502 to 504 or a connection lost once it was sent.
-        const settled = dispatch.unauthorized
+        // 502 to 504, a timeout, or a connection lost once it was sent.
+        const verdict = dispatch.unauthorized
           ? unsentAfterUnauthorized(`Connector "${id}"'s MCP server`, dispatch.resendRefused ? undefined : failure)
           : dispatch.redirected || dispatch.resendRefused
             ? new ConnectorCallError(
@@ -3326,7 +3331,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   "so whether it took effect is unknown: check the target before repeating it.",
                 { retryable: false, writeOutcome: "unknown" },
               )
-            : unknownOutcome({ title: `connector "${id}"` }, failure, ctx);
+            : failure;
+        const vendor = { title: `connector "${id}"` };
+        // Whether this call's tools/call reached fetch is the dispatch ledger;
+        // the HTTP status the endpoint answered is its served verdict.
+        const status = failureRecord({}, err).httpStatus;
+        const settled = direct
+          ? providerCallFailure(ctx, vendor, verdict, {
+              dispatched: dispatch.sent,
+              ...(status === undefined ? {} : { status }),
+              fallback: "write",
+            })
+          : verdict === failure
+            ? unknownOutcome(vendor, failure)
+            : verdict;
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
       } finally {
         state.dispatches.delete(dispatch);

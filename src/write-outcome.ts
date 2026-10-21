@@ -5,9 +5,15 @@
 // classification, errors and operator facts, without depending on a provider.
 import { callClassification } from "./call-classification.js";
 import type { ConnectorContext } from "./types.js";
-import { classifyCallError, ConnectorCallError, WithheldTextError, type CallErrorDetails } from "./errors.js";
+import {
+  classifyCallError,
+  ConnectorCallError,
+  networkErrorCode,
+  WithheldTextError,
+  type CallErrorDetails,
+} from "./errors.js";
 import { isKnownProviderFailure, knownProviderFailure, providerRequests, refusalRequest } from "./provider-call.js";
-import { carryFailureFacts } from "./operator-record.js";
+import { carryFailureFacts, errorLabel } from "./operator-record.js";
 
 /** How a dispatched write ended, as far as anyone can know. */
 export type WriteState = "ok" | "failed" | "unknown";
@@ -68,26 +74,26 @@ const REFUSALS = new Set([
 ]);
 
 /**
- * A request that is not safe to repeat (a write without an idempotency key)
- * must never be advertised as retryable after it may have reached the vendor
- * (INV-9): a 5xx, a gateway's 502 to 504, a broken-off reply, or a connection
- * lost after sending. No network failure proves a write unsent: one send can
- * hide several attempts (a 421 or HTTP/2 refused-stream resend, a retrying
+ * A write's retryable common failure, told as an unknown outcome (INV-9). A
+ * request that is not safe to repeat (a write without an idempotency key)
+ * must never be advertised as retryable after it may have reached the vendor:
+ * a 5xx, a gateway's 502 to 504, a broken-off reply, or a connection lost
+ * after sending. No network failure proves a write unsent: one send can hide
+ * several attempts (a 421 or HTTP/2 refused-stream resend, a retrying
  * dispatcher), so a refusal on the last says nothing about the first.
  * Definite answers pass through: refusals and 4xx verdicts (a 429 or a lock
- * conflict included). Timeouts (`timeout`, `ETIMEDOUT`, `*_TIMEOUT`) pass
- * through only on a served call, whose invocation reports them as
- * `write_outcome_unknown`; a direct caller has no such boundary, so its
- * timeout becomes an unknown outcome that keeps the timeout diagnostics.
+ * conflict included). Timeouts pass through too, for a served call's
+ * invocation to report as `write_outcome_unknown`; a served `remoteMcp()`
+ * write comes here directly. A direct write never reaches this with a timeout
+ * or an abort: {@link providerCallFailure} settles those first.
  */
-export function unknownOutcome(vendor: { title: string }, error: unknown, ctx: ConnectorContext): unknown {
+export function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
   if (error instanceof WithheldTextError) {
-    if (!error.retryable) return error;
-    if (error.timeout) return timeoutOutcome(ctx, vendor, error);
+    if (!error.retryable || error.timeout) return error;
   } else {
     if (!(error instanceof ConnectorCallError) || !error.retryable) return error;
     if (error.code !== "unavailable" && error.code !== "connector_call_failed") return error;
-    if (isTimeout(error)) return timeoutOutcome(ctx, vendor, error);
+    if (isTimeout(error)) return error;
   }
   return new ConnectorCallError(
     "connector_call_failed",
@@ -98,11 +104,23 @@ export function unknownOutcome(vendor: { title: string }, error: unknown, ctx: C
 }
 
 /**
- * One failure decision for API providers. The served verdict outranks every
- * transport default and replay-safety hint. Dispatch facts come from the
- * transport, never from a provider's interpretation of its HTTP method.
- * A write is a known failure only on positive evidence: a definite refusal
- * served by the vendor, or a request connecta refused before it left.
+ * The one failure decision for a write, and the one place a direct write's
+ * failure is finalized (INV-9). Every connector surface hands a write's
+ * failure here before it leaves: the `api()` handler boundary, a guarded
+ * transport outside a call ledger (inside one, beneath `ctx.fetch`, the
+ * shared REST layer, or Google, it defers to the `api()` boundary), and a
+ * direct `remoteMcp().callTool()`. Nothing passes a direct write's failure on
+ * ahead of it, the caller's own abort included.
+ *
+ * The served verdict outranks every transport default and replay-safety hint.
+ * Dispatch facts come from the transport, never from a provider's
+ * interpretation of its HTTP method. A write is a known failure only on
+ * positive evidence: a definite refusal served by the vendor, or a request
+ * connecta refused before it left. A direct write that may have left and then
+ * timed out, was aborted, or failed without a served refusal is an unknown
+ * outcome, never retryable, unless the caller proved it repeatable with an
+ * idempotency key the vendor receives. A served call's invocation reports its
+ * own timeouts and aborts.
  */
 export function providerCallFailure(
   ctx: ConnectorContext,
@@ -127,7 +145,7 @@ export function providerCallFailure(
   if (requests) {
     // An empty or partial ledger is no proof for a handler that can send
     // around it: nothing it saw rules out a request it did not see.
-    if (facts.untracked) return uncertainProviderFailure(vendor, error);
+    if (facts.untracked) return uncertainProviderFailure(vendor, error, ctx);
     // In flight counts as sent. The call is closed, so nothing else leaves.
     const dispatched = requests.filter((request) => request.dispatched && !request.auxiliary);
     if (dispatched.length === 0) return knownProviderFailure(error);
@@ -140,15 +158,27 @@ export function providerCallFailure(
     )
       return knownProviderFailure(error);
     if (served === undefined && dispatched.length === 1 && dispatched[0]?.repeatable) return error;
-    return uncertainProviderFailure({ title: dispatched[0]?.provider ?? vendor.title }, error);
+    return uncertainProviderFailure({ title: dispatched[0]?.provider ?? vendor.title }, error, ctx);
   }
   if (!facts.dispatched) return error;
-  // A direct transport user may prove idempotency. A deployment's served
-  // write verdict still requires reconciliation rather than retry advice.
-  if (served === undefined && facts.repeatable === true) return error;
-  if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error, ctx);
-  if (error.writeOutcome === "unknown") return error;
-  if (isTimeout(error)) return timeoutOutcome(ctx, vendor, error);
+  if (served === undefined) {
+    // A direct transport user may prove idempotency. A deployment's served
+    // write verdict still requires reconciliation rather than retry advice.
+    if (facts.repeatable === true) return error;
+    // Read before any code filter: a timeout or an abort, whatever its code
+    // or source, is no verdict, and no invocation will report it.
+    if (timedOutOrAborted(error, ctx)) return uncertainProviderFailure(vendor, error, ctx);
+    if (!(error instanceof ConnectorCallError)) {
+      const converted = unknownOutcome(vendor, error);
+      return converted === error ? uncertainProviderFailure(vendor, error, ctx) : converted;
+    }
+    if (error.writeOutcome === "unknown") return uncertainProviderFailure(vendor, error, ctx);
+  } else {
+    if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error);
+    if (error.writeOutcome === "unknown") return error;
+    // The served call's invocation reports it as `write_outcome_unknown`.
+    if (isTimeout(error)) return error;
+  }
   // A 5xx cannot prove refusal, even when its body names a quota/auth reason.
   const serverError = facts.status !== undefined && facts.status >= 500;
   if (
@@ -167,7 +197,7 @@ export function providerCallFailure(
       ),
     );
   }
-  const converted = unknownOutcome(vendor, error, ctx);
+  const converted = unknownOutcome(vendor, error);
   if (converted instanceof ConnectorCallError && converted !== error) return carryFailureFacts(error, converted);
   return carryFailureFacts(
     error,
@@ -178,18 +208,37 @@ export function providerCallFailure(
   );
 }
 
+function isTimeoutCode(code: string | undefined): boolean {
+  return code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT") === true;
+}
+
+/** `code: "timeout"` (an SDK or connecta deadline, an HTTP 408) or a timeout errno. */
 function isTimeout(error: ConnectorCallError): boolean {
-  const code = error.details?.code;
-  return error.code === "timeout" || code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT") === true;
+  return error.code === "timeout" || isTimeoutCode(error.details?.code);
 }
 
 /**
- * A write that may have left and then timed out. A served call's invocation
- * owns that outcome (`write_outcome_unknown`); a direct caller has no
- * invocation, so the failure itself must say the outcome is unknown.
+ * A direct caller's own abort reason, when its signal had aborted by the time
+ * the failure arrived. Node's fetch rejects with that reason itself; workerd's
+ * with an error of its own, so identity alone cannot tell. A served call's
+ * signal is its invocation's, which reports its own deadline and cancellation.
  */
-function timeoutOutcome(ctx: ConnectorContext, vendor: { title: string }, error: unknown): unknown {
-  return callClassification(ctx) === undefined ? uncertainProviderFailure(vendor, error) : error;
+function callerAbort(ctx: ConnectorContext): { reason: unknown } | undefined {
+  const signal = ctx.signal;
+  return signal?.aborted === true && callClassification(ctx) === undefined ? { reason: signal.reason } : undefined;
+}
+
+/**
+ * Every timeout and abort a direct write can meet: the caller's own signal
+ * (an `AbortSignal.timeout` included), the SDK's request deadline and
+ * connecta's own (`code: "timeout"`), and a runtime's timeout errno
+ * (`ETIMEDOUT`, undici's `UND_ERR_*_TIMEOUT`) or `AbortError`.
+ */
+function timedOutOrAborted(error: unknown, ctx: ConnectorContext): boolean {
+  if (callerAbort(ctx) !== undefined) return true;
+  if (error instanceof WithheldTextError) return error.timeout;
+  if (error instanceof ConnectorCallError) return isTimeout(error);
+  return isTimeoutCode(networkErrorCode(error));
 }
 
 /** Change recovery wording without rebuilding a provider's shared verdict. */
@@ -208,42 +257,75 @@ export function providerFailureMessage(error: ConnectorCallError, message: strin
   );
 }
 
-/** Final ambiguous call verdict, including typed handler failures after 2xx. */
-function uncertainProviderFailure(vendor: { title: string }, error: unknown): ConnectorCallError {
+/**
+ * Final ambiguous call verdict, including typed handler failures after 2xx
+ * and the caller's own abort.
+ */
+function uncertainProviderFailure(
+  vendor: { title: string },
+  error: unknown,
+  ctx: ConnectorContext,
+): ConnectorCallError {
   if (error instanceof ConnectorCallError && error.writeOutcome === "unknown" && !error.retryable) return error;
+  const abort = callerAbort(ctx);
+  if (abort) return callerAborted(vendor, error, abort.reason);
   const details = classifyCallError(error);
-  const networkCode = details.details?.code;
   const timeout =
-    details.code === "timeout" ||
-    (details.code === "unavailable" &&
-      (networkCode === "timeout" || networkCode === "ETIMEDOUT" || networkCode?.endsWith("_TIMEOUT") === true));
+    details.code === "timeout" || (details.code === "unavailable" && isTimeoutCode(details.details?.code));
   const common =
     error instanceof ConnectorCallError && (error.code === "unavailable" || error.code === "connector_call_failed");
   const message =
     !timeout && common && error.retryable
-      ? `${error.message} Whether the write took effect at ${vendor.title} is unknown; check the target before repeating it.`
+      ? `${details.message} Whether the write took effect at ${vendor.title} is unknown; check the target before repeating it.`
       : details.message;
+  const code =
+    error instanceof ConnectorCallError && (error.code !== "unavailable" || timeout)
+      ? error.code
+      : timeout
+        ? "timeout"
+        : "connector_call_failed";
+  return carryFailureFacts(
+    error,
+    new ConnectorCallError(code, message, {
+      retryable: false,
+      writeOutcome: "unknown",
+      // Diagnostics stay with the code they describe.
+      ...(error instanceof ConnectorCallError && code === error.code && error.details
+        ? { details: error.details }
+        : {}),
+      ...(error instanceof ConnectorCallError
+        ? {
+            ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
+            ...(error.validation ? { validation: error.validation } : {}),
+            ...(error.repair ? { repair: error.repair } : {}),
+            ...(error.current ? { current: error.current } : {}),
+          }
+        : {}),
+    }),
+  );
+}
+
+/**
+ * A direct write the caller's own signal aborted after it may have left: a
+ * `timeout` when the reason is one (`AbortSignal.timeout`), else
+ * `connector_call_failed`. The reason stays the cause, since the caller wrote
+ * it, and its class and timeout code stay in `details`, so the caller can
+ * still tell its own abort apart on every runtime.
+ */
+function callerAborted(vendor: { title: string }, error: unknown, reason: unknown): ConnectorCallError {
+  const code = networkErrorCode(reason);
+  const name = errorLabel(reason);
   return carryFailureFacts(
     error,
     new ConnectorCallError(
-      error instanceof ConnectorCallError && (error.code !== "unavailable" || timeout)
-        ? error.code
-        : timeout
-          ? "timeout"
-          : "connector_call_failed",
-      message,
+      isTimeoutCode(code) ? "timeout" : "connector_call_failed",
+      `The caller's signal aborted this call${name ? ` (${name})` : ""} after the write may have reached ` +
+        `${vendor.title}. Whether it took effect is unknown; check the target before repeating it.`,
       {
         retryable: false,
         writeOutcome: "unknown",
-        ...(error instanceof ConnectorCallError
-          ? {
-              ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
-              ...(error.details ? { details: error.details } : {}),
-              ...(error.validation ? { validation: error.validation } : {}),
-              ...(error.repair ? { repair: error.repair } : {}),
-              ...(error.current ? { current: error.current } : {}),
-            }
-          : {}),
+        cause: reason,
+        ...(name || code ? { details: { ...(name ? { name } : {}), ...(code ? { code } : {}) } } : {}),
       },
     ),
   );

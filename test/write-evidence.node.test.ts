@@ -300,6 +300,29 @@ describe("an idempotency key proves a write repeatable only when the vendor rece
     },
   );
 
+  it.each(["a\rb", "a\nb", "a\0b", "\v", "a\x7fb", "a\u0100b"])(
+    "INV-9: a key fetch cannot send, %j, is refused before dispatch, direct or served, and never recorded",
+    async (idempotencyKey) => {
+      // fetch refuses the whole request for such a header, so the key never
+      // reaches the vendor and cannot make a repeat harmless.
+      const server = await recording("reset");
+      try {
+        const stripe = await stripeAt(server.origin);
+        const direct = await stripe.direct({ ...CUSTOMER, idempotencyKey });
+        expect(direct).toMatchObject({ code: "invalid_args", retryable: false });
+        expect((direct as Error).message).toContain("idempotencyKey contains a character an HTTP header cannot carry");
+        const served = await stripe.served({ ...CUSTOMER, idempotencyKey });
+        if (served.ok) throw new Error("expected the write to fail");
+        expect(served.error).toMatchObject({ code: "invalid_args", retryable: false });
+        expect(served.error).not.toHaveProperty("uncertainCall");
+        expect(classifyWriteOutcome({ ok: false, dispatched: served.dispatched, error: served.error })).toBe("failed");
+        expect(server.received).toEqual([]);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
   it("INV-9: a genuine key a direct caller sent keeps its retry advice, and a served write keeps it for recovery", async () => {
     const server = await recording("reset");
     try {
@@ -436,6 +459,74 @@ describe("a direct write that times out after dispatch", () => {
       });
       expect(result.error.message).toContain("timed out during downstream");
       expect(server.received).toEqual([{ method: "POST", key: undefined }]);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("a direct write that the caller's own signal times out after dispatch", () => {
+  /** An api() connector whose handler sends through ctx.fetch with the caller's signal. */
+  function tickets(origin: string) {
+    const connector = api("tickets", {
+      tools: (["send", "list"] as const).map((name) => ({
+        name,
+        description: `${name} tickets`,
+        annotations: { readOnlyHint: name === "list" },
+        handler: (_args: unknown, ctx: import("../src/connectors/api.js").ApiHandlerContext) =>
+          ctx.fetch(`${origin}/tickets`, {
+            method: name === "list" ? "GET" : "POST",
+            ...(name === "list" ? {} : { body: "{}" }),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          }),
+      })),
+    });
+    return { connector, registry: makeRegistry([connector]) };
+  }
+
+  it("INV-9: is unknown and never retryable each time, keeping the timeout's class, code, and reason", async () => {
+    // The identity passthrough once returned the raw TimeoutError, which
+    // classifies as a retryable timeout: each repeat sent the POST again.
+    const server = await recording("silent");
+    try {
+      const { connector, registry } = tickets(server.origin);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const ctx = registry.contextFor("tickets", "https://connecta.example", undefined, {
+          signal: AbortSignal.timeout(200),
+        });
+        const error = await connector.callTool("send", {}, ctx).then(
+          () => {
+            throw new Error("expected the write to fail");
+          },
+          (failure: unknown) => failure as Error,
+        );
+        expect(error).toMatchObject({
+          code: "timeout",
+          retryable: false,
+          writeOutcome: "unknown",
+          details: { name: "TimeoutError", code: "timeout" },
+        });
+        expect(error.cause).toBe(ctx.signal!.reason);
+        expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("unknown");
+      }
+      expect(server.received).toEqual([
+        { method: "POST", key: undefined },
+        { method: "POST", key: undefined },
+      ]);
+
+      // Control: a read passes the caller's reason through by identity.
+      const ctx = registry.contextFor("tickets", "https://connecta.example", undefined, {
+        signal: AbortSignal.timeout(200),
+      });
+      expect(await connector.callTool("list", {}, ctx).catch((failure: unknown) => failure)).toBe(ctx.signal!.reason);
+
+      // Control: a served write's deadline is reported by its invocation.
+      const served = await new InvocationService(
+        registry,
+        new CatalogService(registry, "https://connecta.example"),
+      ).invoke("tickets.send", {}, { source: "call_destructive_tool", timeoutMs: 200 });
+      if (served.ok) throw new Error("expected the write to fail");
+      expect(served.error).toMatchObject({ code: "write_outcome_unknown", retryable: false });
     } finally {
       await server.close();
     }

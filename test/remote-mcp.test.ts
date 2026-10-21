@@ -1696,11 +1696,14 @@ describe("downstream tool error classification", () => {
               : status === 408
                 ? "timeout"
                 : "connector_call_failed",
-        retryable: status === 429 || status === 408,
+        // The unlisted tool is a direct write: a 408 is a timeout, whose
+        // outcome is unknown; every other 4xx is the endpoint's refusal.
+        retryable: status === 429,
         message: expect.stringContaining(
           status === 403 ? "Check the account's permissions" : "timeout is not a valid parameter:",
         ),
       });
+      expect(classifyCallError(error).writeOutcome).toBe(status === 408 ? "unknown" : undefined);
       expect(new TextEncoder().encode(classifyCallError(error).message).length).toBeLessThanOrEqual(515);
       await connector.closeScope!(context);
     },

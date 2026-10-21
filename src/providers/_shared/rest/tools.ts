@@ -172,6 +172,20 @@ function sentValue(value: string): string {
 }
 
 /**
+ * Why fetch would not send `value` as a header value the vendor receives:
+ * blank once trimmed, or a byte fetch rejects (CR, LF, NUL, any other control
+ * character but tab, DEL, or a code point past Latin-1). Undici refuses the
+ * whole request for any of them; workerd at least for CR, LF and NUL.
+ */
+function unsendableKey(value: string): string | undefined {
+  const sent = sentValue(value);
+  if (sent === "") return "is blank; pass a key with at least one non-whitespace character";
+  if (!/^[\t\x20-\x7e\x80-\xff]*$/.test(sent))
+    return "contains a character an HTTP header cannot carry (a control character, or one past Latin-1); pass a printable key";
+  return undefined;
+}
+
+/**
  * A guarded transport whose requests, response bodies included, end after
  * `timeoutMs`: a stream the vendor never closes cannot hold a call open past
  * it. The request's own signal still cancels first.
@@ -322,7 +336,9 @@ export async function callRest(
     // Only a key the vendor receives proves the write repeatable.
     repeatable:
       header !== undefined &&
-      Object.entries(visibleHeaders).some(([name, value]) => name.toLowerCase() === header && sentValue(value) !== ""),
+      Object.entries(visibleHeaders).some(
+        ([name, value]) => name.toLowerCase() === header && unsendableKey(value) === undefined,
+      ),
     path: call.path,
     ...(framing.query ? { query: framing.query } : {}),
     ...(framing.headers ? { headers: framing.headers } : {}),
@@ -703,11 +719,10 @@ export function restTools(vendor: RestVendor): ApiTool[] {
         index.check(call.op, call.query, call.body);
         const header = vendor.idempotencyHeader && call.method !== "DELETE" ? vendor.idempotencyHeader : undefined;
         const given = typeof args["idempotencyKey"] === "string" ? args["idempotencyKey"] : undefined;
-        // fetch trims a header value, so a blank key would reach the vendor
-        // empty: no key at all, and no proof that a retry cannot repeat it.
-        if (given !== undefined && sentValue(given) === "") {
-          invalid("idempotencyKey is blank; pass a key with at least one non-whitespace character, or omit it.");
-        }
+        // A blank key reaches the vendor empty, and one fetch cannot carry
+        // never leaves: neither proves that a retry cannot repeat the write.
+        const unsendable = given === undefined ? undefined : unsendableKey(given);
+        if (unsendable) invalid(`idempotencyKey ${unsendable}, or omit it.`);
         const key = header ? (given ?? crypto.randomUUID()) : undefined;
         // Recorded before dispatch: if the invocation deadline interrupts this
         // call, no failure of ours arrives, and the invocation returns the key

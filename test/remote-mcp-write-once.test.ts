@@ -5,6 +5,8 @@ import { attachCallClassification } from "../src/call-classification.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { InvocationService } from "../src/invocation.js";
+import { CatalogService } from "../src/catalog-service.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scopes } from "../src/storage/keys.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -43,7 +45,8 @@ type Answer =
   | "resume"
   | "reset"
   | "refused"
-  | "timeout";
+  | "timeout"
+  | "deadline";
 
 function setup(
   options: {
@@ -155,6 +158,15 @@ function setup(
     if (answer === "reset") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
     if (answer === "timeout")
       throw Object.assign(new TypeError("fetch failed"), { cause: { code: "UND_ERR_HEADERS_TIMEOUT" } });
+    // The answer never arrives: the SDK's request deadline or the caller's
+    // signal ends the call, rejecting fetch with its reason.
+    if (answer === "deadline") {
+      const signal = init!.signal!;
+      return await new Promise<Response>((_resolve, reject) => {
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }
     return new Response("<html>bad gateway</html>", { status: answer, headers: { "content-type": "text/html" } });
   });
   const storage = memoryStorage();
@@ -226,7 +238,9 @@ function setup(
     outcome,
     program,
     connector,
-    context: () => registry.contextFor("svc", BASE),
+    context: (options?: { signal?: AbortSignal; timeoutMs?: number }) =>
+      registry.contextFor("svc", BASE, undefined, options),
+    registry,
     seedOAuth,
     applied,
     answers,
@@ -599,5 +613,68 @@ describe("remote MCP writes after an ambiguous failure", () => {
       uncertainCall: { address: "svc.create_item", args: { id: 2 } },
     });
     expect(flow.applied).toEqual(["create_item 1", "list_items", "create_item 2"]);
+  });
+  it("INV-9: a direct write the SDK's request deadline ended after the server acted is unknown and never retryable", async () => {
+    // The SDK's own deadline fails the call with `code: "timeout"`, which no
+    // common-code filter may let past as retryable: each repeat applies again.
+    const flow = setup();
+    const ctx = flow.context({ timeoutMs: 100 });
+    await flow.connector.listTools(ctx);
+    flow.answers.set("create_item", "deadline");
+    flow.answers.set("list_items", "deadline");
+    const direct = (name: string, args: Record<string, unknown>) =>
+      flow.connector.callTool(name, args, ctx).then(
+        () => {
+          throw new Error("expected the call to fail");
+        },
+        (failure: unknown) => failure as { code: string; retryable: boolean; writeOutcome?: string },
+      );
+    for (const id of [1, 2])
+      expect(await direct("create_item", { id })).toMatchObject({
+        code: "timeout",
+        retryable: false,
+        writeOutcome: "unknown",
+      });
+    expect(flow.applied).toEqual(["create_item 1", "create_item 2"]);
+
+    // Control: a direct read's deadline stays retryable.
+    const read = await direct("list_items", {});
+    expect(read).toMatchObject({ code: "timeout", retryable: true });
+    expect(read.writeOutcome).toBeUndefined();
+
+    // Control: a served write's deadline is unchanged; the invocation reports it.
+    const served = await new InvocationService(flow.registry, new CatalogService(flow.registry, BASE)).invoke(
+      "svc.create_item",
+      { id: 3 },
+      { source: "call_destructive_tool", timeoutMs: 100 },
+    );
+    if (served.ok) throw new Error("expected the write to fail");
+    expect(served.error).toMatchObject({
+      code: "write_outcome_unknown",
+      retryable: false,
+      details: { stage: "downstream" },
+      uncertainCall: { address: "svc.create_item", args: { id: 3 } },
+    });
+    expect(flow.applied).toEqual(["create_item 1", "create_item 2", "list_items", "create_item 3"]);
+  });
+
+  it("INV-9: a direct write the caller aborted after the server acted is unknown; its reason stays the cause", async () => {
+    const flow = setup();
+    const controller = new AbortController();
+    const ctx = flow.context({ signal: controller.signal });
+    await flow.connector.listTools(ctx);
+    flow.answers.set("create_item", "deadline");
+    const pending = flow.connector.callTool("create_item", { id: 1 }, ctx).then(
+      () => {
+        throw new Error("expected the call to fail");
+      },
+      (failure: unknown) => failure as Error & { code: string },
+    );
+    await vi.waitFor(() => expect(flow.applied).toEqual(["create_item 1"]));
+    const reason = new Error("caller left");
+    controller.abort(reason);
+    const error = await pending;
+    expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(error.cause).toBe(reason);
   });
 });

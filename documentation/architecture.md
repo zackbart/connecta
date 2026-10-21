@@ -1936,13 +1936,29 @@ compiling and configuring the real thing.
   A served write requires reconciliation even with an idempotency key or a
   provider's idempotent-operation hint; direct transport calls without a
   served verdict can still prove repeatability, but only with a key the
-  vendor receives: the REST write tool refuses an `idempotencyKey` that fetch's
-  header trimming would send empty (`invalid_args`, before recovery is
-  recorded), and `callRest` marks a request repeatable only for a non-blank
-  key. Without that proof, a direct write's timeout after dispatch is unknown
-  and non-retryable, keeping its code and `details.code`: no invocation exists
-  to report it as `write_outcome_unknown`. A served write's timeout passes
-  through unchanged for the invocation to report.
+  vendor receives: the REST write tool refuses an `idempotencyKey` that fetch
+  would send empty after trimming or would not send at all (CR, LF, NUL, any
+  other control character but tab, DEL, or a code point past Latin-1), as
+  `invalid_args` before recovery is recorded, and `callRest` marks a request
+  repeatable only for a key fetch sends as given.
+  `providerCallFailure` (`src/write-outcome.ts`) is the one finalizer for a
+  direct write's failure: the `api()` handler boundary, a guarded transport
+  outside a call ledger, and a direct `remoteMcp().callTool()` (with its
+  `tools/call` dispatch record as the ledger and the endpoint's HTTP status
+  as the served verdict) all hand it every write failure. Guarded transports
+  inside a call (`ctx.fetch`, the shared REST layer, Google) defer to the
+  `api()` boundary. No identity passthrough or code filter runs ahead of it
+  for a direct write. It recognizes every timeout and abort before any code
+  filter: the caller's own signal (an `AbortSignal.timeout` included, and
+  however the runtime's fetch reports it), an SDK or connecta deadline
+  (`code: "timeout"`, an HTTP 408), and a timeout errno. Without a genuine
+  key, such a write is unknown and non-retryable: a timeout keeps its code
+  and `details.code`; the caller's abort becomes `timeout` or
+  `connector_call_failed` with its reason as `cause` and its class and code
+  in `details`. No invocation exists to report it as
+  `write_outcome_unknown`. The caller's own abort reason still passes by
+  identity for a read and for a served call, whose timeout passes through
+  unchanged for the invocation to report.
   The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
   provider/tool in both runtimes, fails on missing provider/tool examples or a
   dispatched failure bypassing the helper, and covers served write/read

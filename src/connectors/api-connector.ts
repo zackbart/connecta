@@ -412,8 +412,6 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         // Settled before anything is decided or reported: a request that has
         // not left by now (a sibling awaiting its credential) never will.
         closeProviderCall(callCtx);
-        // The request's own abort reason, by identity, is the caller's.
-        if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
         // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
         // URL, so it must never masquerade as the failed downstream host.
         const settle = (failure: unknown) =>
@@ -427,6 +425,12 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
               untracked: !tracksRequests(connector),
             }),
           );
+        // The request's own abort reason, by identity, is the caller's. A
+        // direct write's is settled like any other failure: it may have left.
+        if (ctx.signal?.aborted === true && error === ctx.signal.reason) {
+          if (!write || callClassification(ctx) !== undefined) throw error;
+          throw settle(error);
+        }
         if (error instanceof ConnectorCallError) throw settle(error);
         if (!networkErrorCode(error)) {
           // Anything else is a runtime's, parser's, or stream's account of

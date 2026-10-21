@@ -641,8 +641,14 @@ describe("a reply the SDK cannot parse", () => {
       mode,
     );
     expect(error.message).toContain('Connector "svc" tools/call with https://downstream.example failed (SyntaxError).');
-    // A SyntaxError's verdict, as it had before its text was withheld.
-    expect(classified).toEqual({ ...classifyCallError(new SyntaxError("Unexpected token")), message: error.message });
+    // A SyntaxError's verdict, as it had before its text was withheld. The
+    // unlisted tool is a direct write, and an unreadable reply proves nothing
+    // about it, so its outcome is unknown (INV-9).
+    expect(classified).toEqual({
+      ...classifyCallError(new SyntaxError("Unexpected token")),
+      message: error.message,
+      writeOutcome: "unknown",
+    });
   });
 
   it.each(modes)("withholds a parser's account of the handshake's reply (%s)", async (mode) => {
@@ -705,7 +711,8 @@ describe("a reply the SDK cannot parse", () => {
     await connector.closeScope!(context);
     // The SDK reports a frame it cannot parse only to the transport's
     // `onerror`, which nothing renders; the call itself runs out of time.
-    expect(classifyCallError(error)).toMatchObject({ code: "timeout", retryable: true });
+    // The unlisted tool is a direct write, so the timeout is an unknown outcome.
+    expect(classifyCallError(error)).toMatchObject({ code: "timeout", retryable: false, writeOutcome: "unknown" });
     expectWithheld(rendered(error), JSON.stringify(classifyCallError(error)), ...lines);
   });
 
@@ -1008,6 +1015,8 @@ describe("the MCP boundary is an allow-list", () => {
       "fetch",
       downstream({
         live: true,
+        // A listed read: a direct write's abort after dispatch is an unknown outcome instead.
+        tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
         toolCall: () => {
           controller.abort(reason);
           return new Response(new ReadableStream({ start() {} }), { headers: { "content-type": "application/json" } });
@@ -1016,6 +1025,7 @@ describe("the MCP boundary is an allow-list", () => {
     );
     const connector = remoteMcp("svc", { url: MCP_URL, versionNegotiation: mode });
     const context: ConnectorContext = { ...scope(), signal: controller.signal };
+    await connector.listTools(context);
     const error = await connector.callTool("read", {}, context).then(
       () => null,
       (err: unknown) => err,

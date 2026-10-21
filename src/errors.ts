@@ -276,7 +276,11 @@ function boundedValidation(details: ArgumentValidationDetails | undefined): Argu
 
 /** Optional transport diagnostics; never a URL path or raw runtime message. */
 interface UnavailableDetails {
-  /** Guest program diagnostics; returned to the agent, never operator records. */
+  /**
+   * An error class label: a guest program's, or the class of the caller's own
+   * abort reason behind a direct write whose outcome is unknown. Returned to
+   * the agent, never operator records.
+   */
   name?: string;
   line?: number | null;
   hint?: string;
@@ -318,6 +322,9 @@ function networkCode(value: unknown): string | undefined {
   return typeof value === "string" && value.length <= 32 && NETWORK_ERROR_CODES.has(value) ? value : undefined;
 }
 
+/** An error class label, as `errorLabel` reports one. */
+const ERROR_CLASS = /^[A-Z][A-Za-z]{0,63}$/;
+
 function sanitizedUnavailableDetails(details: UnavailableDetails | undefined): UnavailableDetails | undefined {
   if (!details) return undefined;
   let host: string | undefined;
@@ -331,7 +338,10 @@ function sanitizedUnavailableDetails(details: UnavailableDetails | undefined): U
     }
   }
   const code = networkCode(details.code);
-  return host || code ? { ...(host ? { host } : {}), ...(code ? { code } : {}) } : undefined;
+  const name = typeof details.name === "string" && ERROR_CLASS.test(details.name) ? details.name : undefined;
+  return host || code || name
+    ? { ...(name ? { name } : {}), ...(host ? { host } : {}), ...(code ? { code } : {}) }
+    : undefined;
 }
 
 /** Runtime fields only: provider prose cannot supply an errno or a deadline. */
@@ -480,7 +490,10 @@ export class ConnectorCallError extends Error {
   /** Bounded schema findings for `invalid_args`; never submitted values. */
   readonly validation: ArgumentValidationDetails | undefined;
   readonly repair: ArgumentRepairDetails | undefined;
-  /** Sanitized transport diagnostics for `unavailable` only. */
+  /**
+   * Sanitized transport diagnostics, for `unavailable` and for a write whose
+   * outcome is unknown (a timeout's errno, an abort's class).
+   */
   readonly details: UnavailableDetails | undefined;
   /**
    * For `conflict` only: where each thing the write touched stands now, e.g.
@@ -514,7 +527,8 @@ export class ConnectorCallError extends Error {
     this.code = code;
     this.retryable = opts.retryable ?? RETRYABLE_BY_CODE[code];
     this.retryAfterMs = normalizeRetryAfterMs(opts.retryAfterMs);
-    this.details = code === "unavailable" ? sanitizedUnavailableDetails(opts.details) : undefined;
+    this.details =
+      code === "unavailable" || opts.writeOutcome === "unknown" ? sanitizedUnavailableDetails(opts.details) : undefined;
     this.validation = code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
     this.repair = code === "invalid_args" ? boundedRepair(opts.repair) : undefined;
     this.current = code === "conflict" ? boundedCurrent(opts.current) : undefined;

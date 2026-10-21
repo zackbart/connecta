@@ -965,9 +965,17 @@ carry `argsOmitted: true`; sensitive or unresolved schemas also carry
 arguments if reconciliation requires another call. A timeout before dispatch remains `timeout`.
 A connector's `callTool` called directly from code, outside an invocation, has
 no such boundary: a write that may have been dispatched and then timed out
-keeps its code and timeout `details.code`, and is `retryable: false` with
-`writeOutcome: "unknown"`. Only a non-blank idempotency key the vendor receives
-keeps such a direct write's retry advice. A direct read's timeout stays retryable.
+(an SDK deadline or HTTP 408 included) keeps its code and timeout
+`details.code`, and is `retryable: false` with `writeOutcome: "unknown"`. A
+write the caller's own signal aborted after it may have been dispatched is
+the same: `timeout` when the reason is one (`AbortSignal.timeout`), else
+`connector_call_failed`, with the caller's reason as its `cause` and the
+reason's class and code in `details` (`{ name: "TimeoutError", code:
+"timeout" }`). Only an idempotency key the vendor receives keeps such a direct
+write's retry advice: a key that is blank once trimmed, or that holds a
+character fetch cannot send in a header, is refused as `invalid_args`. A
+direct read's timeout stays retryable, and a direct read's own abort reason is
+rethrown unchanged.
 Program write accounting keeps this detail even if the guest catches the
 failure or returns early. Multiple uncertain writes use `uncertainCalls`,
 bounded to ten calls with `uncertainCallsTruncated` when more exist.
