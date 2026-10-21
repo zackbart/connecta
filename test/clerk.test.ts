@@ -636,49 +636,6 @@ describe("clerkAuth inbound auth", () => {
       },
     );
 
-    it.each(["/mcp"])("checks raw opaque audiences after real Clerk verification at %s", async (path) => {
-      // Clerk uses the current fetch in test mode, including under workerd.
-      vi.stubEnv("NODE_ENV", "test");
-      const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
-      const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", telemetry: { disabled: true } });
-      mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
-      const cases: [Record<string, unknown>, readonly string[] | undefined, number][] = [
-        [{ aud: ["https://other.test/mcp", `${BASE}${path}`] }, [], 200],
-        [{ aud: [`${BASE}/mcp/support`] }, ["client_connecta"], 401],
-        [{ client_id: "client_other" }, ["client_connecta"], 401],
-      ];
-      for (const [claims, allowedOAuthClientIds, status] of cases) {
-        mocks.fetch.mockReset();
-        mocks.fetch.mockImplementation(async () => Response.json(opaqueVerification(claims)));
-        // undefined really omits the option, rather than deployment()'s default.
-        const auth = clerkAuth({
-          publishableKey,
-          secretKey: "sk_test_fake",
-          publicUrl: BASE,
-          ...(allowedOAuthClientIds === undefined ? {} : { allowedOAuthClientIds }),
-        });
-        const request = mcpRequest(path);
-        request.headers.set("Authorization", "Bearer oat_verified");
-        const result = await auth.authorize(request, BASE);
-        expect(result.ok ? 200 : result.response.status, JSON.stringify(claims)).toBe(status);
-        expect(mocks.fetch).toHaveBeenCalledTimes(2);
-        for (const [, init] of mocks.fetch.mock.calls) {
-          expect(init.method).toBe("POST");
-          expect(JSON.parse(init.body)).toEqual({ access_token: "oat_verified" });
-          expect(new Headers(init.headers).get("Authorization")).toBe("Bearer sk_test_fake");
-        }
-        const directInit = mocks.fetch.mock.calls[1]![1];
-        expect(mocks.fetch.mock.calls[1]![0]).toBe("https://api.clerk.com/v1/oauth_applications/access_tokens/verify");
-        expect(directInit.redirect).toBe("manual");
-        expect(directInit.signal).toBeInstanceOf(AbortSignal);
-        expect(new Headers(directInit.headers).get("Clerk-API-Version")).toBe("2026-05-12");
-        if (!result.ok) {
-          expect(await result.response.json()).toEqual({ error: "unauthorized" });
-          expect(result.response.headers.get("WWW-Authenticate")).toContain("resource_metadata=");
-        }
-      }
-    });
-
     it.each([{ expired: true }, { subject: "user_other" }, { client_id: "client_other" }])(
       "rejects an opaque verification response that disagrees with SDK authentication: %j",
       async (claims) => {

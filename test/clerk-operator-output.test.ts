@@ -495,6 +495,39 @@ describe("Clerk operator output with the real SDK", () => {
     expect(output(spies)).toBe("[]");
   });
 
+  it("INV-6: byte-reads a fresh SDK opaque-verification client and preserves resource binding", async () => {
+    const spies = captureOutput();
+    const responses: Response[] = [];
+    const nativeReaders: ReturnType<typeof vi.spyOn>[] = [];
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => {
+      const response = Response.json({
+        object: "clerk_idp_oauth_access_token",
+        id: "oat_verified",
+        client_id: "client_connecta",
+        subject: "user_123",
+        type: "oauth_token",
+        scopes: ["openid"],
+        revoked: false,
+        revocation_reason: null,
+        expired: false,
+        expiration: Date.now() + 300_000,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        aud: `${BASE}/mcp`,
+      });
+      nativeReaders.push(vi.spyOn(response, "json"), vi.spyOn(response, "text"));
+      responses.push(response);
+      return response;
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const request = new Request(`${BASE}/mcp`, { headers: { Authorization: "Bearer oat_verified" } });
+    expect(await auth().authorize(request, BASE)).toEqual({ ok: true, userId: "user_123" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const spy of nativeReaders) expect(spy).not.toHaveBeenCalled();
+    expect(responses.every((response) => response.bodyUsed)).toBe(true);
+    expect(output(spies)).toBe("[]");
+  });
+
   it("INV-4 INV-6: verifies valid, invalid, expired and wrong-audience OAuth JWTs through the bundled SDK", async () => {
     const spies = captureOutput();
     const pair = (await crypto.subtle.generateKey(
