@@ -807,12 +807,20 @@ The kit runs them in this order for every `StatusFailure`:
   `rate_limited` with `Retry-After`; 5xx → `unavailable` with `Retry-After`;
   any other status → `connector_call_failed`, non-retryable.
 - **409 has no default.** A vendor that documents its 409 may name it
-  `conflict`. The code is the agent's diagnosis, never the write's outcome.
-  A write's own served 404 or 409 is a known failure by provenance (b),
-  whatever code the vendor gives it, provided it answered the one request the
-  call sent. Tithe.ly keeps `connector_call_failed`, non-retryable and in
-  unchanged words, for both, because it cannot tell absence from reach or
-  name the conflict. Neither carries a `writeOutcome`.
+  `conflict`. The code is the agent's diagnosis; the write's outcome reads
+  it only through `servedRefusal`. A write's own served 404 or 409 is a known
+  failure by provenance (b) only when it passes `servedRefusal`: the status
+  is a 4xx other than 408 (`refusedStatus`), and the code the provider maps
+  it to (`classifyCallError(error).code`) is neither `unavailable` nor
+  `timeout`. It must also answer the one request the logical call sent, and
+  the failure must carry no explicit unknown marker. A vendor that maps its
+  404 or 409 to `unavailable` or `timeout` leaves that write unknown and
+  never retryable, on the kit and the core alike; mapped to `unavailable`, it
+  becomes `connector_call_failed` with `writeOutcome: "unknown"`. Tithe.ly
+  keeps `connector_call_failed`, non-retryable and in unchanged words, for
+  both, because it cannot tell absence from reach or name the conflict. That
+  code passes `servedRefusal`, so both are known failures and neither carries
+  a `writeOutcome`.
 - **What the types cannot stop.** A rule that closes over mutable module state
   could carry one failure's wording into the next failure's classification.
   That is code review's to refuse; the contract makes it the only way, and a
@@ -1006,8 +1014,12 @@ resend words. Specifically, rule 1's "proven no connection", rule 4's
 reliance on `REFUSALS`, rule 5's `nonExecution` proof and its example are
 gone; the merged core keeps `rate_limited` as the diagnostic code of a write
 answered 503 rather than `connector_call_failed`. Rule 6's wording ("had
-already accepted this call's write") is replaced by the core's. The text is
-kept for the reasoning:
+already accepted this call's write") is replaced by the core's. Rule 4's
+claim that `classifyWriteOutcome` accounts Tithe.ly's answered 404/409 as
+unknown is also wrong under the merged core: both pass `servedRefusal`, so
+`providerCallFailure` marks them known failures and the classifier reports
+`failed` (`test/kit-core-verdicts.test.ts`). The text is kept for the
+reasoning:
 
 **Write outcome over the entire call ledger — decided, rounds 4–5.** The kit
 calls the core's `providerCallFailure` and `classifyWriteOutcome` in
