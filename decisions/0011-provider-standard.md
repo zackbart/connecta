@@ -452,9 +452,14 @@ Infisical's `metadataOmitted` (withheld values) and Drive's
   reached the vendor. A 5xx or a connection lost after sending is a
   non-retryable `connector_call_failed` whose outcome is unknown, unless the
   write carried an idempotency key. A write answered 401 is an unknown outcome
-  unless the vendor declares `authBeforeExecution` evidence. A failure proven
-  before any connection stays retryable. A timeout is invocation's
-  `write_outcome_unknown`.
+  unless the vendor declares `authBeforeExecution` evidence. A refusal before
+  dispatch, which the ledger proves never left connecta, keeps its own code
+  and retryability. A native-fetch rejection never proves a write unsent,
+  because one `fetch` can hide several attempts (a 421 or HTTP/2
+  refused-stream resend, a retrying dispatcher); a write that fails that way
+  is unknown and non-retryable, whatever its errno, "never connected"
+  included, with the same idempotency-key exception (#902 round 8). A
+  timeout is invocation's `write_outcome_unknown`.
 - Codes come from facts, never prose. Vendor text appears only when value
   safety does not withhold it.
 
