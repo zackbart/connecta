@@ -2400,6 +2400,11 @@ The output boundary's guarantee is K = 8 units, and these are its exact limits:
   units that are not adjacent, such as the two seven-unit halves of a fourteen-
   unit value in two Slides shapes with other leaves between them, survive: they
   are indistinguishable from ordinary text without redacting ordinary words.
+- Object keys are checked on their own and never join the value projection, so
+  a key never separates two adjacent values. A value split between a key and
+  its value with each piece shorter than eight units, such as a seven-unit key
+  holding a seven-unit value, survives like any other non-adjacent pieces; a
+  piece of eight or more units is still matched in either place.
 - Private values of one to three units match whole field values only; four to
   seven also as substrings; eight and more also by every eight-unit run.
 - One checker (`checked()` in `src/sent-secrets.ts`) applies everything below
@@ -2453,8 +2458,14 @@ The encoding lattice is exactly this, and anything outside it is out of scope:
   content is searched for base64 up to three levels deep, but the guarantee does
   not depend on it); a base64 encoding glued to preceding alphabet units with no
   separator, such as a path segment after `/`, which decodes misaligned; HTML
-  entities; compression; custom alphabets; encryption; and bytes written as a
-  JSON array of numbers.
+  entities; compression; custom alphabets; encryption; bytes written as a
+  JSON array of numbers; and one encoding split across separate leaves, such as
+  the base64 of a value cut into array items. Raw text is matched across
+  adjacent leaves, but an encoding is decoded only within one string.
+- The boundary removes echoes of values Connecta sent. A downstream already
+  holds what it was sent and can always return it in a form outside this
+  lattice, so redaction is not a defense against a downstream that reshapes a
+  value on purpose.
 
 `test/sent-secret-output-boundary.test.ts` holds the evidence, including its
 `review round 3`, `review round 4` and `review round 5` blocks for these limits;
