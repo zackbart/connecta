@@ -38,6 +38,12 @@ on a later request if workerd ends one without delivering a signal or stream
 cancellation. Set it above the longest authorization, tool call, and response
 delivery your deployment expects to serve.
 
+Keep `enable_weak_ref` in `alchemy.run.ts` and `wrangler.jsonc`. Before the
+2025-05-05 compatibility date it exposes `FinalizationRegistry`, which lets
+connecta eventually release an authentication slot whose work workerd cancelled
+and which therefore can never settle
+([Authentication capacity](../../documentation/auth.md#authentication-capacity-and-ingress-limiting)).
+
 Keep `unhandled_rejection_after_microtask_checkpoint` in both `alchemy.run.ts`
 and `wrangler.jsonc`: it defers unhandled-rejection reporting until the microtask
 checkpoint finishes, avoiding false reports when a handler attaches later in the

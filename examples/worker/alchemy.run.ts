@@ -65,9 +65,16 @@ export default Alchemy.Stack(
       name: "connecta",
       main: "./src/index.ts",
       // Keep enable_request_signal: a client disconnect aborts its request.
+      // Keep enable_weak_ref: it releases an authentication charge whose
+      // cancelled work can never settle.
       compatibility: {
         date: "2025-01-01",
-        flags: ["nodejs_compat", "enable_request_signal", "unhandled_rejection_after_microtask_checkpoint"],
+        flags: [
+          "nodejs_compat",
+          "enable_request_signal",
+          "enable_weak_ref",
+          "unhandled_rejection_after_microtask_checkpoint",
+        ],
       },
       access,
       env: {

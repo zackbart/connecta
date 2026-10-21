@@ -224,6 +224,149 @@ Clerk, a `cta_` token refused at `/mcp` or `/mcp/<pool>` still receives Clerk's
 resource metadata challenge.
 An open deployment with connectors warns at construction.
 
+### Authentication capacity and ingress limiting
+
+Connecta admits at most **16 active inbound adapter authorizations** per
+loaded core in a process or Worker isolate. Human MCP endpoints, agent endpoints,
+operator APIs, connection starts (`/connect/<connector>`), and OAuth callbacks
+share this fixed bound, including network calls made inside an adapter's SDK.
+It has no queue and no configuration option. When full, a request receives HTTP
+503 with `Retry-After: 1`, `Cache-Control: no-store`, and
+`error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true }`.
+The operator log records only the checked `authentication_busy` reason, never
+credentials or identity-provider diagnostics. Retry after the indicated delay;
+Connecta does not automatically retry the authentication.
+
+Underlying work stays charged until it settles, including cancellation cleanup.
+A caller leaving alone never releases capacity. After an authorization's hard
+deadline plus **one second of settlement grace**, unfinished work moves from the
+active pool to a separate **abandoned allowance of 16 operations**. The native
+Access lookup and agent-token verification have five-second deadlines; Clerk's
+deadline is ten seconds, and custom adapters share that ten-second threshold.
+The allowance equals the active limit, so normal authentication continues
+while a partial wave of stalled operations is abandoned, and at most **32
+authorizations** are ever outstanding per loaded core. A full wave of 16
+stalled operations fills the allowance. While the allowance is full, no
+authorization starts, even when active slots are free. Overdue work that finds
+the allowance full keeps its active slot until an abandoned operation ends and
+makes room. A binding that never settles therefore fills the allowance and
+fails closed instead of accumulating I/O.
+
+Each charge ends exactly once, in one of two ways:
+
+- **Settlement.** The adapter's promise and every native operation it
+  registered have settled. This applies on every runtime and through every
+  entry.
+- **Unreachable work.** Nothing can ever settle the charge: the garbage
+  collector has freed every promise and callback that could have. On Workers
+  this follows invocation cancellation. Cloudflare ends a fetch invocation at
+  most 30 seconds after its response is sent or its client disconnects
+  ([`waitUntil` limit](https://developers.cloudflare.com/workers/runtime-apis/context/)),
+  and drops each I/O operation it still owns without running its callbacks.
+  Once the collector frees that work, Connecta releases the charge, and the
+  next admission logs the checked reason `authentication_unreachable`.
+
+Release through unreachable work is **eventual, never timed**. It waits for a
+garbage collection, which runs as the process or isolate allocates. On
+workerd, a collection triggered by allocation can keep a recently freed object
+for several later collections, so one charge may linger after the rest are
+released. While anything can still settle the work, the charge counts: a
+connected caller, middleware that reads Connecta's response and then awaits
+other work, and a scheduled handler that is still running all keep their
+charges. A late settlement after such a release changes nothing, so no count
+is released twice.
+
+Release through unreachable work needs `FinalizationRegistry`. Node always
+provides it. On Workers, set the `enable_weak_ref` compatibility flag, or use
+a compatibility date of 2025-05-05 or later, and keep `enable_request_signal`;
+the installed Worker example sets both flags. Without `FinalizationRegistry`,
+only settlement releases a charge. A native authentication operation that
+hangs past invocation cancellation then consumes one abandoned slot until the
+isolate is recycled, and 16 such operations in one isolate make every later
+authentication return `authentication_busy`, visible on `/health`.
+
+A request refused because the allowance is full receives the same 503
+`authentication_busy` response and headers. The operator log records the
+checked reason `authentication_abandoned_saturated` instead. `GET /health`
+reports `admission.authentication` with `active`, `limit`, `abandoned`,
+`abandonedLimit`, `abandonedSaturated`, and `unreachableRelease`, for example:
+
+```json
+{
+  "active": 0,
+  "limit": 16,
+  "abandoned": 16,
+  "abandonedLimit": 16,
+  "abandonedSaturated": true,
+  "unreachableRelease": true
+}
+```
+
+`unreachableRelease` is `true` when the runtime provides
+`FinalizationRegistry`. On Workers, `false` means neither `enable_weak_ref` nor
+a compatibility date of 2025-05-05 or later is in effect. A saturated allowance
+refuses all new authentication until an underlying operation settles or its
+unreachable work is collected. Investigate the identity binding or token
+storage; restarting the process or isolate clears its local accounting.
+
+Clerk creates a client per authorization: SDK verification (opaque
+access tokens, JWT/JWKS, browser handshakes and session refresh), domain checks,
+and gate-client lookups all use that request's signal and a ten-second
+authentication deadline. Its transport reads at most 1 MiB per SDK response,
+cancels the upstream body on every exit, and gives the SDK only buffered bytes.
+JWKS fetches make one attempt; cancellation starts no retry timer. Additional
+Backend API admission reads retain their 64 KiB response bound.
+
+On Workers, the event's `ctx` reaches Connecta through the `ctx` argument of
+`connecta.fetch`. Its `waitUntil` keeps only that request's
+already-running authorization and cleanup runnable after disconnect, so an
+aborted upstream settles before its slot is released. No other request shares
+its promise or I/O. Custom adapters must honor `request.signal` and return a promise that settles
+only after their work ends; ignoring cancellation consumes the bounded
+abandoned allowance, and work the promise does not await is not counted.
+The current adapters cannot cheaply establish a fully authenticated cache hit
+before verification, so every adapter invocation counts, including one that
+later uses a cached membership or policy verdict. Cache hits finish their slots
+quickly; a cached policy verdict never bypasses credential verification.
+Domain/gate and organization caches store only completed verdicts, never a
+lookup failure, cancellation, or timeout. A `gate` that returns `false` after
+its request was cancelled is not cached either. The JWKS cache stores only
+signing keys from a completed fetch.
+An adapter returning a synchronous local verdict releases before yielding;
+it consumes no pending slot between requests.
+
+This bound is independent of MCP request/program admission and downstream call
+limits. `Mcp-Method: subscriptions/listen` still defers its MCP request permit:
+after authentication and endpoint admission, a body-confirmed modern listen is
+refused promptly even when execution capacity is full. It always passes the
+authentication bound, and no request body is read before authentication.
+
+Routes that do not invoke an inbound verifier consume no authentication slot:
+health, public OAuth discovery and client metadata, UI shells and static assets,
+preflight, redirects, unknown paths, and local header/origin/path refusals.
+An invalid `/connect` handoff or unknown OAuth callback target also refuses
+before a verifier. Downstream OAuth exchanges and display-label reads are
+separate operations, with their existing limits; this bound covers the inbound
+authentication that admits their caller. Cloudflare Access edge authentication
+runs before the Worker; its in-Worker identity lookup is covered. Access uses
+only the trusted runtime binding, with no JWT/JWKS fetch. That native binding
+and token storage expose no cancellation API. Both answer promptly on caller
+cancellation or their five-second deadline and keep the unfinished operation
+in active or abandoned accounting until it settles. The five-second agent
+deadline covers hashing and every verification read together, and returns the
+machine `401` challenge; no further storage read starts after cancellation or
+timeout. A late native result never admits its original caller.
+
+This is a concurrency bound, **not a rate limit or a shared provider quota**.
+Require ingress rate limiting for public deployments across all authenticated
+paths, including `/agent/*`, `/ui/*`, `/connect/*`, and `/oauth/callback/*`.
+For example, a deployment at `https://assistant.example.com` using Clerk must
+budget all isolates and deployments sharing its Clerk secret key together.
+Fast invalid tokens and repeated cache misses can exhaust a provider's request
+budget without ever exceeding 16 active authentications. Set ingress limits
+to that provider's quota and expected traffic; increasing MCP concurrency does
+not increase authentication capacity.
+
 Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
 addresses, and email domains stay out of denial logs, activity, and status,
 including email lookup failures and admission policy refusals.
@@ -1727,6 +1870,9 @@ Protect the shared Backend API quota:
   per ten seconds in production, 100 in development. Membership reads use that
   general limit. A deployment's MCP concurrency setting does not bound all
   authentication paths, including `subscriptions/listen` and operator routes.
+  The independent [authentication capacity bound](#authentication-capacity-and-ingress-limiting)
+  covers those paths and the SDK's authentication calls before this adapter's
+  organization-specific bounds; it still does not impose a rate budget.
 - Organization mode permits at most 16 concurrent membership/extra opaque
   verification calls per `clerkAuth` instance (per isolate on Workers), with at
   most two per user. Each call owns its signal, deadline, and response body;

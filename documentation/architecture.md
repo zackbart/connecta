@@ -128,10 +128,44 @@ An admitted non-preflight `/mcp` request then takes five steps in
    `-32601`; anything else takes a permit then, so the header alone bypasses
    nothing. Auth and classification share the configured request lifetime.
    Other requests take one permit from the deployment-wide pool, taken before
-   auth so an unauthenticated flood costs a permit rather than a Clerk lookup,
+   auth so an unauthenticated flood costs a request permit before an auth lookup,
    and held until the response _body_ completes, the caller leaves, or its
    configured lifetime ends, not until the handler returns.
-2. **Authorize.** `/agent/<pool>` consults only the built-in `cta_` adapter
+2. **Authorize.** Every adapter invocation passes the independent fixed
+   16-active-authorization bound in `src/auth-admission.ts`, including header-named
+   listens, SDK-owned auth, agent-token storage, and operator/connection routes
+   outside the MCP pool. Shared state is counters and bounded plain charge
+   records, never request I/O; there is no queue or shared promise. Saturation
+   returns retryable 503 `authentication_busy` with `Retry-After: 1` and a
+   checked payload-free log. Each request releases exactly once after the
+   adapter and its cancellation cleanup settle; abort alone does not release
+   capacity. At its hard deadline plus one second of grace, unfinished work
+   moves to a separate allowance of 16 abandoned operations, or stays active
+   while that allowance is full. A full allowance refuses all new work, logged
+   as `authentication_abandoned_saturated`; only a charge's end decrements it
+   and promotes an overdue active charge. A charge ends exactly once, through a
+   released state in its plain record: on settlement, or when the collector
+   frees its token. That token is an object held only by the closures
+   attached to the adapter promise and the registered native operations (plus
+   the deadline timer and the request's lifetime entry, which refers to the
+   lifetime through a `WeakRef`, because workerd keeps a `Request` and its
+   WeakMap entries alive past its invocation). A module-level
+   `FinalizationRegistry` holds the record, never the token, so a freed token
+   proves nothing can settle the charge; the next admission logs
+   `authentication_unreachable`. Without `FinalizationRegistry` (workerd
+   without `enable_weak_ref` before 2025-05-05) only settlement releases.
+   Health exposes both counters and `unreachableRelease`. Access
+   and agent verification race five-second deadlines while registering their
+   uncancellable native work with the invocation's charge. The request's
+   `ctx.waitUntil` keeps that same settlement continuation runnable on Worker
+   disconnects. No other request touches its promise, signal or I/O. Clerk
+   uses a client per authorization, with its signal and a ten-second deadline
+   across verification, JWKS, handshakes, session refresh, domain and gate
+   lookups. The SDK transport buffers at most 1 MiB, closes every upstream body,
+   and makes no JWKS retries; no live response escapes to an SDK clone. No current adapter exposes a cheap,
+   fully authenticated cache hit, so the entire adapter invocation counts.
+   [Authentication capacity](./auth.md#authentication-capacity-and-ingress-limiting)
+   lists exemptions and ingress requirements. `/agent/<pool>` consults only the built-in `cta_` adapter
    (`authorizeAgent`), never with the runtime context that carries
    `ctx.access`. Human endpoints refuse a `cta_` token before recognition or
    storage, and never ask the `cta_` adapter. A provider's
@@ -363,6 +397,32 @@ not proof that workerd cancelled an old stream. A still-live request reaches
 the same hard deadline and is aborted in its own context.
 Cloudflare documents the flag in its
 [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
+
+### Authentication release by collection on workerd
+
+Measured on 2026-10-20 with workerd 1.20260722.1 (Miniflare 4.20260722.0),
+compatibility date `2025-01-01`:
+
+- `FinalizationRegistry` and `WeakRef` are undefined without
+  `enable_weak_ref`; the flag's default-on date is 2025-05-05.
+- With `enable_weak_ref` and `enable_request_signal`, an object reachable only
+  through a fetch continuation is finalized once its invocation ends and
+  workerd cancels the fetch; while the invocation runs it is not. Pending
+  timers and listeners on the request's signal do not keep it.
+- Strong values in a WeakMap keyed by a `Request` (even one the handler
+  created), properties set on a `Request`, and WeakMap values keyed by its
+  `Headers`, `ctx` or `env` stay reachable after the invocation ends. The
+  lifetime registry in `src/auth-admission.ts` therefore stores `WeakRef`s.
+- No `gc()` is exposed. Allocating large arrays (32 × 1 MiB per request)
+  triggers collections, but the most recent unreachable object often survives
+  them; V8 in this build scans the native stack conservatively. The inspector's
+  precise `HeapProfiler.collectGarbage` freed it.
+- In the vitest-pool-workers harness, an isolate that had already collected
+  one scenario's cancelled work sometimes kept a later scenario's cancelled
+  work reachable through 400 rounds of pressure; standalone Miniflare never
+  did. `test/auth-admission-binding.test.ts` gives each collection scenario a
+  fresh isolate and requires two of four sentinels collected before asserting
+  that live charges stayed counted.
 
 A second production run on the same date tested the request bound at 2,000 ms.
 All twelve raw-stream and MCP cases passed with both flag configurations. Live

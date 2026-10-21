@@ -767,8 +767,14 @@ export function createMcpRoute(opts: ServerOptions): {
         // Agent endpoints consult only the `cta_` adapter; human endpoints refuse `cta_`.
         const admit = (): ReturnType<typeof authorize> =>
           agentEndpoint
-            ? authorizeAgent(localRequest, baseUrl, opts.config.auth)
-            : authorize(localRequest, baseUrl, opts.config.auth, runtimeContext);
+            ? authorizeAgent(
+                localRequest,
+                baseUrl,
+                opts.config.auth,
+                opts.config.logger,
+                runtimeContext?.waitUntil.bind(runtimeContext),
+              )
+            : authorize(localRequest, baseUrl, opts.config.auth, runtimeContext, true, false, opts.config.logger);
         // Plain /mcp admits maintainers and serves the whole catalog; a pool
         // admits its members, people at /mcp/<pool> and agents at
         // /agent/<pool>, and serves exactly its tools (INV-4).

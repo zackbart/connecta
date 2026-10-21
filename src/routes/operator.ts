@@ -60,7 +60,9 @@ export function authorized(
   partitionIdentity = true,
 ): Effect.Effect<Authorized, Answer> {
   return Effect.suspend(() =>
-    admitted(authorize(request, baseUrl, opts.config.auth, runtimeContext, partitionIdentity)),
+    admitted(
+      authorize(request, baseUrl, opts.config.auth, runtimeContext, partitionIdentity, false, opts.config.logger),
+    ),
   );
 }
 
@@ -70,7 +72,7 @@ export function authorizedPerson(
   purpose: string,
 ): Effect.Effect<Authorized, Answer> {
   return Effect.suspend(() =>
-    admitted(authorizeUiIdentity(request, baseUrl, opts.config.auth, purpose, runtimeContext)),
+    admitted(authorizeUiIdentity(request, baseUrl, opts.config.auth, purpose, runtimeContext, opts.config.logger)),
   );
 }
 
