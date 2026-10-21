@@ -1,10 +1,10 @@
-// Node-only: drives undici itself (a 421 resend, a RetryAgent dispatcher, a `duplex: "half"` stream body), which workerd's fetch does not have.
+// Node-only: drives undici itself (a 421 resend, a RetryAgent dispatcher, a `duplex: "half"` stream body, header trimming and timeouts on a real socket), which workerd's fetch does not have.
 // One send can hide several attempts, so the rejection fetch reports says
 // nothing about what the server already received. Each case here had the
 // server holding the write while connecta reported a retryable failure.
 import { createServer } from "node:http";
 import { Agent, RetryAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
-import { expect, inject, it } from "vitest";
+import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
@@ -13,6 +13,7 @@ import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { planningCenter } from "../src/providers/planning-center/index.js";
+import { stripe } from "../src/providers/stripe/index.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { makeRegistry } from "./helpers.js";
 
@@ -211,4 +212,232 @@ it("INV-9: a Blob write whose overridden stream() raised ECONNREFUSED after the 
     if (received[0]?.bytes !== 20) await new Promise((resolve) => setTimeout(resolve, 10));
   }
   expect(received).toEqual([{ method: "POST", bytes: 20 }]);
+});
+
+// Round 9: repeatability needs a key the vendor actually receives, and a
+// direct caller has no invocation to call a timed-out write unknown.
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+/** A server that records each request and answers it with `answer`. */
+async function recording(answer: "reset" | "silent") {
+  const received: Array<{ method: string; key: string | undefined }> = [];
+  const server = createServer((request, response) => {
+    const key = request.headers["idempotency-key"];
+    received.push({ method: request.method ?? "", key: typeof key === "string" ? key : undefined });
+    request.resume();
+    // "silent" holds the request until the client gives up.
+    request.on("end", () => {
+      if (answer === "reset") response.socket?.destroy();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("The fixture server has no TCP address.");
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    received,
+    async close() {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+/** Stripe with a fixture key, its requests sent to `origin` over a real socket. */
+async function stripeAt(origin: string) {
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+    real(`${origin}${new URL(String(input)).pathname}`, init),
+  );
+  const connector = stripe("billing", { purpose: "Billing", auth: { type: "apiKey" }, mode: "sandbox" });
+  const storage = memoryStorage();
+  const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+  await vault.set("billing", "sk_test_fixture", "fixture");
+  const registry = makeRegistry([connector], { storage, credentialVault: vault });
+  return {
+    direct: (args: Record<string, unknown>) =>
+      connector.callTool("stripe_api_write", args, registry.contextFor("billing", "https://connecta.example")).then(
+        () => {
+          throw new Error("expected the write to fail");
+        },
+        (failure: unknown) => failure,
+      ),
+    served: (args: Record<string, unknown>) =>
+      new InvocationService(registry, new CatalogService(registry, "https://connecta.example")).invoke(
+        "billing.stripe_api_write",
+        args,
+        { source: "call_destructive_tool" },
+      ),
+  };
+}
+
+const CUSTOMER = { method: "POST", path: "/v1/customers", body: { description: "Fixture" } };
+
+describe("an idempotency key proves a write repeatable only when the vendor receives it", () => {
+  it.each([" ", "\t", "\r\n\t "])(
+    "INV-9: a blank key %j is refused before dispatch, direct or served, and never recorded for recovery",
+    async (idempotencyKey) => {
+      // fetch trims a header value, so this key would leave empty: two such
+      // sends are two writes, while the direct one was advertised retryable.
+      const server = await recording("reset");
+      try {
+        const stripe = await stripeAt(server.origin);
+        const direct = await stripe.direct({ ...CUSTOMER, idempotencyKey });
+        expect(direct).toMatchObject({ code: "invalid_args", retryable: false });
+        expect((direct as Error).message).toContain("idempotencyKey is blank");
+        const served = await stripe.served({ ...CUSTOMER, idempotencyKey });
+        if (served.ok) throw new Error("expected the write to fail");
+        expect(served.error).toMatchObject({ code: "invalid_args", retryable: false });
+        expect(served.error).not.toHaveProperty("uncertainCall");
+        expect(classifyWriteOutcome({ ok: false, dispatched: served.dispatched, error: served.error })).toBe("failed");
+        expect(server.received).toEqual([]);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  it("INV-9: a genuine key a direct caller sent keeps its retry advice, and a served write keeps it for recovery", async () => {
+    const server = await recording("reset");
+    try {
+      const stripe = await stripeAt(server.origin);
+      const direct = await stripe.direct({ ...CUSTOMER, idempotencyKey: " fixture-key " });
+      expect(direct).toMatchObject({ code: "unavailable", retryable: true });
+      expect((direct as { writeOutcome?: string }).writeOutcome).toBeUndefined();
+      const served = await stripe.served({ ...CUSTOMER, idempotencyKey: "fixture-key" });
+      if (served.ok) throw new Error("expected the write to fail");
+      expect(served.error).toMatchObject({
+        retryable: false,
+        writeOutcome: "unknown",
+        uncertainCall: { recovery: { idempotencyKey: "fixture-key" } },
+      });
+      // The vendor received the key both times, trimmed as fetch sends it.
+      expect(server.received).toEqual([
+        { method: "POST", key: "fixture-key" },
+        { method: "POST", key: "fixture-key" },
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("a direct write that times out after dispatch", () => {
+  /** An api() connector whose handler fetches the server with a 100 ms timeout. */
+  function timing(origin: string, readOnlyHint: boolean) {
+    const connector = api("tickets", {
+      tools: [
+        {
+          name: "send",
+          description: "Send a ticket",
+          annotations: { readOnlyHint },
+          handler: () =>
+            globalThis.fetch(`${origin}/tickets`, {
+              method: readOnlyHint ? "GET" : "POST",
+              ...(readOnlyHint ? {} : { body: "{}" }),
+              signal: AbortSignal.timeout(100),
+            }),
+        },
+      ],
+    });
+    const registry = makeRegistry([connector]);
+    return {
+      direct: () =>
+        connector.callTool("send", {}, registry.contextFor("tickets", "https://connecta.example")).then(
+          () => {
+            throw new Error("expected the call to fail");
+          },
+          (failure: unknown) => failure,
+        ),
+      served: () =>
+        new InvocationService(registry, new CatalogService(registry, "https://connecta.example")).invoke(
+          "tickets.send",
+          {},
+          { source: readOnlyHint ? "call_tool" : "call_destructive_tool" },
+        ),
+    };
+  }
+
+  it("INV-9: through an api() handler is unknown and never retryable, keeping its timeout diagnostics", async () => {
+    const server = await recording("silent");
+    try {
+      const error = await timing(server.origin, false).direct();
+      expect(error).toMatchObject({
+        code: "unavailable",
+        retryable: false,
+        writeOutcome: "unknown",
+        details: { code: "timeout" },
+      });
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("unknown");
+      expect(server.received).toEqual([{ method: "POST", key: undefined }]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("INV-9: through a guarded transport outside any call ledger is unknown and never retryable", async () => {
+    const server = await recording("silent");
+    try {
+      const send = guardedFetch({
+        provider: "Tickets",
+        baseUrl: server.origin,
+        authenticate: () => ({}),
+        maxResponseBytes: 1024,
+        fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(100) }),
+      });
+      const ctx = makeRegistry([]).contextFor("tickets", "https://connecta.example");
+      const failure = (method: "GET" | "POST") =>
+        send({ method, path: "/tickets", ...(method === "POST" ? { body: {} } : {}) }, ctx, (r) => r.json()).then(
+          () => {
+            throw new Error("expected the call to fail");
+          },
+          (error: unknown) => error,
+        );
+      expect(await failure("POST")).toMatchObject({
+        retryable: false,
+        writeOutcome: "unknown",
+        details: { code: "timeout" },
+      });
+      // Control: a read's timeout stays retryable.
+      const read = await failure("GET");
+      expect(read).toMatchObject({ code: "unavailable", retryable: true, details: { code: "timeout" } });
+      expect((read as { writeOutcome?: string }).writeOutcome).toBeUndefined();
+      expect(server.received.map((request) => request.method)).toEqual(["POST", "GET"]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("INV-9: control: a direct read's timeout stays retryable", async () => {
+    const server = await recording("silent");
+    try {
+      const error = await timing(server.origin, true).direct();
+      expect(error).toMatchObject({ code: "unavailable", retryable: true, details: { code: "timeout" } });
+      expect((error as { writeOutcome?: string }).writeOutcome).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("INV-9: control: a served write's timeout is unchanged, reported unknown by the invocation", async () => {
+    const server = await recording("silent");
+    try {
+      const result = await timing(server.origin, false).served();
+      if (result.ok) throw new Error("expected the write to fail");
+      expect(result.error).toMatchObject({
+        code: "write_outcome_unknown",
+        retryable: false,
+        details: { code: "timeout", stage: "downstream" },
+        uncertainCall: { address: "tickets.send", args: {} },
+        retry: "Do not retry automatically. Check whether the write took effect first.",
+      });
+      expect(result.error.message).toContain("timed out during downstream");
+      expect(server.received).toEqual([{ method: "POST", key: undefined }]);
+    } finally {
+      await server.close();
+    }
+  });
 });

@@ -30,7 +30,20 @@ afterEach(() => {
  * HeaderMismatch once, and `"resume"` breaks the answer stream after its
  * priming event, so the answer arrives only on a resumed stream.
  */
-type Answer = "pass" | 401 | 403 | 502 | 503 | 504 | 307 | 308 | "mismatch" | "resume" | "reset" | "refused";
+type Answer =
+  | "pass"
+  | 401
+  | 403
+  | 502
+  | 503
+  | 504
+  | 307
+  | 308
+  | "mismatch"
+  | "resume"
+  | "reset"
+  | "refused"
+  | "timeout";
 
 function setup(
   options: {
@@ -140,6 +153,8 @@ function setup(
       );
     }
     if (answer === "reset") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+    if (answer === "timeout")
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "UND_ERR_HEADERS_TIMEOUT" } });
     return new Response("<html>bad gateway</html>", { status: answer, headers: { "content-type": "text/html" } });
   });
   const storage = memoryStorage();
@@ -183,6 +198,8 @@ function setup(
         message: string;
         reconciliationRequired?: boolean;
         writeOutcome?: string;
+        details?: Record<string, unknown>;
+        uncertainCall?: unknown;
       };
     };
   };
@@ -543,5 +560,44 @@ describe("remote MCP writes after an ambiguous failure", () => {
     flow.answers.set("list_items", "refused");
     const read = await flow.outcome("list_items");
     expect(read.error).toMatchObject({ code: "unavailable", retryable: true });
+  });
+
+  it("INV-9: a direct write that timed out after the server acted is unknown, never retryable, and stays a timeout", async () => {
+    // A direct callTool has no invocation to report its timeout unknown.
+    const flow = setup();
+    const ctx = flow.context();
+    // Listed hints classify the direct read as one.
+    await flow.connector.listTools(ctx);
+    flow.answers.set("create_item", "timeout");
+    const direct = (name: string, args: Record<string, unknown>) =>
+      flow.connector.callTool(name, args, ctx).then(
+        () => {
+          throw new Error("expected the call to fail");
+        },
+        (failure: unknown) => failure as { code: string; retryable: boolean; writeOutcome?: string },
+      );
+    expect(await direct("create_item", { id: 1 })).toMatchObject({
+      code: "unavailable",
+      retryable: false,
+      writeOutcome: "unknown",
+      details: { code: "UND_ERR_HEADERS_TIMEOUT" },
+    });
+    expect(flow.applied).toEqual(["create_item 1"]);
+
+    // Control: a direct read's timeout stays retryable.
+    flow.answers.set("list_items", "timeout");
+    const read = await direct("list_items", {});
+    expect(read).toMatchObject({ code: "unavailable", retryable: true, details: { code: "UND_ERR_HEADERS_TIMEOUT" } });
+    expect(read.writeOutcome).toBeUndefined();
+
+    // Control: a served write's timeout is unchanged; the invocation reports it.
+    const served = await flow.outcome("create_item", { id: 2 });
+    expect(served.error).toMatchObject({
+      code: "write_outcome_unknown",
+      retryable: false,
+      details: { code: "UND_ERR_HEADERS_TIMEOUT", stage: "downstream" },
+      uncertainCall: { address: "svc.create_item", args: { id: 2 } },
+    });
+    expect(flow.applied).toEqual(["create_item 1", "list_items", "create_item 2"]);
   });
 });

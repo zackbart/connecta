@@ -1935,7 +1935,14 @@ compiling and configuring the real thing.
   verdicts and provenance; Google also retains its response phases and reasons.
   A served write requires reconciliation even with an idempotency key or a
   provider's idempotent-operation hint; direct transport calls without a
-  served verdict can still prove repeatability.
+  served verdict can still prove repeatability, but only with a key the
+  vendor receives: the REST write tool refuses an `idempotencyKey` that fetch's
+  header trimming would send empty (`invalid_args`, before recovery is
+  recorded), and `callRest` marks a request repeatable only for a non-blank
+  key. Without that proof, a direct write's timeout after dispatch is unknown
+  and non-retryable, keeping its code and `details.code`: no invocation exists
+  to report it as `write_outcome_unknown`. A served write's timeout passes
+  through unchanged for the invocation to report.
   The catalog-driven `test/provider-failure-sweep.test.ts` checks every API
   provider/tool in both runtimes, fails on missing provider/tool examples or a
   dispatched failure bypassing the helper, and covers served write/read

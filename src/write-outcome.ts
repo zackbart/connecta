@@ -75,17 +75,19 @@ const REFUSALS = new Set([
  * hide several attempts (a 421 or HTTP/2 refused-stream resend, a retrying
  * dispatcher), so a refusal on the last says nothing about the first.
  * Definite answers pass through: refusals and 4xx verdicts (a 429 or a lock
- * conflict included), and timeouts (`timeout`, `ETIMEDOUT`, `*_TIMEOUT`),
- * which the invocation layer already reports as `write_outcome_unknown`.
+ * conflict included). Timeouts (`timeout`, `ETIMEDOUT`, `*_TIMEOUT`) pass
+ * through only on a served call, whose invocation reports them as
+ * `write_outcome_unknown`; a direct caller has no such boundary, so its
+ * timeout becomes an unknown outcome that keeps the timeout diagnostics.
  */
-export function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
+export function unknownOutcome(vendor: { title: string }, error: unknown, ctx: ConnectorContext): unknown {
   if (error instanceof WithheldTextError) {
-    if (!error.retryable || error.timeout) return error;
+    if (!error.retryable) return error;
+    if (error.timeout) return timeoutOutcome(ctx, vendor, error);
   } else {
     if (!(error instanceof ConnectorCallError) || !error.retryable) return error;
     if (error.code !== "unavailable" && error.code !== "connector_call_failed") return error;
-    const code = error.details?.code;
-    if (code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT")) return error;
+    if (isTimeout(error)) return timeoutOutcome(ctx, vendor, error);
   }
   return new ConnectorCallError(
     "connector_call_failed",
@@ -144,12 +146,9 @@ export function providerCallFailure(
   // A direct transport user may prove idempotency. A deployment's served
   // write verdict still requires reconciliation rather than retry advice.
   if (served === undefined && facts.repeatable === true) return error;
-  if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error);
+  if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error, ctx);
   if (error.writeOutcome === "unknown") return error;
-  const code = error.details?.code;
-  if (error.code === "timeout" || code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT")) {
-    return error; // The invocation owns timeout/cancellation outcomes.
-  }
+  if (isTimeout(error)) return timeoutOutcome(ctx, vendor, error);
   // A 5xx cannot prove refusal, even when its body names a quota/auth reason.
   const serverError = facts.status !== undefined && facts.status >= 500;
   if (
@@ -168,7 +167,7 @@ export function providerCallFailure(
       ),
     );
   }
-  const converted = unknownOutcome(vendor, error);
+  const converted = unknownOutcome(vendor, error, ctx);
   if (converted instanceof ConnectorCallError && converted !== error) return carryFailureFacts(error, converted);
   return carryFailureFacts(
     error,
@@ -177,6 +176,20 @@ export function providerCallFailure(
       writeOutcome: "unknown",
     }),
   );
+}
+
+function isTimeout(error: ConnectorCallError): boolean {
+  const code = error.details?.code;
+  return error.code === "timeout" || code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT") === true;
+}
+
+/**
+ * A write that may have left and then timed out. A served call's invocation
+ * owns that outcome (`write_outcome_unknown`); a direct caller has no
+ * invocation, so the failure itself must say the outcome is unknown.
+ */
+function timeoutOutcome(ctx: ConnectorContext, vendor: { title: string }, error: unknown): unknown {
+  return callClassification(ctx) === undefined ? uncertainProviderFailure(vendor, error) : error;
 }
 
 /** Change recovery wording without rebuilding a provider's shared verdict. */

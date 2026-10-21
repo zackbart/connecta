@@ -3326,7 +3326,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   "so whether it took effect is unknown: check the target before repeating it.",
                 { retryable: false, writeOutcome: "unknown" },
               )
-            : unknownOutcome({ title: `connector "${id}"` }, failure);
+            : unknownOutcome({ title: `connector "${id}"` }, failure, ctx);
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
       } finally {
         state.dispatches.delete(dispatch);

@@ -8,7 +8,6 @@ import type { ConnectorContext } from "./types.js";
 
 export interface ProviderRequest {
   dispatched: boolean;
-  answered: boolean;
   status?: number;
   auxiliary: boolean;
   provider: string;
@@ -70,7 +69,7 @@ export function providerRequest(
   provider: string,
   repeatable = false,
 ): ProviderRequest {
-  const request: ProviderRequest = { dispatched: false, answered: false, auxiliary, provider, repeatable };
+  const request: ProviderRequest = { dispatched: false, auxiliary, provider, repeatable };
   (ctx as CallContext)[CALL]?.requests.push(request);
   return request;
 }
@@ -112,7 +111,6 @@ export function providerFetch(
     const request = providerRequest(ctx, auxiliary, provider);
     dispatchProviderRequest(ctx, request);
     const response = await send(input, init);
-    request.answered = true;
     request.status = response.status;
     return response;
   };

@@ -377,7 +377,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       trackRemoteClientRequest(sentSecretsFor(ctx), input, init);
       dispatch.dispatched = true;
       const response = await sentSecretsFetch(ctx)(input, { ...init, redirect: "manual" });
-      dispatch.answered = true;
       dispatch.status = response.status;
       return byteReadResponse(response);
     }
@@ -387,7 +386,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
     dispatch.dispatched = true;
     const response = await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" });
-    dispatch.answered = true;
     dispatch.status = response.status;
     return byteReadResponse(response);
   };
@@ -497,7 +495,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         redirect: "manual",
         ...(signal ? { signal } : {}),
       });
-      dispatch.answered = true;
       dispatch.status = response.status;
       return byteReadResponse(response);
     };

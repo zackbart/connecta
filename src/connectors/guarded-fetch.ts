@@ -569,7 +569,6 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         dispatchProviderRequest(ctx, dispatch);
         dispatched = true;
         response = await send(url.toString(), init, ctx);
-        dispatch.answered = true;
         dispatch.status = response.status;
       } catch (cause) {
         if (cause instanceof ConnectorCallError) throw cause;

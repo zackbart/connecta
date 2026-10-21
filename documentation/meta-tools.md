@@ -946,7 +946,10 @@ A write that times out after dispatch returns `write_outcome_unknown` with
 `retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted?, recovery? }`.
 No write is automatically replayed. `recovery` carries facts the connector
 recorded before dispatch, such as a REST connector's
-generated or caller-supplied `idempotencyKey`. Recovery accepts keys up to 255
+generated or caller-supplied `idempotencyKey`. A caller-supplied key that is
+empty once leading and trailing whitespace is removed is refused with
+`invalid_args` before dispatch and never recorded: fetch would send it empty,
+which is no key. Recovery accepts keys up to 255
 characters, matching the REST write schema. Other recovery values remain capped
 at 128 characters, with at most four facts per call and camelCase names of at
 most 32 characters. Values outside these bounds are dropped whole. A deliberate
@@ -960,6 +963,11 @@ with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget
 carry `argsOmitted: true`; sensitive or unresolved schemas also carry
 `argsRedacted: true`. When `args` is absent or redacted, use the original
 arguments if reconciliation requires another call. A timeout before dispatch remains `timeout`.
+A connector's `callTool` called directly from code, outside an invocation, has
+no such boundary: a write that may have been dispatched and then timed out
+keeps its code and timeout `details.code`, and is `retryable: false` with
+`writeOutcome: "unknown"`. Only a non-blank idempotency key the vendor receives
+keeps such a direct write's retry advice. A direct read's timeout stays retryable.
 Program write accounting keeps this detail even if the guest catches the
 failure or returns early. Multiple uncertain writes use `uncertainCalls`,
 bounded to ten calls with `uncertainCallsTruncated` when more exist.
