@@ -22,6 +22,7 @@
     "src/version.ts",
     "bin/version.mjs",
     "src/providers/*/SKILL.md",
+    "src/providers/*/drift.json",
     "/package.json",
     "/knip.jsonc",
     "scripts/bundle-budget.json",

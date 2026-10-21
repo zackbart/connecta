@@ -1192,12 +1192,27 @@ PRs: onto the kit with unchanged output, then onto the standard surface.
 landed each step, and this section describes their current shapes.
 `test/provider-standard.node.test.ts` holds every other provider folder to the
 standard, and `test/provider-conventions.test.ts` checks the surface rules on
-both runtimes.
+both runtimes. `providers:generate` writes the standard's derived parts and
+refuses a provider past step 1 that breaks the `drift.json` rules, or one past
+step 2 that breaks the guide rules: `drift.json` version 2's `generated` block
+(operations from the kit's `ProviderKitFacts`, hosted names from the reviewed
+classification, evidence digests), and a guide's `## Conventions`, rendered
+from the definition's declarations into `skill.generated.ts`.
+`ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
+with the definition's `blocks`. `providers:check` reads both record versions,
+reports a manifest operation no endpoint row records at the provider's level,
+and lists manual checks last verified more than 180 days ago. Its offline
+record validator, `scripts/drift-validate.mjs`, also gates `providers:generate`
+and the standard suite, so a record they accept is one `providers:check` reads.
 
 The generic REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `pnpm run providers:spec` compiles offline from the
-provider's pinned `openapi.source.json` into `openapi.generated.ts`.
+provider's pin (`evidence/openapi.json`; `openapi.source.json` until its step 1)
+into `openapi.generated.ts`. A `vendored: true` pin compiles the reviewed
+conversion in `evidence/openapi.document.json` instead of fetching, and the
+generated header records that document's digest beside the pin's, so the
+offline freshness check sees a changed conversion.
 Each call is matched to an operation and checked against its parameters before
 transport; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
 its handler, since classification is per tool name. Vendors configure only a
@@ -1237,12 +1252,14 @@ every vendor ships one reviewed table through one mechanism
    signing, webhooks, drains, transfer, claim, and invite codes). It is the
    union of the detectors Cloudflare and Vercel shipped first, and
    deliberately over-inclusive. `providers:spec` writes
-   `value-safety.candidates.json` beside the index when the source record sets
+   `evidence/value-safety.json` (`value-safety.candidates.json` until the
+   provider's step 1) when the source record sets
    `options.valueSafety` (vendor `operationWords`; Stripe's `expansions: false`
    skips id-or-object expansions, which are their own operations' candidates),
    stamped with the pinned digest, the detector format, and its options. The
    file is test evidence and never ships.
-2. **One reviewed verdict per candidate**, in the vendor's `value-safety.ts`:
+2. **One reviewed verdict per candidate**, in the vendor's `safety.ts`
+   (`value-safety.ts` until its step 1):
    `refuse` (the generic tools refuse it before transport, naming the
    operation and the reason), `redact` (reviewed field paths), or `safe`, each
    with a reason. Paths are dot paths into the data a tool returns: a list on
@@ -1368,13 +1385,15 @@ spec: every `redact` path and `keep` must name something the operation's
 response schema can return (through `options.valueSafety.dataRoot` for an
 envelope such as Cloudflare's `result`), and every resource rule path
 something the resource's schema can return. It stamps the paths that resolve
-into the candidates file and fails on the rest, unless
-`value-safety.absent.json` acknowledges them (shared verdicts applied to
-operations whose schema lacks a path, or fields a schema leaves undeclared;
-such paths still apply at runtime).
+into the candidates file and fails on the rest, unless the table's `absent`
+field (`value-safety.absent.json` until the provider's step 1) acknowledges
+them with a reason (shared verdicts applied to operations whose schema lacks a
+path, or fields a schema leaves undeclared; such paths still apply at
+runtime).
 
 `test/fixtures/value-safety.ts` is the shared harness each vendor's
-`value-safety.node.test.ts` runs; `reviewProblems` is pure, and
+`value-safety.node.test.ts` (`provider.safety.node.test.ts` after its step 1)
+runs; `reviewProblems` is pure, and
 `test/value-safety-harness.node.test.ts` proves wrong paths fail it. It fails
 on candidates from another pin, format, or option set; an unreviewed
 candidate; a verdict for an operation the index lacks; a table path the stamp

@@ -298,6 +298,8 @@ describe("Provider drift pull request scope", () => {
 
   it.each([
     "scripts/drift-check.mjs",
+    "scripts/drift-record.mjs",
+    "scripts/drift-validate.mjs",
     "scripts/providers.mjs",
     "scripts/generate-openapi.mjs",
     "scripts/vercel-inventory.mjs",

@@ -10,8 +10,9 @@
 // - a verdict without a reason, a redact verdict without paths, or a path
 //   outside the path language;
 // - a reviewed path the pinned response schema does not have (`providers:spec`
-//   stamps the paths that resolve; `value-safety.absent.json` acknowledges
-//   shared paths an operation's schema lacks), or a stale stamp;
+//   stamps the paths that resolve; the table's `absent` field, or a legacy
+//   `value-safety.absent.json`, acknowledges shared paths an operation's
+//   schema lacks), or a stale stamp;
 // - a flagged response field no `redact` path, `keep`, vendor-wide field
 //   review, or scope map accounts for;
 // - a flagged field, built in the shape the pinned schema gives it, that
@@ -62,7 +63,7 @@ export interface Candidates {
   };
 }
 
-/** Table paths an operation's (or resource's) pinned schema lacks, acknowledged in `value-safety.absent.json`. */
+/** Table paths an operation's (or resource's) pinned schema lacks: the table's `absent`, or a legacy `value-safety.absent.json`. */
 export interface Absent {
   operations?: Record<string, string[]>;
   resources?: Record<string, string[]>;
@@ -75,7 +76,7 @@ export interface ValueSafetyReview {
   readonly source: { digest: string; options?: { valueSafety?: unknown } };
   /** The provider's `value-safety.candidates.json`. */
   readonly candidates: Candidates;
-  /** The provider's `value-safety.absent.json`, when it has one. */
+  /** A legacy `value-safety.absent.json`; defaults to the table's own `absent` field. */
   readonly absent?: Absent;
   /**
    * A flagged spec field as the path into the data a tool returns ("" for
@@ -263,6 +264,7 @@ export interface ReviewProblems {
  */
 export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
   const { table, index, candidates } = review;
+  const acknowledged = review.absent ?? table.absent;
   const safety = valueSafety(table, () => index);
   const operations = Object.entries(table.operations);
   const indexedKeys = new Set(index.ops.map((op) => `${op.method} ${op.path}`));
@@ -342,7 +344,7 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
   for (const [key, verdict] of operations) {
     const paths = verdictPaths(verdict);
     if (paths.length === 0 && !stamped?.operations[key]) continue;
-    check(key, paths, stamped?.operations[key] ?? [], review.absent?.operations?.[key] ?? []);
+    check(key, paths, stamped?.operations[key] ?? [], acknowledged?.operations?.[key] ?? []);
   }
   for (const key of Object.keys(stamped?.operations ?? {})) {
     if (!Object.hasOwn(table.operations, key)) problems.unresolved.push(`${key}: stamped, but the table lacks it`);
@@ -352,7 +354,7 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
       ? [...Object.keys(rule.guest.bindings), ...Object.keys(rule.guest.unbound), ...Object.keys(rule.guest.requires ?? {})]
       : [];
     const paths = [...(rule.paths ?? []), ...(rule.withheld ?? []), ...(rule.verbatim ?? []), ...guest];
-    check(`resource ${type}`, paths, stamped?.resources[type] ?? [], review.absent?.resources?.[type] ?? []);
+    check(`resource ${type}`, paths, stamped?.resources[type] ?? [], acknowledged?.resources?.[type] ?? []);
     // Deny by default needs every binding field the schema has: a new one fails until it is reviewed.
     if (rule.guest) {
       const declared = [...Object.keys(rule.guest.bindings), ...Object.keys(rule.guest.unbound)].sort();

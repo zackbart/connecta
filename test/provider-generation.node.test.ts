@@ -1,5 +1,6 @@
 // Node-only: executes the generator against temporary provider folders.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -88,7 +89,22 @@ function repository() {
   return root;
 }
 
+/** Excuse a provider from both steps, as PENDING excuses the legacy providers. */
+function excuse(root: string, name: string, steps: readonly ("step1" | "step2")[] = ["step1", "step2"]) {
+  const path = join(root, "test/provider-pending-baseline.json");
+  let baseline = { step1: [] as string[], step2: [] as string[] };
+  try {
+    baseline = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    // The first excused provider creates the baseline.
+  }
+  for (const step of steps) baseline[step] = [...new Set([...baseline[step], name])].sort();
+  writeFileSync(path, JSON.stringify(baseline));
+}
+
+/** A provider written to the legacy shapes, excused from both steps. */
 function provider(root: string, name: string, node = false) {
+  excuse(root, name);
   const folder = `src/providers/${name}`;
   mkdirSync(join(root, folder));
   write(
@@ -346,7 +362,7 @@ describe("provider folder generation", () => {
     write(root, "src/providers/alpha/openapi.source.json", JSON.stringify(source));
     const stale = run(root, true);
     expect(stale.status).toBe(1);
-    expect(stale.stderr).toContain("Operation indexes differ from openapi.source.json (run providers:spec)");
+    expect(stale.stderr).toContain("Operation indexes differ from their OpenAPI pins (run providers:spec)");
     expect(stale.stderr).toContain("src/providers/alpha/openapi.generated.ts");
     const generated = renderOpenApiModule(buildOperationIndex(JSON.parse(document), source), source);
     write(root, "src/providers/alpha/openapi.generated.ts", generated);
@@ -362,6 +378,409 @@ describe("provider folder generation", () => {
     expect(snapshot(root)).toEqual(before);
     expect(run(root).status).toBe(1);
     expect(read(root, "src/providers/alpha/openapi.generated.ts")).toBe(generated);
+  });
+});
+
+interface StandardOptions {
+  kind?: "api" | "mcp" | "dual";
+  /** TypeScript spread into the definition: blocks, kit, classify. */
+  definition?: string;
+  skill?: string;
+  checks?: unknown[];
+  files?: Record<string, string>;
+}
+
+/** A provider past both steps: a standard guide, a version-2 drift record, and its providers.md section. */
+function standardProvider(root: string, name: string, options: StandardOptions = {}) {
+  const folder = `src/providers/${name}`;
+  mkdirSync(join(root, folder, "evidence"), { recursive: true });
+  write(
+    root,
+    `${folder}/index.ts`,
+    `import { skill } from "./skill.generated.js";
+export const factory = Object.assign((id: string) => ({ id }), {
+  definition: { name: ${JSON.stringify(name)}, title: ${JSON.stringify(name.toUpperCase())}, readme: ${JSON.stringify(`Vendor ${name}`)},
+    kind: ${JSON.stringify(options.kind ?? "api")}, skill, bundle: { baselineGzip: 17 }, ${options.definition ?? ""} }
+});\n`,
+  );
+  write(
+    root,
+    `${folder}/SKILL.md`,
+    `---\n${JSON.stringify({ name, instructionsHeading: "Deployment instructions" })}\n---\n\n${
+      options.skill ?? "## Identity\n\nResolve an account id before any write.\n"
+    }`,
+  );
+  write(
+    root,
+    `${folder}/fixtures.ts`,
+    `import { factory } from "./index.js";
+export const fixture = { name: ${JSON.stringify(name)}, options: { purpose: "fixture" }, cases: [{ label: "default", options: {} }],
+  create(id = "fixture") { return factory(id); }
+};\n`,
+  );
+  write(
+    root,
+    `${folder}/drift.json`,
+    JSON.stringify({
+      version: 2,
+      provider: name,
+      checks: options.checks ?? [
+        {
+          type: "manual",
+          source: "https://vendor.example/reference",
+          reason: "The reference is hand-written HTML.",
+          lastVerified: "2026-10-01",
+        },
+      ],
+    }),
+  );
+  write(root, `${folder}/provider.test.ts`, "// Portable fixture.\n");
+  for (const [path, content] of Object.entries(options.files ?? {})) write(root, `${folder}/${path}`, content);
+  mkdirSync(join(root, "documentation"), { recursive: true });
+  const docs = join(root, "documentation/providers.md");
+  let existing = "# Providers\n";
+  try {
+    existing = readFileSync(docs, "utf8");
+  } catch {
+    // The first standard provider creates the page.
+  }
+  writeFileSync(docs, `${existing}\n## Vendor ${name}\n\nSetup for operators.\n`);
+}
+
+const generatedSkill = (root: string, name: string) => {
+  const source = read(root, `src/providers/${name}/skill.generated.ts`);
+  return JSON.parse(source.slice(source.indexOf("= ") + 2, source.lastIndexOf(" as const")));
+};
+const digestOf = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+
+describe("decision 0011 guides and drift records", () => {
+  const KIT = `kit: { operations: ["POST /b", "GET /a", "GET /a"], pageSize: { default: 25, max: 100 },
+    hatch: { name: "alpha", verdicts: { "GET /a": "read", "POST /b": "write", "DELETE /c": "refuse" } } },`;
+
+  it("renders a standard guide's Conventions from its declarations and writes drift.json's generated block", () => {
+    const root = repository();
+    const safety = '{ "format": 5 }\n';
+    standardProvider(root, "alpha", {
+      definition: KIT,
+      files: { "safety.ts": "export const table = {};\n", "evidence/value-safety.json": safety },
+    });
+    const first = run(root);
+    expect(first.status, first.stderr).toBe(0);
+    const skill = generatedSkill(root, "alpha");
+    expect(Object.keys(skill)).toEqual(["content", "instructionsHeading"]);
+    expect(
+      skill.content.startsWith("## Identity\n\nResolve an account id before any write.\n\n## Conventions\n\n"),
+    ).toBe(true);
+    expect(skill.content.split("\n").filter((line: string) => line.startsWith("- **"))).toEqual([
+      expect.stringContaining(
+        "**Paging:** a paged `list_*` or `search_*` read takes `limit` (default 25, at most 100)",
+      ),
+      expect.stringContaining("**Results:** `fields` narrows"),
+      expect.stringMatching(
+        /^- \*\*Hatch:\*\* `alpha_api_search` .*`alpha_api_write` calls a reviewed write, and every call to it needs approval\. .*refused by design: `DELETE \/c`\.$/,
+      ),
+      expect.stringContaining("**Writes:** a write is sent once and never retried"),
+      expect.stringContaining('**Withheld values:** a value withheld for safety reads `"[redacted]"`'),
+    ]);
+    const drift = json(root, "src/providers/alpha/drift.json");
+    expect(Object.keys(drift)).toEqual(["version", "provider", "generated", "checks"]);
+    expect(drift.generated).toEqual({
+      operations: ["GET /a", "POST /b"],
+      hosted: [],
+      evidence: { "value-safety.json": digestOf(safety) },
+    });
+    expect(run(root, true).status).toBe(0);
+    // Tools own the generated block: a hand edit, or evidence bytes that moved, is stale.
+    const path = "src/providers/alpha/drift.json";
+    const generated = read(root, path);
+    write(root, path, generated.replace('"GET /a",', '"GET /a",\n      "GET /typed-by-hand",'));
+    const handEdited = run(root, true);
+    expect(handEdited.status).toBe(1);
+    expect(handEdited.stderr).toContain(path);
+    write(root, path, generated);
+    write(root, "src/providers/alpha/evidence/value-safety.json", '{ "format": 6 }\n');
+    expect(run(root, true).stderr).toContain(path);
+    expect(run(root).status).toBe(0);
+    expect(json(root, path).generated.evidence).toEqual({ "value-safety.json": digestOf('{ "format": 6 }\n') });
+    // So does a Conventions section whose declaration moved.
+    const index = "src/providers/alpha/index.ts";
+    write(root, index, read(root, index).replace("default: 25", "default: 50"));
+    const moved = run(root, true);
+    expect(moved.status).toBe(1);
+    expect(moved.stderr).toContain("src/providers/alpha/skill.generated.ts");
+  });
+
+  it("keys a dual guide's API and hosted Conventions to its declared blocks, and lists served hosted names", () => {
+    const root = repository();
+    standardProvider(root, "alpha", {
+      kind: "dual",
+      definition: `blocks: { keys: ["api", "hosted"], select: () => ["api"] },
+        classify: { tools: { list_items: "read", edit_item: "write" } },`,
+      skill: "## Identity\n\n<!-- when: hosted -->\nSelect the workspace first.\n<!-- end -->\n",
+      files: {
+        "evidence/catalog.json": JSON.stringify({
+          capturedAt: "2026-10-01",
+          method: "tools/list",
+          source: "https://vendor.example/mcp",
+          tools: [{ name: "edit_item" }, { name: "list_items" }],
+        }),
+      },
+    });
+    const result = run(root);
+    expect(result.status, result.stderr).toBe(0);
+    expect(generatedSkill(root, "alpha").content.split("\n")).toEqual([
+      "## Identity",
+      "",
+      "<!-- when: hosted -->",
+      "Select the workspace first.",
+      "<!-- end -->",
+      "",
+      "## Conventions",
+      "",
+      "<!-- when: api -->",
+      expect.any(String),
+      "<!-- end -->",
+      expect.stringContaining("- **Writes:**"),
+      "<!-- when: hosted -->",
+      expect.stringContaining("- **Hosted tools:** the hosted catalog varies by plan and permission"),
+      "<!-- end -->",
+    ]);
+    expect(json(root, "src/providers/alpha/drift.json").generated).toMatchObject({
+      operations: [],
+      hosted: ["edit_item", "list_items"],
+      evidence: { "catalog.json": expect.stringMatching(/^sha256:/) },
+    });
+  });
+
+  it.each([
+    [
+      "a fragment guide",
+      { skill: "<!-- fragment: content -->\nText.\n<!-- endfragment -->\n" },
+      "G2: SKILL.md uses retired fragment markers",
+    ],
+    [
+      "an undeclared when-block key",
+      { skill: "<!-- when: region -->\nUS only.\n<!-- end -->\n" },
+      "G2: SKILL.md uses the when-block region, which blocks.keys omits",
+    ],
+    [
+      "an inline when-block",
+      { skill: "Text <!-- when: api -->inline<!-- end -->\n" },
+      "G2: a when-block marker stands alone on its line",
+    ],
+    [
+      "a written Conventions section",
+      { skill: "## Conventions\n\nPage with cursors.\n" },
+      "G3: the Conventions section",
+    ],
+    [
+      "operator setup",
+      { skill: "## Setup\n\nImport it from `@zackbart/connecta/providers/alpha`.\n" },
+      "G4: SKILL.md carries operator setup",
+    ],
+    [
+      "a dual guide without hosted and api keys",
+      { kind: "dual" as const, definition: 'classify: { tools: { list_items: "read" } },' },
+      "G2: a dual provider declares the hosted and api block keys",
+    ],
+    [
+      "a manual check without lastVerified",
+      { checks: [{ type: "manual", source: "https://vendor.example", reason: "Prose." }] },
+      "D3: checks[0] manual check needs lastVerified",
+    ],
+    [
+      "a hand-kept reviewed list",
+      {
+        checks: [{ type: "mcp-docs", setup: "https://vendor.example/mcp", endpoints: ["https://x"], reviewed: ["a"] }],
+      },
+      "D4: checks[0] hand-keeps a reviewed list",
+    ],
+    [
+      "an endpoint row the manifest does not send",
+      {
+        checks: [
+          {
+            type: "endpoints",
+            specification: { url: "https://vendor.example/openapi.json" },
+            endpoints: [{ operation: "GET /unsent", specRevision: "1" }],
+          },
+        ],
+      },
+      "D4: checks[0] entries are keyed by an operation in generated.operations",
+    ],
+    [
+      "a ReadMe endpoint row without its page, which providers:check cannot read",
+      {
+        definition: KIT,
+        checks: [
+          {
+            type: "endpoints",
+            specification: { url: "https://docs.vendor.example/reference/", format: "readme-operation-pages" },
+            endpoints: [{ operation: "GET /a", specRevision: "1", contract: `sha256:${"0".repeat(64)}` }],
+          },
+        ],
+      },
+      "D3: providers:check rejects checks[0]: GET /a names its reference page",
+    ],
+    [
+      "reviewed access to a tool generated.hosted does not serve",
+      {
+        kind: "mcp" as const,
+        definition: 'classify: { tools: { list_items: "read" } },',
+        checks: [
+          {
+            type: "mcp-docs",
+            setup: "https://vendor.example/mcp",
+            endpoints: ["https://mcp.vendor.example/mcp"],
+            reviewedAccess: { ghost: "read" },
+          },
+        ],
+      },
+      "D3: providers:check rejects checks[0]: reviewed access must name generated hosted tools",
+    ],
+  ])("refuses %s past its step before writing anything", (_label, options, finding) => {
+    const root = repository();
+    standardProvider(root, "alpha", options);
+    const before = snapshot(root);
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`providers/alpha: ${finding}`);
+    expect(snapshot(root)).toEqual(before);
+    expect(run(root, true).status).toBe(1);
+  });
+
+  it("generates an endpoint row awaiting its contract, which providers:check --record then writes", async () => {
+    const { driftViolations } = await import("./provider-standard.js");
+    const root = repository();
+    const pages = join(root, "pages");
+    mkdirSync(pages);
+    for (const [file, method, path] of [
+      ["list-a", "get", "/a"],
+      ["create-b", "post", "/b"],
+    ]) {
+      const snippet = {
+        openapi: "3.1.0",
+        info: { version: "3" },
+        paths: { [path!]: { [method!]: { responses: {} } } },
+      };
+      write(root, `pages/${file}.md`, `# OpenAPI definition\n\n\`\`\`json\n${JSON.stringify(snippet)}\n\`\`\`\n`);
+    }
+    standardProvider(root, "alpha", {
+      definition: KIT,
+      checks: [
+        {
+          type: "endpoints",
+          specification: { url: "https://docs.vendor.example/reference/", format: "readme-operation-pages" },
+          endpoints: [
+            { operation: "GET /a", page: "list-a", specRevision: "0" },
+            { operation: "POST /b", page: "create-b", specRevision: "0" },
+          ],
+        },
+      ],
+    });
+    const facts = () => ({
+      name: "alpha",
+      kind: "api",
+      display: "Vendor alpha",
+      files: ["drift.json"],
+      read: (path: string) => (path === "drift.json" ? read(root, "src/providers/alpha/drift.json") : undefined),
+    });
+    // Generation accepts the rows --record will complete; the suite does not accept them committed.
+    expect(run(root).status).toBe(0);
+    expect(driftViolations(facts(), "2026-10-20")).toEqual([
+      "D3: providers:check rejects checks[0]: invalid contract digest: GET /a",
+    ]);
+    const recorded = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../scripts/drift-check.mjs", import.meta.url)),
+        "--specs",
+        "--record",
+        "--provider-dir",
+        join(root, "src/providers"),
+        "--provider",
+        "alpha",
+        "--spec",
+        `alpha=${pages}/`,
+      ],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    expect(recorded.status, recorded.stdout + recorded.stderr).toBe(0);
+    expect(json(root, "src/providers/alpha/drift.json").checks[0].endpoints).toEqual([
+      { operation: "GET /a", page: "list-a", specRevision: "3", contract: expect.stringMatching(/^sha256:/) },
+      { operation: "POST /b", page: "create-b", specRevision: "3", contract: expect.stringMatching(/^sha256:/) },
+    ]);
+    expect(driftViolations(facts(), "2026-10-20")).toEqual([]);
+    expect(run(root, true).status).toBe(0);
+  });
+
+  it("refuses a version-1 record past step 1, and excuses G only while step 2 is pending", () => {
+    const root = repository();
+    standardProvider(root, "alpha");
+    write(root, "src/providers/alpha/drift.json", '{"version":1,"provider":"alpha","checks":[]}\n');
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("providers/alpha: D1: drift.json needs version 2 and this provider's name");
+    // Excused from step 1 only: D waits, and a legacy guide is still G's business.
+    excuse(root, "alpha", ["step1"]);
+    expect(run(root).status).toBe(0);
+    write(
+      root,
+      "src/providers/alpha/SKILL.md",
+      read(root, "src/providers/alpha/SKILL.md").replace("## Identity", "# Identity"),
+    );
+    expect(run(root).stderr).toContain("providers/alpha: G3: SKILL.md headings start at ##");
+    // Excused from step 2 as well: the fragment guide and its parser stay.
+    excuse(root, "alpha", ["step2"]);
+    write(
+      root,
+      "src/providers/alpha/SKILL.md",
+      `---\n${JSON.stringify({ name: "alpha", instructionsHeading: "Notes" })}\n---\n<!-- fragment: content -->\n# Legacy\n<!-- endfragment -->\n`,
+    );
+    expect(run(root).status).toBe(0);
+    expect(generatedSkill(root, "alpha")).toEqual({
+      content: "# Legacy\n",
+      instructionsHeading: "Notes",
+      fragments: { content: "# Legacy\n" },
+    });
+  });
+});
+
+describe("the generated Conventions", () => {
+  const conventions = async () =>
+    (await import(new URL("../scripts/provider-guide.mjs", import.meta.url).href)) as {
+      renderConventions(input: object): string;
+    };
+  const labels = (text: string) => [...text.matchAll(/^- \*\*([A-Za-z ]+):\*\*/gm)].map((match) => match[1]);
+
+  it("states the hosted conventions for mcp, and only the declared API ones for api", async () => {
+    const { renderConventions } = await conventions();
+    expect(labels(renderConventions({ name: "acme", kind: "mcp" }))).toEqual(["Writes", "Hosted tools"]);
+    expect(labels(renderConventions({ name: "acme", kind: "api" }))).toEqual(["Results", "Writes"]);
+    const kit = { operations: [], pageSize: { default: 10, max: 50 }, hatch: { name: "acme", verdicts: {} } };
+    const full = renderConventions({ name: "acme", kind: "api", kit, withheld: true });
+    expect(labels(full)).toEqual(["Paging", "Results", "Hatch", "Writes", "Withheld values"]);
+    // A hatch with no write verdict offers no write tool and asks no approval.
+    expect(full).not.toContain("acme_api_write");
+    expect(full).toContain("An operation without a reviewed verdict is refused.");
+  });
+
+  it("refuses kit facts it cannot state truthfully", async () => {
+    const { renderConventions } = await conventions();
+    expect(() =>
+      renderConventions({ name: "acme", kind: "api", kit: { operations: [], pageSize: { default: 50, max: 10 } } }),
+    ).toThrow("kit.pageSize default exceeds its maximum");
+    expect(() =>
+      renderConventions({ name: "acme", kind: "api", kit: { operations: [], hatch: { name: "Acme", verdicts: {} } } }),
+    ).toThrow("snake_case tool prefix");
+    expect(() =>
+      renderConventions({
+        name: "acme",
+        kind: "api",
+        kit: { operations: [], hatch: { name: "acme", verdicts: { "GET /a": "maybe" } } },
+      }),
+    ).toThrow("read, write, destructive, or refuse");
+    expect(() => renderConventions({ name: "acme", kind: "composed" })).toThrow("mcp, api, or dual");
   });
 });
 
@@ -1024,5 +1443,174 @@ describe("value-safety candidate detection", () => {
       "POST /v1/projects/{id}/handoff": { fields: [], named: true },
       "GET /v1/sessions": { fields: ["handle", "inviteCode", "teamCode"], named: false },
     });
+  });
+});
+
+describe("decision 0011 evidence names in providers:spec and value safety", () => {
+  interface Spec {
+    checkOpenApiOutputs(root: string, providers: { directory: string }[]): Promise<string[]>;
+    openApiEvidence(directory: string): Promise<{ pin: string } | undefined>;
+    readOpenApiSource(directory: string): Promise<unknown>;
+    sha256(bytes: string): string;
+    specProvider(
+      provider: { name: string; directory: string },
+      options?: { file?: string; record?: boolean },
+    ): Promise<{ problems: string[]; summary: string }>;
+  }
+  const spec = async () => (await import(new URL("../scripts/generate-openapi.mjs", import.meta.url).href)) as Spec;
+  const safetyScript = async () =>
+    (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {
+      reviewedTable(directory: string): Promise<{ table: unknown; absent: Record<string, unknown> } | undefined>;
+    };
+  const document = JSON.stringify({
+    openapi: "3.0.0",
+    info: { version: "1" },
+    paths: {
+      "/v1/keys": {
+        get: {
+          responses: {
+            "200": {
+              content: {
+                "application/json": { schema: { type: "object", properties: { secret: { type: "string" } } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const table = (absent: boolean) =>
+    `export const TABLE = { title: "Acme", operations: { "GET /v1/keys": { verdict: "redact", reason: "Signing secret.", paths: ["secret", "legacy_secret"] } }${
+      absent ? ', absent: { reason: "A shared verdict path.", operations: { "GET /v1/keys": ["legacy_secret"] } }' : ""
+    } };\n`;
+
+  function folder(files: Record<string, string>) {
+    const root = mkdtempSync(join(tmpdir(), "connecta-evidence-"));
+    directories.push(root);
+    const directory = join(root, "acme");
+    mkdirSync(join(directory, "evidence"), { recursive: true });
+    for (const [path, content] of Object.entries(files)) writeFileSync(join(directory, path), content);
+    return { root, directory, provider: { name: "acme", directory } };
+  }
+
+  it("compiles evidence/openapi.json, writes evidence/value-safety.json, and records a moved pin there", async () => {
+    const { checkOpenApiOutputs, sha256, specProvider } = await spec();
+    const pin = {
+      url: "https://vendor.example/openapi.json",
+      revision: "r1",
+      digest: sha256(document),
+      options: { valueSafety: true },
+    };
+    const { root, directory, provider } = folder({
+      "evidence/openapi.json": JSON.stringify(pin),
+      "safety.ts": table(true),
+      "document.json": document,
+    });
+    const file = join(directory, "document.json");
+    expect((await specProvider(provider, { file })).problems).toEqual([]);
+    expect(readFileSync(join(directory, "openapi.generated.ts"), "utf8").split("\n")[0]).toBe(
+      "// Generated by scripts/generate-openapi.mjs from evidence/openapi.json; do not edit.",
+    );
+    const candidates = JSON.parse(readFileSync(join(directory, "evidence/value-safety.json"), "utf8"));
+    expect(candidates).toMatchObject({ digest: pin.digest, reviewed: { operations: { "GET /v1/keys": ["secret"] } } });
+    expect(readdirSync(directory)).not.toContain("value-safety.candidates.json");
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual([]);
+    // Without its absent acknowledgement, a path the schema lacks fails the review.
+    const unacknowledged = folder({ "evidence/openapi.json": JSON.stringify(pin), "safety.ts": table(false) });
+    expect((await specProvider(unacknowledged.provider, { file })).problems).toEqual([
+      "GET /v1/keys: legacy_secret (not in the response schema)",
+    ]);
+    const moved = document.replace('"version":"1"', '"version":"2"');
+    writeFileSync(file, moved);
+    await expect(specProvider(provider, { file })).rejects.toThrow("does not match the pinned");
+    await specProvider(provider, { file, record: true });
+    expect(JSON.parse(readFileSync(join(directory, "evidence/openapi.json"), "utf8")).digest).toBe(sha256(moved));
+    expect(readdirSync(directory)).not.toContain("openapi.source.json");
+  });
+
+  it("compiles a vendored document offline and moves its pin only by review", async () => {
+    const { readOpenApiSource, sha256, specProvider } = await spec();
+    const yaml = "openapi: 3.0.0\n";
+    const pin = { url: "https://vendor.example/openapi.yaml", revision: "1.0.0", digest: sha256(yaml), vendored: true };
+    const { directory, provider } = folder({
+      "evidence/openapi.json": JSON.stringify(pin),
+      "evidence/openapi.document.json": document,
+    });
+    await specProvider(provider);
+    expect(readFileSync(join(directory, "openapi.generated.ts"), "utf8")).toContain(`// digest: ${pin.digest}`);
+    await expect(specProvider(provider, { record: true })).rejects.toThrow("a vendored pin moves by review");
+    unlinkSync(join(directory, "evidence/openapi.document.json"));
+    await expect(readOpenApiSource(directory)).rejects.toThrow("evidence/openapi.document.json is missing");
+    const legacy = folder({ "openapi.source.json": JSON.stringify(pin) });
+    await expect(readOpenApiSource(legacy.directory)).rejects.toThrow("vendored is true, beside");
+  });
+
+  it("reads a vendored index as stale once its conversion document changes", async () => {
+    const { checkOpenApiOutputs, sha256, specProvider } = await spec();
+    const pin = {
+      url: "https://vendor.example/openapi.yaml",
+      revision: "1.0.0",
+      digest: sha256("openapi: 3.0.0\n"),
+      vendored: true,
+    };
+    const { root, directory, provider } = folder({
+      "evidence/openapi.json": JSON.stringify(pin),
+      "evidence/openapi.document.json": document,
+    });
+    await specProvider(provider);
+    const output = join(directory, "openapi.generated.ts");
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual([]);
+    // The published-byte pin is unchanged, but the index it would compile is not.
+    const moved = document.replace('"version":"1"', '"version":"2"');
+    writeFileSync(join(directory, "evidence/openapi.document.json"), moved);
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual(["acme/openapi.generated.ts"]);
+    await specProvider(provider);
+    expect(readFileSync(output, "utf8")).toContain('version: "2"');
+    expect(readFileSync(output, "utf8")).toContain(`// document: ${sha256(moved)}`);
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual([]);
+    // A non-vendored module states no conversion digest.
+    writeFileSync(join(directory, "evidence/openapi.json"), JSON.stringify({ ...pin, vendored: undefined }));
+    unlinkSync(join(directory, "evidence/openapi.document.json"));
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual(["acme/openapi.generated.ts"]);
+  });
+
+  it("refuses a folder that pins OpenAPI under both names, and keeps legacy names until step 1", async () => {
+    const { openApiEvidence } = await spec();
+    const pin = JSON.stringify({
+      url: "https://vendor.example/openapi.json",
+      revision: "r1",
+      digest: `sha256:${"0".repeat(64)}`,
+    });
+    const both = folder({ "evidence/openapi.json": pin, "openapi.source.json": pin });
+    await expect(openApiEvidence(both.directory)).rejects.toThrow("pins OpenAPI twice");
+    const legacy = folder({ "openapi.source.json": pin });
+    expect(await openApiEvidence(legacy.directory)).toEqual({
+      pin: "openapi.source.json",
+      candidates: "value-safety.candidates.json",
+    });
+  });
+
+  it("reads the reviewed table and its absent paths from safety.ts, legacy files until step 1, never both", async () => {
+    const { reviewedTable } = await safetyScript();
+    const standard = folder({ "safety.ts": table(true) });
+    expect((await reviewedTable(standard.directory))?.absent).toEqual({
+      operations: { "GET /v1/keys": ["legacy_secret"] },
+      resources: {},
+      reason: "A shared verdict path.",
+    });
+    writeFileSync(join(standard.directory, "value-safety.absent.json"), "{}");
+    await expect(reviewedTable(standard.directory)).rejects.toThrow("remove value-safety.*");
+    const legacy = folder({
+      "value-safety.ts": table(false),
+      "value-safety.absent.json": JSON.stringify({
+        reason: "Shared.",
+        operations: { "GET /v1/keys": ["legacy_secret"] },
+      }),
+    });
+    expect((await reviewedTable(legacy.directory))?.absent).toMatchObject({
+      operations: { "GET /v1/keys": ["legacy_secret"] },
+      resources: {},
+    });
+    expect(await reviewedTable(folder({}).directory)).toBeUndefined();
   });
 });

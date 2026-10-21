@@ -1,12 +1,28 @@
 // Credential-free maintainer tooling. Provider folders own vendor evidence in
 // versioned drift.json records; no deployment module reads these records.
+// Version 2 (decision 0011, D; scripts/drift-record.mjs) reads hosted names
+// from `generated.hosted`, catalog baselines from evidence/catalog.json, and
+// endpoint rows keyed by an `operation` from `generated.operations`. Version 1
+// stays readable for providers that have not landed their step 1.
 // Reports are advisory (exit 0), including parser/network failures and required
 // manual reviews. --strict exits 1 for findings; invocation errors exit 2.
 // Only --record with an explicit --provider selection updates endpoint digests,
 // revisions and latest-published evidence. It never changes pins, check config,
 // hosted reviewed names/annotations, or runtime code. MCP schemas remain live tools/list.
 import { createHash } from "node:crypto";
-import { readOpenApiSource, sha256 } from "./generate-openapi.mjs";
+import { STALE_AFTER_DAYS, serializeDrift } from "./drift-record.mjs";
+import {
+  CATALOG_HINTS,
+  DRIFT_VERSION,
+  EvidenceError,
+  checkView as projectCheck,
+  daysSince,
+  parseOperation,
+  productOf,
+  validateCheck,
+  validateRecord,
+} from "./drift-validate.mjs";
+import { openApiEvidence, readOpenApiSource, sha256 } from "./generate-openapi.mjs";
 import { discoverProviders } from "./providers.mjs";
 import { readVercelInventory } from "./vercel-inventory.mjs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
@@ -25,6 +41,15 @@ const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
  * {type: "manual", source: string, rationale: string, evidence?: object} |
  * {type: "openapi-index", source: "openapi.source.json"}} DriftCheck
  * @typedef {{version: 1, provider: string, checks: DriftCheck[]}} DriftRecord
+ *
+ * Version 2 changes these, and every checker reads a v2 check through
+ * `checkView` in the version-1 shape above: `manual` names `reason` and a
+ * `lastVerified` day; `mcp-docs` and `oauth-discovery` name no `reviewed`
+ * list (it is `generated.hosted`); `mcp-catalog` names
+ * `catalog: "evidence/catalog.json"`; endpoint rows carry `operation` (and
+ * `page` for ReadMe operation pages) in place of `method` and `path`;
+ * `openapi-index` reads `evidence/openapi.json`.
+ * @typedef {{version: 2, provider: string, generated: {operations: string[], hosted: string[], evidence: Record<string, string>}, checks: object[]}} DriftRecordV2
  */
 
 /**
@@ -129,7 +154,6 @@ function parseArguments(argv) {
 
 class UnavailableError extends Error {}
 class ParserError extends Error {}
-class EvidenceError extends Error {}
 
 function errorFinding(error) {
   return {
@@ -174,16 +198,7 @@ async function discoverRecords(directory) {
     }
     try {
       const record = JSON.parse(text);
-      if (
-        record?.version !== 1 ||
-        record.provider !== entry.name ||
-        !Array.isArray(record.checks) ||
-        record.checks.length === 0
-      ) {
-        throw new EvidenceError(
-          `${entry.name}'s drift record requires version 1, matching provider, and non-empty checks`,
-        );
-      }
+      validateRecord(record, entry.name);
       providers.push({ provider: entry.name, path, record });
     } catch (error) {
       providers.push({
@@ -209,6 +224,8 @@ function validateSelection(options, providers) {
     if (!entry) usage(`unknown provider: ${provider}`);
     if (entry.error) continue; // Invalid evidence must still get a structured report.
     const modes = new Set(entry.record.checks.map((check) => checkMode(check?.type)));
+    // --specs reports a version-2 manifest's unrecorded operations even without an endpoint check.
+    if (entry.record.version === DRIFT_VERSION && entry.record.generated.operations.length > 0) modes.add("specs");
     if (modes.has("records")) continue;
     if (![...modes].some((mode) => options[mode])) {
       usage(
@@ -252,134 +269,34 @@ function validateSelection(options, providers) {
   }
 }
 
-/** Reject missing vendor evidence before network access; config is never guessed. */
-function validateCheck(check, allowUnrecorded) {
-  const require = (condition, detail) => {
-    if (!condition) throw new EvidenceError(detail);
+/**
+ * A check as the version-1 checkers read it (drift-validate.mjs), with a
+ * version-2 public catalog's baseline read from its evidence file.
+ */
+async function checkView(record, check, directory) {
+  let catalog;
+  if (record.version === DRIFT_VERSION && check?.type === "mcp-catalog" && check.catalog === "evidence/catalog.json") {
+    try {
+      catalog = JSON.parse(await readFile(resolvePath(directory, check.catalog), "utf8"));
+    } catch (error) {
+      throw new EvidenceError(
+        `could not read ${check.catalog}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return projectCheck(record, check, { catalog });
+}
+
+/** A recorded endpoint row in its version-2 spelling. */
+function operationRow({ method, path, page, specRevision, deprecated, contract, ...rest }) {
+  return {
+    operation: `${method} ${path}`,
+    ...(page === undefined ? {} : { page }),
+    ...rest,
+    specRevision,
+    ...(deprecated ? { deprecated } : {}),
+    ...(contract === undefined ? {} : { contract }),
   };
-  const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
-  const strings = (value) =>
-    Array.isArray(value) && value.length > 0 && value.every(nonempty) && new Set(value).size === value.length;
-  require(check && typeof check === "object", "check must be an object");
-  if (check.type === "mcp-catalog") {
-    const url = new URL(check.endpoint);
-    require(url.protocol === "https:" &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash, "public catalog requires a credential-free HTTPS endpoint");
-    require(Array.isArray(check.reviewed) &&
-      check.reviewed.length > 0, "public catalog requires reviewed names and annotations");
-    const names = new Set();
-    for (const tool of check.reviewed) {
-      require(nonempty(tool?.name) && !names.has(tool.name), "reviewed catalog requires unique non-empty names");
-      names.add(tool.name);
-      require(tool.annotations &&
-        typeof tool.annotations === "object" &&
-        !Array.isArray(tool.annotations), "reviewed catalog requires annotations");
-      for (const key of CATALOG_HINTS)
-        require(tool.annotations[key] === undefined ||
-          typeof tool.annotations[key] === "boolean", `invalid annotation ${key}`);
-    }
-    return;
-  }
-  if (check.type === "manual") {
-    require(nonempty(check.source) && nonempty(check.rationale), "manual check requires source and rationale");
-    return;
-  }
-  if (check.type === "openapi-index") {
-    require(check.source === "openapi.source.json", "OpenAPI index check reads openapi.source.json");
-    return;
-  }
-  if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
-    require(nonempty(check.setup) &&
-      strings(check.endpoints) &&
-      strings(check.reviewed), "MCP check requires setup, endpoints, and reviewed vendor names");
-    if (check.type === "oauth-discovery")
-      require(check.inventory === undefined, "OAuth discovery checks have no tool inventory");
-    if (check.reviewedAccess !== undefined) {
-      require(check.reviewedAccess !== null &&
-        typeof check.reviewedAccess === "object" &&
-        !Array.isArray(check.reviewedAccess) &&
-        Object.entries(check.reviewedAccess).every(
-          ([name, access]) => check.reviewed.includes(name) && (access === "read" || access === "write"),
-        ), "reviewed access must map reviewed names to read or write");
-    }
-    if (check.inventory !== undefined) {
-      const inventory = check.inventory;
-      require(nonempty(inventory.url) &&
-        ["headings", "inline", "inline-calls", "table", "vercel-categories"].includes(
-          inventory.format,
-        ), "inventory requires URL and supported parser format");
-      for (const key of ["start", "end", "prefix", "accessColumn"])
-        require(inventory[key] === undefined || nonempty(inventory[key]), `inventory ${key} must be non-empty`);
-      require(inventory.categories === undefined ||
-        (inventory.format === "vercel-categories" &&
-          inventory.categories !== null &&
-          typeof inventory.categories === "object" &&
-          !Array.isArray(inventory.categories) &&
-          Object.entries(inventory.categories).every(
-            ([category, names]) => /^[a-z0-9-]+$/.test(category) && strings(names),
-          )), "inventory categories must map category slugs to known tool names");
-      require(inventory.acknowledgedRemoved === undefined ||
-        (inventory.format === "vercel-categories" &&
-          strings(inventory.acknowledgedRemoved) &&
-          inventory.acknowledgedRemoved.every((name) =>
-            check.reviewed.includes(name),
-          )), "acknowledged removed names must be unique reviewed names");
-      require(inventory.acknowledgedUnclassified === undefined ||
-        strings(
-          inventory.acknowledgedUnclassified,
-        ), "acknowledged unclassified names must be unique non-empty strings");
-    }
-    return;
-  }
-  require(check.type === "endpoints" ||
-    check.type === "versioned-endpoints", `unknown check type: ${String(check.type)}`);
-  require(Array.isArray(check.endpoints) && check.endpoints.length > 0, "endpoint check requires touched endpoints");
-  const seen = new Set();
-  for (const endpoint of check.endpoints) {
-    require(endpoint &&
-      /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(endpoint.method) &&
-      nonempty(endpoint.path) &&
-      endpoint.path.startsWith("/") &&
-      nonempty(endpoint.specRevision), "endpoint requires method, path, and reviewed revision");
-    const key = `${endpoint.method} ${endpoint.path}`;
-    require(!seen.has(key), `duplicate endpoint: ${key}`);
-    seen.add(key);
-    require((allowUnrecorded && endpoint.contract === undefined) ||
-      /^sha256:[0-9a-f]{64}$/.test(endpoint.contract), `invalid contract digest: ${key}`);
-    require(endpoint.deprecated === undefined ||
-      typeof endpoint.deprecated === "boolean", `invalid deprecation evidence: ${key}`);
-  }
-  if (check.type === "endpoints") {
-    require(nonempty(check.specification?.url), "endpoint check requires specification URL");
-    require(check.specification.format === undefined ||
-      ["openapi", "google-discovery", "readme-operation-pages"].includes(
-        check.specification.format,
-      ), "unknown specification format");
-    if (check.specification.format === "readme-operation-pages")
-      require(strings(check.specification.pages), "operation-page check requires reference pages");
-    if (check.specification.format === "google-discovery")
-      require(strings(check.scopes), "Google Discovery check requires requested scopes");
-  } else {
-    require(check.specifications &&
-      typeof check.specifications === "object" &&
-      !Array.isArray(check.specifications) &&
-      Object.keys(check.specifications).length > 0, "versioned check requires per-product specifications");
-    for (const [app, spec] of Object.entries(check.specifications)) {
-      require(nonempty(spec?.url) &&
-        nonempty(spec.documentation) &&
-        nonempty(spec.version), `product ${app} requires URL, documentation, and pin`);
-      require(spec.latestPublished === undefined ||
-        nonempty(spec.latestPublished), `product ${app} has invalid reviewed publication`);
-    }
-    for (const endpoint of check.endpoints)
-      require(Object.hasOwn(
-        check.specifications,
-        productOf(endpoint.path),
-      ), `no product specification for ${endpoint.path}`);
-  }
 }
 
 /**
@@ -672,21 +589,28 @@ function operationFor(document, endpoint) {
  * pin is a digest of exact bytes, so any change is drift to review; accepting
  * it is `providers:spec -- --provider <name> --record` after moving the pin.
  */
-async function checkOpenApiIndex(provider, options) {
+async function checkOpenApiIndex(provider, check, options) {
   let source;
+  const directory = resolvePath(options.providerDirectory, provider);
   try {
-    source = await readOpenApiSource(resolvePath(options.providerDirectory, provider));
+    if ((await openApiEvidence(directory))?.pin !== check.source) {
+      throw new Error(`${provider} declares an OpenAPI index check without ${check.source}`);
+    }
+    source = await readOpenApiSource(directory);
   } catch (error) {
     throw new EvidenceError(error instanceof Error ? error.message : String(error));
   }
-  if (!source) throw new EvidenceError(`${provider} declares an OpenAPI index check without openapi.source.json`);
   const live = options.specSources.get(provider) ?? source.latest ?? source.url;
   const text = await loadPublished(provider, "published specification", live);
   let version;
-  try {
-    version = JSON.parse(text)?.info?.version;
-  } catch {
-    throw new ParserError(`${provider}'s published specification at ${live} is not JSON`);
+  // A vendored pin (decision 0011, E) digests a document only published in
+  // another format; the reviewed JSON conversion lives beside it.
+  if (source.vendored !== true) {
+    try {
+      version = JSON.parse(text)?.info?.version;
+    } catch {
+      throw new ParserError(`${provider}'s published specification at ${live} is not JSON`);
+    }
   }
   const digest = sha256(new TextEncoder().encode(text));
   return {
@@ -702,7 +626,7 @@ async function checkOpenApiIndex(provider, options) {
               detail:
                 `pinned ${source.revision} (${source.digest}) differs from ${live} (${digest}` +
                 `${typeof version === "string" ? `, info.version ${version}` : ""}). Review it, move the pin in ` +
-                `openapi.source.json, then run providers:spec -- --provider ${provider} --record.`,
+                `${check.source}, then run providers:spec -- --provider ${provider} --record.`,
             },
           ],
   };
@@ -791,11 +715,6 @@ function checkEndpoints(endpoints, documentFor) {
     });
   }
   return { findings, recorded };
-}
-
-/** `/people/v2/people/{person_id}` → `people`; the version segment is fixed. */
-function productOf(path) {
-  return /^\/([a-z-]+)\/v2(?:\/|$)/.exec(path)?.[1];
 }
 
 /** Non-beta versions a Planning Center documentation graph lists, newest first. */
@@ -887,9 +806,6 @@ async function checkVersionedProvider(provider, manifest, options) {
 // Published MCP references
 // ---------------------------------------------------------------------------
 
-// Only the four behavioral hints are drift evidence. Titles and schemas remain
-// vendor-owned; this catalog review does not grant a runtime classification.
-const CATALOG_HINTS = ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"];
 function catalogHints(annotations) {
   return Object.fromEntries(
     CATALOG_HINTS.filter((key) => annotations?.[key] !== undefined).map((key) => [key, annotations[key]]),
@@ -1378,13 +1294,36 @@ async function main() {
       continue;
     }
     let changed = false;
-    for (const [index, check] of record.checks.entries()) {
-      const mode = checkMode(check?.type);
+    const v2 = record.version === DRIFT_VERSION;
+    const endpointChecks = record.checks.filter(
+      (check) => check?.type === "endpoints" || check?.type === "versioned-endpoints",
+    );
+    // A manifest operation no endpoint row records is a finding (D4) at the
+    // provider's level: it holds with no endpoint check, or one that fails.
+    const covered = new Set(
+      endpointChecks
+        .flatMap((check) => (Array.isArray(check?.endpoints) ? check.endpoints : []))
+        .map((row) => row?.operation),
+    );
+    const unrecorded = v2 ? record.generated.operations.filter((key) => !covered.has(key)) : [];
+    if (options.specs && unrecorded.length > 0) {
+      report.specs.push({
+        provider,
+        findings: unrecorded.map((key) => ({
+          ...parseOperation(key),
+          kind: "operation-unrecorded",
+          detail: `${key}: the provider sends this operation, but no endpoint row records its contract`,
+        })),
+      });
+    }
+    for (const [index, raw] of record.checks.entries()) {
+      const mode = checkMode(raw?.type);
       if (mode !== "records" && !options[mode]) continue;
       try {
-        validateCheck(check, options.record);
+        const check = await checkView(record, raw, resolvePath(options.providerDirectory, provider));
+        validateCheck(check, options.record, record.version);
         if (check.type === "openapi-index") {
-          report.specs.push({ ...(await checkOpenApiIndex(provider, options)), check: index, index: true });
+          report.specs.push({ ...(await checkOpenApiIndex(provider, check, options)), check: index, index: true });
         } else if (mode === "specs") {
           const versioned = check.type === "versioned-endpoints";
           const specification = versioned
@@ -1399,9 +1338,9 @@ async function main() {
           );
           if (options.record && recordable) {
             record.checks[index] = {
-              ...check,
+              ...(v2 ? raw : check),
               ...(result.specifications ? { specifications: result.specifications } : {}),
-              endpoints: result.recorded,
+              endpoints: v2 ? result.recorded.map(operationRow) : result.recorded,
             };
             changed = true;
           }
@@ -1421,12 +1360,25 @@ async function main() {
               : await checkDocumentedProvider(provider, check, options);
           report.docs.push({ ...result, check: index });
         } else {
+          const age = v2 ? daysSince(check.lastVerified) : 0;
           report.manual.push({
             provider,
             check: index,
             source: check.source,
             evidence: check.evidence,
-            findings: [{ kind: "manual-required", detail: check.rationale }],
+            ...(v2 ? { lastVerified: check.lastVerified } : {}),
+            findings: [
+              { kind: "manual-required", detail: check.rationale },
+              // Advisory only: a gate that failed as the calendar moved would break main with no change.
+              ...(age > STALE_AFTER_DAYS
+                ? [
+                    {
+                      kind: "manual-stale",
+                      detail: `last verified ${check.lastVerified}, ${age} days ago; verify it again and move lastVerified`,
+                    },
+                  ]
+                : []),
+            ],
           });
         }
       } catch (error) {
@@ -1435,7 +1387,7 @@ async function main() {
     }
     if (changed) {
       try {
-        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`);
+        await writeFile(path, v2 ? serializeDrift(record) : `${JSON.stringify(record, null, 2)}\n`);
       } catch (error) {
         report.records.push({
           provider,

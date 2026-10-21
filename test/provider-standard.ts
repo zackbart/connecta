@@ -5,8 +5,9 @@
 // maintained guide, S the agent-facing surface. Step 1 (onto the kit, agent
 // output unchanged) answers to L, E and D; step 2 (the agent-facing surface)
 // adds G and S. The checks are plain functions over plain data, so the
-// Node-only folder suite (`provider-standard.node.test.ts`) and the
-// conventions suite apply the same rules.
+// Node-only folder suite (`provider-standard.node.test.ts`), the
+// conventions suite, and `providers:generate` (which refuses D past step 1
+// and G past step 2) apply the same rules.
 
 /**
  * Providers that have not landed a step yet. Each list only shrinks: a
@@ -15,6 +16,7 @@
  * outlive its reason. A name never joins these lists. A provider folder
  * created after them meets the whole standard from its first commit.
  */
+import { driftRecordProblems } from "../scripts/drift-validate.mjs";
 import type { Connector, ConnectorContext } from "../src/types.js";
 
 export const PENDING = {
@@ -112,6 +114,8 @@ export interface ProviderFacts {
   readonly files: readonly string[];
   /** A file's text, or undefined when the folder has no such file. */
   readonly read: (path: string) => string | undefined;
+  /** `definition.blocks.keys`: the guide's declared when-block keys, if any. */
+  readonly blockKeys?: readonly string[];
 }
 
 /** The parts of a served tool the S rules read. */
@@ -332,8 +336,19 @@ export function evidenceViolations(provider: ProviderFacts, today: string): stri
   return found;
 }
 
-/** D: drift.json v2. Humans write sources, reasons, and dates; tools write lists and digests. */
-export function driftViolations(provider: ProviderFacts, today: string): string[] {
+/**
+ * D: drift.json v2. Humans write sources, reasons, and dates; tools write
+ * lists and digests. A record that meets these rules must also be one
+ * `providers:check` can read, by the validator it uses (drift-validate.mjs).
+ * `recording` admits an endpoint row awaiting the contract `--record` writes:
+ * `providers:generate` passes it, so a new operation's row can be generated
+ * and then recorded, while this suite requires every contract.
+ */
+export function driftViolations(
+  provider: ProviderFacts,
+  today: string,
+  { recording = false }: { recording?: boolean } = {},
+): string[] {
   const found: string[] = [];
   const drift = parse(provider.read("drift.json"));
   if (!record(drift) || drift["version"] !== 2 || drift["provider"] !== provider.name) {
@@ -409,7 +424,11 @@ export function driftViolations(provider: ProviderFacts, today: string): string[
       }
     }
   }
-  return found;
+  if (found.length > 0) return found;
+  const catalog = parse(provider.read("evidence/catalog.json"));
+  return driftRecordProblems(drift, provider.name, { catalog, today, recording }).map(
+    (problem) => `D3: providers:check rejects ${problem}`,
+  );
 }
 
 /** G: SKILL.md carries agent-facing domain guidance only, rendered by the one guide renderer. */
@@ -428,14 +447,27 @@ export function guideViolations(provider: ProviderFacts, documentation: string):
   const body = frontmatter ? source.slice(frontmatter[0].length) : source;
   if (/<!--\s*(?:end)?fragment\b/.test(body)) found.push("G2: SKILL.md uses retired fragment markers");
   let open = false;
-  for (const marker of body.matchAll(/<!--\s*(when:\s*([a-z][a-z0-9:-]*)|end)\s*-->/g)) {
-    if (marker[2] !== undefined ? open : !open) {
+  const keys = new Set<string>();
+  for (const line of body.split("\n")) {
+    const marker = /^<!--\s*(?:when:\s*([a-z][a-z0-9:-]*)|end)\s*-->$/.exec(line.trim());
+    if (!marker) {
+      if (/<!--\s*(?:when:|end\s*-->)/.test(line)) found.push("G2: a when-block marker stands alone on its line");
+      continue;
+    }
+    if (marker[1] !== undefined ? open : !open) {
       found.push("G2: SKILL.md when-blocks must open and close in turn, unnested");
       break;
     }
-    open = marker[2] !== undefined;
+    open = marker[1] !== undefined;
+    if (marker[1] !== undefined) keys.add(marker[1]);
   }
   if (open) found.push("G2: SKILL.md leaves a when-block open");
+  for (const key of keys) {
+    if (!provider.blockKeys?.includes(key)) found.push(`G2: SKILL.md uses the undeclared when-block key ${key}`);
+  }
+  if (provider.kind === "dual" && !["hosted", "api"].every((key) => provider.blockKeys?.includes(key))) {
+    found.push("G2: a dual provider declares the hosted and api block keys");
+  }
   if (/^# /m.test(body)) found.push("G3: SKILL.md headings start at ##; the renderer writes the title");
   if (/^## Conventions\s*$/m.test(body)) found.push("G3: the Conventions section is generated, not written");
   if (/@zackbart\/connecta|^#+ .*\b(?:setup|set up|install|configure|configuration)\b/im.test(body)) {
