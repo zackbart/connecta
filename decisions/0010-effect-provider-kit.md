@@ -17,15 +17,17 @@ and hatch paths. A second side file expresses Stripe's failure mapper on the
 kit's error contract (`src/providers/stripe/kit-prototype.ts`). Nothing live
 imports either, and the build does not emit them.
 
-The prototype gives three kinds of evidence:
+The prototype gives four kinds of evidence:
 
-- **Against `index.ts`.** `kit-prototype.test.ts` (55 tests) compares catalog
+- **Against `index.ts`.** `kit-prototype.test.ts` (56 tests) compares catalog
   entries, the requests sent, and the mapped results for 44 fixture cases,
   including the write's statuses, in-band refusal, refused connection,
   oversized 401 bodies,
-  confinement and a path of astral characters. It names every deliberate
-  difference and asserts it: A.2's write outcomes and sensitive fields, and
-  this record's 401 rule.
+  confinement and a path of astral characters. Every case is identical,
+  advice segments included. The one deliberate difference, asserted on its
+  own, is this record's 401 rule (Q8). A.2's write outcomes and sensitive
+  fields are no longer differences: since #902 merged, both sides get them
+  from the core.
 - **Against A.3's goldens (round 2; superseded by round 3 below).** Run out of tree through PR #900's harness (at
   `f1a2df2b`), with the three kit tools substituted into today's provider:
   `catalog.json` and `calls.json` are byte-identical, and `failures.json`
@@ -41,13 +43,74 @@ The prototype gives three kinds of evidence:
 - **Against today's mappers.** `src/providers/stripe/kit-prototype.test.ts`
   maps 360 combinations of status, error body, headers and value-safety
   verdict through `stripeFailure` and through the kit, and requires the same
-  code, message, retry advice and wait.
+  code, message, retry advice and wait, with the advice as its own segment.
+- **Against the core's verdicts (final round).** `test/kit-core-verdicts.test.ts`
+  runs the kit and today's `api()` core over one committed table of cases,
+  served by the invocation and called directly, and requires the same
+  requests and the same verdict on every row (below).
 
-`test/http-kit.test.ts` (109 tests) covers the kit's own rules, and
+`test/http-kit.test.ts` (113 tests) covers the kit's own rules, and
 `test/kit-stability.node.test.ts` the stability guard (Q7). Every suite but the
 Node-only guard passes on Node and workerd.
 
-**Round-5 ruling and evidence.** The kit delegates single-write verdicts to
+**Final round: one verdict table, the core's.** #902 merged at `eef0274c`
+with a contract that differs from the head this record was first checked
+against (`44dd4df3`); "A.2 as merged" below lists the differences. The
+temporary adapter `src/http/core-write-outcome.ts` is deleted, which also
+settles the review's request for a drift guard: no copy of the verdict is
+left to drift. The kit now decides no write's outcome:
+
+- Its transport enters every resource request in the core's ledger
+  (`src/provider-call.ts`, the `Ledger` service) synchronously before
+  `fetch`, with its method and any genuine idempotency key it carries, and
+  records its status when it is answered. The dispatch also joins the request
+  to the invocation's logical call.
+- Its mapping marks a failure that is its own request's served answer with
+  that request (`vendorRefusal`). That is provenance (b), recorded where it
+  was observed.
+- `api()`'s boundary decides the write with `providerCallFailure` over the
+  whole logical call, exactly as it does for today's providers. A kit
+  connector therefore declares `tracksEveryRequest` (B.4).
+
+The kit composes only two things over that decision: Q8's 401 handoff (B.3),
+which the 401 back-port moves into the core, and the words of a blocked
+resend. `classifyWriteOutcome` and the module-private `servedRefusal` stay
+in the core and reach the kit only through the boundary; the kit evaluates
+no provenance of its own.
+
+The committed case table covers Tithe.ly's write and read answered 2xx then
+an unreadable body, 2xx then an in-band refusal, 400, 401, 403, 404, 408,
+409, 422, 429, 500 and 503, a network error, a timeout and the caller's abort.
+It adds two refusals before dispatch, Stripe's 424 mapped to `unavailable`,
+Stripe's lock-timeout 429 and a keyed Stripe write. Four rows cover a
+two-step composite. All 34 rows agree on requests, outcome
+(`classifyWriteOutcome`), `retryable`, code and whether advice reaches the
+agent. The exceptions are the write 401 rows, marked Q8. There the kit
+reports the write unknown with its auth code and handoff, while today's core
+still reports a served refusal until the 401 back-port lands. Two red checks
+show the table can fail: without the kit's provenance marks 8 rows fail, and
+with its requests kept out of the core ledger 12 rows fail.
+
+The out-of-tree golden comparison reran #900's harness (on `main` since
+`eef0274c`) against this branch, with the three kit tools substituted into
+today's provider. Both sides use the provider's default privacy. Nothing
+from the run is committed:
+
+- `catalog.json`: 35,437 → 35,437 bytes, byte-identical.
+- `calls.json`: 17,640 → 17,640 bytes, byte-identical; every request matches.
+- `failures.json`: 23,947 → 24,241 bytes (+294). **Only write 401 and write
+  401 echo differ, in the back-port's direction**: each drops `answered`
+  (no longer a served refusal), gains `writeOutcome: "unknown"`, and its
+  message gains "The write was sent before Tithe.ly rejected its credential,
+  so whether it took effect is unknown: check the target before repeating
+  it." The code (`auth_required`), the handoff and non-retryability are
+  unchanged. Every other row is identical, write 404, 409, 500, network and
+  timeout included.
+- The substituted provider matches those bytes in compare mode on Node and
+  workerd, at the full and the always tier.
+
+**Round-5 ruling and evidence (superseded by the final round above: the
+adapter is deleted and the kit delegates through the core ledger).** The kit delegates single-write verdicts to
 `classifyWriteOutcome` and `providerCallFailure` in the core's
 `src/write-outcome.ts` (#902). It does not restate their verdict table.
 While #902 is unmerged, `src/http/core-write-outcome.ts` vendors the identical
@@ -83,7 +146,7 @@ The only separate B.5 prerequisite after #902 is the write-401-with-handoff
 back-port and goldens regeneration, as specified below. B.5 remains strictly
 Tithe.ly's step 1 under 0011.
 
-**Round-5 verification.** `VITEST_MAX_WORKERS=2 pnpm run check` ran once
+**Historical round-5 verification.** `VITEST_MAX_WORKERS=2 pnpm run check` ran once
 and passed: 394 suites passed, 3 skipped; 18,859 tests passed, 313 skipped;
 all 13 invariants and 154 spec references have passing coverage. All 347
 Chromium tests pass. The requested kit/prototype, Stripe and Tithe.ly suites
@@ -150,7 +213,54 @@ Four constraints shape the design:
   every kit migration matches catalog, calls AND failures goldens. Safety
   changes are back-ported first; surface changes belong to step 2.
 
-A.2 (#902) is not merged yet. Its draft adds `deriveContext`/`contextKey`,
+**A.2 as merged (#902, `eef0274c`).** The kit delegates every write verdict
+to this contract (`src/write-outcome.ts`, `src/provider-call.ts`) and keeps
+no copy of it:
+
+- **Provenance, never codes.** A dispatched write is a known failure only on
+  refusal provenance, recorded where the evidence was observed. Either (a) the
+  ledger shows the request never left connecta, or (b) the downstream served a
+  refusing status that passes `servedRefusal`: a 4xx other than 408
+  (`refusedStatus`) that its provider does not read as `unavailable` or a
+  timeout. Stripe's 424 is the reviewed example of that last clause. A 2xx, a
+  408 and a 5xx never prove a write unapplied. The `REFUSALS` code set is
+  gone. An error code is never evidence, whether it is a mapper's
+  `rate_limited` after a 2xx, an output validator's `invalid_args` or a
+  JSON-RPC `-32602`. Anything else after dispatch keeps its code and message
+  for diagnostics, is never retryable, and carries `writeOutcome: "unknown"`.
+- **The logical-call rule.** The evidence must hold for the whole logical call
+  (`knownForLogicalCall`). Exactly one boundary was entered, the object the
+  invocation invoked owns it, and the one request that call sent carries the
+  refusal. Ownership means a boundary invoked with the `callTool` captured
+  when it was built (`providerBoundary`), or a declared delegator
+  (`delegatesEachCall`; GitHub is the only one). Identities are captured at
+  boundary construction and entry, and requests join the call at dispatch.
+  None is read back from a mutable property.
+- **`isError` and `input_required` prove nothing for a write.** An MCP
+  `isError` and an unsupported `input_required` suspension both arrive after
+  the downstream handler ran, so either one on a write is unknown.
+- **Advice is a segment of its own.** Advice to send a call again is a
+  structured `resendAdvice` segment beside the error, never part of
+  `message`. Output composes it only once the outcome allows it: for a read
+  or a known refusal. Key-reuse advice (`keyResendAdvice`) also needs its key
+  to protect the whole logical call (`keyProtectsLogicalCall`).
+- **Repeatability needs a sent key.** Only a genuine, legal idempotency key
+  the vendor receives, recorded on the request that carried it, makes a
+  direct write repeatable, and only when it protects the whole logical call.
+  No operation hint counts.
+- **A transport failure is never evidence.** Every native-fetch transport
+  failure on a write is unknown (#902 round 8), because one `fetch` can hide
+  several attempts. Neither an errno nor "never connected" proves a write
+  unsent. B.2's guarded `HttpClient` is the documented place to own
+  transport attempts (B.2).
+- **401 (Q8, decided).** A write answered 401 is unknown by default, unless a
+  reviewed `authBeforeExecution` declaration says the vendor authenticates
+  first. On `main` a served 401 is still provenance (b). A separate PR, the
+  401 back-port (`t3/write-401-unknown`), changes that for today's providers
+  and is landing on its own. The kit applies the rule already.
+
+_Superseded (#902's draft, rounds 2–5; the merged contract above replaces it
+where they differ):_ A.2 (#902) is not merged yet. Its draft adds `deriveContext`/`contextKey`,
 `callClassification`, the shared `unknownOutcome`, and the
 deployment-controlled `sensitiveFields` privacy projection, and stops `api()`
 OAuth from resending a write. Its fix round extends the rule that a dispatched
@@ -175,20 +285,20 @@ the served verdict and `unknownWrite` carries only Q8/whole-call uncertainty.
 Today a call's state lives in side tables keyed on the identity of the context
 object. The table below sorts that state by owner and lifetime:
 
-| State                                                                                           | Today                                                                    | Owner and lifetime                  | B.1                                                         |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------- | ----------------------------------------------------------- |
-| Caller                                                                                          | `connector-caller.ts` `callers`                                          | operation (any registry operation)  | `Caller`, in the operation layer                            |
-| Catalog-cache policy, OAuth partition and sealer                                                | `catalog-cache.ts` `settings`, `oauth-partition.ts`, `oauth-sealing.ts`  | operation                           | the operation entry; moved into services by D.4             |
-| Admission permit                                                                                | `call-admission-context.ts` `permits`                                    | call                                | `Budget`, whose `charge` refuses once the call closes       |
-| Served classification                                                                           | A.2's `call-classification.ts`                                           | call                                | `Classification`                                            |
-| Recovery facts                                                                                  | `call-recovery.ts` `facts`, which invocation reads via `dispatchContext` | call, read by invocation afterwards | `Recovery`, which writes into a record the invocation owns  |
-| Per-call sent secrets                                                                           | `sent-secrets.ts` `contexts` and `wrappedCredentials`                    | call, included in the request set   | `Secrets`                                                   |
-| Credentials                                                                                     | `ctx.credential`, plus the `trackCredentialReads` mutation               | call                                | `Credentials`; every read registers what it returns         |
-| Signal                                                                                          | `ctx.signal`                                                             | call                                | `Signal`                                                    |
-| Requests sent                                                                                   | none                                                                     | call                                | `Dispatches`, the ledger the write-outcome rule reads (B.3) |
-| OAuth grant                                                                                     | `ctx.oauth` and `static-oauth.ts` closures                               | call                                | `Grant` (B.2)                                               |
-| Request set of sent secrets, invocation auth, handoffs, `rejectedScopes`, request-token flights | WeakMaps keyed on `requestScope`                                         | request                             | request-owned; a `RequestScope` service in D.1              |
-| `remoteMcp()` sessions and transports                                                           | `requestScope` finalizers in `remote-mcp.ts`                             | request                             | request-owned; unchanged until D.6                          |
+| State                                                                                           | Today                                                                    | Owner and lifetime                  | B.1                                                                                                   |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Caller                                                                                          | `connector-caller.ts` `callers`                                          | operation (any registry operation)  | `Caller`, in the operation layer                                                                      |
+| Catalog-cache policy, OAuth partition and sealer                                                | `catalog-cache.ts` `settings`, `oauth-partition.ts`, `oauth-sealing.ts`  | operation                           | the operation entry; moved into services by D.4                                                       |
+| Admission permit                                                                                | `call-admission-context.ts` `permits`                                    | call                                | `Budget`, whose `charge` refuses once the call closes                                                 |
+| Served classification                                                                           | A.2's `call-classification.ts`                                           | call                                | `Classification`                                                                                      |
+| Recovery facts                                                                                  | `call-recovery.ts` `facts`, which invocation reads via `dispatchContext` | call, read by invocation afterwards | `Recovery`, which writes into a record the invocation owns                                            |
+| Per-call sent secrets                                                                           | `sent-secrets.ts` `contexts` and `wrappedCredentials`                    | call, included in the request set   | `Secrets`                                                                                             |
+| Credentials                                                                                     | `ctx.credential`, plus the `trackCredentialReads` mutation               | call                                | `Credentials`; every read registers what it returns                                                   |
+| Signal                                                                                          | `ctx.signal`                                                             | call                                | `Signal`                                                                                              |
+| Requests sent                                                                                   | `provider-call.ts`'s request ledger and logical call (#902)              | call                                | the core's `Ledger`, which `api()`'s boundary reads (B.3), beside the kit's `Dispatches` reservations |
+| OAuth grant                                                                                     | `ctx.oauth` and `static-oauth.ts` closures                               | call                                | `Grant` (B.2)                                                                                         |
+| Request set of sent secrets, invocation auth, handoffs, `rejectedScopes`, request-token flights | WeakMaps keyed on `requestScope`                                         | request                             | request-owned; a `RequestScope` service in D.1                                                        |
+| `remoteMcp()` sessions and transports                                                           | `requestScope` finalizers in `remote-mcp.ts`                             | request                             | request-owned; unchanged until D.6                                                                    |
 
 The defect 0009 names is call state keyed on a context that a `{...ctx}` copy
 replaces. Request-keyed state does not have it, but it needs the same explicit
@@ -207,7 +317,9 @@ interface CallShapes extends OperationShapes {
   Secrets: SentSecrets;
   Credentials: { readonly values: Effect.Effect<ConnectorCredentialValues | null, ConnectorCallError> };
   Signal: AbortSignal | undefined;
-  Dispatches: Dispatch[]; // permanent reservations and dispatch facts (B.2/B.3)
+  Dispatches: Dispatch[]; // permanent reservations and dispatch facts (B.2)
+  Ledger: { open; dispatch }; // the core's request ledger (src/provider-call.ts), which api()'s boundary decides from (B.3)
+  RequestSecrets: SentSecrets; // the request's whole set: redacts a body before anything cuts it (#911)
   WriteCapacity: ReadonlyMap<string, ReadonlyMap<string | undefined, WriteRequest | undefined>>; // B.4: fixed slots and item-derived requests
 }
 // What one request inside a call is; set by `Send`, read by the transport and refresh-once.
@@ -362,26 +474,26 @@ invocation and the registry:
 `TracerPropagationEnabled` is on, which is the default. That would change the
 requests sent and hand request facts to whatever tracer is installed.
 
-| `guarded-fetch.ts`                                                                                              | Kit                                                                                                                              |
-| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Base URL: https (http only on loopback), no URL credentials, query or fragment; throws at construction (INV-11) | `confinementBase`, the same function                                                                                             |
-| Path is provider-relative with no `?` or `#`; origin and prefix re-checked after normalization                  | `preprocess`; `RequestRefused` → `invalid_args`, before any credential is read                                                   |
-| `query`: `undefined` dropped; an array repeats its key                                                          | `HttpApiClient` encodes the operation's query Schema; struct field order is wire order                                           |
-| `admit(url)` on the encoded URL, before authentication                                                          | `GuardedOptions.admit`, an Effect, in `preprocess` before `authenticate`                                                         |
-| Constant headers, then request headers, then auth applied last; a shadowing auth header is refused              | `preprocess`: constants, then `authenticate` (an Effect over `Credentials` or `Grant`); a collision is `RequestRefused`          |
-| JSON `body` gets `Content-Type: application/json`; `rawBody` is sent as framed; the two are exclusive           | `HttpClientRequest.bodyJsonUnsafe` / `bodyUrlParams` / `bodyText` set the type; the wire carries the body's retained text        |
-| `sentSecretsFor(ctx).header(v)` per auth value, then `.request(url, init)` on the final URL and form body       | the `Secrets` service, with the same calls; a form body is registered from its text                                              |
-| `visibleHeaders` added after registration; a collision is refused                                               | the `write` builder adds the idempotency header in `postprocess`, after registration                                             |
-| `fetch` override: `oauthBearer` routes through `ctx.oauth.fetch`                                                | `refreshOnce` over `bearer`, below                                                                                               |
-| `redirect: "manual"`; 301, 302, 303, 307 and 308 cancel the body and refuse                                     | `postprocess`: `RedirectRefused` → `connector_call_failed`, non-retryable                                                        |
-| Declared `Content-Length` over the ceiling refused, except on HEAD or an ok `prefixOnly` read                   | `postprocess`: `ResponseTooLarge`; `prefixOnly` arrives with its first user (Google media)                                       |
-| Streamed body capped at one chunk past the ceiling, then cancelled; no stream → measure the buffer              | `readReply`: `Stream.runFoldEffect` over `response.stream`; `EmptyBodyError` falls back to a measured `arrayBuffer`              |
-| 204, 205, 304 and HEAD have no body                                                                             | the same sets                                                                                                                    |
-| Bytes decoded as UTF-8, never `text()` (INV-6)                                                                  | `TextDecoder` over the bounded bytes                                                                                             |
-| `jsonResult` tells unparseable text from a transport failure                                                    | `connect`'s settle step: `StatusFailure` with the parsed body, `UnreadableBody` for a 2xx that is not JSON; empty is `undefined` |
-| `fetch` rejection → `unavailableCallError(cause, url, …, signal)`: errno and host only                          | `TransportFailure`, mapped through `unavailableCallError` unchanged; the ledger records `unconnected` or `lost`                  |
-| `ctx.signal` handed to `fetch`                                                                                  | the `Signal` service combined with the fiber's interrupt signal through `AbortSignal.any`                                        |
-| `retryAfterMs(headers)`                                                                                         | the same function, moved to a module both transports share                                                                       |
+| `guarded-fetch.ts`                                                                                              | Kit                                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base URL: https (http only on loopback), no URL credentials, query or fragment; throws at construction (INV-11) | `confinementBase`, the same function                                                                                                                    |
+| Path is provider-relative with no `?` or `#`; origin and prefix re-checked after normalization                  | `preprocess`; `RequestRefused` → `invalid_args`, before any credential is read                                                                          |
+| `query`: `undefined` dropped; an array repeats its key                                                          | `HttpApiClient` encodes the operation's query Schema; struct field order is wire order                                                                  |
+| `admit(url)` on the encoded URL, before authentication                                                          | `GuardedOptions.admit`, an Effect, in `preprocess` before `authenticate`                                                                                |
+| Constant headers, then request headers, then auth applied last; a shadowing auth header is refused              | `preprocess`: constants, then `authenticate` (an Effect over `Credentials` or `Grant`); a collision is `RequestRefused`                                 |
+| JSON `body` gets `Content-Type: application/json`; `rawBody` is sent as framed; the two are exclusive           | `HttpClientRequest.bodyJsonUnsafe` / `bodyUrlParams` / `bodyText` set the type; the wire carries the body's retained text                               |
+| `sentSecretsFor(ctx).header(v)` per auth value, then `.request(url, init)` on the final URL and form body       | the `Secrets` service, with the same calls; a form body is registered from its text                                                                     |
+| `visibleHeaders` added after registration; a collision is refused                                               | the `write` builder adds the idempotency header in `postprocess`, after registration                                                                    |
+| `fetch` override: `oauthBearer` routes through `ctx.oauth.fetch`                                                | `refreshOnce` over `bearer`, below                                                                                                                      |
+| `redirect: "manual"`; 301, 302, 303, 307 and 308 cancel the body and refuse                                     | `postprocess`: `RedirectRefused` → `connector_call_failed`, non-retryable                                                                               |
+| Declared `Content-Length` over the ceiling refused, except on HEAD or an ok `prefixOnly` read                   | `postprocess`: `ResponseTooLarge`; `prefixOnly` arrives with its first user (Google media)                                                              |
+| Streamed body capped at one chunk past the ceiling, then cancelled; no stream → measure the buffer              | `readReply`: `Stream.runFoldEffect` over `response.stream`; `EmptyBodyError` falls back to a measured `arrayBuffer`                                     |
+| 204, 205, 304 and HEAD have no body                                                                             | the same sets                                                                                                                                           |
+| Bytes decoded as UTF-8, never `text()` (INV-6)                                                                  | `TextDecoder` over the bounded bytes                                                                                                                    |
+| `jsonResult` tells unparseable text from a transport failure                                                    | `connect`'s settle step: `StatusFailure` with the parsed body, `UnreadableBody` for a 2xx that is not JSON; empty is `undefined`                        |
+| `fetch` rejection → `unavailableCallError(cause, url, …, signal)`: errno and host only                          | `TransportFailure`, mapped through `unavailableCallError` unchanged; the ledger records `lost`, since no rejection proves a write unsent (#902 round 8) |
+| `ctx.signal` handed to `fetch`                                                                                  | the `Signal` service combined with the fiber's interrupt signal through `AbortSignal.any`                                                               |
+| `retryAfterMs(headers)`                                                                                         | the same function, moved to a module both transports share                                                                                              |
 
 A provider never holds an `HttpClientResponse` or a raw body. `Send` returns an
 `Answer` that already passed the value-safety boundary (B.4).
@@ -428,11 +540,12 @@ interface Dispatch {
   readonly step?: string;           // construction-declared step; default write
   readonly item?: string;           // identity in the call's fixed, bounded item set
   readonly operation?: OperationRef;
-  state: "reserved" | "preparing" | "pending" | "unconnected" | "lost" | "answered";
+  state: "reserved" | "preparing" | "pending" | "lost" | "answered"; // "unconnected" is gone (#902 round 8)
   status?: number;                  // recorded as soon as the resource server answers
   headers?: Headers;
   failure?: HttpFailure;            // only this request's own failure, never a blocked retry's
   renewed?: true;
+  request?: ProviderRequest;        // its core ledger entry, dispatched synchronously before fetch
 }
 ```
 
@@ -443,31 +556,33 @@ before it evaluates preparation. A direct `HttpClient` call reserves and claims
 there instead. Nothing yields between the slot check and insertion or claim,
 so `Effect.all(..., { concurrency: "unbounded" })` cannot admit two sends.
 A wrapper that retries below `Send` sees the same claimed reservation and is
-refused too. A reservation is **never released**, including after preparation
-failure or a proven failure to connect. This deliberately gives up an in-call
-retry even when nothing left: retaining the slot makes two sends impossible;
-a new deliberate call gets fresh capacity and the proven-unsent failure may
-still be advertised retryable. No request id, body, URL, retry counter or
+refused too. A reservation is **never released**, including after a failure
+before dispatch. This deliberately gives up an in-call retry even when nothing
+left: retaining the slot makes two sends impossible; a new deliberate call
+gets fresh capacity, and a failure the ledger proves unsent (provenance (a))
+may still be advertised retryable. No request id, body, URL, retry counter or
 new step name can mint capacity.
 
 `reserved` and `preparing` have not dispatched. Immediately before `fetch`,
-the transport marks the slot `pending` and associates it with the attempt.
-A read needs no reservation and enters the ledger there. A fetch rejection is
-`unconnected` only for a never-connected errno (`ECONNREFUSED`, `ENOTFOUND`,
-`EAI_AGAIN`, `EAI_FAIL`, `EHOSTUNREACH`); every other rejection is `lost`.
-After a response arrives, a body failure with one of those errnos does **not**
-prove non-execution: the recorded answer still owns the outcome. A write
-interrupted after dispatch stays `pending`. Authorization-server requests
-never enter this resource ledger.
+in the same synchronous step, the transport enters the request in the core
+ledger (`dispatchProviderRequest`, which refuses a request whose call has
+ended), marks the slot `pending` and associates it with the attempt. A read
+needs no reservation and enters both ledgers there. Every fetch rejection is
+`lost`. _Superseded (rounds 3–5):_ a rejection was `unconnected` for a
+never-connected errno (`ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `EAI_FAIL`,
+`EHOSTUNREACH`), which proved the write unsent. #902 round 8 showed that one
+`fetch` can hide several attempts, so the last attempt's errno says nothing
+about the first. A write interrupted after dispatch stays `pending`.
+Authorization-server requests never enter this resource ledger.
 
 The slot's `failure` records only its own preparation or answer failure, never
 `ResendRefused` from a later attempt. `Send`'s attempt slot distinguishes its
-request from later auxiliary requests. B.3 maps a blocked retry from the
-original reservation and its raw dispatch facts. If the reservation never
-dispatched or never connected, its own original verdict stands. Otherwise B.3 uses its own definite refusal or reviewed proof, then checks
-all other write slots; any one that may have executed makes the call unknown
-and non-retryable.
-A recorded 401 keeps its auth handoff until renewal succeeds.
+request from later auxiliary requests. B.3 maps a blocked retry to the
+original reservation's own answer, carrying that attempt's provenance, and
+the core decides over the whole call. A first attempt that never dispatched
+reports its own failure, and the ledger proves it unsent; a sole served
+refusal stays known; anything else that left is unknown and non-retryable.
+A recorded 401 keeps its auth handoff until renewal succeeds (Q8).
 
 This holds below Effect retries, program retries, 307/308 followers, replaying
 renewals, reconnects and new request ids. It also holds when a retry tries fresh
@@ -482,12 +597,37 @@ module for unmigrated providers, and is deleted with its last caller. It does
 not become a facade over the kit client: `remote-mcp.ts` imports
 `retryAfterMs` from it, and the kit client alone adds 31,260 B gzip to the
 root, more than the root's headroom. B.2 moves the pure pieces
-(`confinementBase`, `retryAfterMs`, the never-connected errno set, the
-redirect and bodiless sets) into one plain module both transports import, and
-adds a parity suite that runs one fixture matrix (confinement, header
-precedence and collision, form registration, redirects, declared and streamed
-ceilings, errno normalization, `Retry-After`) through both transports and
-requires the same requests and the same mapped failures.
+(`confinementBase`, `retryAfterMs`, the redirect and bodiless sets) into one
+plain module both transports import, and adds a parity suite. The suite runs
+one fixture matrix (confinement, header precedence and collision, form
+registration, redirects, declared and streamed ceilings, errno normalization,
+`Retry-After`) through both transports and requires the same requests, the
+same core ledger entries and the same mapped failures. The never-connected
+errno set this paragraph once listed was deleted by #902 round 8.
+
+**Transport attempts (#902 rounds 8–9).** B.2's guarded `HttpClient` is the
+documented place to own transport attempts: one attempt per send, and no
+hidden resends on Node. Until it does, the kit inherits native `fetch`'s
+behaviour, as `guarded-fetch.ts` does, and #902 recorded three ways one
+`fetch` can send a request more than once:
+
+- **421.** Node's fetch (undici) resends a request answered 421 Misdirected
+  Request, even with `redirect: "manual"`. Round 8 reproduced a Planning
+  Center POST arriving twice when the listener stayed open.
+- **`RetryAgent`.** An operator-installed undici dispatcher such as
+  `RetryAgent` retries a reset connection behind the same call.
+- **HTTP/2 refused stream.** A fetch that negotiates h2 can resend after
+  `REFUSED_STREAM`. Node 22's built-in fetch does not negotiate h2, so this was
+  not reproducible on CI's Node; it is expected on Node 24 and 26.
+
+So no rejection is evidence today. Every transport failure of a write that
+left, on the kit or on `guarded-fetch.ts`, is unknown and never retryable,
+however the last attempt failed. Owning attempts means B.2 sends through a
+dispatcher it configures (no retry interceptor, no 421 or refused-stream
+resend) or refuses to send. Even then a rejection becomes evidence only by a
+separate decision taken with the core contract, never by a kit rule. Round 9
+adds the other half: repeatability comes only from a genuine key the vendor
+receives (`ProviderRequest.key`), never from a method or an operation hint.
 
 **Refresh-once** (`src/http/oauth.ts`). `Grant` is any renewable token. The
 rule replaces four per-provider renewals after a 401: the static OAuth grant,
@@ -523,8 +663,8 @@ class Grant extends Context.Service<Grant, {
    fails DNS, goes down) is not this write's verdict. The ledger keeps one
    fact from it, `renewed` when the renewal succeeded, because that alone
    decides whether the agent still needs the `authorize_connector` handoff.
-   Refresh-once then hands the write's own 401 back to the pipeline, and B.3
-   maps it from the ledger. A caller who leaves during the renewal gets the
+   Refresh-once then hands the write's own 401 back to the pipeline, and B.3's
+   Q8 handoff reports it from the ledger. A caller who leaves during the renewal gets the
    same verdict: the builder's edge reads the ledger when the call's signal
    aborted (`departedVerdict`). A refresh-once that did resend would still be
    stopped by the one-dispatch guard.
@@ -550,31 +690,32 @@ cancellation, successful renewal and oversized/broken 401 bodies. It also
 checks direct calls and caught/uncaught program accounting against #902's
 `classifyWriteOutcome`, and records the wording changes in the OAuth goldens.
 
-The goldens record two divergent 401 behaviours today:
-
-- Google mints and resends once, writes included. Its transport argues that a
-  401 is a refusal before the request did anything.
-- Infisical logs in again without resending a write.
-
-INV-9 forbids replaying a dispatched write, so C.7 stops Google's resend and
-records the change; Google keeps a refusal only if its review cites the
-evidence Q8 requires. C.5 adopts the rule as it stands.
+Since #902 the goldens record one 401 behaviour for a write: it is never
+resent. Google mints a token and sends the write once (two requests), and
+Infisical logs in again without resending it. Both already report the write
+unknown with its auth code. Providers on `guarded-fetch.ts`, Tithe.ly among
+them, still count a served 401 a refusal; the 401 back-port changes that, and
+C.5 and C.7 adopt Q8 as it stands. _Superseded (round 2):_ the goldens
+recorded Google minting and resending once, writes included, and C.7 was to
+stop that resend. #902's first fix round stopped it.
 
 ### B.3 Tagged errors, vendor facts and the wire mapping
 
 Every kit failure is one tag of `HttpFailure`. Each tag reaches the wire
-through `toConnectorCallError` (`src/http/errors.ts`):
+through `toConnectorCallError` (`src/http/errors.ts`). For a write, that
+mapping is the vendor's verdict and its provenance, not the write's outcome:
+`api()`'s boundary decides that with the core (below).
 
-| Tag                | Raised by                                                              | Wire                                                               |
-| ------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `RequestRefused`   | confinement, `admit`, header collision                                 | `invalid_args`, before anything is sent                            |
-| `TransportFailure` | `fetch` rejected                                                       | `unavailableCallError`: errno and host only                        |
-| `RedirectRefused`  | 3xx                                                                    | `connector_call_failed`, non-retryable                             |
-| `ResponseTooLarge` | declared or streamed bytes past the ceiling                            | `connector_call_failed`, non-retryable                             |
-| `ResendRefused`    | a second dispatch of a logical write in one call (B.2)                 | the original step's verdict, constrained by the entire call ledger |
-| `StatusFailure`    | non-2xx, or an in-band refusal mapped as a status                      | the vendor's rules, then its table, then the defaults              |
-| `UnreadableBody`   | a 2xx that is not JSON                                                 | `connector_call_failed` with the vendor's `unreadable` text        |
-| `Refusal`          | the provider or kit's own verdict (in-band, credential, cursor, grant) | the carried `ConnectorCallError`                                   |
+| Tag                | Raised by                                                              | Wire                                                                                   |
+| ------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `RequestRefused`   | confinement, `admit`, header collision                                 | `invalid_args`, before anything is sent                                                |
+| `TransportFailure` | `fetch` rejected                                                       | `unavailableCallError`: errno and host only                                            |
+| `RedirectRefused`  | 3xx                                                                    | `connector_call_failed`, non-retryable                                                 |
+| `ResponseTooLarge` | declared or streamed bytes past the ceiling                            | `connector_call_failed`, non-retryable                                                 |
+| `ResendRefused`    | a second dispatch of a logical write in one call (B.2)                 | the original attempt's own answer, with its provenance; the core decides over the call |
+| `StatusFailure`    | non-2xx, or an in-band refusal mapped as a status                      | the vendor's rules, then its table, then the defaults                                  |
+| `UnreadableBody`   | a 2xx that is not JSON                                                 | `connector_call_failed` with the vendor's `unreadable` text                            |
+| `Refusal`          | the provider or kit's own verdict (in-band, credential, cursor, grant) | the carried `ConnectorCallError`                                                       |
 
 `StatusFailure` carries its `operation` (`{ method, template, flags? }`), set by
 `Send` before the answer is read, so value safety decides what the failure may
@@ -593,10 +734,10 @@ interface VendorErrors<F extends Facts> {
   readonly detail: (input: { status; facts: F; headers; withheld: boolean; body?: unknown }) => string; // after classification
   readonly unreadable: string;
   readonly authBeforeExecution?: { evidence: string; matches: (input: Classified<F>) => boolean }; // Q8, raw 401 only
-  readonly nonExecution?: readonly { evidence: string; matches: (input: Classified<F>) => boolean }[]; // explicit reviewed proof over raw response facts
+  // nonExecution: removed in the final round. A 5xx never proves a write unapplied (#902).
 }
 interface Classified<F> { status; facts: F; headers; retryAfterMs; operation: OperationRef; withheld: boolean } // no detail, no body
-interface Verdict { code; retryable?; retryAfterMs?; current?; words?: (detail: string) => string }
+interface Verdict { code; retryable?; retryAfterMs?; current?; words?: (detail: string) => string; advice?: string }
 ```
 
 The kit runs them in this order for every `StatusFailure`:
@@ -621,7 +762,10 @@ The kit runs them in this order for every `StatusFailure`:
    does not withhold vendor text. The verdict's `words` receives that line and
    returns the message; without `words` the message is the line itself.
    `words` decides nothing: the code, retry advice and wait were copied from
-   the verdict before it ran.
+   the verdict before it ran. Advice to send the call again is never in
+   `words`. It is the verdict's `advice`, attached as #902's structured
+   `resendAdvice` segment, and output composes it only where the outcome
+   allows: for a read or a known refusal, never for an unknown write.
 
 - **Headers are an allowlist.** Only the names a vendor's review lists are
   visible to rules and wording, and a value longer than 128 characters or with
@@ -637,10 +781,13 @@ The kit runs them in this order for every `StatusFailure`:
 - **Defaults cover the rest:** 400 and 422 → `invalid_args`; 429 →
   `rate_limited` with `Retry-After`; 5xx → `unavailable` with `Retry-After`;
   any other status → `connector_call_failed`, non-retryable.
-- **409 has no default.** A vendor may refine its own definite 409 answer to
-  `conflict`, a known refusal under the core contract. Tithe.ly deliberately
-  keeps `connector_call_failed` for its ambiguous 404 and 409, with unchanged
-  wording and non-retryability; the explicit outcome carries uncertainty.
+- **409 has no default.** A vendor that documents its 409 may name it
+  `conflict`. The code is the agent's diagnosis, never the write's outcome.
+  A write's own served 404 or 409 is a known failure by provenance (b),
+  whatever code the vendor gives it, provided it answered the one request the
+  call sent. Tithe.ly keeps `connector_call_failed`, non-retryable and in
+  unchanged words, for both, because it cannot tell absence from reach or
+  name the conflict. Neither carries a `writeOutcome`.
 - **What the types cannot stop.** A rule that closes over mutable module state
   could carry one failure's wording into the next failure's classification.
   That is code review's to refuse; the contract makes it the only way, and a
@@ -656,20 +803,26 @@ const stripeErrors: VendorErrors<{ type?; code?; declineCode?; param? }> = {
   detail: ({ status, facts, headers, withheld, body }) =>
     `Stripe ${kind || `HTTP ${status}`}${param}: ${withheld ? "Stripe's message is withheld…" : message(withholdEmbeddedUrlsIn(body))}${requestId}`,
   classify: [({ status, facts }) => status === 429 && facts.code === "lock_timeout"
-    ? { code: "conflict", retryable: true, retryAfterMs: 1_000, words: (detail) => `${detail} Another request is changing this object…` } : undefined],
-  statuses: { 429: rate_limited(reason header, retryAfterMs ?? 1_000), 401: auth_required, 403: provider_permission_denied,
+    ? { code: "conflict", retryable: true, retryAfterMs: 1_000, words: (detail) => `${detail} Another request is changing this object…`,
+        advice: " Retry after it finishes." } : undefined],
+  statuses: { 429: rate_limited(reason header, retryAfterMs ?? 1_000, advice " Back off before retrying."), 401: auth_required, 403: provider_permission_denied,
     404: not_found, 400/409/422: invalid_args, 402: connector_call_failed, 424: unavailable, serverError: unavailable (no wait) },
 };
 ```
 
-Stripe's own raw HTTP 429 + `lock_timeout` answer maps to `conflict`, a
-known refusal under the core contract, with its existing 1,000 ms wait.
-Its `nonExecution` declaration also cites the vendor's
-[object-lock-timeout guarantee](https://docs.stripe.com/rate-limits#object-lock-timeouts):
-Stripe does not process those failed requests. Removing that declaration
-does not change this definite 4xx refusal. The same token on raw 503 remains
-unknown: neither the 429 rule nor its proof covers 503. Tests cover both,
-ordinary 429 and the vendor's raw 409 refinement.
+Stripe's own raw HTTP 429 + `lock_timeout` answer maps to `conflict` with
+its existing 1,000 ms wait and its advice to retry after the other request
+finishes. On a write it is a known refusal by provenance (b), a served 4xx
+other than 408 on the call's one request, not because of its code. The same
+token on a raw 503 is unknown, since a 5xx never proves a write unapplied.
+Stripe's 424 maps to `unavailable`, which `servedRefusal` reads as no
+refusal, so a write answered 424 is unknown too. The case table and the
+Stripe suite cover all three. _Superseded (rounds 4–5):_ a `nonExecution`
+declaration citing the vendor's
+[object-lock-timeout guarantee](https://docs.stripe.com/rate-limits#object-lock-timeouts)
+marked the 429 non-executed. The merged contract has no third kind of
+provenance, so the declaration and the kit's `nonExecution` field are gone.
+The guarantee still justifies the retry advice.
 
 The one narrowing: a `param` outside the token grammar (a param name with
 spaces) is dropped where `stripeFailure` quotes it; the suite records it.
@@ -731,6 +884,105 @@ because rules see complete lists; only the detail line sees the first eight
 ahead of these (Drive's `cannotDownloadAbusiveFile`), reading `facts.reasons`,
 so the `googleReasonsOf` side table goes away. `googleOutcomeOf`'s phases
 become the ledger.
+
+**Write outcome — decided, final round: the core decides, the kit records
+provenance.** INV-9 forbids automatically replaying a dispatched write; it
+does not make every vendor answer unknown, and it does not let the kit judge
+which answers are refusals. The kit keeps no verdict table:
+
+1. **Provenance is recorded where it is observed.** The transport enters each
+   resource request in the core ledger synchronously before `fetch`, with its
+   method, any genuine idempotency key it carries, and `auxiliary` for an
+   `{ effect: "read" }` request inside a write call. It records the status as
+   soon as the resource server answers. The mapping marks a failure that is
+   its own request's served answer with that request (`vendorRefusal`, which
+   holds only for a refusing status). Nothing else in the kit marks a
+   failure.
+2. **`api()`'s boundary decides.** It closes the ledger when the handler
+   settles and hands the failure to `providerCallFailure` with `finalize`. A
+   write is a known failure only by (a), no request but auxiliary ones left,
+   or (b), the one request the logical call sent was served a refusal that
+   passes `servedRefusal`. Anything else after dispatch is unknown and never
+   retryable:
+   - a 2xx followed by an unreadable body or an in-band refusal;
+   - a 408, a 5xx, a redirect or an oversized body;
+   - a transport failure or the caller's abort;
+   - a second write step, or an auxiliary failure after the write.
+
+   The core keeps the failure's code as a diagnostic; an `unavailable` that
+   is no timeout becomes `connector_call_failed` with the core's
+   unknown-outcome words. A direct write whose one request carried a key the
+   vendor honors keeps its retry advice. A served write is reconciled by the
+   invocation (`uncertainCall`), which also promotes a timeout to
+   `write_outcome_unknown`. Advice composes only after this decision, so an
+   unknown write never carries it.
+
+3. **Q8 is the one composition, until the 401 back-port.** Say a write request
+   was answered 401, preferring an unrenewed one. The call's failure is then
+   that 401's vendor verdict, with `writeOutcome: "unknown"`, non-retryable,
+   and the words "The write was sent before <vendor> rejected its credential,
+   so whether it took effect is unknown". That holds whatever the call met
+   afterwards: a renewal, an auxiliary request, or the caller leaving
+   (`departedVerdict`). The core keeps an explicit unknown marker in every
+   branch, so the auth code, `reconciliationRequired` and the
+   `authorize_connector` handoff survive. A renewal that succeeded reports the
+   core's `unsentAfterUnauthorized`. With the vendor's `authBeforeExecution`
+   evidence, the 401 is its own served refusal and step 2 weighs it like any
+   other: known only if it was the one request the call sent. When the
+   back-port lands, `authBeforeExecution` becomes the core's declaration and
+   the kit's marker goes; anything the back-port's core leaves to compose is
+   decided with it.
+4. **A blocked resend reports the first attempt.** `ResendRefused` maps to
+   the first attempt's own answer, with that attempt's provenance, plus "A
+   second attempt to send it was stopped before it left". The second attempt
+   never left, so step 2 decides as it would for the first attempt alone.
+
+Kit code calls `unsentAfterUnauthorized` and `providerFailureMessage` for
+steps 3 and 4, and reaches `providerCallFailure` only through `api()`.
+Neither `classifyWriteOutcome` nor `servedRefusal` is called by kit code, and
+no kit file restates either. `test/kit-core-verdicts.test.ts` is the guard
+against drift: a kit that disagreed with the core on any case would fail its
+row.
+
+`authBeforeExecution` is a **trusted, per-vendor review obligation**. It
+requires non-empty evidence text and a narrow predicate over the raw status,
+token facts and reviewed headers, never a mapped code or prose. Construction
+rejects missing evidence or a missing predicate. The reviewer of each vendor
+declaration must verify the claim and the predicate against vendor
+documentation. A broad predicate, or a link with no supporting guarantee, is
+not proof. The predicate is trusted code: types cannot verify vendor
+semantics. It only narrows Q8; no declaration can make any other answer a
+refusal.
+
+Idempotency keys never allow an automatic resend or erase an ambiguous
+outcome; they supply reconciliation facts and, for a direct caller whose key
+protects the whole call, repeatability.
+
+A write is reported unknown even when the vendor answered it with a 2xx and
+the call then failed (rule 6 of rounds 4–5; the core does the same). The
+alternative, accounting it as `ok`, was rejected:
+
+- The call failed, so the agent has no result to compare the target against.
+- A 2xx is one request's status, not the tool's success. A later step, or the
+  provider's own check of the reply, can still find the write incomplete, and
+  the kit cannot tell those apart.
+- Counted `ok`, a caught failure would drop out of a program's
+  `writes.unknown` and lose its reconciliation facts.
+- There is no wire code for "the write succeeded and the tool failed". A
+  connector-raised one belongs to the contract phase.
+
+Unknown never invites a repeat, so reconciling it is one read.
+
+_Superseded (rounds 4–5): write outcome over the entire call ledger._ The
+rules below composed the core's single-write verdict over the kit's own
+ledger. The final round replaces them: the core's ledger and logical-call
+rule now do the whole-call composition, so the kit keeps only Q8 and the
+resend words. Specifically, rule 1's "proven no connection", rule 4's
+reliance on `REFUSALS`, rule 5's `nonExecution` proof and its example are
+gone; the merged core keeps `rate_limited` as the diagnostic code of a write
+answered 503 rather than `connector_call_failed`. Rule 6's wording ("had
+already accepted this call's write") is replaced by the core's. The text is
+kept for the reasoning:
 
 **Write outcome over the entire call ledger — decided, rounds 4–5.** The kit
 calls the core's `providerCallFailure` and `classifyWriteOutcome` in
@@ -813,20 +1065,8 @@ automatic resend or erase ambiguous outcome; they supply reconciliation
 facts. #902 reads `writeOutcome` before refusal codes in direct calls and
 caught/uncaught program accounting.
 
-Rule 6 reports unknown even when the vendor answered the write with a 2xx.
-The alternative, accounting it as `ok`, was rejected:
-
-- The call failed, so the agent has no result to compare the target against.
-- A 2xx is one request's status, not the tool's success. A later step, or the
-  provider's own check of the reply, can still find the write incomplete, and
-  the kit cannot tell those apart.
-- Counted `ok`, a caught failure would drop out of a program's
-  `writes.unknown` and lose its reconciliation facts.
-- There is no wire code for "the write succeeded and the tool failed". A
-  connector-raised one belongs to the contract phase.
-
-Unknown never invites a repeat, and the words carry the vendor's 2xx, so
-reconciling it is one read.
+Rule 6's reasoning for reporting a 2xx-then-failed write unknown now stands
+above, under the final round's decision.
 
 The goldens show invocation already marks an entered write's `auth_required`
 `reconciliationRequired`, while `classifyWriteOutcome` on `main` counts it as
@@ -855,7 +1095,8 @@ type Send<R> = <Op extends Operation>(operation: Op, request: RequestOf<Op>, opt
   readonly item?: string;                                    // bound to its snapshotted request, never a free alias
   readonly flags?: Readonly<Record<string, true>>;           // facts the vendor's rules read, such as revisionGuarded
 }) => Effect.Effect<Answer, HttpFailure, R>;                 // Answer = { status, data }: settled and safe
-export function manifest(vendor: Vendor): OpenApi.OpenAPISpec; // for scripts/drift-check.mjs only
+export function manifest(vendor: Vendor): OpenApi.OpenAPISpec; // the vendor contract drift checks compare
+export function operations(vendor: Vendor): string[];          // manifest's operations as "METHOD /path", sorted: ProviderKitFacts.operations
 ```
 
 - Schemas use the stable `effect` `Schema`. Query struct field order is wire
@@ -891,9 +1132,12 @@ provider cannot reach a body any earlier:
 
 1. confinement, `admit`, then authentication, before anything is sent;
 2. the bounded read;
-3. a non-2xx becomes `StatusFailure` with its operation, and B.3 asks
-   `withholdsErrors(operation)` before it builds any detail;
-4. JSON parse (`UnreadableBody` otherwise);
+3. JSON parse, then the request's whole sent-secret set (`RequestSecrets`)
+   redacts the parsed body before anything can cut, trim or extract from it
+   (#911's `redactBeforeCut`), on a failure's body and a success's alike;
+4. a non-2xx becomes `StatusFailure` with its operation, and B.3 asks
+   `withholdsErrors(operation)` before it builds any detail; a 2xx that did
+   not parse is `UnreadableBody`;
 5. the vendor's `result` hook: unwrap an envelope, or fail an in-band refusal.
    It receives `withheld`; a vendor whose review withholds any operation's
    text raises its in-band refusals as `StatusFailure`, so the same check
@@ -941,13 +1185,24 @@ function get<I extends Input, O extends Schema.Top>(connection: Connection, spec
 function read<I extends Input, O extends Schema.Top>(connection: Connection, spec: ToolSpec<I, O> & { readonly review?: string }): ApiTool;
 function write<I extends Input, O extends Schema.Top>(connection: Connection, spec: ToolSpec<I, O> & {
   readonly destructive: boolean;
-  readonly idempotency?: { readonly header: string; readonly key: (args: I["Type"]) => string };
+  readonly idempotency?: { readonly header: string; readonly key: (args: I["Type"]) => string | undefined };
 }): ApiTool;
 function action<I extends Input, O extends Schema.Top>(connection: Connection, spec: ToolSpec<I, O>): ApiTool;
 ```
 
-`read` and `write` are prototyped; `list`, `get`, `action`, `idempotency` and
-the `review` check arrive in B.4.
+`read` and `write`, with `write`'s `idempotency`, are prototyped; `list`,
+`get`, `action` and the `review` check arrive in B.4.
+
+`idempotency` declares a genuine key the vendor honors, taken from validated
+arguments (an `idempotencyKey` argument, say). One key protects one request,
+so a tool with more than one write step cannot declare it (a construction
+error). A blank key, or one an HTTP header cannot carry, is refused before
+anything leaves. The key is recorded for reconciliation (`Recovery`) before
+dispatch. It is sent as a visible header after sent-secret registration, on
+the tool's own requests only, and entered on the core ledger request that
+carried it. Only that recorded key makes a direct write repeatable
+(`keyProtectsLogicalCall`); a served write is still reconciled, never
+retried.
 
 | Builder                       | Catalog verdict | Annotations                                                                                      |
 | ----------------------------- | --------------- | ------------------------------------------------------------------------------------------------ |
@@ -970,7 +1225,7 @@ the `review` check arrive in B.4.
   marks it `{ effect: "read" }`. The method never decides.
 - **The builder closes its lease** when the run ends (`Effect.ensuring`). When
   the caller left after the vendor answered a write with 401, it rejects with
-  that answer's verdict (B.3, rule 2: the auth code, never retryable,
+  that answer's verdict (B.3's Q8 step: the auth code, never retryable,
   `writeOutcome: "unknown"`) rather than the bare abort reason; any other
   cancellation keeps the reason, which invocation reports as it does today,
   an unknown outcome.
@@ -1080,38 +1335,56 @@ function defineApiProvider<O extends ProviderOptions>(definition: Omit<ProviderD
   readonly result?: ConnectOptions["result"];
   readonly probe: { readonly operation: Operation; readonly request: unknown; readonly describe: (reply: unknown) => string };
   readonly guide: (options: Readonly<O>) => ProviderGuideInput;
+  readonly hatch?: Omit<Parameters<typeof hatch>[0], "connection">;  // name, index, verdicts; the kit builds the hatch tools
   readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
-}): ProviderFactory<O>;
+}): ProviderFactory<O>; // kit: ProviderKitFacts set on the definition; the connector declares tracksEveryRequest
 ```
 
 The probe becomes `testCredential(s)`. It runs `authenticate` against the
 candidate values, sends one operation, and maps a failure through the vendor
 table. It copies no context.
 
-`manifest(vendor)` gives the method, path and parameter names of every
-operation. `scripts/drift-check.mjs` digests it against the vendor's published
-contract, so `drift.json` lists only the vendor sources, and the operation set
-comes from code.
+`defineApiProvider` wraps its `api()` connector in `tracksEveryRequest`:
+every kit request enters the core ledger, so an empty ledger proves a write
+never left (provenance (a)). It also sets the definition's `kit`, decision
+0011's `ProviderKitFacts` seam (S.1), under exactly that seam's names:
+
+- `operations`: `operations(vendor)`, every operation of `manifest(vendor)`
+  as `"METHOD /path"`, sorted. `providers:generate` writes it into
+  `drift.json` v2's `generated.operations`, and `providers:check` keys each
+  `endpoints` entry by one of them;
+- `pageSize`: the declaration above, `{ default, max }`, which the generated
+  `## Conventions` states for every paged read;
+- `hatch`: `{ name, verdicts }` from the hatch declaration, from which the
+  Conventions name the hatch tools and the operations refused by design.
+
+The Tithe.ly prototype declares `TITHELY_KIT_FACTS` the same way:
+operations `GET /charges-list` and `GET /charges/{chargeId}`, page size 25
+of at most 99, and no `hatch`, because step 1 keeps `tithely_api_get` and
+`tithely_api_mutate` and the standard hatch arrives with step 2. Its suite
+checks the page size against the catalog's `limit`. `manifest(vendor)`
+keeps the method, path and parameter names for the drift checks; the
+operation set comes from code, never a hand-typed list.
 
 `src/provider.ts` stays Effect-free, as `purity.node.test.ts` requires.
 
 ### How the kit keeps the invariants
 
-| INV | Mechanism                                                                                                                                                                                                                                   | Evidence: existing, then new                                                                                                                                                                                                                         |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | The builder annotates the class; the served classification decides at run time; byte-identical catalog; catalog and decoder agree, string lengths in code points; inexact input checks refused                                              | `rest-connector.test.ts` "INV-1: names four tools…"; `kit-prototype.test.ts` "INV-1" (catalog, served classification); `http-kit.test.ts` "INV-1" (boundary agreement beyond ASCII, code points, refusal, served classification); A.3 `catalog.json` |
-| 2   | Kit tools are `ApiTool`s; registry enforcement unchanged                                                                                                                                                                                    | `connector-read-only.test.ts` "INV-2: defaults writable…"                                                                                                                                                                                            |
-| 3   | Confinement and `admit` run before credentials; agents name no base or credential                                                                                                                                                           | `guarded-fetch.test.ts` confinement suite; `http-kit.test.ts` "INV-3: confines…" and "INV-3 INV-5: admits…"                                                                                                                                          |
-| 4   | `Caller` comes from the admitted scope on every operation; `Classification` from the served definition                                                                                                                                      | `mcp-core.test.ts` "INV-4: binds SDK envelope…"; `http-kit.test.ts` "INV-4 INV-10: discovery, status, and startAuth views…"; B.1's registry tests                                                                                                    |
-| 5   | Credentials only through services; every sent value registered; one value-safety boundary; withheld text decided before any detail                                                                                                          | `sent-secrets.test.ts` "INV-5: api OAuth registers both tokens…"; `http-kit.test.ts` "INV-5" (boundary, hatch, withheld); `kit-prototype.test.ts` "INV-5" (sensitive fields)                                                                         |
-| 6   | Bounded bytes, token-only facts, rules typed without prose and run before any wording, allowlisted headers, `TextDecoder`, errno-only transport facts, withheld handler and decode text                                                     | `guarded-fetch.test.ts` "INV-6: decodes bounded bytes…"; `http-kit.test.ts` "INV-6" (token facts, rule order, compile-fail fixture, complete lists); Stripe `kit-prototype.test.ts` "INV-6"                                                          |
-| 7   | Explicit call finalizers and closed-state checks; request-owned resources close with the request, revocation first and every step run; `fetch` gets the call signal                                                                         | `call-admission.test.ts` "INV-7: stops a retained connector context…"; `http-kit.test.ts` "INV-7" (retained service, pending read, retained view, request-owned session, throwing finalizers); `kit-prototype.test.ts` "INV-7"                       |
-| 8   | Catalogs are static; no change                                                                                                                                                                                                              | `catalog-cache.test.ts` "INV-8: a missing SQL chunk forces a complete live refresh"                                                                                                                                                                  |
-| 9   | One dispatch per logical write below every resend path; fixed capacity, permanent atomic reservations and raw dispatch facts decide; a write answered 401 keeps its code with an unknown outcome; nothing after a write changes its outcome | `rest-connector.test.ts` "INV-9: dispatches a write once…"; `http-kit.test.ts` "INV-9" (ledger, guard triggers, auxiliary failures, renewals, cancellation, direct call, evidence); `kit-prototype.test.ts` "INV-9"; A.3 `failures.json`             |
-| 10  | Renewal only inside a call; probes and operation views never start authorization                                                                                                                                                            | `api-oauth.test.ts` "INV-10: reports auth_required from status…"                                                                                                                                                                                     |
-| 11  | Base URL, ceiling, page size, value-safety review and options checked at construction                                                                                                                                                       | `provider-definition.test.ts` "INV-11: rejects invalid common options before create runs"; `http-kit.test.ts` "INV-11"                                                                                                                               |
-| 12  | `src/http/` is unreachable from the root; area modules confined to three files; stable members only elsewhere                                                                                                                               | `purity.node.test.ts` "keeps the provider kit out of the root graph" and "confines Effect's unstable area modules…"; `kit-stability.node.test.ts`                                                                                                    |
-| 13  | Factories return `Connector`; kit types are internal; the build does not emit the prototype                                                                                                                                                 | `package-surface.node.test.ts` "INV-13: publishes no Effect type in any reachable declaration"; `check:declarations`                                                                                                                                 |
+| INV | Mechanism                                                                                                                                                                                                                                                                                                                           | Evidence: existing, then new                                                                                                                                                                                                                                                                                                                               |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The builder annotates the class; the served classification decides at run time; byte-identical catalog; catalog and decoder agree, string lengths in code points; inexact input checks refused                                                                                                                                      | `rest-connector.test.ts` "INV-1: names four tools…"; `kit-prototype.test.ts` "INV-1" (catalog, served classification); `http-kit.test.ts` "INV-1" (boundary agreement beyond ASCII, code points, refusal, served classification); A.3 `catalog.json`                                                                                                       |
+| 2   | Kit tools are `ApiTool`s; registry enforcement unchanged                                                                                                                                                                                                                                                                            | `connector-read-only.test.ts` "INV-2: defaults writable…"                                                                                                                                                                                                                                                                                                  |
+| 3   | Confinement and `admit` run before credentials; agents name no base or credential                                                                                                                                                                                                                                                   | `guarded-fetch.test.ts` confinement suite; `http-kit.test.ts` "INV-3: confines…" and "INV-3 INV-5: admits…"                                                                                                                                                                                                                                                |
+| 4   | `Caller` comes from the admitted scope on every operation; `Classification` from the served definition                                                                                                                                                                                                                              | `mcp-core.test.ts` "INV-4: binds SDK envelope…"; `http-kit.test.ts` "INV-4 INV-10: discovery, status, and startAuth views…"; B.1's registry tests                                                                                                                                                                                                          |
+| 5   | Credentials only through services; every sent value registered; a body redacted with the request's whole set before any cut; one value-safety boundary; withheld text decided before any detail                                                                                                                                     | `sent-secrets.test.ts` "INV-5: api OAuth registers both tokens…"; `http-kit.test.ts` "INV-5" (boundary, hatch, withheld); `kit-prototype.test.ts` "INV-5" (sensitive fields, a reply quoting the credential)                                                                                                                                               |
+| 6   | Bounded bytes, token-only facts, rules typed without prose and run before any wording, allowlisted headers, `TextDecoder`, errno-only transport facts, withheld handler and decode text                                                                                                                                             | `guarded-fetch.test.ts` "INV-6: decodes bounded bytes…"; `http-kit.test.ts` "INV-6" (token facts, rule order, compile-fail fixture, complete lists); Stripe `kit-prototype.test.ts` "INV-6"                                                                                                                                                                |
+| 7   | Explicit call finalizers and closed-state checks; request-owned resources close with the request, revocation first and every step run; `fetch` gets the call signal                                                                                                                                                                 | `call-admission.test.ts` "INV-7: stops a retained connector context…"; `http-kit.test.ts` "INV-7" (retained service, pending read, retained view, request-owned session, throwing finalizers); `kit-prototype.test.ts` "INV-7"                                                                                                                             |
+| 8   | Catalogs are static; no change                                                                                                                                                                                                                                                                                                      | `catalog-cache.test.ts` "INV-8: a missing SQL chunk forces a complete live refresh"                                                                                                                                                                                                                                                                        |
+| 9   | One dispatch per logical write below every resend path; fixed capacity and permanent atomic reservations; every request entered in the core ledger before `fetch` and its own answer marked with its provenance; the core decides the write over the logical call; a write answered 401 keeps its code with an unknown outcome (Q8) | `rest-connector.test.ts` "INV-9: dispatches a write once…"; `write-provenance.test.ts`; `kit-core-verdicts.test.ts` "INV-9" (the kit and the core over one case table); `http-kit.test.ts` "INV-9" (ledger, guard triggers, provenance, auxiliary failures, renewals, cancellation, idempotency key); `kit-prototype.test.ts` "INV-9"; A.3 `failures.json` |
+| 10  | Renewal only inside a call; probes and operation views never start authorization                                                                                                                                                                                                                                                    | `api-oauth.test.ts` "INV-10: reports auth_required from status…"                                                                                                                                                                                                                                                                                           |
+| 11  | Base URL, ceiling, page size, value-safety review and options checked at construction                                                                                                                                                                                                                                               | `provider-definition.test.ts` "INV-11: rejects invalid common options before create runs"; `http-kit.test.ts` "INV-11"                                                                                                                                                                                                                                     |
+| 12  | `src/http/` is unreachable from the root; area modules confined to three files; stable members only elsewhere                                                                                                                                                                                                                       | `purity.node.test.ts` "keeps the provider kit out of the root graph" and "confines Effect's unstable area modules…"; `kit-stability.node.test.ts`                                                                                                                                                                                                          |
+| 13  | Factories return `Connector`; kit types are internal; the build does not emit the prototype                                                                                                                                                                                                                                         | `package-surface.node.test.ts` "INV-13: publishes no Effect type in any reachable declaration"; `check:declarations`                                                                                                                                                                                                                                       |
 
 ### Migration order
 
@@ -1122,20 +1395,26 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
   entry and shared core, `contextView`, and the one table behind the existing
   readers. It includes the tests above. Agent-facing output is unchanged.
 - **B.2.**
-  - Moves `client.ts` and `oauth.ts` out of prototype status, with the ledger.
+  - Moves `client.ts` and `oauth.ts` out of prototype status, with the ledger
+    and its entry in the core ledger before every `fetch`.
   - Adds the shared pure module and the two-transport parity suite (Q6).
+  - Owns transport attempts: one attempt per send, with no hidden 421,
+    HTTP/2 refused-stream or dispatcher resend, or the send is refused. A
+    transport rejection still proves nothing about a write unless a separate
+    decision with the core says so.
   - Builds `Grant` over `static-oauth.ts`: `token`, `refresh`, and `rejected`
     with its latch. Aligns `src/auth/static-oauth.ts` with the kit's resource
     auth verdict and handoff until renewal succeeds; the parity matrix and
     direct/program accounting checks above are required, planned B.2 work.
     `ctx.oauth.fetch` shares the decision.
-- **B.3.** Adds `errors.ts` for vendor facts, wording and ledger composition.
-  It calls the core's `providerCallFailure` and `classifyWriteOutcome` from
-  `src/write-outcome.ts`; neither function moves into the kit or gains a
-  divergent copy. The temporary pre-merge adapter must switch to that module
-  when #902 lands. Vendor mappers become facts, an allowlist and rules, with
-  parity suites like Stripe's. Single-write fields, including timeout and
-  answered 404/409, match the shared helper exactly.
+- **B.3.** Adds `errors.ts` for vendor facts, wording, provenance and the Q8
+  handoff. The write's outcome stays the core's: `api()`'s boundary decides it
+  with `providerCallFailure` over the core ledger, and neither that function,
+  `servedRefusal` nor `classifyWriteOutcome` moves into the kit or gains a
+  copy. Vendor mappers become facts, an allowlist and rules, with parity
+  suites like Stripe's. The case table (`kit-core-verdicts.test.ts`) grows
+  with each mapper. _Superseded (round 5):_ a temporary pre-merge adapter
+  vendored #902's functions until it landed; the final round deleted it.
 - **B.4.** Adds `safety.ts`, `vendor.ts`, `tools.ts` with all five builders,
   `paging.ts` with all five strategies, `json-schema.ts` with `Integer` and
   the agreement check, `hatch.ts`, `provider.ts`, and the stability guard
@@ -1151,13 +1430,15 @@ Each step is one PR. Each must pass `pnpm run check` and match the goldens.
     other surface change belong to Tithe.ly's separate step 2, never B.5.
   - **Prerequisite sequence, decided by the orchestrator (round 5):** merge
     #902, switch the kit adapter to its shared core helpers, then land one
-    separate write-401 back-port and regenerate goldens. The 401 and 401-echo
-    back-port keeps the auth code and handoff, adds `writeOutcome: "unknown"`,
-    and is non-retryable. The kit delegates every other base verdict to the
-    core: **do not back-port divergent kit wording or fields**. The answered
-    404/409 and timeout errors, plus `raw` and hatch `result` descriptions,
-    already match #902. B.5 migrates against the regenerated bytes. No
-    back-port or goldens regeneration is part of this design PR.
+    separate write-401 back-port and regenerate goldens. The first two are
+    done: #902 merged and the final round deleted the adapter. The 401
+    back-port (`t3/write-401-unknown`) is landing separately. It keeps the
+    auth code and handoff on the 401 and 401-echo rows, adds
+    `writeOutcome: "unknown"`, and stays non-retryable. The final round's
+    golden comparison shows those two rows are the only difference left. The
+    kit delegates every other verdict to the core: **do not back-port
+    divergent kit wording or fields**. B.5 migrates against the regenerated
+    bytes. No back-port or goldens regeneration is part of this design PR.
   - It reports, against today's provider: code lines, cyclomatic complexity
     per tool, the provider entry's gzip size, and catalog render time apart
     from per-call decode time (Q4).
@@ -1226,15 +1507,15 @@ The previous draft asked eight questions. The orchestrator decided them:
 2. **Defer the wire-code change.** Promoting ambiguous writes to
    `write_outcome_unknown` waits for the contract phase and its evals, which
    then promote every dispatched write whose `classifyWriteOutcome` is
-   `unknown`. The kit delegates single-write verdicts, retryability and
-   explicit fields to the core helper, and composes whole-call uncertainty
-   through recovery failures and failures after the write (B.3's ledger).
-   It never adds a second timeout/404/409 contract. The handoff is not deferred: a
-   write answered 401 keeps its auth code and `authorize_connector` handoff
-   and carries #902's explicit `writeOutcome: "unknown"`, which
-   `classifyWriteOutcome` reads before its refusal codes, so direct calls and
-   caught and uncaught programs all report it as unknown, with
-   reconciliation facts, and never as retryable.
+   `unknown`. The kit delegates every write verdict, retryability and
+   explicit field to the core: since the final round, `api()`'s boundary
+   decides over the core ledger the kit records into, whole-call uncertainty
+   included. It never adds a second timeout/404/409 contract. The handoff is
+   not deferred: a write answered 401 keeps its auth code and
+   `authorize_connector` handoff and carries #902's explicit
+   `writeOutcome: "unknown"`, which `classifyWriteOutcome` reads before any
+   provenance, so direct calls and caught and uncaught programs all report it
+   as unknown, with reconciliation facts, and never as retryable.
 3. **Tithe.ly's `raw` flag.** Keep A.2's deployment-controlled
    `sensitiveFields` and filter both branches. B.5 preserves the existing
    catalog bytes, including its output schema; the prototype's transitional
@@ -1268,43 +1549,50 @@ The previous draft asked eight questions. The orchestrator decided them:
    (`connector_call_failed`, still unknown), because the credential then
    needs no recovery. A write is never resent automatically: refresh-once
    does not, and the transport's one-dispatch guard stops anything that
-   tries. This is the separate Q8 policy composed over the core's base
-   verdict, not a second kit verdict table. B.3 delegates those base verdicts
-   to `providerCallFailure` and `classifyWriteOutcome`; B.5 needs only the
-   separate write-401-with-handoff back-port after #902 and regenerated
-   goldens, with no divergent timeout/404/409 or description back-port.
+   tries. This is the separate Q8 policy composed over the core's verdict,
+   not a second kit verdict table. **Decided:** the rule stands for every
+   provider. The kit applies it today. The 401 back-port
+   (`t3/write-401-unknown`), a separate PR now landing, makes it the core's
+   for today's `guarded-fetch.ts` providers, with `authBeforeExecution` as the
+   core's reviewed declaration. Google Workspace and Infisical already report
+   a write's 401 unknown since #902. B.5 needs only that back-port and
+   regenerated goldens, with no divergent timeout/404/409 or description
+   back-port; the final round's golden comparison shows the write 401 rows
+   are the only difference left.
 
 ## Consequences
 
 - **Provider authors write declarations.** A provider becomes operations, a
   facts extractor and status table, a value-safety review, Schemas and
   projections. Paging, ledger, redirect, ceiling, secret and value-safety
-  rules come from the kit; base write verdicts delegate to the core's shared
-  failure decision and classifier. Q8 and whole-call uncertainty compose over
-  that contract. No provider or kit copy forks its verdict table.
+  rules come from the kit. Every write verdict comes from the core, decided
+  at `api()`'s boundary from the ledger the kit records into; only Q8 composes
+  over it until the 401 back-port lands. No provider or kit copy forks the
+  verdict table, and the committed case table catches one that tries.
 - **Call state stops depending on object identity, and stops outliving its
   call.** Kit tools receive services on a fiber; every capability closes with
   its call, and request-owned resources close with their request. The
   Promise view keeps one table until `remoteMcp()` moves.
-- **A write's verdict is a fact recorded when the vendor answered.** Nothing
-  after it can turn it into a refusal or a retry: not a renewal or its
-  failure, not a cancellation, not an auxiliary request's 401, 429 or 5xx,
-  not the provider's own refusal.
+- **A write's verdict rests on facts recorded when they happened.** A refusal
+  is the one request's served answer, marked where it was observed; nothing
+  after it can turn an unknown write into a refusal or a retry: not a renewal
+  or its failure, not a cancellation, not an auxiliary request's 401, 429 or
+  5xx, not the provider's own refusal, not an error code.
 - **A write leaves once.** The transport refuses a second dispatch of any
   logical write in a call, whatever above it asked: a retry, a redirect
   follower, a replaying renewal, a reconnect, a new request id. Every tool's write capacity is fixed at construction; a tool sending
   several declares its steps and bounded, input-derived item identities.
   Reservation happens atomically before any asynchronous preparation and
   is never released within a call.
-- **Some write failures read differently.** Tithe.ly-style writes answered
-  5xx, or cut off after connecting, report `connector_call_failed` with an
-  unknown outcome instead of a retryable `unavailable`. A write answered 401
-  keeps `auth_required` and its handoff, but is never retryable and its
-  outcome is unknown. A failure after a write left reports the write as
-  unknown instead of the later failure's retry advice. Base verdicts come
-  from #902's shared helper. After #902, only the separate answered-401
-  back-port and goldens regeneration remain before B.5's byte-identical step
-  1; today's providers never receive divergent kit wording or fields.
+- **Only a write answered 401 reads differently.** #902 already gave today's
+  providers the rest: writes answered 5xx or 408, cut off, or refused at
+  connect are unknown and never retryable, and a failure after a write left
+  carries no retry advice. On the kit a write answered 401 keeps
+  `auth_required` and its handoff, but is never retryable and its outcome is
+  unknown. The separate 401 back-port gives today's providers the same, and
+  with regenerated goldens it is all that remains before B.5's
+  byte-identical step 1; today's providers never receive divergent kit
+  wording or fields.
 - **Classification cannot read prose.** Vendor rules see tokens and
   allowlisted headers and return a code; the message is rendered afterwards.
   A vendor whose current mapper branches on message text must find a code or
@@ -1317,3 +1605,5 @@ The previous draft asked eight questions. The orchestrator decided them:
   `oauth.ts` and `vendor.ts`, B.5 trips the HttpApiClient fallback, or a
   migrated provider cannot match its goldens without a new kit primitive.
   That provider then stays on the old path until the kit grows the primitive.
+  A kit change that needs a verdict the core does not give is a change to
+  the core contract, decided there, never a kit rule.
