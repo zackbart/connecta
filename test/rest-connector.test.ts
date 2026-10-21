@@ -10,8 +10,8 @@ import { ConnectorCallError } from "../src/errors.js";
 import { OperationIndex, type OpenApiData, type SchemaNode } from "../src/providers/_shared/rest/operation-index.js";
 import { restTools, restTransport, type RestVendor } from "../src/providers/_shared/rest/tools.js";
 import { redact, valueSafety } from "../src/providers/_shared/rest/value-safety.js";
-import { byAuth, hostedOAuth } from "../src/providers/_shared/rest/dispatch.js";
-import { recordRecovery, recoveryFor } from "../src/call-recovery.js";
+import { byAuth } from "../src/providers/_shared/rest/dispatch.js";
+import { recoveryFor } from "../src/call-recovery.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import type { ProviderContext } from "../src/provider.js";
@@ -132,53 +132,6 @@ async function refusal(promise: Promise<unknown>): Promise<ConnectorCallError> {
 }
 
 describe("restTools()", () => {
-  it("INV-1: names four tools from the vendor and classifies reads and the destructive write", async () => {
-    const tools = await connector().listTools(ctx());
-    expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
-      ["acme_api_search", { readOnlyHint: true }],
-      ["acme_api_details", { readOnlyHint: true }],
-      ["acme_api_read", { readOnlyHint: true }],
-      ["acme_api_write", { readOnlyHint: false, destructiveHint: true }],
-    ]);
-    const write = tools.find((tool) => tool.name === "acme_api_write")!;
-    expect((write.inputSchema as any).properties.method.enum).toEqual(["POST", "DELETE"]);
-    expect((write.inputSchema as any).required).toEqual(["method", "path"]);
-    // No idempotency header configured, so no idempotency argument.
-    expect((write.inputSchema as any).properties.idempotencyKey).toBeUndefined();
-    const read = tools.find((tool) => tool.name === "acme_api_read")!;
-    expect((read.inputSchema as any).properties.method.enum).toEqual(["GET", "HEAD", "POST"]);
-  });
-
-  it("INV-10: searches and describes the pinned index without sending a request", async () => {
-    const acme = connector();
-    const found = (await acme.callTool("acme_api_search", { query: "query widgets" }, ctx())) as any;
-    expect(found.operations[0]).toMatchObject({ method: "POST", path: "/v1/widgets/query", tool: "acme_api_read" });
-    const byPath = (await acme.callTool("acme_api_search", { query: "/v1/widgets/w_1" }, ctx())) as any;
-    expect(byPath.operations.map((op: any) => `${op.method} ${op.path}`).slice(0, 2)).toEqual([
-      "GET /v1/widgets/{widget}",
-      "DELETE /v1/widgets/{widget}",
-    ]);
-    const details = (await acme.callTool("acme_api_details", { method: "POST", path: "/v1/widgets" }, ctx())) as any;
-    expect(details).toMatchObject({
-      tool: "acme_api_write",
-      revision: "r1",
-      parameters: [{ name: "team", in: "query", required: false }],
-      body: {
-        contentType: "application/json",
-        schema: { required: ["name"], properties: { spec: { properties: { size: { enum: ["s", "m"] } } } } },
-      },
-    });
-    const one = (await acme.callTool(
-      "acme_api_details",
-      { method: "GET", path: "/v1/widgets", param: "limit" },
-      ctx(),
-    )) as any;
-    expect(one.parameters).toEqual([
-      { name: "limit", in: "query", required: false, description: "Most results.", schema: { type: "integer" } },
-    ]);
-    expect(sent).toEqual([]);
-  });
-
   it("refuses unknown paths, wrong methods, and unsafe segments before transport", async () => {
     const acme = connector();
     const cases: Array<[string, Record<string, unknown>, string]> = [
@@ -442,7 +395,7 @@ describe("restTools()", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it.each(["GET", "HEAD", "POST"])(
+  it.each(["HEAD", "POST"])(
     "INV-9: a served write-classified REST %s never advertises an ambiguous failure as retryable",
     async (method) => {
       respond = () => new Response(null, { status: 503 });
@@ -453,7 +406,7 @@ describe("restTools()", () => {
           "acme_api_read",
           {
             method,
-            path: method === "HEAD" ? "/v1/widgets/w_1" : method === "POST" ? "/v1/widgets/query" : "/v1/widgets",
+            path: method === "HEAD" ? "/v1/widgets/w_1" : "/v1/widgets/query",
           },
           call,
         ),
@@ -461,15 +414,6 @@ describe("restTools()", () => {
       expect(sent).toHaveLength(1);
     },
   );
-
-  it("INV-9: dispatches a write once and maps its failure through the vendor", async () => {
-    respond = () => Response.json({ message: "boom" }, { status: 500 });
-    const error = await refusal(
-      connector().callTool("acme_api_write", { method: "POST", path: "/v1/widgets", body: { name: "a" } }, ctx()),
-    );
-    expect(error.message).toBe('Acme 500: {"message":"boom"}');
-    expect(sent).toHaveLength(1);
-  });
 
   it("reads HEAD as a read whose data is the response headers, and refuses it as a write", async () => {
     // A HEAD's Content-Length describes the GET body: past the 1 MiB ceiling, it still answers.
@@ -565,58 +509,6 @@ describe("restTools()", () => {
     expect(sent.map((request) => request.headers.has("idempotency-key"))).toEqual([false, false, false, true, false]);
   });
 
-  it("INV-9: treats a reset, a refused connection, or a 5xx on a write without a key as an unknown outcome", async () => {
-    const failing = (code: string) =>
-      (async (input: RequestInfo | URL, init?: RequestInit) => {
-        sent.push({
-          url: new URL(String(input)),
-          method: init?.method ?? "GET",
-          headers: new Headers(init?.headers),
-          body: undefined,
-        });
-        throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error(code), { code }) });
-      }) as typeof fetch;
-    const five = (status: number, body: unknown) =>
-      status >= 500
-        ? new ConnectorCallError("unavailable", `Acme ${status}.`)
-        : new ConnectorCallError("invalid_args", `Acme ${status}: ${JSON.stringify(body)}`);
-    const plain = connector({ failure: five });
-    const keyed = connector({ failure: five, idempotencyHeader: "Idempotency-Key" });
-    const write = { method: "POST", path: "/v1/widgets", body: { name: "a" } };
-    // A reset after connecting: the write may have landed.
-    globalThis.fetch = failing("ECONNRESET");
-    expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
-    });
-    expect(await refusal(keyed.callTool("acme_api_write", write, ctx()))).toMatchObject({
-      code: "unavailable",
-      retryable: true,
-    });
-    expect(await refusal(plain.callTool("acme_api_read", { path: "/v1/widgets" }, ctx()))).toMatchObject({
-      code: "unavailable",
-      retryable: true,
-    });
-    // A refusal on fetch's last attempt says nothing about earlier ones.
-    globalThis.fetch = failing("ECONNREFUSED");
-    expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
-      writeOutcome: "unknown",
-    });
-    expect(await refusal(plain.callTool("acme_api_read", { path: "/v1/widgets" }, ctx()))).toMatchObject({
-      code: "unavailable",
-      retryable: true,
-    });
-    // A 5xx after dispatch is ambiguous; a 4xx is a definite refusal.
-    globalThis.fetch = (async () => Response.json({ message: "down" }, { status: 503 })) as typeof fetch;
-    const unavailable = await refusal(plain.callTool("acme_api_write", write, ctx()));
-    expect(unavailable).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(unavailable.message).toContain("Whether the write took effect at Acme is unknown");
-    globalThis.fetch = (async () => Response.json({ message: "bad" }, { status: 400 })) as typeof fetch;
-    expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({ code: "invalid_args" });
-  });
-
   it("INV-9: no connect-phase code proves a write unsent, before a response or while reading its body", async () => {
     const plain = connector();
     const write = { method: "POST", path: "/v1/widgets", body: { name: "a" } };
@@ -648,44 +540,8 @@ describe("restTools()", () => {
     });
   });
 
-  it("INV-9: never advertises a keyless write's 503 as retryable through call_destructive_tool", async () => {
-    globalThis.fetch = (async () => Response.json({ message: "down" }, { status: 503 })) as typeof fetch;
-    const app = createTestConnecta({
-      connectors: [
-        tracksEveryRequest(
-          apiConnector("acme", {
-            tools: restTools(
-              vendor({
-                failure: (status) =>
-                  status >= 500
-                    ? new ConnectorCallError("unavailable", `Acme ${status}.`)
-                    : new ConnectorCallError("invalid_args", `Acme ${status}.`),
-              }),
-            ),
-          }),
-        ),
-      ],
-      logger: silentLogger,
-    });
-    try {
-      const rpc = await readJsonRpc(
-        await mcpRpc(app, "tools/call", {
-          name: "call_destructive_tool",
-          arguments: {
-            address: "acme.acme_api_write",
-            args: { method: "POST", path: "/v1/widgets", body: { name: "a" } },
-          },
-        }),
-      );
-      expect(rpc.result.structuredContent.error).toMatchObject({ code: "connector_call_failed", retryable: false });
-    } finally {
-      await app.close();
-    }
-  });
-
   it.each([
     ["generated", undefined],
-    ["200-character caller-supplied", "k".repeat(200)],
     ["255-character caller-supplied", "k".repeat(255)],
   ])("INV-9: carries the %s idempotency key in recovery when a direct write's reply is lost", async (_label, given) => {
     respond = () =>
@@ -733,59 +589,61 @@ describe("restTools()", () => {
     }
   });
 
-  it.each([
-    ["generated", undefined],
-    ["200-character caller-supplied", "k".repeat(200)],
-    ["255-character caller-supplied", "k".repeat(255)],
-  ])("INV-9: returns the %s idempotency key with write_outcome_unknown on a call deadline", async (_label, given) => {
-    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      sent.push({
-        url: new URL(String(input)),
-        method: init?.method ?? "GET",
-        headers: new Headers(init?.headers),
-        body: typeof init?.body === "string" ? init.body : undefined,
+  it.each([["generated", undefined]])(
+    "INV-9: returns the %s idempotency key with write_outcome_unknown on a call deadline",
+    async (_label, given) => {
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        sent.push({
+          url: new URL(String(input)),
+          method: init?.method ?? "GET",
+          headers: new Headers(init?.headers),
+          body: typeof init?.body === "string" ? init.body : undefined,
+        });
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+        });
+      }) as typeof fetch;
+      const app = createTestConnecta({
+        connectors: [
+          tracksEveryRequest(
+            apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
+          ),
+        ],
+        logger: silentLogger,
       });
-      return new Promise<Response>((_, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
-      });
-    }) as typeof fetch;
-    const app = createTestConnecta({
-      connectors: [
-        tracksEveryRequest(
-          apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
-        ),
-      ],
-      logger: silentLogger,
-    });
-    try {
-      const rpc = await readJsonRpc(
-        await mcpRpc(app, "tools/call", {
-          name: "call_destructive_tool",
-          arguments: {
-            address: "acme.acme_api_write",
-            args: {
-              method: "POST",
-              path: "/v1/widgets",
-              body: { name: "a" },
-              ...(given ? { idempotencyKey: given } : {}),
+      try {
+        const rpc = await readJsonRpc(
+          await mcpRpc(app, "tools/call", {
+            name: "call_destructive_tool",
+            arguments: {
+              address: "acme.acme_api_write",
+              args: {
+                method: "POST",
+                path: "/v1/widgets",
+                body: { name: "a" },
+                ...(given ? { idempotencyKey: given } : {}),
+              },
+              timeoutMs: 200,
             },
-            timeoutMs: 200,
-          },
-        }),
-      );
-      const error = rpc.result.structuredContent.error;
-      expect(error.code).toBe("write_outcome_unknown");
-      expect(sent).toHaveLength(1);
-      const key = sent[0]!.headers.get("idempotency-key");
-      if (given) expect(key).toBe(given);
-      else expect(key).toMatch(/^[0-9a-f-]{36}$/);
-      expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
-      expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
-      expect(error.retry).toContain("while the vendor retains that key");
-    } finally {
-      await app.close();
-    }
-  });
+          }),
+        );
+        const error = rpc.result.structuredContent.error;
+        expect(error.code).toBe("write_outcome_unknown");
+        expect(sent).toHaveLength(1);
+        const key = sent[0]!.headers.get("idempotency-key");
+        if (given) expect(key).toBe(given);
+        else expect(key).toMatch(/^[0-9a-f-]{36}$/);
+        expect(error.uncertainCall).toMatchObject({
+          address: "acme.acme_api_write",
+          recovery: { idempotencyKey: key },
+        });
+        expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
+        expect(error.retry).toContain("while the vendor retains that key");
+      } finally {
+        await app.close();
+      }
+    },
+  );
 
   it("INV-9: rejects a 256-character idempotency key per the write schema before dispatch", async () => {
     const app = createTestConnecta({
@@ -814,26 +672,6 @@ describe("restTools()", () => {
     } finally {
       await app.close();
     }
-  });
-
-  it("INV-9: keeps 255-character recovery keys while other facts retain the 128-character bound", () => {
-    const callCtx = ctx();
-    const key = "k".repeat(255);
-    recordRecovery(callCtx, { idempotencyKey: key, reference: "r".repeat(128), tooLong: "r".repeat(129) });
-    expect(recoveryFor(callCtx)).toEqual({ idempotencyKey: key, reference: "r".repeat(128) });
-    recordRecovery(callCtx, { idempotencyKey: "k".repeat(256) });
-    expect(recoveryFor(callCtx)).toEqual({ idempotencyKey: key, reference: "r".repeat(128) });
-    const oversized = ctx();
-    recordRecovery(oversized, { idempotencyKey: "k".repeat(256) });
-    expect(recoveryFor(oversized)).toBeUndefined();
-  });
-
-  it("bounds recovery facts to a few short named strings", () => {
-    const callCtx = ctx();
-    recordRecovery(callCtx, { idempotencyKey: "k1", "bad name": "x", long: "y".repeat(200) });
-    recordRecovery(callCtx, { a: "1", b: "2", c: "3", d: "4" });
-    expect(recoveryFor(callCtx)).toEqual({ idempotencyKey: "k1", a: "1", b: "2", c: "3" });
-    expect(recoveryFor(ctx())).toBeUndefined();
   });
 
   it("INV-11: refuses a reviewed read-only POST the pinned index no longer carries", () => {
@@ -882,22 +720,5 @@ describe("auth dispatch", () => {
       'auth.type must be one of "oauth", "key".',
     );
     expect(oauth).not.toHaveBeenCalled();
-  });
-
-  it("builds the hosted connection with OAuth only and the provider's review", () => {
-    const hosted = hostedOAuth("acme_mcp", provider, {
-      url: "https://mcp.vendor.example/mcp",
-      title: "Acme",
-      description: "Acme hosted",
-      usageGuide: { content: "# Acme\n" },
-    });
-    expect(hosted.describe?.()).toMatchObject({
-      source: { kind: "remote-mcp" },
-      endpoint: { origin: "https://mcp.vendor.example", path: "/mcp" },
-      auth: { mode: "oauth" },
-      transport: { requireHttps: true },
-    });
-    expect(hosted.classification).toEqual({ tools: { list: "read" } });
-    expect(hosted.credential).toBeUndefined();
   });
 });

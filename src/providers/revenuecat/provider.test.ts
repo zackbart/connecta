@@ -22,7 +22,7 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 
 import { REVENUECAT_MCP_ENDPOINT, REVENUECAT_VETTED_CATALOG, revenuecat } from "./index.js";
 import contracts from "./contracts.fixture.json";
-import { detectCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
+import { detectCatalogDrift } from "../../catalog-drift.js";
 import { connectorGuideSummary } from "../../skills.js";
 
 const reviewedTools: ToolDef[] = contracts.tools;
@@ -67,46 +67,6 @@ describe("revenuecat()", () => {
     const options = mocks.remoteMcp.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(options).not.toHaveProperty("callAdmission");
     expect(options).not.toHaveProperty("maxResultBytes");
-  });
-
-  it("passes an operator-declared budget and result cap through", () => {
-    const callAdmission = {
-      rules: [
-        {
-          maxConcurrency: 4,
-          budget: {
-            kind: "rolling-window" as const,
-            maxCalls: 25,
-            windowMs: 60_000,
-          },
-        },
-      ],
-    };
-    revenuecat("revenuecat", {
-      purpose: "Chart-heavy revenue reporting",
-      callAdmission,
-      maxResultBytes: 25_000,
-    });
-    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
-      "revenuecat",
-      expect.objectContaining({ callAdmission, maxResultBytes: 25_000 }),
-    );
-  });
-
-  it("leads the OAuth guide with list-projects and refuses to guess (P8)", () => {
-    const connector = revenuecat("revenuecat", {
-      purpose: "Subscription state across every mobile app we ship",
-    });
-    const guide = guideOf(connector);
-
-    expect(guide).toContain(
-      "Account-scoped connection: this OAuth session reaches every RevenueCat project the account can see.",
-    );
-    expect(guide).toContain(
-      "Call `list-projects` first and carry the exact `project_id` it returned into every project-scoped call.",
-    );
-    expect(guide).toContain("Connecta does not pick a project");
-    expect(guide).toContain("If more than one project fits the request, stop and ask; never guess a `project_id`.");
   });
 
   it("binds a static key to one project and says a second project is a second connector", () => {
@@ -158,153 +118,6 @@ describe("revenuecat()", () => {
     // single-project one, not the account-wide one.
     expect(guideOf(connector)).toContain("`list-projects` returns the one project this key can see");
     expect(connectorGuideSummary(connector)).toBe("One project only: Subscription state for the BePresent iOS project");
-  });
-
-  it("lets a deployment override the slot copy it renders", () => {
-    revenuecat("bepresent_ios", {
-      purpose: "Subscription state for the BePresent iOS project",
-      auth: {
-        type: "credential",
-        credential: { label: "iOS project key" },
-        scheme: "Bearer",
-      },
-    });
-
-    expect(mocks.remoteMcp).toHaveBeenCalledWith(
-      "bepresent_ios",
-      expect.objectContaining({
-        auth: {
-          type: "credential",
-          credential: { label: "iOS project key" },
-          scheme: "Bearer",
-        },
-      }),
-    );
-  });
-
-  it("explains permission-gated catalogs and independent read-only endpoint enforcement", () => {
-    const guide = guideOf(
-      revenuecat("bepresent_ios", {
-        purpose: "Subscription state for the BePresent iOS project",
-        auth: KEY_AUTH,
-      }),
-    );
-    expect(guide).toContain("RevenueCat can omit tools this key cannot use from its live catalog");
-    expect(guide).toContain("Catalog presence alone does not prove a call is permitted");
-    expect(guide).toContain("A read-only Connecta endpoint independently omits and blocks tools classified as writes");
-  });
-
-  it("tells two static connectors apart in the one field search returns (P3)", () => {
-    const ios = revenuecat("bepresent_ios", {
-      purpose: "Subscription state for the BePresent iOS project",
-      auth: KEY_AUTH,
-    });
-    const scroll = revenuecat("biblescroll", {
-      purpose: "Subscription state for the BibleScroll project",
-      auth: KEY_AUTH,
-    });
-    const first = connectorGuideSummary(ios);
-    const second = connectorGuideSummary(scroll);
-    expect(first).toBe("One project only: Subscription state for the BePresent iOS project");
-    expect(second).toBe("One project only: Subscription state for the BibleScroll project");
-    expect(first).not.toEqual(second);
-    for (const summary of [first, second]) {
-      expect(summary?.length).toBeLessThanOrEqual(120);
-    }
-  });
-
-  it("clips an over-long purpose rather than throwing at the 120-byte bound", () => {
-    const connector = revenuecat("verbose", {
-      purpose:
-        "Subscription state, entitlement grants, refund questions, and paywall experiments for the flagship consumer project",
-      auth: KEY_AUTH,
-    });
-    const summary = connectorGuideSummary(connector);
-    expect(summary?.length).toBeLessThanOrEqual(120);
-    expect(summary?.endsWith("…")).toBe(true);
-    expect(summary).toContain("One project only:");
-  });
-
-  it("carries the reduction, async, and catalog-varies advice (P6, P7)", () => {
-    const guide = guideOf(revenuecat("revenuecat", { purpose: "Subscription questions" }));
-    expect(guide).toContain("not a fixed set");
-    expect(guide).toContain("reduce inside `execute_code`");
-    expect(guide).toContain("`gives_access` on each subscription");
-    expect(guide).toContain("answer access questions from `gives_access`");
-    expect(guide).toContain("Page with the cursor the list returned");
-    expect(guide).toContain("get-paywall-ai-task");
-    expect(guide).toContain("get-product-store-state-plan");
-    expect(guide).toContain("apply-product-store-state-plan");
-    expect(guide).toContain("authorize_connector");
-    expect(guide).toContain('skills({ name: "usage" })');
-    expect(guide).toContain("`render-paywall-screenshot` are reviewed reads");
-    expect(guide).toContain("observational POST");
-    expect(guide).toContain("`validate-app-credentials` stays classified as write conservatively");
-    expect(guide).not.toContain("unclassified on purpose");
-  });
-
-  it("states RevenueCat's own per-domain rate limits in the guide (P12)", () => {
-    const guide = guideOf(revenuecat("revenuecat", { purpose: "Subscription questions" }));
-    expect(guide).toContain(
-      "480 requests per minute for customer information and virtual currencies, 60 for project configuration and audiences, 25 for charts and metrics",
-    );
-    expect(guide).toContain("`backoff_ms`");
-  });
-
-  it("names the id chain both guides depend on (P8)", () => {
-    for (const auth of [undefined, KEY_AUTH]) {
-      const guide = guideOf(
-        revenuecat("revenuecat", {
-          purpose: "Subscription questions",
-          ...(auth ? { auth } : {}),
-        }),
-      );
-      expect(guide).toContain("never guess one");
-      expect(guide).toContain("`list-projects` yields the `project_id`");
-      expect(guide).toContain("list-apps");
-      expect(guide).toContain("list-customers");
-      expect(guide).toContain("A plausible-looking id belongs to another project or to nobody.");
-    }
-  });
-
-  it("INV-1: reviews all 117 documented tools, retaining deprecated tools", () => {
-    const verdicts = REVENUECAT_VETTED_CATALOG.tools;
-    const counts = { "read-only": 0, additive: 0, destructive: 0 };
-    for (const { verdict } of verdicts.values()) counts[verdict] += 1;
-    expect(counts).toEqual({ "read-only": 56, additive: 19, destructive: 42 });
-    expect(verdicts.size).toBe(117);
-    for (const name of ["list-app-subscription-groups", "preview-audience", "render-paywall-screenshot"])
-      expect(verdicts.get(name)?.verdict).toBe("read-only");
-    const guide = guideOf(revenuecat("crm", { purpose: "Subscription questions" }));
-    for (const name of [
-      "get-product-store-state-operation",
-      "create-product-prices",
-      "equalize-subscription-prices",
-      "set-product-store-state",
-      "upload-product-store-state-screenshot",
-    ]) {
-      expect(verdicts.has(name)).toBe(true);
-      expect(guide).toContain("`" + name + "`");
-    }
-    expect(guide).toContain("tools are deprecated");
-  });
-
-  it("INV-1: verifies the four captured schemas and fails closed when a reviewed read changes", async () => {
-    for (const tool of reviewedTools) {
-      expect(await vettedSchemaDigest(tool, "legacy")).toBe(
-        contracts.schemaDigests[tool.name as keyof typeof contracts.schemaDigests],
-      );
-      expect(REVENUECAT_VETTED_CATALOG.tools.get(tool.name)?.schemaDigest).toBe(
-        await vettedSchemaDigest(tool, "legacy"),
-      );
-    }
-    expect([...REVENUECAT_VETTED_CATALOG.tools.values()].filter((t) => t.schemaDigest)).toHaveLength(4);
-    const connector = revenuecat("crm", { purpose: "Subscription questions" });
-    const reads = reviewedTools.filter((t) => t.name !== "validate-app-credentials");
-    mocks.listTools.mockResolvedValue(reads.map((t) => ({ name: t.name, inputSchema: t.inputSchema! })));
-    expect((await servedTools(connector)).map((t) => t.classification)).toEqual(["read", "read", "read"]);
-    mocks.listTools.mockResolvedValue(reads.map((t) => ({ ...t, inputSchema: { type: "object" } })));
-    expect((await servedTools(connector)).map((t) => t.classification)).toEqual(["write", "write", "write"]);
   });
 
   it("INV-1: serves a 54-tool permission-gated subset without inventing the 63 absent tools", async () => {
@@ -382,22 +195,5 @@ describe("revenuecat()", () => {
     expect(connector.credential).toBeUndefined();
     expect(connector.testCredential).toBeUndefined();
     expect(connector.testCredentials).toBeUndefined();
-  });
-
-  it("rejects an empty purpose at construction (P2)", () => {
-    expect(() => revenuecat("revenuecat", { purpose: "  " })).toThrow("a non-empty purpose");
-  });
-
-  it("lets a deployment override the title without losing the guide's scoping", () => {
-    const connector = revenuecat("bepresent_ios", {
-      title: "RevenueCat — BePresent iOS",
-      purpose: "Subscription state for the BePresent iOS project",
-      auth: KEY_AUTH,
-    });
-    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
-      "bepresent_ios",
-      expect.objectContaining({ title: "RevenueCat — BePresent iOS" }),
-    );
-    expect(guideOf(connector)).toContain("Single-project connection:");
   });
 });

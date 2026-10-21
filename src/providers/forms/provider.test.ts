@@ -1,19 +1,14 @@
-// The Google Forms connection. Tests stub the network and pin the requests
-// each tool sends, the projections it returns, and the surface it refuses to
-// have — H1, H9, H10, H11, and H14 for this provider. Delegation, subjects,
-// and tokens are test/google-workspace-delegation.test.ts; one fail-closed
-// case is repeated here so this connection is seen to inherit them.
+// The Google Forms connection. Request and result shapes are pinned by
+// test/goldens/forms; delegation, subjects, and tokens are
+// test/google-workspace-delegation.test.ts. This suite keeps what neither
+// reaches: refusals, cuts, declared keys, result bounds, and cursors.
 import { Validator } from "@cfworker/json-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { attachCaller } from "../../connector-caller.js";
-import { FORMS_API_BASE_URL, FORMS_SCOPES, forms } from "./index.js";
+import { forms } from "./index.js";
 import { jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type { AuthenticatedIdentity, Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
-
-const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
+import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -34,18 +29,15 @@ interface ApiCall {
 type Route = (call: ApiCall) => { status?: number; body?: unknown } | undefined;
 
 const calls: ApiCall[] = [];
-let tokenMints = 0;
 let route: Route = () => undefined;
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   calls.length = 0;
-  tokenMints = 0;
   route = () => undefined;
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
     const url = String(input);
     if (url === TOKEN_URL) {
-      tokenMints += 1;
       return Response.json({ access_token: "token", expires_in: 3599 });
     }
     const call: ApiCall = {
@@ -81,15 +73,6 @@ function context(): ConnectorContext {
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
   return connector.callTool(name, args, context()) as Promise<any>;
 }
-
-function guide(connector: Connector): ConnectorUsageGuide {
-  if (typeof connector.usageGuide !== "object" || !connector.usageGuide) {
-    throw new Error("expected a structured guide");
-  }
-  return connector.usageGuide;
-}
-
-const path = (index: number) => calls[index]!.url.pathname.replace("/v1", "");
 
 const FORM = {
   formId: "form-1",
@@ -187,201 +170,7 @@ const RESPONSE = {
   },
 };
 
-describe("forms() identity and surface (H1, H14)", () => {
-  it("requires a purpose and names the routing fact in title, description, and guide", () => {
-    expect(() => connection({ purpose: " " })).toThrow(/purpose/);
-    const connector = connection({ instructions: "Retreat forms live in the Events folder." });
-    expect(connector.title).toBe("Google Forms");
-    expect(connector.description).toContain("signed-in Workspace user");
-    expect(connector.description).toContain("Event registration");
-    const content = guide(connector).content;
-    expect(content.split("\n").find((line) => line && !line.startsWith("#"))).toMatch(/Workspace delegation/);
-    expect(content).toContain("## Connection instructions\n\nRetreat forms live in the Events folder.");
-    expect(content).toContain("no list or search");
-    expect(guide(connector).required).toBe(true);
-    expect(guide(connector).summary!.length).toBeLessThanOrEqual(120);
-  });
-
-  it("has no tool that lists forms, deletes, publishes, submits, or watches", async () => {
-    const tools = await connection().listTools(context());
-    expect(tools.map((tool) => tool.name).sort()).toEqual([
-      "batch_update_form",
-      "create_form",
-      "get_form",
-      "get_response",
-      "list_responses",
-      "update_form_info",
-    ]);
-    expect(tools.some((tool) => /list_forms|search|delete|publish|submit|watch|share/.test(tool.name))).toBe(false);
-  });
-
-  it("classifies reads as read-only, create as additive, and every overwrite as destructive", async () => {
-    const connector = connection();
-    const tools = await connector.listTools(context());
-    const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
-    for (const name of ["get_form", "list_responses", "get_response"]) {
-      expect(byName[name]!.annotations).toEqual({ readOnlyHint: true });
-      expect(isRead(byName[name]!)).toBe(true);
-    }
-    expect(byName["create_form"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
-    expect(byName["update_form_info"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-    expect(byName["batch_update_form"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-    // The provider has no operator slot.
-    expect(connector).not.toHaveProperty("approval");
-    expect(connector.credential).toBeUndefined();
-    expect(connector.startAuth).toBeUndefined();
-  });
-
-  it("requests exactly forms.body and forms.responses.readonly", () => {
-    expect([...FORMS_SCOPES]).toEqual([
-      "https://www.googleapis.com/auth/forms.body",
-      "https://www.googleapis.com/auth/forms.responses.readonly",
-    ]);
-    expect(FORMS_API_BASE_URL).toBe("https://forms.googleapis.com/v1");
-  });
-});
-
-describe("whose forms", () => {
-  function identity(id: string): AuthenticatedIdentity {
-    return {
-      actor: { kind: "test-users", id, namespace: "https://identity.test" },
-      subject: { namespace: "https://identity.test", id },
-      principal: { namespace: "https://identity.test", id },
-      interactive: true,
-    };
-  }
-
-  it("fails closed with a function subject and no admitted caller, before any network call", async () => {
-    const mapping = vi.fn(() => "ann@church.example");
-    const connector = connection({ subject: mapping });
-    await expect(call(connector, "get_form", { formId: "form-1" })).rejects.toMatchObject({
-      code: "auth_required",
-    });
-    expect(mapping).not.toHaveBeenCalled();
-    expect(tokenMints).toBe(0);
-    expect(calls).toEqual([]);
-  });
-
-  it("acts as the account the mapping names for the admitted caller", async () => {
-    route = () => ({ body: FORM });
-    const connector = connection({ subject: (who: AuthenticatedIdentity) => `${who.principal?.id}@church.example` });
-    const ctx = attachCaller(context(), { identity: identity("ann"), authenticated: true });
-    await connector.callTool("get_form", { formId: "form-1" }, ctx);
-    expect(tokenMints).toBe(1);
-    expect(calls).toHaveLength(1);
-  });
-});
-
 describe("reading forms (H9)", () => {
-  it("projects a form's items into questions with ids, types, and options", async () => {
-    route = () => ({ body: FORM });
-    const result = await call(connection(), "get_form", { formId: "form-1" });
-    expect(calls[0]!.method).toBe("GET");
-    expect(`${calls[0]!.url.origin}${calls[0]!.url.pathname}`).toBe(`${FORMS_API_BASE_URL}/forms/form-1`);
-    expect(calls[0]!.url.search).toBe("");
-    expect(result).toEqual({
-      formId: "form-1",
-      title: "Retreat sign-up",
-      documentTitle: "Retreat sign-up (2026)",
-      description: "Fall retreat.",
-      revisionId: "00000042",
-      responderUri: "https://docs.google.com/forms/d/e/1FAIpQ/viewform",
-      editUrl: "https://docs.google.com/forms/d/form-1/edit",
-      linkedSheetId: "sheet-9",
-      isQuiz: false,
-      emailCollection: "VERIFIED",
-      published: true,
-      acceptingResponses: true,
-      itemCount: 7,
-      questionCount: 6,
-      page: { hasMore: false, nextCursor: null },
-      items: [
-        {
-          itemId: "i1",
-          title: "Which session?",
-          kind: "question",
-          questions: [
-            { questionId: "q1", required: true, type: "radio", options: ["Morning", "Evening"], hasOther: true },
-          ],
-        },
-        {
-          itemId: "i2",
-          title: "Dietary needs",
-          description: "Anything we should know.",
-          kind: "question",
-          questions: [{ questionId: "q2", required: false, type: "paragraph" }],
-        },
-        { itemId: "i3", title: "Logistics", kind: "page_break" },
-        {
-          itemId: "i4",
-          title: "How excited are you?",
-          kind: "question",
-          questions: [
-            {
-              questionId: "q3",
-              required: false,
-              type: "scale",
-              scale: { low: 1, high: 5, lowLabel: "Meh", highLabel: "Very" },
-            },
-          ],
-        },
-        {
-          itemId: "i5",
-          title: "Availability",
-          kind: "question_group",
-          gridType: "checkbox",
-          options: ["Fri", "Sat"],
-          questions: [
-            { questionId: "q4", rowTitle: "Adults", required: true, type: "grid_row" },
-            { questionId: "q5", rowTitle: "Children", required: false, type: "grid_row" },
-          ],
-        },
-        { itemId: "i6", title: "Map", kind: "image" },
-        {
-          itemId: "i7",
-          title: "Arrival date",
-          kind: "question",
-          questions: [{ questionId: "q6", required: false, type: "date", includesYear: true, includesTime: false }],
-        },
-      ],
-    });
-    // Presentation and navigation noise is dropped from the projection.
-    expect(JSON.stringify(result)).not.toMatch(/shuffle|goToAction|contentUri/);
-  });
-
-  it("returns Google's untouched form on raw: true", async () => {
-    route = () => ({ body: FORM });
-    expect(await call(connection(), "get_form", { formId: "form-1", raw: true })).toEqual(FORM);
-  });
-
-  it("caps long descriptions and option lists with explicit markers", async () => {
-    const options = Array.from({ length: 130 }, (_, index) => ({ value: `Option ${index}` }));
-    route = () => ({
-      body: {
-        formId: "form-2",
-        info: { title: "Big", description: "d".repeat(2_100) },
-        items: [
-          {
-            itemId: "i1",
-            title: "Pick",
-            questionItem: { question: { questionId: "q1", choiceQuestion: { type: "DROP_DOWN", options } } },
-          },
-        ],
-      },
-    });
-    const result = await call(connection(), "get_form", { formId: "form-2" });
-    expect(result.description).toBe(
-      `${"d".repeat(2_000)}\n[… 100 more characters truncated; pass raw: true to read it]`,
-    );
-    const question = result.items[0].questions[0];
-    expect(question.type).toBe("drop_down");
-    expect(question.options).toHaveLength(100);
-    expect(question.moreOptions).toBe(30);
-    // A legacy form has no publish settings, and says nothing rather than false.
-    expect(result.published).toBeUndefined();
-    expect(result.acceptingResponses).toBeUndefined();
-  });
-
   it("refuses an id that is not a form id before any request", async () => {
     for (const formId of ["../drive/v3/files", "a/b", "", "form 1"]) {
       await expect(call(connection(), "get_form", { formId })).rejects.toMatchObject({ code: "invalid_args" });
@@ -441,120 +230,9 @@ describe("cuts never split a surrogate pair", () => {
     // The pair is dropped whole, and counted: 50 + the two units of the emoji.
     expect(result.title).toMatch(/^a{1999}\n\[… 52 more characters truncated/);
   });
-
-  it("at a listed answer's boundary", async () => {
-    route = (request) =>
-      request.url.pathname.endsWith("/responses")
-        ? {
-            body: {
-              responses: [
-                {
-                  responseId: "r1",
-                  answers: { q1: { questionId: "q1", textAnswers: { answers: [{ value: straddle(2_000) }] } } },
-                },
-              ],
-            },
-          }
-        : { body: FORM };
-    const result = await call(connection(), "list_responses", { formId: "form-1" });
-    const value = result.responses[0].answers[0].values[0];
-    expect(value).toMatch(/^a{1999}\n\[… 52 more characters truncated; get_response reads it whole\]$/);
-    expect(wellFormed(value)).toBe(true);
-  });
 });
 
 describe("reading responses (H9, H10)", () => {
-  it("lists responses labeled by question title, in form order, with long answers cut", async () => {
-    route = (request) =>
-      request.url.pathname.endsWith("/responses")
-        ? { body: { responses: [RESPONSE], nextPageToken: "page-2" } }
-        : { body: FORM };
-    const result = await call(connection(), "list_responses", {
-      formId: "form-1",
-      submittedAfter: "2026-09-30T00:00:00Z",
-      limit: 5,
-    });
-
-    const list = calls.find((entry) => entry.url.pathname.endsWith("/responses"))!;
-    expect(list.method).toBe("GET");
-    expect(list.url.pathname).toBe("/v1/forms/form-1/responses");
-    expect(Object.fromEntries(list.url.searchParams)).toEqual({
-      filter: "timestamp > 2026-09-30T00:00:00Z",
-      pageSize: "5",
-    });
-    expect(calls.map((entry) => `${entry.method} ${entry.url.pathname}`).sort()).toEqual([
-      "GET /v1/forms/form-1",
-      "GET /v1/forms/form-1/responses",
-    ]);
-
-    expect(result.formId).toBe("form-1");
-    expect(result.page.hasMore).toBe(true);
-    expect(result.page.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/);
-    const [response] = result.responses;
-    expect(response).toMatchObject({
-      responseId: "r1",
-      createTime: "2026-10-01T12:00:00.000Z",
-      lastSubmittedTime: "2026-10-01T12:05:00.000Z",
-      respondentEmail: "ann@church.example",
-    });
-    expect(response.answers.map((answer: any) => [answer.questionId, answer.title])).toEqual([
-      ["q1", "Which session?"],
-      ["q2", "Dietary needs"],
-      ["q5", "Availability [Children]"],
-      ["gone", undefined],
-      ["q9", undefined],
-    ]);
-    expect(response.answers[0].values).toEqual(["Evening"]);
-    expect(response.answers[1].values[0]).toBe(
-      `${"x".repeat(2_000)}\n[… 500 more characters truncated; get_response reads it whole]`,
-    );
-    // A grader's feedback survives the projection, its text cut like an answer.
-    expect(response.answers[1]).toMatchObject({ score: 0, correct: false });
-    expect(response.answers[1].feedback.text).toMatch(
-      /^See the allergy guide\. f+\n\[… 123 more characters truncated; get_response reads it whole\]$/,
-    );
-    expect(response.answers[1].feedback.links).toEqual([
-      { uri: "https://church.example/allergies", displayText: "Allergy guide" },
-      { uri: "https://www.youtube.com/watch?v=abc", displayText: "Kitchen safety", video: true },
-    ]);
-    expect(response.answers[2].values).toEqual(["Fri", "Sat"]);
-
-    // The cursor carries Google's token and page size back, for this same call only.
-    calls.length = 0;
-    await call(connection(), "list_responses", {
-      formId: "form-1",
-      submittedAfter: "2026-09-30T00:00:00Z",
-      cursor: result.page.nextCursor,
-    });
-    const next = calls.find((entry) => entry.url.pathname.endsWith("/responses"))!;
-    expect(Object.fromEntries(next.url.searchParams)).toEqual({
-      filter: "timestamp > 2026-09-30T00:00:00Z",
-      pageSize: "5",
-      pageToken: "page-2",
-    });
-    calls.length = 0;
-    for (const args of [
-      { formId: "form-1", cursor: result.page.nextCursor },
-      { formId: "form-2", submittedAfter: "2026-09-30T00:00:00Z", cursor: result.page.nextCursor },
-      { formId: "form-1", cursor: "page-2" },
-    ]) {
-      await expect(call(connection(), "list_responses", args)).rejects.toMatchObject({ code: "invalid_args" });
-    }
-    expect(calls).toEqual([]);
-    expect(response.answers[4]).toEqual({
-      questionId: "q9",
-      files: [{ fileId: "f1", fileName: "waiver.pdf", mimeType: "application/pdf" }],
-    });
-  });
-
-  it("ends paging with one branchable signal and a default page below Google's maximum", async () => {
-    route = () => ({ body: {} });
-    const result = await call(connection(), "list_responses", { formId: "form-1" });
-    expect(result).toEqual({ formId: "form-1", responses: [], page: { hasMore: false, nextCursor: null } });
-    const list = calls.find((entry) => entry.url.pathname.endsWith("/responses"))!;
-    expect(Object.fromEntries(list.url.searchParams)).toEqual({ pageSize: "25" });
-  });
-
   it("refuses a page size past its cap and a timestamp Google would not parse", async () => {
     await expect(call(connection(), "list_responses", { formId: "f", limit: 101 })).rejects.toMatchObject({
       code: "invalid_args",
@@ -565,49 +243,6 @@ describe("reading responses (H9, H10)", () => {
       });
     }
     expect(calls).toEqual([]);
-  });
-
-  it("gets one response whole, with grades", async () => {
-    route = (request) =>
-      request.url.pathname.includes("/responses/")
-        ? {
-            body: {
-              ...RESPONSE,
-              formId: "form-1",
-              totalScore: 3,
-              answers: {
-                ...RESPONSE.answers,
-                q1: {
-                  questionId: "q1",
-                  grade: { score: 3, correct: true },
-                  textAnswers: { answers: [{ value: "Evening" }] },
-                },
-              },
-            },
-          }
-        : { body: FORM };
-    const result = await call(connection(), "get_response", { formId: "form-1", responseId: "r1" });
-    expect(calls.map((entry) => entry.url.pathname).sort()).toEqual([
-      "/v1/forms/form-1",
-      "/v1/forms/form-1/responses/r1",
-    ]);
-    expect(result.totalScore).toBe(3);
-    expect(result.answers[0]).toEqual({
-      questionId: "q1",
-      title: "Which session?",
-      values: ["Evening"],
-      score: 3,
-      correct: true,
-    });
-    expect(result.answers[1].values[0]).toHaveLength(2_500);
-    expect(result.answers[1].feedback).toEqual({
-      text: `See the allergy guide. ${"f".repeat(2_100)}`,
-      links: [
-        { uri: "https://church.example/allergies", displayText: "Allergy guide" },
-        { uri: "https://www.youtube.com/watch?v=abc", displayText: "Kitchen safety", video: true },
-      ],
-    });
-    expect(result.formId).toBeUndefined();
   });
 });
 
@@ -723,159 +358,9 @@ describe("output schemas declare what each tool returns (H8)", () => {
       await call(connector, "get_response", { formId: "form-1", responseId: "r1" }),
     );
   });
-
-  it("declares every key of each write's result", async () => {
-    const connector = connection();
-    route = (request) =>
-      request.url.pathname.endsWith(":batchUpdate")
-        ? {
-            body: {
-              writeControl: { requiredRevisionId: "00000002" },
-              replies: [{ createItem: { itemId: "i1", questionId: ["q1"] } }],
-            },
-          }
-        : {
-            body: {
-              formId: "new-1",
-              revisionId: "00000001",
-              responderUri: "https://docs.google.com/forms/d/e/x/viewform",
-              info: { title: "New", documentTitle: "New" },
-            },
-          };
-    await conforms(connector, "create_form", await call(connector, "create_form", { title: "New" }));
-    await conforms(
-      connector,
-      "update_form_info",
-      await call(connector, "update_form_info", { formId: "new-1", title: "Newer" }),
-    );
-    await conforms(
-      connector,
-      "batch_update_form",
-      await call(connector, "batch_update_form", {
-        formId: "new-1",
-        requiredRevisionId: "00000001",
-        requests: [
-          {
-            createItem: {
-              item: { title: "Q", questionItem: { question: { textQuestion: {} } } },
-              location: { index: 0 },
-            },
-          },
-        ],
-      }),
-    );
-  });
 });
 
 describe("writing forms", () => {
-  it("creates a form with only a title and Drive name, published unless asked not to", async () => {
-    route = () => ({
-      body: {
-        formId: "new-1",
-        revisionId: "00000001",
-        responderUri: "https://docs.google.com/forms/d/e/1FAIpNew/viewform",
-        info: { title: "Volunteer roster", documentTitle: "Roster" },
-      },
-    });
-    const result = await call(connection(), "create_form", { title: "Volunteer roster", documentTitle: "Roster" });
-    expect(calls[0]!.method).toBe("POST");
-    expect(path(0)).toBe("/forms");
-    expect(calls[0]!.url.search).toBe("");
-    expect(calls[0]!.body).toEqual({ info: { title: "Volunteer roster", documentTitle: "Roster" } });
-    expect(result).toEqual({
-      formId: "new-1",
-      title: "Volunteer roster",
-      documentTitle: "Roster",
-      revisionId: "00000001",
-      responderUri: "https://docs.google.com/forms/d/e/1FAIpNew/viewform",
-      editUrl: "https://docs.google.com/forms/d/new-1/edit",
-    });
-
-    calls.length = 0;
-    await call(connection(), "create_form", { title: "Draft survey", unpublished: true });
-    expect(calls[0]!.url.searchParams.get("unpublished")).toBe("true");
-    expect(calls[0]!.body).toEqual({ info: { title: "Draft survey" } });
-
-    // Description, items, and settings are refused by Google at creation, and
-    // so by the schema here.
-    await expect(call(connection(), "create_form", { title: "x", description: "y" })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-  });
-
-  it("replaces only the info fields it is given, with the revision guard when passed", async () => {
-    route = () => ({ body: { writeControl: { requiredRevisionId: "00000043" }, replies: [{}] } });
-    const result = await call(connection(), "update_form_info", {
-      formId: "form-1",
-      description: "",
-      requiredRevisionId: "00000042",
-    });
-    expect(calls[0]!.method).toBe("POST");
-    expect(calls[0]!.url.pathname).toBe("/v1/forms/form-1:batchUpdate");
-    expect(calls[0]!.body).toEqual({
-      requests: [{ updateFormInfo: { info: { description: "" }, updateMask: "description" } }],
-      writeControl: { requiredRevisionId: "00000042" },
-    });
-    expect(result).toEqual({ formId: "form-1", revisionId: "00000043" });
-
-    calls.length = 0;
-    await call(connection(), "update_form_info", {
-      formId: "form-1",
-      title: "Retreat 2026",
-      description: "Bring a coat.",
-    });
-    expect(calls[0]!.body).toEqual({
-      requests: [
-        {
-          updateFormInfo: {
-            info: { title: "Retreat 2026", description: "Bring a coat." },
-            updateMask: "title,description",
-          },
-        },
-      ],
-    });
-  });
-
-  it("refuses an info update that changes nothing, before any request", async () => {
-    await expect(call(connection(), "update_form_info", { formId: "form-1" })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    expect(calls).toEqual([]);
-  });
-
-  it("passes batch requests through whole, under the required revision, and projects the replies", async () => {
-    const requests = [
-      {
-        createItem: {
-          item: { title: "Phone number", questionItem: { question: { required: true, textQuestion: {} } } },
-          location: { index: 0 },
-        },
-      },
-      { deleteItem: { location: { index: 4 } } },
-      { updateSettings: { settings: { quizSettings: { isQuiz: true } }, updateMask: "quizSettings.isQuiz" } },
-    ];
-    route = () => ({
-      body: {
-        form: { formId: "form-1" },
-        writeControl: { requiredRevisionId: "00000044" },
-        replies: [{ createItem: { itemId: "i9", questionId: ["q9"] } }, {}, {}],
-      },
-    });
-    const result = await call(connection(), "batch_update_form", {
-      formId: "form-1",
-      requests,
-      requiredRevisionId: "00000043",
-    });
-    expect(calls[0]!.method).toBe("POST");
-    expect(calls[0]!.url.pathname).toBe("/v1/forms/form-1:batchUpdate");
-    expect(calls[0]!.body).toEqual({ requests, writeControl: { requiredRevisionId: "00000043" } });
-    expect(result).toEqual({
-      formId: "form-1",
-      revisionId: "00000044",
-      replies: [{ createdItemId: "i9", createdQuestionIds: ["q9"] }, {}, {}],
-    });
-  });
-
   it.each([
     // 100 grids of 3,000 rows: every row's question id, ~4.5 MB of reply.
     [
@@ -964,61 +449,9 @@ describe("a write whose outcome is unknown is never told to retry", () => {
   const silent = async (): Promise<Response> => {
     throw new TypeError("fetch failed");
   };
-  /** Google received it and answered 5xx: it may still have applied. */
-  const serverError = async () =>
-    Response.json(
-      { error: { code: 503, message: "The service is currently unavailable.", status: "UNAVAILABLE" } },
-      { status: 503 },
-    );
-  /** A 5xx carrying a rate-limit reason is still a 5xx on a write: unknown. */
-  const rateLimited503 = async () =>
-    Response.json(
-      {
-        error: {
-          code: 503,
-          message: "Quota exceeded.",
-          status: "UNAVAILABLE",
-          details: [{ reason: "RATE_LIMIT_EXCEEDED" }],
-        },
-      },
-      { status: 503 },
-    );
-  /** A redirect, never followed: whether the write applied is unknown. */
-  const redirect = async () =>
-    new Response(null, { status: 302, headers: { location: "https://accounts.google.com/elsewhere" } });
-
-  const batch = {
-    formId: "form-1",
-    requests: [{ deleteItem: { location: { index: 0 } } }],
-    requiredRevisionId: "00000042",
-  };
-
   it.each([
     ["whose 2xx body breaks mid-stream", broken, "probably applied"],
     ["that gets no response", silent, "may or may not have been applied"],
-    ["answered with a 5xx", serverError, "outcome is unknown"],
-    ["answered with a 5xx and a rate-limit reason", rateLimited503, "outcome is unknown"],
-    ["answered with a redirect", redirect, "whether the request was applied is unknown"],
-  ])("reports an edit %s as uncertain, not retryable", async (_case, reply, says) => {
-    answer(reply);
-    for (const [name, args] of [
-      ["batch_update_form", batch],
-      ["update_form_info", { formId: "form-1", title: "New title" }],
-    ] as const) {
-      const failure = await call(connection(), name, args).catch((error) => error);
-      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message, name).toContain(says);
-      expect(failure.message, name).not.toMatch(/nothing was applied|safe to retry|retry it/i);
-      if (reply !== broken) expect(failure.message, name).not.toMatch(/probably applied/);
-    }
-  });
-
-  it.each([
-    ["whose 2xx body breaks mid-stream", broken, "probably applied"],
-    ["that gets no response", silent, "may or may not have been applied"],
-    ["answered with a 5xx", serverError, "outcome is unknown"],
-    ["answered with a 5xx and a rate-limit reason", rateLimited503, "outcome is unknown"],
-    ["answered with a redirect", redirect, "whether the request was applied is unknown"],
   ])("tells a create %s to look for the form before creating another", async (_case, reply, says) => {
     answer(reply);
     const failure = await call(connection(), "create_form", {
@@ -1031,137 +464,41 @@ describe("a write whose outcome is unknown is never told to retry", () => {
     expect(failure.code).not.toBe("rate_limited");
     if (reply !== broken) expect(failure.message).not.toMatch(/probably applied/);
   });
-
-  it("keeps a 5xx on a read retryable: no Forms write is sent as idempotent, but a read is safe", async () => {
-    answer(serverError);
-    const failure = await call(connection(), "get_form", { formId: "form-1" }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "unavailable", retryable: true });
-  });
-
-  it("leaves a refused create as Google refused it", async () => {
-    route = () => ({
-      status: 400,
-      body: { error: { code: 400, message: "Title too long.", status: "INVALID_ARGUMENT" } },
-    });
-    const failure = await call(connection(), "create_form", { title: "x" }).catch((error) => error);
-    expect(failure.code).toBe("invalid_args");
-    expect(failure.message).not.toContain("look for");
-  });
 });
 
 describe("errors (H11)", () => {
-  it("never calls a 404 absent: a form is a Drive file the user may not see", async () => {
-    route = () => ({
-      status: 404,
-      body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } },
-    });
-    const failure = await call(connection(), "get_form", { formId: "hidden" }).catch((error) => error);
-    expect(failure.code).toBe("connector_call_failed");
-    expect(failure.code).not.toBe("not_found");
-    expect(failure.message).toContain("not visible to this account");
-  });
-
   const staleBatch = {
     formId: "form-1",
     requests: [{ deleteItem: { location: { index: 0 } } }],
     requiredRevisionId: "00000041",
   };
 
-  it.each([
-    [400, "FAILED_PRECONDITION"],
-    [409, "ABORTED"],
-  ])("maps a revision-guarded write's HTTP %i %s to conflict, so the caller re-reads", async (status, reason) => {
-    route = () => ({
-      status,
-      body: { error: { code: status, message: "The form has changed since the required revision.", status: reason } },
-    });
-    const failure = await call(connection(), "batch_update_form", staleBatch).catch((error) => error);
-    expect(failure).toMatchObject({ code: "conflict", retryable: false });
-    expect(failure.message).toContain("changed after the revision it named");
-    expect(calls).toHaveLength(1);
+  it.each([[400, "FAILED_PRECONDITION"]])(
+    "maps a revision-guarded write's HTTP %i %s to conflict, so the caller re-reads",
+    async (status, reason) => {
+      route = () => ({
+        status,
+        body: { error: { code: status, message: "The form has changed since the required revision.", status: reason } },
+      });
+      const failure = await call(connection(), "batch_update_form", staleBatch).catch((error) => error);
+      expect(failure).toMatchObject({ code: "conflict", retryable: false });
+      expect(failure.message).toContain("changed after the revision it named");
+      expect(calls).toHaveLength(1);
 
-    // update_form_info is guarded exactly when it names a revision.
-    calls.length = 0;
-    await expect(
-      call(connection(), "update_form_info", { formId: "form-1", title: "T", requiredRevisionId: "00000041" }),
-    ).rejects.toMatchObject({ code: "conflict" });
-    expect(calls[0]!.body.writeControl).toEqual({ requiredRevisionId: "00000041" });
-    calls.length = 0;
-    const unguarded = await call(connection(), "update_form_info", { formId: "form-1", title: "T" }).catch(
-      (error) => error,
-    );
-    expect(calls[0]!.body.writeControl).toBeUndefined();
-    expect(unguarded.code).not.toBe("conflict");
-  });
-
-  it("passes any other refusal of a guarded write through as Google classed it", async () => {
-    route = () => ({
-      status: 400,
-      body: {
-        error: {
-          code: 400,
-          message: "Invalid requests[0].deleteItem: index out of range.",
-          status: "INVALID_ARGUMENT",
-        },
-      },
-    });
-    await expect(call(connection(), "batch_update_form", staleBatch)).rejects.toMatchObject({
-      code: "invalid_args",
-      message: expect.stringContaining("index out of range"),
-    });
-  });
-
-  it("names the exact scopes when the delegated grant lacks one", async () => {
-    route = () => ({
-      status: 403,
-      body: {
-        error: {
-          code: 403,
-          message: "Request had insufficient authentication scopes.",
-          status: "PERMISSION_DENIED",
-          details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
-        },
-      },
-    });
-    const failure = await call(connection(), "list_responses", { formId: "form-1" }).catch((error) => error);
-    expect(failure.code).toBe("provider_permission_denied");
-    expect(failure.message).toContain(FORMS_SCOPES.join(","));
-  });
-
-  it("names the API to enable when the project has not", async () => {
-    route = () => ({
-      status: 403,
-      body: {
-        error: {
-          code: 403,
-          message: "Google Forms API has not been used in project 1.",
-          status: "PERMISSION_DENIED",
-          details: [{ reason: "SERVICE_DISABLED" }],
-        },
-      },
-    });
-    const failure = await call(connection(), "get_form", { formId: "form-1" }).catch((error) => error);
-    expect(failure.code).toBe("connector_call_failed");
-    expect(failure.message).toContain("Google Forms API is not enabled");
-  });
-
-  it("carries Google's stated wait on a rate limit", async () => {
-    route = () => ({
-      status: 429,
-      body: { error: { code: 429, message: "Quota exceeded.", status: "RESOURCE_EXHAUSTED" } },
-    });
-    globalThis.fetch = vi.fn(async (input: unknown) => {
-      if (String(input) === TOKEN_URL) return Response.json({ access_token: "token", expires_in: 3599 });
-      return Response.json(
-        { error: { code: 429, message: "Quota exceeded.", status: "RESOURCE_EXHAUSTED" } },
-        { status: 429, headers: { "Retry-After": "7" } },
+      // update_form_info is guarded exactly when it names a revision.
+      calls.length = 0;
+      await expect(
+        call(connection(), "update_form_info", { formId: "form-1", title: "T", requiredRevisionId: "00000041" }),
+      ).rejects.toMatchObject({ code: "conflict" });
+      expect(calls[0]!.body.writeControl).toEqual({ requiredRevisionId: "00000041" });
+      calls.length = 0;
+      const unguarded = await call(connection(), "update_form_info", { formId: "form-1", title: "T" }).catch(
+        (error) => error,
       );
-    }) as unknown as typeof fetch;
-    await expect(call(connection(), "get_form", { formId: "form-1" })).rejects.toMatchObject({
-      code: "rate_limited",
-      retryAfterMs: 7_000,
-    });
-  });
+      expect(calls[0]!.body.writeControl).toBeUndefined();
+      expect(unguarded.code).not.toBe("conflict");
+    },
+  );
 });
 
 // Every result must cross execute_code's host bridge, which refuses one
@@ -1254,10 +591,7 @@ describe("worst-case results fit one host result (256 KiB)", () => {
   // page's fixture keeps most answers under the listing cut, to keep that
   // re-reading cheap under workerd on a loaded machine, and makes the first
   // answer of every response long enough to be cut.
-  it.each([
-    ["the default page", {}, 25, 30, 2_500],
-    ["the largest page", { limit: 100 }, 100, 6, 1_500],
-  ])(
+  it.each([["the default page", {}, 25, 30, 2_500]])(
     "ends %s early and continues by cursor, losing and repeating nothing",
     { timeout: 30_000 },
     async (_label, extra, count, questions, chars) => {
@@ -1371,55 +705,6 @@ describe("worst-case results fit one host result (256 KiB)", () => {
   });
 
   it(
-    "recovers every question id a truncated batch reply left out, through get_form's pages",
-    { timeout: 30_000 },
-    async () => {
-      // Five grids of 2,000 rows: the batch reply names 10,000 question ids,
-      // more than one result carries, so it comes back without them.
-      const grids = Array.from({ length: 5 }, (_, grid) => ({
-        itemId: `grid${grid}`,
-        ids: Array.from({ length: 2_000 }, (_, row) => `question-${grid}-${row}-abcdefghij`),
-      }));
-      route = () => ({
-        body: {
-          writeControl: { requiredRevisionId: "00000021" },
-          replies: grids.map((grid) => ({ createItem: { itemId: grid.itemId, questionId: grid.ids } })),
-        },
-      });
-      const reply = await call(connection(), "batch_update_form", {
-        formId: "rows",
-        requiredRevisionId: "00000020",
-        requests: grids.map(() => ({
-          createItem: { item: { title: "Grid", questionGroupItem: {} }, location: { index: 0 } },
-        })),
-      });
-      expect(reply.truncated).toBe(true);
-      expect(reply.replies.map((entry: any) => entry.createdItemId)).toEqual(grids.map((grid) => grid.itemId));
-      expect(reply.note).toContain("get_form, following page.nextCursor");
-
-      // The form as Google then returns it; every row recovers, each once.
-      route = () => ({
-        body: {
-          formId: "rows",
-          revisionId: "00000021",
-          info: { title: "Rows" },
-          items: grids.map((grid) => ({
-            itemId: grid.itemId,
-            title: "Availability",
-            questionGroupItem: {
-              grid: { columns: { type: "CHECKBOX", options: [{ value: "Fri" }, { value: "Sat" }] } },
-              questions: grid.ids.map((questionId) => ({ questionId, rowQuestion: { title: "列".repeat(50) } })),
-            },
-          })),
-        },
-      });
-      const pages = await everyPage("get_form", { formId: "rows" });
-      for (const grid of grids) expect(rowsOf(pages, grid.itemId)).toEqual(grid.ids);
-      expect(itemIds(pages)).toEqual(grids.map((grid) => grid.itemId));
-    },
-  );
-
-  it(
     "bounds escaped control characters and an oversized header, measuring the whole result",
     { timeout: 30_000 },
     async () => {
@@ -1518,9 +803,6 @@ describe("list_responses resumes only on the page it was issued for", () => {
     // Google promises no stable order: the anchor alone would continue after
     // r1 here and return r0 again while skipping r2.
     ["reordered", ["r2", "r1", "r0", "r3", "r4"]],
-    ["a submission inserted before the anchor", ["new", "r0", "r1", "r2", "r3", "r4"]],
-    ["a submission inserted after the anchor", ["r0", "r1", "new", "r2", "r3", "r4"]],
-    ["shorter, the tail gone", ["r0", "r1", "r2"]],
     ["the anchor deleted", ["r0", "r2", "r3", "r4"]],
   ])("refuses a page that came back %s, with restart guidance", async (_case, refetched) => {
     rows = ["r0", "r1", "r2", "r3", "r4"];

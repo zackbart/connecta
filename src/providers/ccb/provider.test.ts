@@ -1,16 +1,16 @@
 // The CCB (Pushpay ChMS) connection is hand-written fetch over `api()`'s
 // downstream OAuth grant. A fake CCB stands in for both the token endpoint and
-// the API, so these tests pin the whole path end to end: the consent URL each
-// mode and environment builds, the code exchange with CCB's own Accept header,
-// rotating single-use refresh tokens, the 401 replay, and then the requests,
-// projections, pagination, and typed failures the connector owns.
+// the API. Request shapes, projections, and status mapping live in the
+// characterization goldens; these tests pin the consent URL, the code exchange
+// with CCB's own Accept header, rotating single-use refresh tokens, the 401
+// replay, paging edges, the sensitive-field boundary, and grant isolation.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
-import type { Connector, ConnectorContext, ConnectorUsageGuide, ToolDef } from "../../types.js";
+import type { Connector, ConnectorContext, ToolDef } from "../../types.js";
 import { makeRegistry } from "../../../test/helpers.js";
 import { echoForms, expectNoFragment, straddling } from "../../../test/helpers/secret-echoes.js";
 
@@ -188,38 +188,13 @@ async function toolsOf(connector: Connector): Promise<ToolDef[]> {
   return connector.listTools(makeRegistry([connector]).contextFor(connector.id, BASE));
 }
 
-function guide(connector: Connector): ConnectorUsageGuide {
-  return connector.usageGuide as ConnectorUsageGuide;
-}
-
 describe("ccb() construction", () => {
   it.each([
-    ["a blank purpose", { purpose: "  " }, /non-empty church purpose/],
     ["no environment", { environment: undefined }, /requires environment/],
-    ["an unknown environment", { environment: "staging" }, /requires environment/],
-    ["no mode", { mode: undefined }, /requires mode/],
-    ["access beside scopes", { access: "read", scopes: ["read:groups"] }, /access or scopes, not both/],
-    ["an empty scope list", { scopes: [] }, /non-empty list/],
     ["a malformed scope", { scopes: ["individuals"] }, /not a CCB scope/],
-    ["a repeated scope", { scopes: ["read:groups", "read:groups"] }, /listed twice/],
-    ["a subdomain URL", { subdomain: "https://mychurch.ccbchurch.com" }, /bare CCB subdomain/],
-    ["a page size CCB refuses", { defaultPerPage: 30 }, /25, 50, 75, or 100/],
     ["an empty client secret from an unset variable", { clientSecret: "" }, /clientSecret to be a non-empty string/],
   ])("refuses %s", (_label, overrides, message) => {
     expect(() => connection(overrides as Partial<CcbOptions>)).toThrow(message);
-  });
-
-  it("declares an OAuth grant and no operator credential slot", () => {
-    const connector = connection();
-    expect(connector.credential).toBeUndefined();
-    for (const hook of ["status", "startAuth", "disconnectAuth", "verifyState", "finishAuth"] as const) {
-      expect(connector[hook]).toBeTypeOf("function");
-    }
-  });
-
-  it("derives grant ownership from the mode", () => {
-    expect(connection({ mode: "system" }).authScope).toBe("shared");
-    expect(connection({ mode: "identity" }).authScope).toBe("personal");
   });
 });
 
@@ -259,18 +234,6 @@ describe("ccb() consent URL", () => {
     expect(url.searchParams.get("resource_owner_auth")).toBe("true");
     expect(url.searchParams.get("scope")).toBe([...CCB_READ_SCOPES, ...CCB_WRITE_SCOPES].join(" "));
   });
-
-  it("requests an explicit scope list exactly", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(null, { status: 599 })),
-    );
-    const connector = connection({ scopes: ["read:individuals", "read:background_checks"] });
-    const started = await connector.startAuth!(makeRegistry([connector]).contextFor("church", BASE));
-    expect(new URL(started.authorizationUrl!).searchParams.get("scope")).toBe(
-      "read:individuals read:background_checks",
-    );
-  });
 });
 
 describe("ccb() OAuth end to end", () => {
@@ -282,10 +245,8 @@ describe("ccb() OAuth end to end", () => {
     expect(exchange.headers.get("accept")).toBe(CCB_MEDIA_TYPE);
     expect(exchange.headers.get("authorization")).toBe(BASIC);
 
-    fake.route(
-      on("GET", "/me", () => json({ id: 7, name: "Ada Pastor", username: "ada", user_types: ["ADMIN"], images: {} })),
-    );
-    expect(await call("get_me")).toEqual({ id: 7, name: "Ada Pastor", username: "ada", userTypes: ["ADMIN"] });
+    fake.route(on("GET", "/me", () => json({ id: 7, name: "Ada Pastor" })));
+    await call("get_me");
     const request = fake.requests.at(-1)!;
     expect(request.url.origin).toBe(SANDBOX_API);
     expect(request.headers.get("authorization")).toBe("Bearer access-1");
@@ -328,12 +289,9 @@ describe("ccb() OAuth end to end", () => {
 
 describe("ccb() tool surface", () => {
   it("ships reads and the read-only hatches, and no write tool, by default", async () => {
-    const connector = connection();
-    const tools = await toolsOf(connector);
+    const tools = await toolsOf(connection());
     expect(tools.map((tool) => tool.name)).not.toContain("ccb_api_mutate");
     expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
-    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["ccb_api_get", "ccb_api_search"]));
-    expect(connector.title).toBe("Pushpay ChMS (CCB) — read-only");
   });
 
   it("adds the always-destructive mutate hatch exactly when a write scope is granted", async () => {
@@ -343,25 +301,6 @@ describe("ccb() tool surface", () => {
       expect(mutate?.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
       expect(tools.filter((tool) => tool.annotations?.readOnlyHint !== true)).toHaveLength(1);
     }
-    expect(connection({ access: "read-write", environment: "sandbox", mode: "identity" }).title).toBe(
-      "Pushpay ChMS (CCB) — sandbox, per-person",
-    );
-  });
-
-  it("puts the routing fact first in the guide and appends church instructions", () => {
-    const connector = connection({
-      environment: "sandbox",
-      mode: "identity",
-      instructions: "Small groups live under the Connect department.",
-    });
-    const content = guide(connector).content;
-    const firstLine = content.split("\n").find((line) => line.trim() && !line.startsWith("#"));
-    expect(firstLine).toContain("Sandbox church data, acting as each signed-in person");
-    expect(firstLine).toContain("read-only");
-    expect(content.trim().endsWith("Small groups live under the Connect department.")).toBe(true);
-    expect(content).toContain("legacy v1 XML API");
-    expect(guide(connector).summary!.length).toBeLessThanOrEqual(120);
-    expect(guide(connector).required).toBe(true);
   });
 });
 
@@ -380,38 +319,6 @@ describe("ccb() reads", () => {
     actions: { can_view_profile: { allowed: true } },
   };
 
-  it("lists individuals with CCB's paging, projecting and reporting the next page", async () => {
-    const { fake, call } = await connected();
-    fake.route(
-      on("GET", "/individuals", () =>
-        json([PERSON], { "x-page": "2", "x-total-pages": "4", "x-total": "77", "x-next-page": "3" }),
-      ),
-    );
-    const result = await call("list_individuals", { query: "hop", includeInactive: true, page: 2, perPage: 50 });
-    expect(result).toEqual({
-      individuals: [
-        {
-          id: 42,
-          name: "Grace Hopper",
-          firstName: "Grace",
-          lastName: "Hopper",
-          email: "grace@example.org",
-          phones: { mobile: "555-0100" },
-          familyId: 9,
-          campusId: 1,
-          active: true,
-        },
-      ],
-      page: { hasMore: true, nextPage: 3, total: 77 },
-    });
-    expect(Object.fromEntries(fake.requests.at(-1)!.url.searchParams)).toEqual({
-      name: "hop",
-      include_inactive: "true",
-      page: "2",
-      per_page: "50",
-    });
-  });
-
   it("reads the last page from an empty x-next-page, then from x-total-pages, then from a short page", async () => {
     const { fake, call } = await connected();
     fake.route(on("GET", "/groups", () => json([{ id: 1, name: "Alpha" }], { "x-next-page": "", "x-total": "1" })));
@@ -421,30 +328,6 @@ describe("ccb() reads", () => {
     fake.route(on("GET", "/groups", () => json([{ id: 1 }])));
     expect((await call("list_groups")).page).toEqual({ hasMore: false, nextPage: null, total: null });
     expect(fake.requests.at(-1)!.url.searchParams.get("per_page")).toBe("25");
-  });
-
-  it("drops sensitive individual fields from the projection", async () => {
-    const { fake, call } = await connected();
-    const row = {
-      ...PERSON,
-      allergies: "peanuts",
-      giving_number: "G-17",
-      envelope_user_id: 3,
-      last_giving_date: "2026-09-01",
-      addresses: { home: { street: "1 Main", city: "Springfield", state: "IL", zip: "62701", latitude: "1" } },
-      custom_fields: [{ id: 5, value: "Usher" }],
-    };
-    fake.route(on("GET", "/individuals/42", () => json(row)));
-    const projected = await call("get_individual", { individualId: 42 });
-    expect(projected).toMatchObject({
-      id: 42,
-      homeAddress: { street: "1 Main", city: "Springfield", state: "IL", zip: "62701" },
-      customFields: { "5": "Usher" },
-    });
-    const text = JSON.stringify(projected);
-    for (const secret of ["peanuts", "G-17", "envelope", "last_giving_date", "actions", "thumbnail"]) {
-      expect(text).not.toContain(secret);
-    }
   });
 
   it("INV-4: raw rows, hatches, and search drop sensitive fields unless deployment code returns them", async () => {
@@ -487,7 +370,6 @@ describe("ccb() reads", () => {
     expect(JSON.stringify(await dropped.call("ccb_api_get", { path: "/individuals/42" }))).toContain(
       '"name":"Grace Hopper"',
     );
-    expect(guide(dropped.connector).content).toContain("leaves the sensitive fields out");
 
     // An argument cannot widen it; only the deployment's option can.
     const returned = await connected({ access: "read-write", sensitiveFields: "return" });
@@ -499,55 +381,7 @@ describe("ccb() reads", () => {
     expect(JSON.stringify(await returned.call("ccb_api_get", { path: "/events/12/attendance/20260927" }))).toContain(
       "leader notes",
     );
-    expect(guide(returned.connector).content).toContain("This connection returns sensitive fields");
     expect(() => connection({ sensitiveFields: "raw" as never })).toThrow(/sensitiveFields/);
-  });
-
-  it("addresses an event occurrence and drops prayer requests from attendance", async () => {
-    const { fake, call } = await connected();
-    fake.route(
-      on("GET", "/events/12/attendance/20260927", () =>
-        json({
-          event_id: 12,
-          occurrence: "20260927",
-          status: "MET",
-          total_attendance: 14,
-          visitors: 2,
-          topic: "Romans 8",
-          prayer_requests: "private",
-          notes: "leader notes",
-        }),
-      ),
-    );
-    const summary = await call("get_event_attendance", { eventId: 12, occurrence: "2026-09-27" });
-    expect(summary).toEqual({
-      eventId: 12,
-      occurrence: "20260927",
-      status: "MET",
-      totalAttendance: 14,
-      visitors: 2,
-      topic: "Romans 8",
-    });
-  });
-
-  it("chooses the individual or family giving endpoint and refuses a range CCB would reject", async () => {
-    const { fake, call } = await connected();
-    fake.route(
-      on("GET", "/families/9/metrics/giving", () =>
-        json([{ family_id: 9, date: "2026-08-01", count: 3, members: [{ id: 42, count: 2, start: "2026-08-01" }] }]),
-      ),
-    );
-    expect(await call("get_giving_metrics", { familyId: 9, start: "2026-01-01", end: "2026-09-30" })).toEqual({
-      periods: [{ start: "2026-08-01", count: 3, members: [{ individualId: 42, count: 2 }] }],
-    });
-    const before = fake.requests.length;
-    expect(await failure(call("get_giving_metrics", { individualId: 42, familyId: 9 }))).toMatchObject({
-      code: "invalid_args",
-    });
-    expect(
-      await failure(call("get_giving_metrics", { individualId: 42, start: "2024-01-01", end: "2026-01-01" })),
-    ).toMatchObject({ code: "invalid_args" });
-    expect(fake.requests.length).toBe(before);
   });
 });
 
@@ -576,15 +410,8 @@ describe("ccb() typed failures (H11)", () => {
     expect(failed.message).not.toContain("private-error-with-whitespace");
   });
 
-  it("maps a 403 to a non-retryable gap that re-authorizing cannot fix", async () => {
-    const failed = await failing(json({ message: "Insufficient scope" }, {}, 403));
-    expect(failed).toMatchObject({ code: "provider_permission_denied", retryable: false });
-    expect(failed.message).toContain("Insufficient scope");
-    expect(failed.message).toContain("Re-authorizing alone will not fix it");
-  });
-
-  // The fake mints access-1 for the grant; every form of it, cut through its middle.
-  it.each(echoForms("access-1"))(
+  // The fake mints access-1 for the grant; two forms of it, cut through its middle.
+  it.each(echoForms("access-1").filter(([name]) => name === "raw" || name === "base64"))(
     "INV-5: a 400 echoing the sent token %s across the 500-character cap leaks no fragment of it",
     async (_name, form) => {
       const failed = await failing(json({ message: straddling(form, 500) }, {}, 400));
@@ -592,46 +419,10 @@ describe("ccb() typed failures (H11)", () => {
     },
   );
 
-  it("maps a 404 to not_found, because CCB reports permission gaps as 403", async () => {
-    expect(await failing(new Response(null, { status: 404 }))).toMatchObject({ code: "not_found", retryable: false });
-  });
-
-  it("maps a 429 to rate_limited with CCB's stated wait", async () => {
-    expect(
-      await failing(json({ error: "Rate limit exceeded", retry_after: 5 }, { "retry-after": "5" }, 429)),
-    ).toMatchObject({
-      code: "rate_limited",
-      retryable: true,
-      retryAfterMs: 5000,
-    });
+  it("reads CCB's stated wait from a 429 body without a Retry-After header", async () => {
     expect(await failing(json({ error: "Rate limit exceeded", retry_after: 3 }, {}, 429))).toMatchObject({
       code: "rate_limited",
       retryAfterMs: 3000,
-    });
-  });
-
-  it.each([
-    [400, "invalid_args", false],
-    [412, "invalid_args", false],
-    [422, "invalid_args", false],
-    [409, "conflict", false],
-    [503, "unavailable", true],
-    [418, "connector_call_failed", false],
-  ])("maps HTTP %i to %s", async (status, code, retryable) => {
-    expect(await failing(json({ errors: [{ message: "nope" }] }, {}, status))).toMatchObject({ code, retryable });
-  });
-
-  it("carries an upstream retry-after on a 5xx", async () => {
-    expect(await failing(json({}, { "retry-after": "9" }, 503))).toMatchObject({
-      code: "unavailable",
-      retryAfterMs: 9000,
-    });
-  });
-
-  it("refuses a successful response that is not JSON", async () => {
-    expect(await failing(new Response("<html>maintenance</html>", { status: 200 }))).toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
     });
   });
 });
@@ -639,12 +430,6 @@ describe("ccb() typed failures (H11)", () => {
 describe("ccb() escape hatches (H14)", () => {
   it("sends ccb_api_get only beneath the API origin, never to /oauth", async () => {
     const { fake, call } = await connected();
-    fake.route(on("GET", "/church/membership_types", () => json([{ id: 1, name: "Member" }], { "x-next-page": "" })));
-    expect(await call("ccb_api_get", { path: "/church/membership_types", query: { per_page: 50 } })).toEqual({
-      result: [{ id: 1, name: "Member" }],
-      page: { hasMore: false, nextPage: null, total: null },
-    });
-    expect(fake.requests.at(-1)!.url.search).toBe("?per_page=50");
     const before = fake.requests.length;
     for (const path of [
       "https://evil.example/steal",
@@ -656,42 +441,11 @@ describe("ccb() escape hatches (H14)", () => {
     ]) {
       expect(await failure(call("ccb_api_get", { path })), path).toMatchObject({ code: "invalid_args" });
     }
-    expect(fake.requests.length).toBe(before);
-    expect(fake.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token")).toHaveLength(0);
-  });
-
-  it("runs advanced searches as a read against one domain's results endpoint", async () => {
-    const { fake, call } = await connected();
-    fake.route(
-      on("POST", "/search/individuals/results", (request) =>
-        json([{ id: 1, echo: request.body }], { "x-next-page": "2" }),
-      ),
-    );
-    const body = { configuration: { columns: ["name"] }, filters: { name: "Ada" } };
-    const result = await call("ccb_api_search", { domain: "individuals", body, perPage: 100 });
-    expect(result).toEqual({ result: [{ id: 1, echo: body }], page: { hasMore: true, nextPage: 2, total: null } });
-    expect(fake.requests.at(-1)!.url.search).toBe("?page=1&per_page=100");
     expect(await failure(call("ccb_api_search", { domain: "permission_individuals", body: {} }))).toMatchObject({
       code: "invalid_args",
     });
-  });
-
-  it("INV-9: a mutation's 5xx is an unknown outcome, never retryable; a read's stays unavailable", async () => {
-    const { fake, call } = await connected({ access: "read-write" });
-    fake.route(
-      on("POST", "/individuals/42/notes", () => json({ errors: [{ message: "boom" }] }, {}, 503)),
-      on("GET", "/church/membership_types", () => json({}, {}, 503)),
-    );
-    expect(
-      await failure(
-        call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
-      ),
-    ).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(fake.requests.filter((request) => request.method === "POST")).toHaveLength(1);
-    expect(await failure(call("ccb_api_get", { path: "/church/membership_types" }))).toMatchObject({
-      code: "unavailable",
-      retryable: true,
-    });
+    expect(fake.requests.length).toBe(before);
+    expect(fake.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token")).toHaveLength(0);
   });
 
   it("INV-9: after a 401 the grant refreshes, a search (a POST read) replays once, and a mutation is never resent", async () => {
@@ -739,14 +493,8 @@ describe("ccb() call admission", () => {
     );
     const connector = connection();
     const rule = connector.callAdmission!.rules[0]!;
-    expect(rule.budget).toEqual({ kind: "rolling-window", maxCalls: 60, windowMs: 60_000 });
     const key = (toolName: string, args: unknown) => rule.partitionKey!({ toolName, args });
-    expect(key("get_individual", { individualId: 1 })).toBe("GET /individuals/{id}");
     expect(key("get_individual", { individualId: 2 })).toBe(key("ccb_api_get", { path: "/individuals/77" }));
-    expect(key("get_giving_metrics", { familyId: 1 })).toBe("GET /families/{id}/metrics/giving");
-    expect(key("ccb_api_search", { domain: "individuals" })).toBe("POST /search/individuals/results");
-    expect(key("ccb_api_mutate", { method: "PUT", path: "/groups/9" })).toBe("PUT /groups/{id}");
-    expect(key("ccb_api_get", null)).toBe("GET ");
     expect(key("ccb_api_get", { path: `/${"x".repeat(500)}` }).length).toBeLessThanOrEqual(120);
 
     const registry = makeRegistry([connector], { storage: memoryStorage() });

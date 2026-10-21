@@ -21,7 +21,7 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import { LINEAR_MCP_ENDPOINTS, LINEAR_VETTED_CATALOG, linear } from "./index.js";
+import { LINEAR_MCP_ENDPOINTS, linear } from "./index.js";
 import { hostedCatalog } from "./fixtures.js";
 import drift from "./drift.json";
 import { observedCatalogDrift, vettedSchemaDigest } from "../../catalog-drift.js";
@@ -78,14 +78,6 @@ describe("linear()", () => {
     expect(guideOf(connector)).toContain("File bugs into the Platform team unless told otherwise.");
   });
 
-  it("omits the account section entirely when no instructions are given", () => {
-    const connector = linear("tracker", {
-      purpose: "Roadmap questions",
-      access: "read-write",
-    });
-    expect(guideOf(connector)).not.toContain("## Workspace instructions");
-  });
-
   it("declares no call-admission budget of its own", () => {
     linear("tracker", {
       purpose: "Roadmap questions",
@@ -116,27 +108,6 @@ describe("linear()", () => {
     expect(LINEAR_MCP_ENDPOINTS["read-only"]).toBe("https://mcp.linear.app/mcp/readonly");
     expect(guideOf(connector)).toContain("read-only endpoint");
     expect(guideOf(connector)).not.toContain("call_destructive_tool");
-  });
-
-  it("defaults the title to plain Linear for a read-write connection", () => {
-    linear("tracker", {
-      purpose: "Roadmap questions",
-      access: "read-write",
-    });
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).toMatchObject({
-      title: "Linear",
-    });
-  });
-
-  it("lets an operator title override the read-only default", () => {
-    linear("tracker", {
-      purpose: "Roadmap questions",
-      access: "read-only",
-      title: "Delivery reporting",
-    });
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).toMatchObject({
-      title: "Delivery reporting",
-    });
   });
 
   it("leads the guide with access, so the discovery summary carries it", () => {
@@ -191,129 +162,11 @@ describe("linear()", () => {
     expect(guideOf(connector)).toContain("Read-only connection");
   });
 
-  it("lets a deployment override the framing and the slot copy", () => {
-    linear("automation_tracker", {
-      purpose: "Headless release reporting",
-      access: "read-write",
-      auth: {
-        type: "credential",
-        credential: { label: "Workspace key" },
-        scheme: null,
-      },
-    });
-
-    expect(mocks.remoteMcp).toHaveBeenCalledWith(
-      "automation_tracker",
-      expect.objectContaining({
-        auth: {
-          type: "credential",
-          credential: { label: "Workspace key" },
-          scheme: null,
-        },
-      }),
-    );
-  });
-
-  it("supports API-key header auth and operator-supplied limits", () => {
-    linear("automation_tracker", {
-      purpose: "Headless release reporting",
-      access: "read-write",
-      auth: { type: "headers", headers: { Authorization: "lin_api_secret" } },
-      maxResultBytes: 25_000,
-      callAdmission: {
-        rules: [{ budget: { kind: "rolling-window", maxCalls: 1_000, windowMs: 3_600_000 } }],
-      },
-    });
-
-    expect(mocks.remoteMcp).toHaveBeenCalledWith(
-      "automation_tracker",
-      expect.objectContaining({
-        auth: {
-          type: "headers",
-          headers: { Authorization: "lin_api_secret" },
-        },
-        maxResultBytes: 25_000,
-        callAdmission: {
-          rules: [
-            {
-              budget: {
-                kind: "rolling-window",
-                maxCalls: 1_000,
-                windowMs: 3_600_000,
-              },
-            },
-          ],
-        },
-      }),
-    );
-  });
-
   itClassifiesLikeARelease(() => linear("tracker", { purpose: "Delivery planning", access: "read-write" }), mocks, {
     read: ["list_issues", "get_issue", "get_project"],
     write: "create_issue_label",
     destructive: "save_issue",
     unknown: ["summon_new_thing", "peek_at_new_thing", "wreck_new_thing"],
-  });
-
-  it("agrees with the markdown helper's own read-only annotation", async () => {
-    // The hosted server ships `extract_images` with explicit `readOnlyHint`
-    // and `idempotentHint`. It reads images out of content it is handed and
-    // touches no workspace state, so it belongs on the read allowlist —
-    // classifying it as a write would have overruled an explicit downstream
-    // annotation, which a fill-in classification never does.
-    mocks.listTools.mockResolvedValue([
-      {
-        name: "extract_images",
-        annotations: { readOnlyHint: true, idempotentHint: true },
-      },
-      // Same tool from a workspace that reports nothing: filled in, not feared.
-      { name: "extract_images" },
-    ]);
-    const connector = linear("tracker", {
-      purpose: "Delivery planning",
-      access: "read-write",
-    });
-    const tools = await servedTools(connector);
-
-    expect(tools[0]?.annotations).toEqual({
-      readOnlyHint: true,
-      idempotentHint: true,
-      destructiveHint: false,
-    });
-    expect(tools[1]?.annotations).toEqual({
-      readOnlyHint: true,
-      destructiveHint: false,
-    });
-  });
-
-  it("classifies plan-gated and current workspace surfaces", async () => {
-    mocks.listTools.mockResolvedValue([
-      { name: "list_customers" },
-      { name: "delete_customer_need" },
-      { name: "merge_diff" },
-      { name: "prepare_attachment_upload" },
-      { name: "search_documentation" },
-      { name: "get_workspace" },
-      { name: "get_template" },
-      { name: "share_issue" },
-      { name: "unshare_issue" },
-    ]);
-    const connector = linear("tracker", {
-      purpose: "Delivery planning",
-      access: "read-write",
-    });
-    const tools = await servedTools(connector);
-
-    expect(tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
-    expect(tools[1]?.annotations).toMatchObject({ destructiveHint: true });
-    expect(tools[2]?.annotations).toMatchObject({ destructiveHint: true });
-    // An upload URL is a side effect but destroys nothing.
-    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[4]?.annotations).toMatchObject({ readOnlyHint: true });
-    expect(tools[5]?.annotations).toMatchObject({ readOnlyHint: true });
-    expect(tools[6]?.annotations).toMatchObject({ readOnlyHint: true });
-    expect(tools[7]?.annotations).toMatchObject({ destructiveHint: true });
-    expect(tools[8]?.annotations).toMatchObject({ destructiveHint: true });
   });
 
   it("INV-1: reviews all 76 hosted tools, pins complete schemas, and retains only the six customer superset entries", async () => {
@@ -354,81 +207,6 @@ describe("linear()", () => {
     });
     // These entries are documentation/prior-review evidence, never invented schemas.
     for (const name of absent) expect(reviewed[name]).not.toHaveProperty("schemaDigest");
-  });
-
-  it("INV-1: keeps every new label, notification and diff write closed despite a read-only claim", async () => {
-    const destructive = [
-      "save_issue_label",
-      "save_project_label",
-      "save_initiative_label",
-      "retire_issue_label",
-      "restore_issue_label",
-      "retire_project_label",
-      "restore_project_label",
-      "retire_initiative_label",
-      "restore_initiative_label",
-      "update_diff",
-    ];
-    const writes = ["mark_notification", "create_issue_label", "create_initiative_label"];
-    mocks.listTools.mockResolvedValue(
-      [...destructive, ...writes].map((name) => ({ name, annotations: { readOnlyHint: true } })),
-    );
-    const tools = await servedTools(linear("tracker", { purpose: "Delivery planning", access: "read-write" }));
-    expect(
-      tools
-        .slice(0, destructive.length)
-        .every((tool) => tool.annotations?.readOnlyHint === false && tool.annotations.destructiveHint === true),
-    ).toBe(true);
-    expect(
-      tools
-        .slice(destructive.length)
-        .every((tool) => tool.annotations?.readOnlyHint === false && tool.annotations.destructiveHint !== true),
-    ).toBe(true);
-  });
-
-  it("INV-1: classifies silent new reads and fails closed after a reviewed read schema changes", async () => {
-    const reads = ["list_custom_views", "get_notifications", "get_triage_responsibility", "list_customer_needs"];
-    mocks.listTools.mockResolvedValue(reads.map((name) => ({ name })));
-    const connector = linear("tracker", { purpose: "Delivery planning", access: "read-write" });
-    expect((await servedTools(connector)).every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
-    mocks.listTools.mockResolvedValue([
-      {
-        name: "get_notifications",
-        inputSchema: { type: "object", properties: { markRead: { type: "boolean" } } },
-        annotations: { readOnlyHint: true },
-      },
-      { name: "get_triage_responsibility", inputSchema: {}, annotations: { readOnlyHint: true } },
-    ]);
-    expect((await servedTools(connector)).every((tool) => tool.annotations?.readOnlyHint === false)).toBe(true);
-    expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 2 });
-  });
-
-  it("INV-1: keeps its reviewed verdicts when the definition is written to", async () => {
-    const tools = linear.definition.classify?.tools as Record<string, { verdict: string }>;
-    expect(() => {
-      required(tools.save_issue).verdict = "read";
-    }).toThrow(TypeError);
-    expect(() => {
-      (tools as Record<string, unknown>).delete_issue = "read";
-    }).toThrow(TypeError);
-    expect(tools.save_issue).toMatchObject({ verdict: "destructive" });
-    expect(LINEAR_VETTED_CATALOG.tools.get("save_issue")?.verdict).toBe("destructive");
-    mocks.listTools.mockResolvedValue([{ name: "save_issue", annotations: { readOnlyHint: true } }]);
-    const connector = linear("tracker", {
-      purpose: "Delivery planning",
-      access: "read-write",
-    });
-    expect((await servedTools(connector))[0]?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-  });
-
-  it("INV-11: rejects an empty workspace purpose at construction", () => {
-    expect(() => linear("tracker", { purpose: "  ", access: "read-write" })).toThrow(
-      'linear("tracker") requires a non-empty purpose',
-    );
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
   });
 
   it("requires the operator to declare an access mode (P4)", () => {

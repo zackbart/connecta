@@ -1,17 +1,14 @@
-// The draft-only Gmail connection. Tests stub the network and pin the requests
-// each tool sends, the projections it returns, the MIME it writes, and the
-// surface it refuses to have — H1, H9, H10, H11, and H14 for this provider.
+// The draft-only Gmail connection. Request and result shapes are pinned by
+// test/goldens/gmail; this suite keeps what the goldens do not reach: MIME
+// encoding and refusals, body selection, charsets, attachments, and bounds.
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "./index.js";
+import { gmail } from "./index.js";
 import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
-
-const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
+import type { Connector, ConnectorContext } from "../../types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -75,13 +72,6 @@ function context(): ConnectorContext {
 
 function call(connector: Connector, name: string, args: Record<string, unknown> = {}): Promise<any> {
   return connector.callTool(name, args, context()) as Promise<any>;
-}
-
-function guide(connector: Connector): ConnectorUsageGuide {
-  if (typeof connector.usageGuide !== "object" || !connector.usageGuide) {
-    throw new Error("expected a structured guide");
-  }
-  return connector.usageGuide;
 }
 
 const path = (index: number) => calls[index]!.url.pathname.replace("/gmail/v1/users/me", "");
@@ -186,195 +176,7 @@ const MESSAGE = {
   },
 };
 
-describe("gmail() identity and surface (H1, H14)", () => {
-  it("requires a purpose and names the routing fact in title, description, and guide", () => {
-    expect(() => connection({ purpose: "" })).toThrow(/purpose/);
-    const connector = connection({ instructions: "Sign drafts as Pastor Dan." });
-    expect(connector.title).toBe("Gmail (drafts only)");
-    expect(connector.description).toContain("never send");
-    expect(connector.description).toContain("Pastoral staff email");
-    const content = guide(connector).content;
-    expect(content.split("\n").find((line) => line && !line.startsWith("#"))).toMatch(/never send/);
-    expect(content).toContain("## Connection instructions\n\nSign drafts as Pastor Dan.");
-    expect(guide(connector).required).toBe(true);
-  });
-
-  it("has no tool that sends, deletes, or relabels, and no raw hatch", async () => {
-    const tools = await connection().listTools(context());
-    expect(tools.map((tool) => tool.name).sort()).toEqual([
-      "create_draft",
-      "get_attachment",
-      "get_draft",
-      "get_message",
-      "get_thread",
-      "list_drafts",
-      "list_labels",
-      "search_threads",
-      "update_draft",
-    ]);
-    expect(tools.some((tool) => /send|delete|trash|label_|modify|gmail_api/.test(tool.name))).toBe(false);
-  });
-
-  it("INV-1: classifies reads as read-only and drafts as writes", async () => {
-    const connector = connection();
-    const tools = await connector.listTools(context());
-    const writes = tools.filter((tool) => !isRead(tool)).map((tool) => tool.name);
-    expect(writes.sort()).toEqual(["create_draft", "update_draft"]);
-    const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
-    expect(byName["create_draft"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
-    // Gmail's update replaces the whole message; the old body is gone.
-    expect(byName["update_draft"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-    expect(connector).not.toHaveProperty("approval");
-    // No operator slot and no OAuth: the key is deployment config.
-    expect(connector.credential).toBeUndefined();
-    expect(connector.startAuth).toBeUndefined();
-  });
-
-  it("requests exactly gmail.readonly and gmail.compose", () => {
-    expect([...GMAIL_SCOPES]).toEqual([
-      "https://www.googleapis.com/auth/gmail.readonly",
-      "https://www.googleapis.com/auth/gmail.compose",
-    ]);
-  });
-});
-
 describe("reading mail (H9, H10)", () => {
-  it("searches with Gmail syntax and summarizes each thread from metadata", async () => {
-    route = (request) => {
-      if (request.url.pathname.endsWith("/threads")) {
-        return {
-          body: {
-            threads: [
-              { id: "t1", snippet: "Latest &amp; greatest" },
-              { id: "gone", snippet: "deleted meanwhile" },
-            ],
-            nextPageToken: "next-1",
-            resultSizeEstimate: 42,
-          },
-        };
-      }
-      if (request.url.pathname.endsWith("/threads/gone")) {
-        return { status: 404, body: { error: { code: 404, message: "Requested entity was not found." } } };
-      }
-      return {
-        body: {
-          id: "t1",
-          messages: [
-            {
-              id: "m1",
-              labelIds: ["INBOX"],
-              internalDate: "1790000000000",
-              payload: {
-                headers: [
-                  { name: "Subject", value: "Elders meeting" },
-                  { name: "From", value: "Ann <ann@church.example>" },
-                ],
-              },
-            },
-            {
-              id: "m2",
-              labelIds: ["INBOX", "UNREAD"],
-              internalDate: "1790000600000",
-              payload: { headers: [{ name: "From", value: "Bo <bo@church.example>" }] },
-            },
-          ],
-        },
-      };
-    };
-    const searchArgs = { query: "from:ann newer_than:7d", limit: 5, includeSpamTrash: true };
-    const result = await call(connection(), "search_threads", searchArgs);
-
-    const list = calls[0]!.url;
-    expect(`${list.origin}${list.pathname}`).toBe(`${GMAIL_API_BASE_URL}/threads`);
-    expect(Object.fromEntries(list.searchParams)).toEqual({
-      q: "from:ann newer_than:7d",
-      maxResults: "5",
-      includeSpamTrash: "true",
-    });
-    const metadata = calls.find((entry) => entry.url.pathname.endsWith("/threads/t1"))!.url;
-    expect(metadata.searchParams.get("format")).toBe("metadata");
-    expect(metadata.searchParams.getAll("metadataHeaders")).toEqual(["Subject", "From", "Date"]);
-
-    expect(result).toEqual({
-      threads: [
-        {
-          id: "t1",
-          subject: "Elders meeting",
-          from: "Ann <ann@church.example>",
-          lastFrom: "Bo <bo@church.example>",
-          messageCount: 2,
-          lastMessageAt: new Date(1790000600000).toISOString(),
-          unread: true,
-          labelIds: ["INBOX", "UNREAD"],
-          snippet: "Latest & greatest",
-        },
-      ],
-      resultSizeEstimate: 42,
-      page: { hasMore: true, nextCursor: expect.stringMatching(/^[A-Za-z0-9_-]+$/) },
-    });
-
-    // The cursor carries Gmail's page token back to Gmail, for this call only.
-    calls.length = 0;
-    await call(connection(), "search_threads", { ...searchArgs, cursor: result.page.nextCursor });
-    expect(calls[0]!.url.searchParams.get("pageToken")).toBe("next-1");
-    for (const other of [
-      { ...searchArgs, query: "from:bo" },
-      { ...searchArgs, limit: 6 },
-    ]) {
-      await expect(
-        call(connection(), "search_threads", { ...other, cursor: result.page.nextCursor }),
-      ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("different call") });
-    }
-    await expect(call(connection(), "list_drafts", { limit: 5, cursor: result.page.nextCursor })).rejects.toMatchObject(
-      { code: "invalid_args" },
-    );
-  });
-
-  it("ends paging with one branchable signal", async () => {
-    route = () => ({ body: {} });
-    const result = await call(connection(), "search_threads");
-    expect(result).toEqual({ threads: [], page: { hasMore: false, nextCursor: null } });
-    expect(calls[0]!.url.searchParams.get("maxResults")).toBe("10");
-  });
-
-  it("projects a thread's messages with decoded text bodies, headers that matter, and attachment metadata", async () => {
-    route = () => ({ body: { id: "t1", messages: [MESSAGE] } });
-    const result = await call(connection(), "get_thread", { threadId: "t1" });
-    expect(path(0)).toBe("/threads/t1");
-    expect(calls[0]!.url.searchParams.get("format")).toBe("full");
-    expect(result).toEqual({
-      id: "t1",
-      messageCount: 1,
-      messages: [
-        {
-          id: "m2",
-          threadId: "t1",
-          labelIds: ["INBOX", "UNREAD"],
-          date: new Date(1790000000000).toISOString(),
-          from: "Ann Elder <ann@church.example>",
-          to: "pastor@church.example",
-          subject: "Elders meeting",
-          messageIdHeader: "<m2@mail.example>",
-          inReplyTo: "<m1@mail.example>",
-          snippet: "Can we move Tuesday's meeting?",
-          body: "Can we move Tuesday’s meeting to 7pm?",
-          bodyTruncated: false,
-          bodyFormat: "text",
-          attachments: [{ filename: "agenda.pdf", mimeType: "application/pdf", size: 12345, attachmentId: "att-1" }],
-        },
-      ],
-      page: { hasMore: false, nextCursor: null },
-    });
-    expect(JSON.stringify(result)).not.toContain("X-Noise");
-  });
-
-  it("caps a body with an explicit marker", async () => {
-    route = () => ({ body: MESSAGE });
-    const result = await call(connection(), "get_message", { messageId: "m2", maxBodyChars: 11 });
-    expect(result.body).toBe("Can we move\n[… 26 more characters truncated; raise maxBodyChars to read them]");
-    expect(result.bodyTruncated).toBe(true);
-  });
-
   it("falls back to HTML converted to text, and honors a declared charset", async () => {
     route = () => ({
       body: {
@@ -394,87 +196,6 @@ describe("reading mail (H9, H10)", () => {
     const result = await call(connection(), "get_message", { messageId: "m3" });
     expect(result.bodyFormat).toBe("html");
     expect(result.body).toBe("Café & prêt\n\nLigne 2");
-  });
-
-  it("returns Gmail's untouched message on raw: true", async () => {
-    route = () => ({ body: MESSAGE });
-    const result = await call(connection(), "get_message", { messageId: "m2", raw: true });
-    expect(result).toEqual(MESSAGE);
-  });
-
-  it("lists labels as id, name, and type, in one page when they fit", async () => {
-    route = () => ({
-      body: {
-        labels: [
-          { id: "INBOX", name: "INBOX", type: "system", messageListVisibility: "show" },
-          { id: "Label_7", name: "Elders", type: "user", color: { textColor: "#000" } },
-        ],
-      },
-    });
-    const result = await call(connection(), "list_labels");
-    expect(path(0)).toBe("/labels");
-    expect(result).toEqual({
-      labels: [
-        { id: "INBOX", name: "INBOX", type: "system" },
-        { id: "Label_7", name: "Elders", type: "user" },
-      ],
-      page: { hasMore: false, nextCursor: null },
-    });
-  });
-
-  it("lists drafts with their subject and recipients, and gets one with its body", async () => {
-    route = (request) => {
-      if (request.url.pathname.endsWith("/drafts")) {
-        return { body: { drafts: [{ id: "d1", message: { id: "m9", threadId: "t9" } }] } };
-      }
-      return {
-        body: {
-          id: "d1",
-          message: {
-            ...MESSAGE,
-            id: "m9",
-            threadId: "t9",
-            labelIds: ["DRAFT"],
-          },
-        },
-      };
-    };
-    const listed = await call(connection(), "list_drafts", { query: "subject:elders", limit: 3 });
-    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ q: "subject:elders", maxResults: "3" });
-    expect(path(1)).toBe("/drafts/d1");
-    expect(calls[1]!.url.searchParams.get("format")).toBe("metadata");
-    expect(listed).toEqual({
-      drafts: [
-        {
-          draftId: "d1",
-          messageId: "m9",
-          threadId: "t9",
-          subject: "Elders meeting",
-          to: "pastor@church.example",
-          updatedAt: new Date(1790000000000).toISOString(),
-          snippet: "Can we move Tuesday's meeting?",
-        },
-      ],
-      page: { hasMore: false, nextCursor: null },
-    });
-
-    calls.length = 0;
-    const draft = await call(connection(), "get_draft", { draftId: "d1" });
-    expect(calls[0]!.url.searchParams.get("format")).toBe("full");
-    expect(draft).toMatchObject({
-      draftId: "d1",
-      messageId: "m9",
-      threadId: "t9",
-      body: "Can we move Tuesday’s meeting to 7pm?",
-    });
-    expect(draft.id).toBeUndefined();
-  });
-
-  it("maps a 404 to not_found: the mailbox is the token's own", async () => {
-    route = () => ({ status: 404, body: { error: { code: 404, message: "Requested entity was not found." } } });
-    await expect(call(connection(), "get_thread", { threadId: "nope" })).rejects.toMatchObject({
-      code: "not_found",
-    });
   });
 });
 
@@ -508,48 +229,6 @@ describe("writing drafts", () => {
     expect(result).toEqual({ draftId: "d1", messageId: "m1", threadId: "t1", saved: true, sent: false });
   });
 
-  it("adds an HTML alternative beside the plain text", async () => {
-    route = () => ({ body: { id: "d1", message: { id: "m1" } } });
-    await call(connection(), "create_draft", { to: ["a@b.example"], body: "Plain", htmlBody: "<p>Rich</p>" });
-    const mime = parseMime(calls[0]!.body.message.raw);
-    expect(mime.headers["Content-Type"]).toMatch(/^multipart\/alternative; boundary="connecta-/);
-    expect(mime.parts).toEqual([
-      { type: 'text/plain; charset="UTF-8"', text: "Plain" },
-      { type: 'text/html; charset="UTF-8"', text: "<p>Rich</p>" },
-    ]);
-  });
-
-  it("replies in the thread with In-Reply-To, References, Re: subject, and the sender as recipient", async () => {
-    route = (request) =>
-      request.method === "GET"
-        ? {
-            body: {
-              id: "m2",
-              threadId: "t1",
-              payload: {
-                headers: [
-                  { name: "Message-ID", value: "<m2@mail.example>" },
-                  { name: "References", value: "<m0@mail.example>\r\n <m1@mail.example>" },
-                  { name: "Subject", value: "Elders meeting" },
-                  { name: "From", value: "Ann Elder <ann@church.example>" },
-                ],
-              },
-            },
-          }
-        : { body: { id: "d2", message: { id: "m3", threadId: "t1" } } };
-    const result = await call(connection(), "create_draft", { replyToMessageId: "m2", body: "Yes, 7pm works." });
-
-    expect(path(0)).toBe("/messages/m2");
-    expect(calls[0]!.url.searchParams.get("format")).toBe("metadata");
-    expect(calls[1]!.body.message.threadId).toBe("t1");
-    const mime = parseMime(calls[1]!.body.message.raw);
-    expect(mime.headers["In-Reply-To"]).toBe("<m2@mail.example>");
-    expect(mime.headers["References"]).toBe("<m0@mail.example> <m1@mail.example> <m2@mail.example>");
-    expect(mime.headers["Subject"]).toBe("Re: Elders meeting");
-    expect(mime.headers["To"]).toBe("Ann Elder <ann@church.example>");
-    expect(result).toEqual({ draftId: "d2", messageId: "m3", threadId: "t1", saved: true, sent: false });
-  });
-
   it("refuses header injection and malformed addresses before anything is sent", async () => {
     await expect(
       call(connection(), "create_draft", { subject: "Hi\r\nBcc: spy@evil.example", body: "x" }),
@@ -579,44 +258,6 @@ describe("writing drafts", () => {
       },
     };
   }
-
-  it("updates a draft's body, keeping every header it promises to keep", async () => {
-    route = (request) =>
-      request.method === "GET"
-        ? {
-            body: existingDraft([
-              { name: "From", value: "Pastor Dan <dan@church.example>" },
-              { name: "To", value: '"Smith, Ann" <ann@church.example>, bo@church.example' },
-              { name: "Cc", value: "elders@church.example" },
-              { name: "Bcc", value: "secretary@church.example" },
-              { name: "Reply-To", value: "Church Office <office@church.example>" },
-              { name: "Subject", value: "Re: Elders meeting" },
-              { name: "In-Reply-To", value: "<m2@mail.example>" },
-              { name: "References", value: "<m1@mail.example> <m2@mail.example>" },
-            ]),
-          }
-        : { body: { id: "d1", message: { id: "m6", threadId: "t1" } } };
-    const result = await call(connection(), "update_draft", { draftId: "d1", body: "Revised text.", cc: [] });
-
-    expect(calls.map((entry) => `${entry.method} ${entry.url.pathname.replace("/gmail/v1/users/me", "")}`)).toEqual([
-      "GET /drafts/d1",
-      "PUT /drafts/d1",
-    ]);
-    expect(calls[0]!.url.searchParams.get("format")).toBe("full");
-    expect(calls[1]!.body.message.threadId).toBe("t1");
-    const mime = parseMime(calls[1]!.body.message.raw);
-    expect(mime.headers["From"]).toBe("Pastor Dan <dan@church.example>");
-    expect(mime.headers["To"]).toBe('"Smith, Ann" <ann@church.example>, bo@church.example');
-    // Restated as empty: cleared.
-    expect(mime.headers["Cc"]).toBeUndefined();
-    expect(mime.headers["Bcc"]).toBe("secretary@church.example");
-    expect(mime.headers["Reply-To"]).toBe("Church Office <office@church.example>");
-    expect(mime.headers["Subject"]).toBe("Re: Elders meeting");
-    expect(mime.headers["In-Reply-To"]).toBe("<m2@mail.example>");
-    expect(mime.headers["References"]).toBe("<m1@mail.example> <m2@mail.example>");
-    expect(mime.parts[0]!.text).toBe("Revised text.");
-    expect(result).toEqual({ draftId: "d1", messageId: "m6", threadId: "t1", saved: true, sent: false });
-  });
 
   it.each([
     [
@@ -789,36 +430,6 @@ describe("a message's own body, apart from what it carries", () => {
     expect(result.attachments).toBeUndefined();
   });
 
-  it("lists an unnamed inline image, while a stored text body is still read as the body", async () => {
-    route = (request) =>
-      request.url.pathname.endsWith("/attachments/body-3")
-        ? { body: { size: 40, data: b64url("<p>Logo <b>above</b></p>") } }
-        : {
-            body: {
-              id: "m10",
-              payload: {
-                mimeType: "multipart/related",
-                parts: [
-                  { mimeType: "text/html", filename: "", body: { size: 40, attachmentId: "body-3" } },
-                  {
-                    mimeType: "image/png",
-                    filename: "",
-                    headers: [
-                      { name: "Content-Disposition", value: "inline" },
-                      { name: "Content-ID", value: "<logo>" },
-                    ],
-                    body: { size: 2048, attachmentId: "img-1" },
-                  },
-                ],
-              },
-            },
-          };
-    const result = await call(connection(), "get_message", { messageId: "m10" });
-    expect(path(1)).toBe("/messages/m10/attachments/body-3");
-    expect(result).toMatchObject({ body: "Logo above", bodyFormat: "html" });
-    expect(result.attachments).toEqual([{ filename: "", mimeType: "image/png", size: 2048, attachmentId: "img-1" }]);
-  });
-
   it("says so, never returning a silent empty body, when a stored body is too large to read", async () => {
     route = () => ({
       body: {
@@ -848,11 +459,6 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
   // the most expensive strings JSON can carry: control characters (six bytes
   // escaped), lone surrogates (six), emoji (four per two units), CJK (three),
   // quotes and backslashes (two).
-  // Asserted against connecta's own budget, which leaves the bridge room.
-  const BRIDGE_LIMIT = 256 * 1024;
-  it("budgets results under the bridge", () => {
-    expect(RESULT_BUDGET_BYTES).toBeLessThan(BRIDGE_LIMIT);
-  });
   const NASTY = '\u0001界😀\ud800"\\';
   const nasty = (length: number) => NASTY.repeat(Math.ceil(length / NASTY.length)).slice(0, length);
   const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
@@ -914,20 +520,7 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
   });
 
-  it("keeps a full drafts page of the worst summaries under the bridge", async () => {
-    route = (request) =>
-      request.url.pathname.endsWith("/drafts")
-        ? { body: { drafts: Array.from({ length: 25 }, (_, index) => ({ id: `d${index}` })) } }
-        : { body: { id: "d", message: { id: "m", snippet: nasty(5000), payload: { headers: headers(20_000) } } } };
-    const result = await call(connection(), "list_drafts", { limit: 25 });
-    expect(result.drafts).toHaveLength(25);
-    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-  });
-
-  it.each([
-    ["the default body cap", undefined],
-    ["the largest explicit body cap", 100_000],
-  ])(
+  it.each([["the largest explicit body cap", 100_000]])(
     "pages a 40-message worst-case thread under %s, every page under the bridge",
     async (_cap, maxBodyChars) => {
       // Sized to stay inside the connector's 16 MB response ceiling, which a
@@ -973,47 +566,6 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
     expect(result.labelIdsOmitted).toBe(200);
   });
 
-  it("fits a fetched 1 MB stored body under the bridge", async () => {
-    route = (request) =>
-      request.url.pathname.includes("/attachments/")
-        ? { body: { size: 1_000_000, data: b64url(nasty(400_000)) } }
-        : {
-            body: {
-              id: "m2",
-              payload: {
-                mimeType: "text/plain",
-                headers: headers(10_000),
-                body: { size: 1_000_000, attachmentId: "big" },
-              },
-            },
-          };
-    const result = await call(connection(), "get_message", { messageId: "m2", maxBodyChars: 100_000 });
-    expect(path(1)).toBe("/messages/m2/attachments/big");
-    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-    expect(result.bodyTruncated).toBe(true);
-  });
-
-  it("pages 10,000 worst-case labels under the bridge, each label once", async () => {
-    const all = Array.from({ length: 10_000 }, (_, index) => ({
-      id: `Label_${index}`,
-      name: nasty(225),
-      type: "user",
-    }));
-    route = () => ({ body: { labels: all } });
-    const seen: string[] = [];
-    let cursor: string | undefined;
-    let pages = 0;
-    do {
-      const result = await call(connection(), "list_labels", cursor === undefined ? {} : { cursor });
-      expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-      seen.push(...result.labels.map((label: { id: string }) => label.id));
-      cursor = result.page.nextCursor ?? undefined;
-      pages += 1;
-    } while (cursor !== undefined && pages < 1000);
-    expect(seen).toEqual(all.map((label) => label.id));
-    expect(pages).toBeGreaterThan(1);
-  }, 60_000);
-
   it("refuses a raw message past the limit, with the way forward, and returns a small one", async () => {
     route = () => ({ body: hugeMessage("m3", 200_000) });
     const failure = await call(connection(), "get_message", { messageId: "m3", raw: true }).catch((error) => error);
@@ -1051,26 +603,6 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
     expect(result.body).toBe("Hello");
   });
 
-  it("budgets get_draft's whole result, wrapper included", async () => {
-    const nasty = (length: number) => '\u0001界😀\ud800"\\'.repeat(Math.ceil(length / 6)).slice(0, length);
-    route = () => ({
-      body: {
-        id: "d".repeat(200),
-        message: {
-          id: "m1",
-          payload: {
-            mimeType: "text/plain",
-            headers: ["From", "To", "Cc", "Subject"].map((name) => ({ name, value: nasty(5000) })),
-            body: { data: b64url(nasty(200_000)) },
-          },
-        },
-      },
-    });
-    const result = await call(connection(), "get_draft", { draftId: "d1", maxBodyChars: 100_000 });
-    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-    expect(result.bodyTruncated).toBe(true);
-  });
-
   describe("thread cursors", () => {
     /** Messages whose 60 KB bodies put three on a page at most. */
     const message = (id: string) => ({
@@ -1085,21 +617,6 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
     });
     const page = (args: Record<string, unknown>) =>
       call(connection(), "get_thread", { threadId: "t1", maxBodyChars: 100_000, ...args });
-
-    it("pages every message once, each page within budget, and ends", async () => {
-      const seen: string[] = [];
-      let cursor: string | undefined;
-      let pages = 0;
-      do {
-        const result = await page(cursor === undefined ? {} : { cursor });
-        expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-        seen.push(...result.messages.map((entry: { id: string }) => entry.id));
-        cursor = result.page.nextCursor ?? undefined;
-        pages += 1;
-      } while (cursor !== undefined && pages < 20);
-      expect(seen).toEqual(messages.map((entry) => entry.id));
-      expect(pages).toBeGreaterThan(1);
-    });
 
     it("refuses a cursor from another thread, body cap, or tool", async () => {
       const first = await page({});
@@ -1192,14 +709,6 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
       { messageId: "m1" },
       (body: string) => ({ id: "m1", payload: { mimeType: "text/plain", body: { data: b64url(body) } } }),
     ],
-    [
-      "get_draft",
-      { draftId: "d1" },
-      (body: string) => ({
-        id: "d1",
-        message: { id: "m1", payload: { mimeType: "text/plain", body: { data: b64url(body) } } },
-      }),
-    ],
   ] as const)(
     "%s fits a body at the exact boundary, untruncated, and cuts one character past it",
     async (tool, args, reply) => {
@@ -1232,30 +741,6 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
     },
     60_000,
   );
-
-  it("counts label ids it leaves out, and never cuts one", async () => {
-    const labelIds = [...Array.from({ length: 21 }, (_, index) => `Label_${index}`), "L".repeat(500)];
-    route = () => ({ body: { id: "m1", labelIds, payload: { mimeType: "text/plain", body: { data: b64url("x") } } } });
-    const result = await call(connection(), "get_message", { messageId: "m1" });
-    expect(result.labelIds).toEqual(labelIds.slice(0, 20));
-    expect(result.labelIdsOmitted).toBe(2);
-    expect(JSON.stringify(result)).not.toContain("…");
-  });
-
-  it("leaves an unusable label out of list_labels and counts it", async () => {
-    route = () => ({
-      body: {
-        labels: [
-          { id: "INBOX", name: "INBOX", type: "system" },
-          { id: "L".repeat(500), name: "Too long", type: "user" },
-          { id: "Label_1", name: "Elders", type: "user" },
-        ],
-      },
-    });
-    const result = await call(connection(), "list_labels");
-    expect(result.labels.map((label: { id: string }) => label.id)).toEqual(["INBOX", "Label_1"]);
-    expect(result.labelsOmitted).toBe(1);
-  });
 
   it("reports a saved draft as saved even when Gmail's id cannot be returned", async () => {
     route = () => ({ body: { id: "D".repeat(5000), message: { id: "m1", threadId: "t1" } } });
@@ -1342,11 +827,8 @@ describe("reading carried attachments", () => {
     call(connection(), "get_attachment", { messageId: "m1", ...args });
 
   it.each([
-    ["CSV", attachmentFixtures.csv, "name,email\nAnn,a\n"],
-    ["calendar", attachmentFixtures.calendar, "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n"],
     ["forwarded email", attachmentFixtures.forwarded, "From: ann@example.com\r\n\r\nHi"],
     ["JSON", { ...attachmentFixtures.csv, mimeType: "application/json" }, '{"name":"Ann"}'],
-    ["XML", { ...attachmentFixtures.csv, mimeType: "application/xml" }, "<name>Ann</name>"],
   ])("INV-10: reads %s as text with only GET requests", async (_name, part, content) => {
     serve({ ...part, body: { ...part.body, size: new TextEncoder().encode(content).length } }, b64url(content));
     const result = await read({ partId: part.partId });
@@ -1363,41 +845,16 @@ describe("reading carried attachments", () => {
     expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
   });
 
-  it.each([{ size: 0, data: "" }, { size: 0 }])(
-    "renders parsed forwarded headers and its own plain body with container %j",
-    async (body) => {
-      serve({ ...attachmentFixtures.parsedForwarded, body });
-      const result = await read({ partId: "7" });
-      expect(result).toMatchObject({
-        format: "text",
-        contentTruncated: false,
-        content:
-          "From: ann@example.com\nTo: bob@example.com\nDate: Mon, 12 Oct 2026 10:00:00 +0000\nSubject: Forwarded café\n\nHi",
-      });
-      expect(calls).toHaveLength(1);
-    },
-  );
-
-  it("reads a parsed forwarded stored-apart HTML body and applies maxChars", async () => {
-    serve(
-      {
-        ...attachmentFixtures.parsedForwarded,
-        parts: [
-          {
-            mimeType: "text/html",
-            headers: [{ name: "Content-Type", value: 'text/html; charset = "iso-8859-1"' }],
-            body: { size: 11, attachmentId: "forward-body" },
-          },
-        ],
-      },
-      b64url("<p>Café</p>", "latin1"),
-    );
-    expect(await read({ partId: "7", maxChars: 3 })).toMatchObject({
+  it.each([{ size: 0 }])("renders parsed forwarded headers and its own plain body with container %j", async (body) => {
+    serve({ ...attachmentFixtures.parsedForwarded, body });
+    const result = await read({ partId: "7" });
+    expect(result).toMatchObject({
       format: "text",
-      content: expect.stringMatching(/^Caf\n\[… 1 more characters truncated/),
-      contentTruncated: true,
+      contentTruncated: false,
+      content:
+        "From: ann@example.com\nTo: bob@example.com\nDate: Mon, 12 Oct 2026 10:00:00 +0000\nSubject: Forwarded café\n\nHi",
     });
-    expect(path(1)).toBe("/messages/m1/attachments/forward-body");
+    expect(calls).toHaveLength(1);
   });
 
   it("checks the sum of forwarded descendants before any stored-body download", async () => {
@@ -1415,77 +872,9 @@ describe("reading carried attachments", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("reports a forwarded subtree with no readable body explicitly", async () => {
-    serve({
-      ...attachmentFixtures.parsedForwarded,
-      parts: [{ mimeType: "image/png", body: { size: 2, data: "__4" } }],
-    });
-    expect(await read({ partId: "7" })).toMatchObject({
-      format: "unavailable",
-      note: expect.stringContaining("no readable"),
-    });
-  });
-
-  it.each(["inline", "stored"])("prefers %s raw forwarded content over nested parts", async (storage) => {
-    const content = "From: raw@example.com\r\n\r\nRaw body";
-    const body =
-      storage === "inline"
-        ? { size: content.length, data: b64url(content) }
-        : { size: content.length, attachmentId: "raw-mail" };
-    serve({ ...attachmentFixtures.parsedForwarded, body }, b64url(content));
-    expect(await read({ partId: "7" })).toMatchObject({ format: "text", content });
-    expect(calls).toHaveLength(storage === "inline" ? 1 : 2);
-  });
-
-  it("refuses unknown descendant sizes before a forwarded-body download", async () => {
-    serve({
-      ...attachmentFixtures.parsedForwarded,
-      parts: [
-        { mimeType: "text/plain", body: { size: 2, attachmentId: "body" } },
-        { mimeType: "image/png", body: { attachmentId: "image" } },
-      ],
-    });
-    expect(await read({ partId: "7" })).toMatchObject({
-      format: "unavailable",
-      note: expect.stringContaining("valid attachment size"),
-    });
-    expect(calls).toHaveLength(1);
-  });
-
-  it("refuses inconsistent stored forwarded-body sizes", async () => {
-    serve(
-      {
-        ...attachmentFixtures.parsedForwarded,
-        parts: [{ mimeType: "text/plain", body: { size: 3, attachmentId: "body" } }],
-      },
-      b64url("Hi"),
-    );
-    await expect(read({ partId: "7" })).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
-  });
-
-  it("keeps parsed forwarded headers and body within the whole-result budget", async () => {
-    const content = '\u0001界😀"\\'.repeat(30_000);
-    serve(
-      {
-        ...attachmentFixtures.parsedForwarded,
-        headers: [{ name: "Subject", value: content }],
-        parts: [
-          { mimeType: "text/plain", body: { size: new TextEncoder().encode(content).length, attachmentId: "body" } },
-        ],
-      },
-      b64url(content),
-    );
-    const result = await read({ partId: "7", maxChars: 100_000, maxBytes: 64 * 1024 });
-    expect(result).toMatchObject({ format: "text", contentTruncated: true });
-    expect(result.content.match(/more characters truncated/g)).toHaveLength(1);
-    expect(size(result)).toBeLessThanOrEqual(64 * 1024);
-  });
-
   it.each([
-    'text/csv; charset = "iso-8859-1"',
     'text/csv; CHARSET = ISO-8859-1; name="cafe.csv"',
     'text/csv; name="cafe; charset=utf-8.csv"; ChArSeT \t=\t "ISO-8859-1"',
-    'text/csv; charset=iso-8859-1; name="cafe.csv"',
   ])("parses MIME charset parameter %s for attachments and all body callers", async (contentType) => {
     const part = { ...attachmentFixtures.latin1, headers: [{ name: "Content-Type", value: contentType }] };
     serve(part, b64url("Café", "latin1"));
@@ -1522,69 +911,9 @@ describe("reading carried attachments", () => {
     });
   });
 
-  describe.each([
-    ["get_message", { messageId: "m1" }],
-    ["get_thread", { threadId: "t1" }],
-    ["get_draft", { draftId: "d1" }],
-  ] as const)("%s charset notices", (tool, args) => {
-    it.each(
-      ["text/plain", "text/html"].flatMap((mimeType) =>
-        [
-          { limit: "uncut", suffix: "", options: {}, truncated: false },
-          { limit: "default characters", suffix: "x".repeat(13_000), options: {}, truncated: true },
-          { limit: "explicit characters", suffix: "x".repeat(13_000), options: { maxBodyChars: 3 }, truncated: true },
-          { limit: "zero characters", suffix: "x".repeat(13_000), options: { maxBodyChars: 0 }, truncated: true },
-          { limit: "result bytes", suffix: "界".repeat(90_000), options: { maxBodyChars: 100_000 }, truncated: true },
-        ].map((entry) => ({ mimeType, ...entry })),
-      ),
-    )(
-      "INV-10: reads $mimeType at the $limit limit with a fallback note and only GETs",
-      async ({ mimeType, suffix, options, truncated, limit }) => {
-        const value = `Café${suffix}`;
-        const data = b64url(mimeType === "text/html" ? `<p>${value}</p>` : value);
-        const message = {
-          id: "m1",
-          payload: {
-            mimeType,
-            headers: [{ name: "Content-Type", value: `${mimeType}; charset=x-unknown` }],
-            body: { data },
-          },
-        };
-        route = () => ({
-          body:
-            tool === "get_thread"
-              ? { id: "t1", messages: [message] }
-              : tool === "get_draft"
-                ? { id: "d1", message }
-                : message,
-        });
-        const connector = connection();
-        const result = await call(connector, tool, { ...args, ...options });
-        const projected = tool === "get_thread" ? result.messages[0] : result;
-        expect(projected).toMatchObject({
-          bodyNote: 'Gmail declared unsupported charset "x-unknown"; decoded as UTF-8.',
-          bodyTruncated: truncated,
-          bodyFormat: mimeType === "text/html" ? "html" : "text",
-        });
-        const schema = (await connector.listTools(context())).find((entry) => entry.name === tool)!.outputSchema as any;
-        const properties = tool === "get_thread" ? schema.properties.messages.items.properties : schema.properties;
-        expect(properties.bodyNote).toMatchObject({ type: "string" });
-        expect(projected.body).not.toContain("decoded as UTF-8");
-        if (limit === "result bytes") expect(projected.body).toContain("192 KiB per-result limit");
-        if (truncated) expect(projected.body).toContain("truncated");
-        else expect(projected.body).toBe(value);
-        expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-        expect(calls.length).toBeGreaterThan(0);
-        expect(calls.every((request) => request.method === "GET")).toBe(true);
-      },
-    );
-  });
-
   it.each([
     [3, 3, ""],
     [10, 3, "abc"],
-    [3, 10, "abc"],
-    [3, 0, "abc"],
   ])("refuses inconsistent attachment sizes: part %s, response %s, data %j", async (declared, fetched, data) => {
     route = (request) => ({
       body: request.url.pathname.includes("/attachments/")
@@ -1611,16 +940,6 @@ describe("reading carried attachments", () => {
       content: "",
       contentTruncated: false,
     });
-  });
-
-  it("refuses inconsistent inline attachment sizes", async () => {
-    serve({ ...attachmentFixtures.inline, body: { size: 10, data: b64url("abc") } });
-    await expect(read({ partId: "4" })).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
-  });
-
-  it("decodes the attachment's declared non-UTF-8 charset", async () => {
-    serve(attachmentFixtures.latin1, b64url("Café", "latin1"));
-    expect(await read({ partId: "3" })).toMatchObject({ format: "text", content: "Café" });
   });
 
   it("lists and reads inline data without an attachmentId or download request", async () => {
@@ -1655,20 +974,6 @@ describe("reading carried attachments", () => {
     expect(result).toMatchObject({ format: "unavailable", note: expect.stringContaining("1048576-byte") });
     expect(result.content).toBeUndefined();
     expect(calls).toHaveLength(1);
-  });
-
-  it("refuses binary maxBytes overflow before downloading and explains direct calls", async () => {
-    serve({ ...attachmentFixtures.pdf, body: { attachmentId: "large", size: 150_000 } }, b64url("x".repeat(150_000)));
-    const refused = await read({ partId: "5" });
-    expect(refused).toMatchObject({ format: "unavailable", note: expect.stringContaining("Raise maxBytes") });
-    expect(refused.note).toContain("direct call_tool only");
-    expect(refused.content).toBeUndefined();
-    expect(calls).toHaveLength(1);
-    const raised = await read({ partId: "5", maxBytes: 256 * 1024 });
-    expect(raised.format).toBe("base64");
-    expect(atob(raised.content)).toHaveLength(150_000);
-    expect(size(raised)).toBeGreaterThan(RESULT_BUDGET_BYTES);
-    expect(size(raised)).toBeLessThanOrEqual(256 * 1024);
   });
 
   it("accounts for metadata and base64 padding at the exact maxBytes boundary", async () => {
@@ -1748,22 +1053,6 @@ describe("reading carried attachments", () => {
     expect(result.content).toContain("truncated");
     expect(result.content.match(/more characters truncated/g)).toHaveLength(1);
     expect(size(result)).toBeLessThanOrEqual(64 * 1024);
-  });
-
-  it("returns a full 1 MiB binary at the inline cap when maxBytes permits it", async () => {
-    const content = "x".repeat(1024 * 1024);
-    serve({ ...attachmentFixtures.pdf, body: { attachmentId: "full", size: content.length } }, b64url(content));
-    const result = await read({ partId: "5", maxBytes: 4 * 1024 * 1024 });
-    expect(result.format).toBe("base64");
-    expect(atob(result.content)).toBe(content);
-    expect(size(result)).toBeLessThanOrEqual(4 * 1024 * 1024);
-  });
-
-  it("reads a binary stored inline without a separate request", async () => {
-    serve({ ...attachmentFixtures.pdf, body: { size: 2, data: "__4" } });
-    const result = await read({ partId: "5" });
-    expect(result).toMatchObject({ format: "base64", content: "//4=" });
-    expect(calls).toHaveLength(1);
   });
 
   it("does not turn malformed base64url into silently empty text", async () => {

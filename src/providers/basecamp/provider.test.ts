@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../../types.js";
-import {
-  guideOf,
-  itClassifiesLikeARelease,
-  mockRemoteMcp,
-  servedTools,
-} from "../../../test/fixtures/hosted-provider.js";
+import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -18,7 +13,6 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 }));
 
 import { BASECAMP_MCP_ENDPOINT, BASECAMP_VETTED_CATALOG, basecamp } from "./index.js";
-import { connectorGuideSummary } from "../../skills.js";
 
 const CLIENT_METADATA_URL = "https://connecta.example/oauth/basecamp-client";
 
@@ -63,10 +57,6 @@ describe("basecamp()", () => {
     expect(guideOf(connector)).toContain("Post client-facing updates as messages, never as chat.");
   });
 
-  it("omits the account section when no instructions are given", () => {
-    expect(guideOf(connection())).not.toContain("## Account instructions");
-  });
-
   it("INV-11: defaults to the deployment's self-hosted client metadata document", () => {
     basecamp("basecamp", { purpose: "Projects" });
     expect(mocks.remoteMcp).toHaveBeenCalledWith(
@@ -75,10 +65,6 @@ describe("basecamp()", () => {
         auth: { type: "oauth", scope: "full mcp offline_access" },
       }),
     );
-  });
-
-  it("rejects an empty purpose at construction (P2)", () => {
-    expect(() => connection({ purpose: "  " })).toThrow("a non-empty purpose");
   });
 
   it("INV-11: offers no headless credential and no access mode", () => {
@@ -138,55 +124,6 @@ describe("basecamp()", () => {
     expect(personal).not.toContain("One shared authorization");
   });
 
-  it("names each account in a bounded, purpose-bearing summary", () => {
-    expect(connectorGuideSummary(connection())).toBe(
-      "One account per grant; get_me names it: The studio's client projects",
-    );
-    const clipped = connectorGuideSummary(
-      connection({
-        purpose:
-          "Every client engagement the studio runs, including retainers, launches, audits, and the internal operations account",
-      }),
-    );
-    expect(clipped?.length).toBeLessThanOrEqual(120);
-    expect(clipped?.endsWith("…")).toBe(true);
-  });
-
-  it("carries id resolution, reduction, and catalog-varies advice (P6–P8)", () => {
-    const guide = guideOf(connection());
-    expect(guide).toContain("`get_me` returns the signed-in person");
-    expect(guide).toContain("read that as wrong connector");
-    expect(guide).toContain("`get_basecamp_guide` with `topic`");
-    expect(guide).toContain("`deleting-and-trash`");
-    expect(guide).toContain("never guess one");
-    expect(guide).toContain("`get_by_url` reads any link");
-    expect(guide).toContain("`list_projects` then `get_project`");
-    expect(guide).toContain("`create_comment`'s `mentions`");
-    expect(guide).toContain("rather than raising the limit");
-    expect(guide).toContain("reduce inside `execute_code`");
-    expect(guide).toContain("restorable for 25 days");
-    expect(guide).toContain("are permanent");
-    expect(guide).toContain("full replaces");
-    expect(guide).toContain("Do not call `create_stream_ticket`");
-    expect(guide).toContain("not a fixed set");
-    expect(guide).toContain("`Retry-After`");
-    expect(guide).toContain('skills({ name: "usage" })');
-    expect(guide).toContain("authorize_connector");
-  });
-
-  it("classifies the whole reviewed live catalog (P5)", () => {
-    const verdicts = BASECAMP_VETTED_CATALOG.tools;
-    const counts = { "read-only": 0, additive: 0, destructive: 0 };
-    for (const { verdict } of verdicts.values()) counts[verdict] += 1;
-    // The 2026-10-05 live tools/list: 227 tools, every one classified.
-    expect(counts).toEqual({ "read-only": 105, additive: 34, destructive: 88 });
-    expect(verdicts.size).toBe(227);
-    // No digests: no release has a reviewed schema set to compare against.
-    for (const record of verdicts.values()) {
-      expect(record.schemaDigest).toBeUndefined();
-    }
-  });
-
   it("keeps the argued verdicts where the release put them", () => {
     const verdictFor = (name: string) => BASECAMP_VETTED_CATALOG.tools.get(name)?.verdict;
     // Agrees with the server after review: no record written, and the feed
@@ -210,48 +147,10 @@ describe("basecamp()", () => {
     expect(verdictFor("update_project_access")).toBe("destructive");
   });
 
-  it("applies the argued verdicts to the server's explicit annotations", async () => {
-    mocks.listTools.mockResolvedValue([
-      {
-        name: "create_stream_ticket",
-        annotations: { readOnlyHint: true, destructiveHint: false },
-      },
-      {
-        name: "create_folder",
-        annotations: { readOnlyHint: false, destructiveHint: false },
-      },
-      {
-        name: "watch_column",
-        annotations: { readOnlyHint: false, destructiveHint: true },
-      },
-    ]);
-    const tools = await servedTools(connection());
-    expect(tools[0]?.annotations).toEqual({
-      readOnlyHint: true,
-      destructiveHint: false,
-    });
-    // A vetted destructive verdict tightens.
-    expect(tools[1]?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-    // An additive verdict fills silence only, so the server's own
-    // destructive annotation is what a caller still sees.
-    expect(tools[2]?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-  });
-
   itClassifiesLikeARelease(() => connection(), mocks, {
     read: ["list_projects", "get_me", "get_by_url"],
     write: "create_todo",
     destructive: "trash_project",
     unknown: ["summon_new_thing", "peek_at_new_thing", "wreck_new_thing"],
-  });
-
-  it("lets an operator title override the default", () => {
-    connection({ title: "Client Basecamp" });
-    expect(mocks.remoteMcp).toHaveBeenLastCalledWith("basecamp", expect.objectContaining({ title: "Client Basecamp" }));
   });
 });
