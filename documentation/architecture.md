@@ -932,8 +932,9 @@ classification code and a name its class is registered with in
 `redaction-identity.ts` (the built-in errors, `DOMException`, and Connecta's
 and the pinned MCP SDK's own classes, each with literals beside the class); a
 number or string under any name is matched like any other, and any other error
-name is withheld whole as `[redacted]` when anything in it matches, keeping the
-copy's class. An accessor an error's chain defines is held on its copy under its
+name is a projection leaf like any field, joined with its neighbours, and
+withheld whole as `[redacted]` when the lane changes any part of it, keeping
+the copy's class. An accessor an error's chain defines is held on its copy under its
 checked name. Exact relay states and connect links
 Connecta mints and authenticates are kept whole: they hold only sealed state or
 Connecta's own facts. Serialized JSON whose keys, syntax and leaves together

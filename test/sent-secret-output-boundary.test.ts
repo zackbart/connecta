@@ -84,6 +84,21 @@ function everyText(value: unknown, seen = new Set<object>()): string[] {
   });
 }
 
+/** Every string and number under a value read from descriptors, in property order, without
+ * names: the leaves the projection joins, in its order. */
+function everyValue(value: unknown, seen = new Set<object>()): string[] {
+  if (typeof value === "string") return [value];
+  if (typeof value === "number" || typeof value === "bigint") return [String(value)];
+  if (value === null || typeof value !== "object" || seen.has(value)) return [];
+  seen.add(value);
+  return Object.getOwnPropertyNames(value).flatMap((name) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name)!;
+    return "value" in descriptor && !(Array.isArray(value) && name === "length")
+      ? everyValue(descriptor.value, seen)
+      : [];
+  });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -1711,6 +1726,29 @@ describe("review round 5", () => {
         else Object.defineProperty(Getters.prototype, "name", { value: name, configurable: true });
         return new Getters(pick(strings));
       },
+      // A credential split below K across an error's name and its neighbour: an own name before
+      // its message, a custom field before the name a prototype answers, or a name holding both
+      // halves as JSON.
+      (depth) => {
+        const [first, second] = [token.slice(0, 7), token.slice(7, 14)];
+        const Base = pick([Error, TypeError, RangeError, DOMException]);
+        class Split extends Base {}
+        const shape = pick(["own", "getter", "inherited", "json"] as const);
+        if (shape === "getter")
+          Object.defineProperty(Split.prototype, "name", { get: () => second, configurable: true });
+        if (shape === "inherited")
+          Object.defineProperty(Split.prototype, "name", { value: second, configurable: true });
+        const error = new Split();
+        if (shape === "own")
+          Object.defineProperties(error, {
+            name: { value: first, enumerable: true, configurable: true },
+            message: { value: second, enumerable: true, configurable: true },
+          });
+        else if (shape === "json")
+          Object.defineProperty(error, "name", { value: JSON.stringify([first, second]), configurable: true });
+        else Object.defineProperty(error, "prefix", { value: first, enumerable: true });
+        return Object.assign(error, { cause: make(depth) });
+      },
     ];
     function make(depth: number): unknown {
       return depth > 3 || next() < 0.45 ? pick(leaves)() : pick(containers)(depth + 1);
@@ -1723,7 +1761,7 @@ describe("review round 5", () => {
       for (const out of [secrets.redact(input), redactAgentOutput(secrets, input)]) {
         expect(nonJson(out), `round ${round}`).toEqual([]);
         // What JSON shows, and every field name and string an in-process read can reach.
-        for (const text of [wire(out), everyText(out).join("\n")]) {
+        for (const text of [wire(out), everyText(out).join("\n"), everyValue(out).join("")]) {
           expect(text, `round ${round}`).not.toContain(token);
           expect(leakedRun(text, token), `round ${round}`).toBeUndefined();
         }
@@ -1996,6 +2034,164 @@ describe("review round 6", () => {
     );
     const typed = carryFailureFacts(original, new ConnectorCallError("connector_call_failed", "public"));
     expect(failureRecord({}, secrets.redact(typed))).toMatchObject({ errorClass: "RoundSixHttpError" });
+  });
+});
+
+describe("review round 7", () => {
+  const credential = "Q8!wZ2?A7@vR4#";
+  // DOMException is typed apart from the Error constructors; every base here is an Error at runtime.
+  const bases = [Error, TypeError, RangeError, DOMException] as ErrorConstructor[];
+  const [head, tail] = [credential.slice(0, 7), credential.slice(7)];
+  const sent = () => {
+    const secrets = new SentSecrets();
+    secrets.add(credential);
+    return secrets;
+  };
+  /** Every leaf an in-process read reaches, in property order and without names, so adjacent
+   * leaves concatenate as the projection joins them. */
+  const joined = (value: unknown): string => everyValue(value).join("");
+
+  it("INV-5: an error name off the allowlist joins the projection, so a credential split across it and a neighbour is withheld", () => {
+    for (const Base of bases) {
+      // Own name, then message.
+      class Own extends Base {}
+      const own = new Own();
+      delete own.stack;
+      Object.defineProperties(own, {
+        name: { value: head, enumerable: true, configurable: true },
+        message: { value: tail, enumerable: true, configurable: true },
+      });
+      // A custom field, then the name a prototype answers, as an accessor or a data field. On a
+      // DOMException the message and code its prototype answers come between them.
+      class Getter extends Base {
+        override get name() {
+          return tail;
+        }
+      }
+      class Inherited extends Base {}
+      Object.defineProperty(Inherited.prototype, "name", { value: tail, configurable: true });
+      const after = [new Getter("public"), new Inherited("public")].map((error) => {
+        delete error.stack;
+        return Object.defineProperty(error, "prefix", { value: head, enumerable: true });
+      });
+      // A name holding both halves as JSON, adjacent inside it.
+      class Nested extends Base {}
+      const nested = Object.defineProperty(new Nested("public"), "name", {
+        value: JSON.stringify([head, tail]),
+        configurable: true,
+      });
+      delete nested.stack;
+      for (const error of [own, ...(Base === (DOMException as unknown) ? [] : after), nested]) {
+        const label = `${Base.name}/${Object.getPrototypeOf(error).constructor.name}`;
+        const copy = sent().redact(error);
+        // Any part of the name changed withholds it whole; the copy keeps its class.
+        expect(copy.name, label).toBe(MARK);
+        expect(Object.getPrototypeOf(copy) === Object.getPrototypeOf(error), label).toBe(true);
+        expect(joined(copy), label).not.toContain(head);
+        expect(joined(copy), label).not.toContain(tail);
+        expect(JSON.stringify(copy), label).not.toContain(head);
+      }
+    }
+  });
+
+  it("INV-5: the reviewer's allowlist probes: hostile names, constructor and toStringTag spoofing", () => {
+    for (const Base of bases)
+      for (const kind of ["own", "getter", "inherited"] as const)
+        for (const name of [credential, btoa(`x${credential}z`), `echo=x+${btoa(credential)}`]) {
+          class Spoof extends Base {}
+          const error = new Spoof("public");
+          // workerd gives a DOMException an own name, which would shadow the prototype's.
+          if (kind !== "own") Reflect.deleteProperty(error, "name");
+          if (kind === "own")
+            Object.defineProperty(error, "name", { value: name, enumerable: true, configurable: true });
+          else
+            Object.defineProperty(
+              Spoof.prototype,
+              "name",
+              kind === "getter" ? { get: () => name, configurable: true } : { value: name, configurable: true },
+            );
+          Object.defineProperty(error, "constructor", { value: TypeError });
+          Object.defineProperty(error, Symbol.toStringTag, { value: "TypeError" });
+          const copy = sent().redact(error);
+          expect(copy.name, `${Base.name}/${kind}/${name}`).toBe(MARK);
+          expect(Object.getOwnPropertySymbols(copy)).toEqual([]);
+        }
+    const fake = { name: credential, constructor: TypeError, [Symbol.toStringTag]: "Error" };
+    expect(sent().redact(fake).name).toBe(MARK);
+  });
+
+  it("INV-5: the reviewer's field probes: stack, message, cause, members, hidden, symbol and function fields", () => {
+    const root = new AggregateError([new Error(credential), { echo: credential }], credential, {
+      cause: new Error(credential),
+    });
+    Object.defineProperties(root, {
+      stack: { value: credential, configurable: true },
+      hidden: { value: credential, enumerable: false },
+      [credential]: { value: credential, enumerable: false },
+      custom: { value: { echo: credential }, enumerable: true },
+      fn: { value: Object.assign(() => null, { toJSON: () => credential }), enumerable: true },
+      [Symbol(credential)]: { value: credential, enumerable: true },
+    });
+    const clean = sent().redact(root) as AggregateError & { hidden: unknown; fn: unknown };
+    expect(everyText(clean).join("\n")).not.toContain(credential);
+    expect(Object.getOwnPropertySymbols(clean)).toEqual([]);
+    expect((clean.cause as Error).message).toBe(MARK);
+    expect((clean.errors[0] as Error).message).toBe(MARK);
+    expect([clean.hidden, clean.fn]).toEqual([MARK, MARK]);
+    const cyclic: Error = new Error(credential);
+    cyclic.cause = cyclic;
+    const cycle = sent().redact(cyclic);
+    expect([cycle.cause, cycle.message]).toEqual([MARK, MARK]);
+    // A class accessor is read once, and the copy holds its checked answer.
+    let calls = 0;
+    class Counted extends Error {
+      get custom() {
+        calls++;
+        return credential;
+      }
+    }
+    const counted = new Counted("public");
+    delete counted.stack;
+    const copy = sent().redact(counted);
+    expect([copy.custom, copy.custom, calls]).toEqual([MARK, MARK, 1]);
+  });
+
+  it("INV-5: allowlisted names stay exempt and clean names stand beside a withheld neighbour", () => {
+    const secrets = sent();
+    for (const error of [
+      new TypeError(credential),
+      new DOMException(credential, "AbortError"),
+      new ConnectorCallError("connector_call_failed", credential),
+      new UnauthorizedError(credential),
+    ]) {
+      const copy = secrets.redact(error);
+      expect([copy.name, copy.message], error.name).toEqual([error.name, MARK]);
+    }
+    // An unregistered name that matches nothing is kept beside a message that does.
+    const plain = secrets.redact(Object.assign(new Error(credential), { name: "Plain" }));
+    expect([plain.name, plain.message]).toEqual(["Plain", MARK]);
+    // A name off the allowlist is withheld only when the projection changes part of it.
+    const clean = Object.assign(new Error("public"), { name: JSON.stringify(["Plain", "Name"]) });
+    expect(secrets.redact(clean).name).toBe(clean.name);
+  });
+
+  it("INV-5: an error whose split name is withheld keeps its class and the identity facts registered beside it", () => {
+    class RoundSevenHttpError extends Error {}
+    labelErrorClass(RoundSevenHttpError, "RoundSevenHttpError");
+    const original = new RoundSevenHttpError();
+    delete original.stack;
+    Object.defineProperties(original, {
+      name: { value: head, enumerable: true, configurable: true },
+      message: { value: tail, enumerable: true, configurable: true },
+    });
+    attachFailureFacts(original, { httpStatus: 502, origin: "https://api.example.com" });
+    const copy = sent().redact(original);
+    expect(copy).toBeInstanceOf(RoundSevenHttpError);
+    expect([copy.name, copy.message]).toEqual([MARK, MARK]);
+    expect(failureRecord({}, copy)).toEqual(failureRecord({}, original));
+    expect(failureRecord({}, copy)).toMatchObject({ errorClass: "RoundSevenHttpError", httpStatus: 502 });
+    const typed = carryFailureFacts(original, new ConnectorCallError("connector_call_failed", "public"));
+    expect(failureRecord({}, sent().redact(typed))).toMatchObject({ errorClass: "RoundSevenHttpError" });
   });
 });
 

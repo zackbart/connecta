@@ -1823,7 +1823,8 @@ export class SentSecrets {
    * go through the same checker alone. Fixed framing words and tags, outcome booleans, and on an
    * error its classification code and a name its registered class gives it (redaction-identity's
    * fixed allowlist) are kept: nothing downstream chooses them. Every other field is matched,
-   * whatever its name, and an error's other name is withheld whole when anything in it matches.
+   * whatever its name; an error's other name is projected like any field and withheld whole when
+   * anything changes any part of it.
    *
    * What returns is what was checked, and only JSON data: strings, numbers, booleans, null,
    * plain objects and arrays, a fresh built-in Uint8Array, and error copies. A caller's container
@@ -1869,6 +1870,8 @@ export class SentSecrets {
     const active = new Set<object>();
     // Keys and scalars repeat across rows; each is checked once per call.
     const seen = { keys: new Map<string, string>(), scalars: new Map<string, string>() };
+    // Errors' unregistered names, as walked: a copy whose name changed holds the placeholder.
+    const named: [copy: Holder, slot: string, name: string][] = [];
     // Typed binary: where its copy was put, and the leaves its numbers and bytes span.
     const binaries: [frame: Frame, slot: PropertyKey, owner: number, start: number, end: number][] = [];
     // The accessors each prototype's chain defines, found once per call.
@@ -2221,12 +2224,15 @@ export class SentSecrets {
           (error && typeof value === "string" && key === "code" && classificationCode(value) !== undefined)
         )
           next = value;
-        // An error's name is kept only as one its registered class gives it. Any other is checked
-        // and withheld whole when anything in it matches; the copy keeps its class.
-        else if (error && key === "name" && typeof value === "string")
-          next = keptErrorName(prototype, value) || check(seen.keys, value, TEXT) === value ? value : REDACTED;
+        // An error's name is kept only as one its registered class gives it. Any other is a field
+        // like any other, projected with its neighbours, and withheld whole once anything changes
+        // any part of it; the copy keeps its class.
+        else if (error && key === "name" && typeof value === "string" && keptErrorName(prototype, value)) next = value;
         else if (typeof value === "string" && binaryField(field, key)) next = declared(value, target, name, owner);
-        else next = visit(value, target, name, depth + 1, level, owner, owned);
+        else {
+          next = visit(value, target, name, depth + 1, level, owner, owned);
+          if (error && key === "name" && typeof value === "string" && target === own) named.push([out, name, value]);
+        }
         if (target !== own) continue;
         if (!plain) put(out, name, next, extra ? false : visible[index]);
         else if (next !== value) settle(own, name, next, owner);
@@ -2282,6 +2288,7 @@ export class SentSecrets {
       put(writable(entry.frame as Frame), entry.slot, entry.crossing ? REDACTED : JSON.stringify(entry.json));
       touch(entry.owner);
     }
+    for (const [copy, slot, name] of named) if (copy[slot] !== name) put(copy, slot, REDACTED);
     return { value: (root.target as Holder)["value"], changed };
   }
 }

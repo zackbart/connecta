@@ -1518,10 +1518,14 @@ JSON-RPC envelope member names, tag values such as a content `type` or result
 `truncated`, `hasMore`), and, on an error, its classification code and a fixed
 name: one a built-in error, `DOMException` (`DOMException`, `AbortError`,
 `TimeoutError`), Connecta's own classes, or the pinned MCP SDK's classes give
-their instances. Any other error `name`, including one a custom class gives
-itself, is checked like text and replaced whole by `[redacted]` when anything in
-it matches; the copy keeps its class, so classification and identity facts
-still see it. A number or a string under any name,
+their instances. Any other error `name`, own or inherited, a data field or an
+accessor's answer, including one a custom class gives itself, is a leaf of the
+projection like any other field: it is matched joined with the fields beside it
+and through any JSON it holds, and replaced whole by `[redacted]` when anything
+changes any part of it. The copy keeps its class, so classification and
+identity facts still see it. An error's fields are joined in its copy's order:
+its own fields, then what its class answers for `stack`, `message`, `cause`,
+`code` and `name`, then the other accessors its class defines. A number or a string under any name,
 such as `retryAfterMs` or a plain object's `code`, is matched like any other
 value; a matching typed number on an error is dropped. Relay states and connect
 links Connecta minted are kept whole. The agent boundary around Connecta's own

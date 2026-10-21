@@ -334,6 +334,40 @@ it("INV-5: an error whose class and instance name a credential reaches the Quick
   expect(JSON.stringify(seen.structuredContent)).not.toContain(token.slice(0, 7));
 });
 
+it("INV-5: a credential split across an error's own name and message reaches the QuickJS guest only checked", async () => {
+  const token = "Q8!wZ2?A7@vR4#";
+  const split = () => {
+    class SplitError extends Error {}
+    const error = new SplitError();
+    delete error.stack;
+    return Object.defineProperties(error, {
+      name: { value: token.slice(0, 7), enumerable: true, configurable: true, writable: true },
+      message: { value: token.slice(7), enumerable: true, configurable: true, writable: true },
+    });
+  };
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).add(token);
+      return { value: split() };
+    },
+  };
+  const execute = createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger);
+  // The review's program: each half is below K, so only what the guest received decides.
+  const review = await execute({ code: 'async () => (await connecta.call("wire.read")).data.value.name.slice(0, 7)' });
+  expect(review.isError, JSON.stringify(review.structuredContent)).toBeFalsy();
+  expect(review.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
+  const joined = await execute({
+    code: 'async () => { const v = (await connecta.call("wire.read")).data.value; return v.name + v.message; }',
+  });
+  const seen = JSON.stringify(joined.structuredContent);
+  for (const half of [token.slice(0, 7), token.slice(7)]) expect(seen).not.toContain(half);
+});
+
 it.each([
   [
     "a function with a toJSON",
