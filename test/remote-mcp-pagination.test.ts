@@ -27,14 +27,16 @@ const OPAQUE_CURSOR = "eyJwIjoyfQ==?page=2&next=/a\\b c%20";
 const EMPTY_CURSOR = "";
 
 /**
- * The tool ceiling `src/connectors/remote-mcp.ts` enforces, restated here so
- * moving it has to come past these tests on purpose: it is what a refresh
- * holds in memory.
+ * The two ceilings `src/connectors/remote-mcp.ts` enforces, restated here so
+ * moving either has to come past these tests on purpose. The tool ceiling is
+ * the real bound (it is what a refresh holds in memory); the page ceiling is a
+ * runaway backstop no honest server reaches.
  */
 const MAX_TOOLS = 100_000;
-// The walk to that ceiling is 100,001 tools: CPU-bound, with no timing
-// behavior, and on a loaded host it outran vitest's 5s default. Its budget is
-// a hang guard, not a speed assertion.
+const MAX_TOOL_PAGES = 10_000;
+// The walks to those ceilings are 100,001 tools or 10,000 in-memory round trips:
+// CPU-bound, with no timing behavior, and on a loaded host they outran
+// vitest's 5s default. Their budget is a hang guard, not a speed assertion.
 const CEILING_WALK_TIMEOUT_MS = 30_000;
 
 function tool(name: string, extra: Partial<Tool> = {}): Tool {
@@ -333,6 +335,22 @@ describe("remoteMcp() tools/list pagination", () => {
       // The bound is on what the walk accumulates, so it fires before the second
       // request rather than after some number of pages.
       expect(cursors).toEqual([undefined]);
+    },
+    CEILING_WALK_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps an absolute page backstop for a server that satisfies every other guard",
+    async () => {
+      const { connector, cursors } = fixture((_cursor, call) => ({
+        tools: [tool(`t${call}`)],
+        nextCursor: `cursor-${call}`,
+      }));
+
+      // Fresh cursor, a genuinely new tool, every page: no loop, no stall, and
+      // nowhere near the tool ceiling. Nothing but the backstop ends this.
+      await expect(connector.listTools(ctx())).rejects.toThrow(/failed/);
+      expect(cursors).toHaveLength(MAX_TOOL_PAGES);
     },
     CEILING_WALK_TIMEOUT_MS,
   );

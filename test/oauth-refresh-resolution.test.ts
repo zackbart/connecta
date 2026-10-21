@@ -14,6 +14,29 @@ const spent = async (storage: KVStorage) =>
   JSON.parse((await storage.get(await spentKey()))!) as { state: string; epoch: string; resolvedAt?: number };
 
 describe("native SDK refresh resolution on delayed storage", () => {
+  it("keeps expiry ambiguous across Restart and a late definitive answer (INV-5) (INV-9)", async () => {
+    const endpoint = await nativeOAuthServer("sdk-pending-first");
+    const storage = store(true);
+    const a = await adapter("remoteMcp", endpoint.issuer, storage);
+    const first = a.read().catch((error: unknown) => error);
+    await vi.waitFor(async () => expect(await endpoint.sent()).toEqual([refresh]));
+    const outstanding = JSON.parse((await storage.get(await spentKey()))!) as { activeKey: string };
+    await a.exchange();
+    // Simulate storage-owned expiry after reset swept the epoch's lease.
+    await storage.delete(outstanding.activeKey);
+    const fresh = await adapter("remoteMcp", endpoint.issuer, storage, false);
+    await expect(fresh.read()).rejects.toSatisfy(required);
+    const ambiguous = await storage.get(await spentKey());
+    expect(await spent(storage)).toMatchObject({ state: "ambiguous", epoch: "v3:seeded" });
+    await endpoint.finish();
+    await first;
+    expect(await storage.get(await spentKey())).toBe(ambiguous);
+    await a.exchange();
+    const later = await adapter("remoteMcp", endpoint.issuer, storage, false);
+    await expect(later.read()).rejects.toSatisfy(required);
+    expect(await endpoint.sent()).toEqual([refresh, consent, consent]);
+  });
+
   describe.each(["remoteMcp", "api"] as const)("%s", (kind) => {
     it("blocks a held refresh across Restart and identical-token consent, including after the earlier refresh resolves (INV-5) (INV-9)", async () => {
       const endpoint = await nativeOAuthServer("sdk-pending-first");
