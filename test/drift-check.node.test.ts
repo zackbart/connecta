@@ -1,4 +1,5 @@
 // Node-only: spawns the Node maintainer drift checker against filesystem fixtures.
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { execFile, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -1922,5 +1923,309 @@ describe("public hosted catalog drift", () => {
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
+  });
+});
+
+describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_MS }, () => {
+  const day = (offset: number) => new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
+  const generated = (operations: string[] = [], hosted: string[] = []) => ({ operations, hosted, evidence: {} });
+  const v2 = (checks: unknown[], extra: object = {}) => ({
+    version: 2,
+    provider: "vendor",
+    generated: generated(),
+    checks,
+    ...extra,
+  });
+  const manual = (lastVerified: string) => ({
+    type: "manual",
+    source: "https://vendor.example/reference",
+    reason: "The reference is hand-written HTML.",
+    lastVerified,
+  });
+  const evidenceInvalid = (report: any) =>
+    [...report.specs, ...report.docs, ...report.manual, ...report.records].flatMap((entry: any) => entry.findings);
+
+  it("reports a manual check's reason, and lists it as stale after 180 days without failing on the calendar", async () => {
+    const directory = await recordWorkspace({ vendor: v2([manual(day(10)), manual(day(200))]) });
+    const report = JSON.parse(reportFor(directory).output);
+    expect(report.manual).toEqual([
+      expect.objectContaining({
+        check: 0,
+        lastVerified: day(10),
+        findings: [{ kind: "manual-required", detail: "The reference is hand-written HTML." }],
+      }),
+      expect.objectContaining({
+        check: 1,
+        findings: [
+          { kind: "manual-required", detail: "The reference is hand-written HTML." },
+          { kind: "manual-stale", detail: expect.stringMatching(/^last verified \d{4}-\d{2}-\d{2}, 200 days ago/) },
+        ],
+      }),
+    ]);
+    // Advisory: findings exit 0 unless --strict.
+    expect(reportFor(directory).status).toBe(0);
+  });
+
+  it.each([
+    ["a future lastVerified", { ...manual(day(1)), lastVerified: day(-2) }],
+    ["a rationale", { type: "manual", source: "https://vendor.example", rationale: "Prose.", lastVerified: day(1) }],
+    ["a nested reviewedAt", { ...manual(day(1)), evidence: { reviewedAt: day(1) } }],
+    ["an http source", { ...manual(day(1)), source: "http://vendor.example" }],
+    [
+      "a reviewed list",
+      {
+        type: "mcp-docs",
+        setup: "https://vendor.example/mcp",
+        endpoints: ["https://mcp.vendor.example"],
+        reviewed: ["a"],
+      },
+    ],
+    [
+      "a legacy catalog",
+      { type: "mcp-catalog", endpoint: "https://mcp.vendor.example", catalog: "catalog.fixture.json" },
+    ],
+    ["a legacy pin", { type: "openapi-index", source: "openapi.source.json" }],
+  ])("refuses %s in a version 2 check as invalid evidence", async (_label, check) => {
+    const directory = await recordWorkspace({ vendor: v2([check]) });
+    expect(evidenceInvalid(JSON.parse(reportFor(directory).output))).toEqual([
+      expect.objectContaining({ kind: "evidence-invalid" }),
+    ]);
+  });
+
+  it("refuses a version 2 record whose generated block providers:generate did not write", async () => {
+    const directory = await recordWorkspace({
+      vendor: { version: 2, provider: "vendor", checks: [manual(day(1))] },
+      other: {
+        ...v2([manual(day(1))]),
+        provider: "other",
+        generated: { operations: ["b", "a"], hosted: [], evidence: {} },
+      },
+    });
+    const report = JSON.parse(reportFor(directory).output);
+    expect(report.records.map((entry: any) => [entry.provider, entry.findings[0].detail])).toEqual([
+      ["other", expect.stringContaining("needs the generated operations, hosted, and evidence")],
+      ["vendor", expect.stringContaining("needs the generated operations, hosted, and evidence")],
+    ]);
+  });
+
+  it("compares a public catalog with evidence/catalog.json, names and all four hints, missing hints included", async () => {
+    const directory = await recordWorkspace({
+      vendor: v2([
+        { type: "mcp-catalog", endpoint: "https://mcp.vendor.example/mcp", catalog: "evidence/catalog.json" },
+      ]),
+    });
+    await mkdir(join(directory, "vendor", "evidence"));
+    const capture = {
+      capturedAt: day(1),
+      method: "tools/list",
+      source: "https://mcp.vendor.example/mcp",
+      tools: [
+        { name: "edit_item", annotations: { readOnlyHint: false, destructiveHint: true } },
+        { name: "read_item", annotations: { readOnlyHint: true } },
+        { name: "silent_item" },
+      ],
+    };
+    await writeFile(join(directory, "vendor", "evidence", "catalog.json"), JSON.stringify(capture));
+    const live = join(directory, "live.json");
+    await writeFile(
+      live,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          tools: [
+            { name: "read_item", annotations: { readOnlyHint: true, idempotentHint: true } },
+            { name: "silent_item" },
+            { name: "new_item", annotations: { readOnlyHint: true } },
+          ],
+        },
+      }),
+    );
+    const run = () =>
+      spawnSync(
+        process.execPath,
+        [checker, "--docs", "--provider-dir", directory, "--tool-reference", `vendor=${live}`, "--json"],
+        {
+          encoding: "utf8",
+        },
+      );
+    const before = await readFile(join(directory, "vendor", "drift.json"), "utf8");
+    expect(JSON.parse(run().stdout).docs[0].findings).toEqual([
+      { kind: "catalog-annotations", detail: "read_item: behavioral annotations changed" },
+      { kind: "catalog-added", detail: "new_item" },
+      { kind: "catalog-removed", detail: "edit_item" },
+    ]);
+    expect(await readFile(join(directory, "vendor", "drift.json"), "utf8")).toBe(before);
+    await writeFile(
+      join(directory, "vendor", "evidence", "catalog.json"),
+      JSON.stringify({ ...capture, method: "documentation" }),
+    );
+    expect(JSON.parse(run().stdout).docs[0].findings).toEqual([
+      expect.objectContaining({
+        kind: "evidence-invalid",
+        detail: expect.stringContaining("not a tools/list capture"),
+      }),
+    ]);
+  });
+
+  it("reads documented hosted names against generated.hosted, never a hand-kept list", async () => {
+    const endpoint = "https://mcp.vendor.example/mcp";
+    const directory = await recordWorkspace({
+      vendor: v2(
+        [
+          {
+            type: "mcp-docs",
+            setup: "https://vendor.example/setup",
+            endpoints: [endpoint],
+            inventory: { url: "https://vendor.example/tools", format: "inline" },
+          },
+        ],
+        { generated: generated([], ["list_items", "retired_item"]) },
+      ),
+    });
+    const tools = join(directory, "tools.md");
+    const setup = join(directory, "setup.md");
+    await writeFile(tools, "Tools: `list_items`, `new_item`.");
+    await writeFile(setup, `Connect to ${endpoint} with OAuth.`);
+    const result = spawnSync(
+      process.execPath,
+      [
+        checker,
+        "--docs",
+        "--provider-dir",
+        directory,
+        "--tool-reference",
+        `vendor=${tools}`,
+        "--setup-reference",
+        `vendor=${setup}`,
+        "--json",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(JSON.parse(result.stdout).docs[0]).toMatchObject({
+      added: ["new_item"],
+      removed: ["retired_item"],
+      findings: [],
+    });
+  });
+
+  it("keys endpoint rows by operation, records them in that spelling, and reports a manifest operation no row covers", async () => {
+    const pages = await mkdtemp(join(tmpdir(), "connecta-drift-pages-"));
+    temporary.push(pages);
+    const page = (method: string, path: string, marker = path) =>
+      [
+        "# OpenAPI definition",
+        "",
+        "```json",
+        JSON.stringify({
+          openapi: "3.1.0",
+          info: { version: "7" },
+          paths: { [path]: { [method]: operation(marker) } },
+        }),
+        "```",
+      ].join("\n");
+    await writeFile(join(pages, "list-items.md"), page("get", "/items"));
+    await writeFile(join(pages, "create-item.md"), page("post", "/items"));
+    const record = v2(
+      [
+        {
+          type: "endpoints",
+          specification: { url: "https://docs.vendor.example/reference/", format: "readme-operation-pages" },
+          endpoints: [
+            { operation: "GET /items", page: "list-items", specRevision: "0" },
+            { operation: "POST /items", page: "create-item", specRevision: "0" },
+          ],
+        },
+      ],
+      {
+        generated: {
+          operations: ["DELETE /items/{id}", "GET /items", "POST /items"],
+          hosted: [],
+          evidence: { "openapi.json": `sha256:${"0".repeat(64)}` },
+        },
+      },
+    );
+    const directory = await recordWorkspace({ vendor: record });
+    const run = (extra: string[] = []) =>
+      spawnSync(
+        process.execPath,
+        [
+          checker,
+          "--specs",
+          "--provider-dir",
+          directory,
+          "--provider",
+          "vendor",
+          "--spec",
+          `vendor=${pages}`,
+          "--json",
+          ...extra,
+        ],
+        { encoding: "utf8" },
+      );
+    const unrecorded = {
+      kind: "operation-unrecorded",
+      method: "DELETE",
+      path: "/items/{id}",
+      detail: expect.any(String),
+    };
+    expect(JSON.parse(run(["--record"]).stdout).specs[0].findings).toEqual([unrecorded]);
+    const path = join(directory, "vendor", "drift.json");
+    const text = await readFile(path, "utf8");
+    const recorded = JSON.parse(text);
+    expect(Object.keys(recorded)).toEqual(["version", "provider", "generated", "checks"]);
+    expect(recorded.generated).toEqual(record.generated);
+    expect(recorded.checks[0].endpoints).toEqual([
+      { operation: "GET /items", page: "list-items", specRevision: "7", contract: expect.stringMatching(/^sha256:/) },
+      { operation: "POST /items", page: "create-item", specRevision: "7", contract: expect.stringMatching(/^sha256:/) },
+    ]);
+    expect(text).toBe(`${JSON.stringify(recorded, null, 2)}\n`);
+    expect(JSON.parse(run().stdout).specs[0].findings).toEqual([unrecorded]);
+    await writeFile(join(pages, "create-item.md"), page("post", "/items", "changed"));
+    expect(JSON.parse(run().stdout).specs[0].findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "contract-changed", method: "POST", path: "/items" })]),
+    );
+    for (const row of [
+      { method: "GET", path: "/items", specRevision: "0" },
+      { operation: "GET /unsent", specRevision: "0" },
+    ]) {
+      const invalid = await recordWorkspace({
+        vendor: {
+          ...record,
+          checks: [{ ...(record.checks[0] as object), endpoints: [{ ...row, page: "list-items" }] }],
+        },
+      });
+      expect(evidenceInvalid(JSON.parse(reportFor(invalid, ["--specs"]).output))).toEqual([
+        expect.objectContaining({ kind: "evidence-invalid", detail: expect.stringContaining("keyed by an operation") }),
+      ]);
+    }
+  });
+
+  it("checks an OpenAPI pin kept at evidence/openapi.json", async () => {
+    const document = JSON.stringify({ openapi: "3.1.0", info: { version: "1" }, paths: {} });
+    const digest = `sha256:${createHash("sha256").update(document).digest("hex")}`;
+    const directory = await recordWorkspace({
+      vendor: v2([{ type: "openapi-index", source: "evidence/openapi.json" }]),
+    });
+    await mkdir(join(directory, "vendor", "evidence"));
+    const pin = { url: "https://vendor.example/openapi.json", revision: "1", digest };
+    await writeFile(join(directory, "vendor", "evidence", "openapi.json"), JSON.stringify(pin));
+    const live = join(directory, "live.json");
+    await writeFile(live, document);
+    const run = () =>
+      JSON.parse(
+        spawnSync(
+          process.execPath,
+          [checker, "--specs", "--provider-dir", directory, "--spec", `vendor=${live}`, "--json"],
+          {
+            encoding: "utf8",
+          },
+        ).stdout,
+      ).specs[0].findings;
+    expect(run()).toEqual([]);
+    await writeFile(live, document.replace('"1"', '"2"'));
+    expect(run()).toEqual([
+      expect.objectContaining({ kind: "spec-drift", detail: expect.stringContaining("evidence/openapi.json") }),
+    ]);
   });
 });

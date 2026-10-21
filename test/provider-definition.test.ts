@@ -327,6 +327,120 @@ describe("defineProvider()", () => {
     });
   });
 
+  it("renders a standard guide's selected when-blocks per connection, closing the gaps unselected ones leave", () => {
+    type Options = ProviderOptions & { via?: "hosted" | "api" };
+    const guides: string[] = [];
+    const factory = defineProvider<Options>({
+      name: "acme-crm",
+      title: "Acme CRM",
+      kind: "dual",
+      skill: {
+        content: [
+          "## Identity",
+          "",
+          "Resolve ids before writing.",
+          "",
+          "<!-- when: hosted -->",
+          "Select the workspace first.",
+          "<!-- end -->",
+          "",
+          "## Conventions",
+          "",
+          "<!-- when: api -->",
+          "- **Results:** `fields` narrows a result.",
+          "<!-- end -->",
+          "- **Writes:** a write is sent once.",
+          "<!-- when: hosted -->",
+          "- **Hosted tools:** the catalog varies by plan.",
+          "<!-- end -->",
+        ].join("\n"),
+        instructionsHeading: "Account instructions",
+      },
+      blocks: { keys: ["api", "hosted"], select: (options) => [options.via ?? "hosted"] },
+      options: optionsOf<Options>()({ ...PROVIDER_COMMON, ...keys("via") }),
+      create(id, _options, provider) {
+        guides.push(provider.usageGuide({ context: ["Context."] }).content);
+        return stub(id);
+      },
+    });
+    factory("crm", { purpose: "Sales" });
+    factory("crm", { purpose: "Sales", via: "api" });
+    expect(guides).toEqual([
+      "# Acme CRM usage\n\nContext.\n\n## Identity\n\nResolve ids before writing.\n\nSelect the workspace first.\n\n" +
+        "## Conventions\n\n- **Writes:** a write is sent once.\n- **Hosted tools:** the catalog varies by plan.\n",
+      "# Acme CRM usage\n\nContext.\n\n## Identity\n\nResolve ids before writing.\n\n" +
+        "## Conventions\n\n- **Results:** `fields` narrows a result.\n- **Writes:** a write is sent once.\n",
+    ]);
+    expect(Object.isFrozen(factory.definition.blocks)).toBe(true);
+    expect(Object.isFrozen(factory.definition.blocks!.keys)).toBe(true);
+  });
+
+  it("INV-11: refuses a guide's malformed or undeclared when-blocks at load, and an undeclared selection at construction", () => {
+    const base = {
+      name: "acme",
+      title: "Acme",
+      kind: "api" as const,
+      skill: SKILL,
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
+      create: stub,
+    };
+    const guide = (content: string) => ({ content, instructionsHeading: "Notes" });
+    const select = () => ["api"];
+    const cases: Array<[object, string]> = [
+      [{ skill: guide("<!-- when: api -->\nText.\n<!-- end -->") }, 'uses the when-block "api" its blocks omit'],
+      [
+        { skill: guide("<!-- when: region -->\nText.\n<!-- end -->"), blocks: { keys: ["api"], select } },
+        'uses the when-block "region" its blocks omit',
+      ],
+      [{ skill: guide("<!-- when: api -->\nText."), blocks: { keys: ["api"], select } }, "is never closed"],
+      [
+        { skill: guide("<!-- when: api -->\n<!-- when: api -->\n<!-- end -->"), blocks: { keys: ["api"], select } },
+        "open and close in turn, unnested",
+      ],
+      [
+        { skill: guide("Text <!-- when: api -->x<!-- end -->"), blocks: { keys: ["api"], select } },
+        "alone on its line",
+      ],
+      [{ blocks: { keys: [], select } }, "blocks require unique lowercase keys"],
+      [{ blocks: { keys: ["api", "api"], select } }, "blocks require unique lowercase keys"],
+      [{ blocks: { keys: ["API"], select } }, "blocks require unique lowercase keys"],
+      [{ blocks: { keys: ["api"] } }, "blocks require unique lowercase keys and a select function"],
+    ];
+    for (const [patch, message] of cases) {
+      expect(() => defineProvider({ ...base, ...patch } as never)).toThrow(message);
+    }
+    const factory = defineProvider<ProviderOptions>({
+      ...base,
+      skill: guide("<!-- when: api -->\nText.\n<!-- end -->"),
+      blocks: { keys: ["api"], select: () => ["hosted"] },
+      create(id, _options, provider) {
+        provider.usageGuide({ context: [] });
+        return stub(id);
+      },
+    });
+    expect(() => factory("crm", { purpose: "Sales" })).toThrow(
+      'acme("crm") requires blocks.select() to return declared keys; it returned hosted.',
+    );
+  });
+
+  it("freezes the kit facts providers:generate reads", () => {
+    const { factory } = sample();
+    expect(factory.definition.kit).toBeUndefined();
+    const operations = ["GET /a"];
+    const kit = defineProvider<ProviderOptions>({
+      name: "acme",
+      title: "Acme",
+      kind: "api",
+      skill: SKILL,
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
+      kit: { operations, pageSize: { default: 25, max: 100 }, hatch: { name: "acme", verdicts: { "GET /a": "read" } } },
+      create: stub,
+    }).definition.kit!;
+    operations.push("POST /b");
+    expect(kit.operations).toEqual(["GET /a"]);
+    expect(Object.isFrozen(kit) && Object.isFrozen(kit.operations) && Object.isFrozen(kit.hatch!.verdicts)).toBe(true);
+  });
+
   it("INV-11: rejects invalid common options before create runs", () => {
     const { factory, create } = sample();
     const bad: Array<[unknown, string]> = [

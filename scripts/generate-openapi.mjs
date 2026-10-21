@@ -1,18 +1,27 @@
 // Maintainer tooling, network-only: compile a provider's pinned OpenAPI
 // document into the compact operation index its REST connector ships.
 //
-// A provider opts in with `src/providers/<name>/openapi.source.json`:
+// A provider opts in with its pin, `evidence/openapi.json` under decision
+// 0011's evidence names (`openapi.source.json` in a folder that has not
+// landed its step 1):
 //
 //   { "url": "https://…/<pin>/openapi.json", "revision": "<pin>",
 //     "digest": "sha256:…", "latest": "https://…/openapi.json",
 //     "options": { "depth": 2, "descriptions": 160, "maxEnum": 50 } }
 //
+// `"vendored": true` pins a document the vendor publishes only in another
+// format (Mixpanel's YAML): `digest` is still of the vendor's bytes, which
+// `providers:check` compares, and the index is compiled offline from the
+// reviewed JSON conversion in `evidence/openapi.document.json`. A vendored
+// pin moves by review, never by `--record`.
+//
 // `options.versionHeader` names a header parameter (Notion's `Notion-Version`)
 // whose single value is the API version, for documents whose `info.version`
 // is not the version a request sends. `options.valueSafety` (`true`, or the
-// detector's options) also writes `value-safety.candidates.json`, the
-// operations the vendor's reviewed value-safety table must cover; every REST
-// vendor sets it.
+// detector's options) also writes the candidates file
+// (`evidence/value-safety.json`, or `value-safety.candidates.json` beside a
+// legacy pin), the operations the vendor's reviewed value-safety table must
+// cover; every REST vendor sets it.
 //
 // `pnpm run providers:spec` fetches `url`, refuses bytes whose digest differs
 // from the pin, and writes `openapi.generated.ts` beside it: every
@@ -22,7 +31,7 @@
 // Cloudflare's document alone is 27 MB, past every transport cap a Worker has.
 //
 // `--record` accepts a new pin: it computes the digest of whatever `url` now
-// serves and writes it to openapi.source.json. A document served from an
+// serves and writes it to the pin. A document served from an
 // unversioned URL is pinned by content: its revision is the digest's first 12
 // hex digits (`sha256:32399b3ed273`), and `--record` moves it with the digest. `--file <path>` reads the
 // document from disk instead of the network (tests, offline review).
@@ -31,7 +40,7 @@
 // header with its source record (`checkOpenApiOutputs`). `providers:check`
 // compares the pinned digest with `latest` and reports drift.
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
@@ -39,8 +48,13 @@ import { renderValueSafety, reviewedTable } from "./value-safety.mjs";
 
 /** Bump when the generated shape changes, so every output reads as stale. */
 export const OPENAPI_FORMAT = 4;
-const SOURCE = "openapi.source.json";
 const OUTPUT = "openapi.generated.ts";
+const STANDARD = {
+  pin: "evidence/openapi.json",
+  document: "evidence/openapi.document.json",
+  candidates: "evidence/value-safety.json",
+};
+const LEGACY = { pin: "openapi.source.json", candidates: "value-safety.candidates.json" };
 const VERBS = ["get", "head", "post", "put", "patch", "delete"];
 const DEFAULT_DEPTH = 2;
 /** Characters kept from a top-level property or parameter description; nested ones are dropped. */
@@ -58,22 +72,47 @@ export function sha256(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where a provider keeps its OpenAPI evidence, relative to its folder: the
+ * standard names (decision 0011, E) or, until its step 1, the legacy ones.
+ * Undefined when it pins no document; a folder with both pins is refused.
+ */
+export async function openApiEvidence(directory) {
+  const [standard, legacy] = await Promise.all([
+    exists(join(directory, STANDARD.pin)),
+    exists(join(directory, LEGACY.pin)),
+  ]);
+  if (standard && legacy) throw new Error(`${directory} pins OpenAPI twice: keep ${STANDARD.pin} only`);
+  return standard ? STANDARD : legacy ? LEGACY : undefined;
+}
+
 /** Read and validate one provider's source record; undefined when it has none. */
 export async function readOpenApiSource(directory) {
-  let text;
-  try {
-    text = await readFile(join(directory, SOURCE), "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return undefined;
-    throw error;
-  }
-  const source = JSON.parse(text);
+  const names = await openApiEvidence(directory);
+  if (!names) return undefined;
+  const path = join(directory, names.pin);
+  const source = JSON.parse(await readFile(path, "utf8"));
   const nonempty = (value) => typeof value === "string" && value.trim() !== "";
   if (!nonempty(source?.url) || !nonempty(source.revision) || !/^sha256:[0-9a-f]{64}$/.test(source.digest ?? "")) {
-    throw new Error(`${join(directory, SOURCE)} requires url, revision, and a sha256 digest`);
+    throw new Error(`${path} requires url, revision, and a sha256 digest`);
   }
   if (source.latest !== undefined && !nonempty(source.latest)) {
-    throw new Error(`${join(directory, SOURCE)} latest must be a non-empty URL when set`);
+    throw new Error(`${path} latest must be a non-empty URL when set`);
+  }
+  if (source.vendored !== undefined && (source.vendored !== true || names === LEGACY)) {
+    throw new Error(`${path} vendored is true, beside ${STANDARD.document}, or absent`);
+  }
+  if (source.vendored === true && !(await exists(join(directory, STANDARD.document)))) {
+    throw new Error(`${path} is vendored but ${STANDARD.document} is missing`);
   }
   return source;
 }
@@ -490,9 +529,9 @@ function optionsText(source) {
   return JSON.stringify(source.options ?? {});
 }
 
-export function renderOpenApiModule(data, source) {
+export function renderOpenApiModule(data, source, pin = LEGACY.pin) {
   const header = [
-    "// Generated by scripts/generate-openapi.mjs from openapi.source.json; do not edit.",
+    `// Generated by scripts/generate-openapi.mjs from ${pin}; do not edit.`,
     `// source: ${data.source}`,
     `// revision: ${data.revision}`,
     `// digest: ${data.digest}`,
@@ -549,7 +588,7 @@ export async function checkOpenApiOutputs(root, providers) {
       if (error.code !== "ENOENT") throw error;
     }
     if (source === undefined) {
-      if (text !== undefined) stale.push(`${output.slice(root.length + 1)} (no ${SOURCE})`);
+      if (text !== undefined) stale.push(`${output.slice(root.length + 1)} (no OpenAPI pin)`);
       continue;
     }
     const header = text === undefined ? undefined : generatedHeader(text);
@@ -570,6 +609,73 @@ async function fetchDocument(url) {
   const response = await fetch(url, { redirect: "follow" });
   if (!response.ok) throw new Error(`${url} answered HTTP ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
+}
+
+/**
+ * Compile one provider's pinned document into `openapi.generated.ts`, and
+ * its value-safety candidates when the pin opts in. Returns a one-line
+ * summary and the reviewed table paths that do not resolve (a failure).
+ */
+export async function specProvider(provider, { file, record = false } = {}) {
+  const names = await openApiEvidence(provider.directory);
+  const source = await readOpenApiSource(provider.directory);
+  if (!names || !source) throw new Error(`providers/${provider.name} has no OpenAPI pin`);
+  let bytes;
+  if (source.vendored === true) {
+    if (record || file) {
+      throw new Error(
+        `providers/${provider.name}: a vendored pin moves by review; replace ${STANDARD.document} and the pin together`,
+      );
+    }
+    bytes = new Uint8Array(await readFile(join(provider.directory, STANDARD.document)));
+  } else {
+    bytes = file ? new Uint8Array(await readFile(resolve(file))) : await fetchDocument(source.url);
+    const digest = sha256(bytes);
+    if (digest !== source.digest) {
+      if (!record) {
+        throw new Error(
+          `providers/${provider.name}: ${source.url} digest ${digest} does not match the pinned ${source.digest}. ` +
+            "Review the change, then run with --record to accept the new pin.",
+        );
+      }
+      // An unversioned document (Vercel's) is pinned by its own content: a
+      // revision spelled as the digest's prefix moves with the digest.
+      if (source.revision === source.digest.slice(0, 19)) source.revision = digest.slice(0, 19);
+      source.digest = digest;
+      await writeFile(join(provider.directory, names.pin), `${JSON.stringify(source, null, 2)}\n`);
+    }
+  }
+  const document = JSON.parse(new TextDecoder().decode(bytes));
+  const data = buildOperationIndex(document, source);
+  await writeFile(join(provider.directory, OUTPUT), renderOpenApiModule(data, source, names.pin));
+  // The operations whose responses may carry credentials or secret values,
+  // for the provider's reviewed value-safety table (value-safety.mjs and
+  // src/providers/_shared/rest/value-safety.ts). Every REST vendor opts in.
+  // The reviewed table's paths are checked against the pinned response
+  // schemas too: a path that names nothing the operation returns fails here
+  // unless the table's `absent` acknowledgements name it.
+  let problems = [];
+  if (source.options?.valueSafety) {
+    const reviewed = await reviewedTable(provider.directory);
+    const rendered = renderValueSafety(document, source, reviewed);
+    problems = rendered.problems;
+    await writeFile(join(provider.directory, names.candidates), rendered.text);
+  }
+  const rows = JSON.parse(data.details).o;
+  const largest = rows.reduce(
+    (best, row, at) => {
+      const size = JSON.stringify(row).length;
+      return size > best.size ? { size, at } : best;
+    },
+    { size: 0, at: -1 },
+  );
+  const op = data.ops[largest.at];
+  return {
+    problems,
+    summary:
+      `providers/${provider.name}: ${data.ops.length} operations at ${source.revision} (API ${data.version || "unversioned"}); ` +
+      `largest details ${op ? `${op[0]} ${op[1]}` : "none"} at ${largest.size} characters after sharing`,
+  };
 }
 
 async function main() {
@@ -593,59 +699,18 @@ async function main() {
     if (!providers.some((provider) => provider.name === name)) throw new Error(`unknown provider: ${name}`);
   }
   for (const provider of providers) {
-    const source = await readOpenApiSource(provider.directory);
-    if (!source) {
-      if (selected.includes(provider.name)) throw new Error(`providers/${provider.name} has no ${SOURCE}`);
+    if (!(await openApiEvidence(provider.directory))) {
+      if (selected.includes(provider.name)) throw new Error(`providers/${provider.name} has no OpenAPI pin`);
       continue;
     }
-    const bytes = file ? new Uint8Array(await readFile(resolve(file))) : await fetchDocument(source.url);
-    const digest = sha256(bytes);
-    if (digest !== source.digest) {
-      if (!record) {
-        throw new Error(
-          `providers/${provider.name}: ${source.url} digest ${digest} does not match the pinned ${source.digest}. ` +
-            "Review the change, then run with --record to accept the new pin.",
-        );
-      }
-      // An unversioned document (Vercel's) is pinned by its own content: a
-      // revision spelled as the digest's prefix moves with the digest.
-      if (source.revision === source.digest.slice(0, 19)) source.revision = digest.slice(0, 19);
-      source.digest = digest;
-      await writeFile(join(provider.directory, SOURCE), `${JSON.stringify(source, null, 2)}\n`);
+    const { problems, summary } = await specProvider(provider, { file, record });
+    if (problems.length > 0) {
+      console.error(
+        `providers/${provider.name}: reviewed value-safety paths that do not resolve:\n  ${problems.join("\n  ")}`,
+      );
+      process.exitCode = 1;
     }
-    const data = buildOperationIndex(JSON.parse(new TextDecoder().decode(bytes)), source);
-    await writeFile(join(provider.directory, OUTPUT), renderOpenApiModule(data, source));
-    // The operations whose responses may carry credentials or secret values,
-    // for the provider's reviewed value-safety table (value-safety.mjs and
-    // src/providers/_shared/rest/value-safety.ts). Every REST vendor opts in.
-    // The reviewed table's paths are checked against the pinned response
-    // schemas too: a path that names nothing the operation returns fails here
-    // unless `value-safety.absent.json` acknowledges it.
-    if (source.options?.valueSafety) {
-      const document = JSON.parse(new TextDecoder().decode(bytes));
-      const reviewed = await reviewedTable(provider.directory);
-      const { text, problems } = renderValueSafety(document, source, reviewed);
-      await writeFile(join(provider.directory, "value-safety.candidates.json"), text);
-      if (problems.length > 0) {
-        console.error(
-          `providers/${provider.name}: reviewed value-safety paths that do not resolve:\n  ${problems.join("\n  ")}`,
-        );
-        process.exitCode = 1;
-      }
-    }
-    const rows = JSON.parse(data.details).o;
-    const largest = rows.reduce(
-      (best, row, at) => {
-        const size = JSON.stringify(row).length;
-        return size > best.size ? { size, at } : best;
-      },
-      { size: 0, at: -1 },
-    );
-    const op = data.ops[largest.at];
-    console.log(
-      `providers/${provider.name}: ${data.ops.length} operations at ${source.revision} (API ${data.version || "unversioned"}); ` +
-        `largest details ${op ? `${op[0]} ${op[1]}` : "none"} at ${largest.size} characters after sharing`,
-    );
+    console.log(summary);
   }
 }
 

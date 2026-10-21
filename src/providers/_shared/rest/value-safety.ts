@@ -279,6 +279,16 @@ export interface ValueSafetyTable {
   readonly scopeMaps?: readonly string[];
   /** Rules for resource types wherever they appear, for vendors whose objects carry a type discriminator. */
   readonly resources?: ResourceRules;
+  /**
+   * Review evidence, never read at runtime: table paths the pinned response
+   * schema lacks (a shared verdict, or a field the schema leaves undeclared),
+   * which still apply. `providers:spec` checks every other path resolves.
+   */
+  readonly absent?: {
+    readonly reason: string;
+    readonly operations?: Readonly<Record<string, readonly string[]>>;
+    readonly resources?: Readonly<Record<string, readonly string[]>>;
+  };
 }
 
 export const refuse = (reason: string): ValueSafetyVerdict => ({ verdict: "refuse", reason });

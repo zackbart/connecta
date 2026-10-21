@@ -69,8 +69,11 @@ const folders = await Promise.all(
     const directory = join(root, name);
     const module = (await import(pathToFileURL(join(directory, "index.ts")).href)) as Record<string, unknown>;
     const factory = Object.values(module).find(
-      (value): value is { definition: { kind: string; title: string; readme?: string } } =>
-        typeof value === "function" && "definition" in value,
+      (
+        value,
+      ): value is {
+        definition: { kind: string; title: string; readme?: string; blocks?: { keys: readonly string[] } };
+      } => typeof value === "function" && "definition" in value,
     );
     const files = walk(directory).sort();
     const facts: ProviderFacts = {
@@ -79,6 +82,7 @@ const folders = await Promise.all(
       display: factory?.definition.readme ?? factory?.definition.title ?? name,
       files,
       read: (path) => (files.includes(path) ? readFileSync(join(directory, path), "utf8") : undefined),
+      ...(factory?.definition.blocks ? { blockKeys: factory.definition.blocks.keys } : {}),
     };
     // Hosted tools are the vendor's (P1); the S rules read surfaces connecta authors.
     const createAuthored = authoredFixtures[name];
@@ -394,6 +398,7 @@ function standard(): ProviderFacts {
     display: "Acme",
     files: Object.keys(files).sort(),
     read: (path) => files[path],
+    blockKeys: ["api", "hosted"],
   };
 }
 
@@ -489,6 +494,34 @@ describe("the provider standard's rules", () => {
     expect(evidenceViolations(observation, today)).toContain(
       "E3: evidence/catalog.json read_doc behavioral hints must be booleans when present",
     );
+  });
+
+  it("holds when-blocks to declared keys on their own lines, and dual guides to hosted and api", () => {
+    const folder = standard();
+    const guide = (body: string, facts: Partial<ProviderFacts> = {}) =>
+      guideViolations(
+        {
+          ...folder,
+          ...facts,
+          read: (path) =>
+            path === "SKILL.md" ? `---\n{ "name": "acme", "instructionsHeading": "Acme" }\n---\n${body}` : undefined,
+        },
+        "## Acme\n",
+      );
+    expect(guide("\n## Ids\n\n<!-- when: hosted -->\nSelect the account.\n<!-- end -->\n")).toEqual([]);
+    expect(guide("\n<!-- when: region -->\nUS only.\n<!-- end -->\n")).toEqual([
+      "G2: SKILL.md uses the undeclared when-block key region",
+    ]);
+    expect(guide("\nText <!-- when: hosted -->inline<!-- end -->\n")).toContain(
+      "G2: a when-block marker stands alone on its line",
+    );
+    expect(guide("\n<!-- when: hosted -->\n<!-- when: api -->\n<!-- end -->\n")).toContain(
+      "G2: SKILL.md when-blocks must open and close in turn, unnested",
+    );
+    expect(guide("\n## Ids\n", { blockKeys: ["hosted"] })).toEqual([
+      "G2: a dual provider declares the hosted and api block keys",
+    ]);
+    expect(guide("\n## Ids\n", { kind: "api", blockKeys: [] })).toEqual([]);
   });
 
   it("names the drift record's renamed and hand-kept fields", () => {
