@@ -1296,9 +1296,16 @@ describe("api() oauth reset and disconnect", () => {
     expect(await connector.verifyState!(first.searchParams.get("state"), callback)).toBe(true);
     await connector.startAuth!(ctx(), { force: true });
     const exchanges = provider.tokenRequests.length;
-    await expect(
-      connector.finishAuth!(code, callback, new URLSearchParams({ code, state: first.searchParams.get("state")! })),
-    ).rejects.toThrow(/authorization changed .* try again/);
+    const superseded = await connector.finishAuth!(
+      code,
+      callback,
+      new URLSearchParams({ code, state: first.searchParams.get("state")! }),
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    // Its advice to try again is a segment of its own, composed at output.
+    expect(classifyCallError(superseded).message).toMatch(/authorization changed .* try again/);
     expect(provider.tokenRequests.length).toBe(exchanges);
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });

@@ -654,8 +654,66 @@ export function framingError(code: ClassificationCode, message: string): CallErr
   };
 }
 
-/** Typed connector verdicts and runtime facts only. Prose never changes a verdict. */
+// Advice to send a call again, kept beside its failure and never inside the
+// failure's message. See resendAdvice.
+const resendAdvices = new WeakMap<object, string>();
+
+/**
+ * Attach advice to send the call again (a rate limit's " Back off before
+ * retrying.", a token error's ", then retry authorization") to `error` as a
+ * segment of its own: `error.message` never contains it. It holds for a read
+ * and a known refusal, so output composes it ({@link withResendAdvice}) only
+ * there, after the outcome is decided. No redaction or rewording of the
+ * message can then hide it from removal on a write whose outcome is unknown
+ * (INV-9). A segment that opens a sentence (" Wait…") follows the message;
+ * any other is a clause, placed before the message's closing period.
+ */
+export function resendAdvice<T extends object>(error: T, advice: string): T {
+  resendAdvices.set(error, advice);
+  return error;
+}
+
+/** The resend advice attached to `from`, if any. */
+export function resendAdviceOf(from: unknown): string | undefined {
+  return from !== null && typeof from === "object" ? resendAdvices.get(from) : undefined;
+}
+
+/**
+ * Keep `from`'s resend advice on `to`, a copy or rewording of it (redaction,
+ * a provider's recovery words). A write already marked unknown never takes it.
+ */
+export function carryResendAdvice(from: unknown, to: unknown): void {
+  const advice = resendAdviceOf(from);
+  if (advice === undefined || !(to instanceof Error) || resendAdvices.has(to)) return;
+  if ((to as { writeOutcome?: unknown }).writeOutcome === "unknown") return;
+  resendAdvices.set(to, advice);
+}
+
+/** `message` with resend `advice` composed in. Only output calls this. */
+export function withResendAdvice(message: string, advice: string | undefined): string {
+  if (advice === undefined) return message;
+  return /^ [A-Z]/.test(advice) || !message.endsWith(".") ? message + advice : `${message.slice(0, -1)}${advice}.`;
+}
+
+/**
+ * Typed connector verdicts and runtime facts only. Prose never changes a
+ * verdict. The message carries the error's resend advice unless its write's
+ * outcome is unknown.
+ */
 export function classifyCallError(
+  err: unknown,
+  fallbackCode: ClassificationCode = "connector_call_failed",
+): CallErrorDetails {
+  const details = classifyWithoutAdvice(err, fallbackCode);
+  if (details.writeOutcome !== "unknown") details.message = withResendAdvice(details.message, resendAdviceOf(err));
+  return details;
+}
+
+/**
+ * {@link classifyCallError} without the resend advice, for a caller that
+ * decides the outcome first and composes the advice only where it holds.
+ */
+export function classifyWithoutAdvice(
   err: unknown,
   fallbackCode: ClassificationCode = "connector_call_failed",
 ): CallErrorDetails {

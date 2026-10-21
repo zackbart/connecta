@@ -12,6 +12,7 @@ import poolOwnerChanges from "./fixtures/providers-pool-owner-837-contract-chang
 import docsCorrectnessChanges from "./fixtures/providers-docs-correctness-contract-changes.json";
 import ownerlessChanges from "./fixtures/providers-agent-ownerless-workspace-contract-changes.json";
 import sensitiveFieldChanges from "./fixtures/providers-sensitive-fields-a2-contract-changes.json";
+import unknownWriteGuideChanges from "./fixtures/providers-a2-unknown-write-guide-contract-changes.json";
 import { providerContract, type ContractFixture } from "./fixtures/provider-contract.js";
 import { providerFixtures } from "./providers.generated.js";
 
@@ -66,6 +67,8 @@ describe.each(
     const docsCorrectness = docsCorrectnessChanges as Record<string, Record<string, Record<string, string>>>;
     const ownerless = ownerlessChanges as Record<string, Record<string, Record<string, string>>>;
     const sensitiveFields = sensitiveFieldChanges as Record<string, Record<string, Record<string, string>>>;
+    // #902 round 14: the Docs guide stops offering a same-revision repeat of an unknown edit.
+    const unknownWriteGuides = unknownWriteGuideChanges as Record<string, Record<string, Record<string, string>>>;
     const expected = before[fixture.name as keyof typeof before].map((row) => ({
       ...row,
       ...changes[fixture.name]?.[row.label],
@@ -79,6 +82,7 @@ describe.each(
       ...docsCorrectness[fixture.name]?.[row.label],
       ...ownerless[fixture.name]?.[row.label],
       ...sensitiveFields[fixture.name]?.[row.label],
+      ...unknownWriteGuides[fixture.name]?.[row.label],
     }));
     expect(snapshot).toEqual(expected);
   });

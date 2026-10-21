@@ -56,10 +56,10 @@ import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connec
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
 import { callClassification } from "../../../call-classification.js";
-import { providerRequests, resendAdvice } from "../../../provider-call.js";
+import { providerRequests } from "../../../provider-call.js";
 import { providerCallFailure, providerFailureMessage, unsentAfterUnauthorized } from "../../../write-outcome.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
-import { ConnectorCallError } from "../../../errors.js";
+import { ConnectorCallError, resendAdvice } from "../../../errors.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
 import { isWorkspaceAddress } from "../../../workspace-address.js";
 import { tagWorkspaceSubject } from "../../../workspace-subject.js";
@@ -431,7 +431,7 @@ function classifyApiFailure(
     return resendAdvice(
       new ConnectorCallError(
         "rate_limited",
-        `${detail} Google meters this API per user and per project; wait before retrying.`,
+        `${detail} Google meters this API per user and per project.`,
         wait === undefined ? {} : { retryAfterMs: wait },
       ),
       "; wait before retrying",
@@ -476,7 +476,7 @@ function classifyApiFailure(
     return resendAdvice(
       new ConnectorCallError(
         "conflict",
-        `${provider} refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.`,
+        `${provider} refused the write because the item changed after the revision it named.`,
       ),
       " Re-read it for the current revision, reapply the change, and retry.",
     );

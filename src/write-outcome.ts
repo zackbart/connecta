@@ -7,6 +7,7 @@ import { callClassification } from "./call-classification.js";
 import type { ConnectorContext } from "./types.js";
 import {
   classifyCallError,
+  classifyWithoutAdvice,
   ConnectorCallError,
   networkErrorCode,
   WithheldTextError,
@@ -18,7 +19,6 @@ import {
   providerRequests,
   refusalRequest,
   refusedStatus,
-  withoutResendAdvice,
 } from "./provider-call.js";
 import { carryFailureFacts, errorLabel } from "./operator-record.js";
 
@@ -31,13 +31,19 @@ export type WriteState = "ok" | "failed" | "unknown";
  * `unknown` is the outcome a result must never paper over: the call left
  * connecta and no answer came back, so sending it again could do it twice and
  * not sending it could leave it undone. A dispatched write is `failed` only on
- * positive refusal provenance, recorded where the evidence was observed: a
- * request connecta refused before it left (the ledger), a served HTTP refusal
- * (a 4xx other than 408), or a downstream tool's own `isError` (`answered`).
- * An error code is never that evidence by itself: a mapper, parser, output
- * validator, or JSON-RPC error (`-32602` included) can follow a write that
- * applied, so its `rate_limited` or `invalid_args` is `unknown`. So is any
- * failure the connector marked unknown (`writeOutcome`), such as a renewal
+ * positive refusal provenance, recorded where the evidence was observed: (a)
+ * the ledger shows a request connecta refused before it left, or (b) the
+ * downstream served a refusing status, a 4xx other than 408, that its provider
+ * does not read as `unavailable` or a timeout (`servedRefusal`; a 5xx never
+ * proves a write unapplied). The evidence must
+ * hold for the whole logical call (`knownForLogicalCall`, which `answered`
+ * reports for a served call): every request the call sent is proven not
+ * applied, and the failing request carries the refusal. A downstream tool's
+ * `isError` arrives over a 2xx after its handler ran, so it is no such
+ * evidence for a write. Nor is an error code by itself: a mapper, parser,
+ * output validator, or JSON-RPC error (`-32602` included) can follow a write
+ * that applied, so its `rate_limited` or `invalid_args` is `unknown`. So is
+ * any failure the connector marked unknown (`writeOutcome`), such as a renewal
  * that failed after a 401. A call that was never dispatched is `failed`:
  * nothing was sent. `result_processing_failed` means the downstream call
  * completed.
@@ -78,7 +84,7 @@ function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
   }
   return new ConnectorCallError(
     "connector_call_failed",
-    `${withoutResendAdvice(error.message, error)} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
+    `${error.message} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
       "so check the target before repeating it.",
     { retryable: false, writeOutcome: "unknown" },
   );
@@ -179,7 +185,7 @@ export function providerCallFailure(
       error,
       new ConnectorCallError(
         "connector_call_failed",
-        `${withoutResendAdvice(error.message, error)} Whether the write took effect at ${vendor.title} is unknown; check the target before repeating it.`,
+        `${error.message} Whether the write took effect at ${vendor.title} is unknown; check the target before repeating it.`,
         { retryable: false, writeOutcome: "unknown" },
       ),
     );
@@ -188,14 +194,10 @@ export function providerCallFailure(
   if (converted instanceof ConnectorCallError && converted !== error) return carryFailureFacts(error, converted);
   return carryFailureFacts(
     error,
-    new ConnectorCallError(
-      serverError ? "connector_call_failed" : error.code,
-      withoutResendAdvice(error.message, error),
-      {
-        retryable: false,
-        writeOutcome: "unknown",
-      },
-    ),
+    new ConnectorCallError(serverError ? "connector_call_failed" : error.code, error.message, {
+      retryable: false,
+      writeOutcome: "unknown",
+    }),
   );
 }
 
@@ -273,8 +275,7 @@ function uncertainProviderFailure(
   if (error instanceof ConnectorCallError && error.writeOutcome === "unknown" && !error.retryable) return error;
   const abort = callerAbort(ctx);
   if (abort) return callerAborted(vendor, error, abort.reason);
-  const details = classifyCallError(error);
-  details.message = withoutResendAdvice(details.message, error);
+  const details = classifyWithoutAdvice(error);
   const timeout =
     details.code === "timeout" || (details.code === "unavailable" && isTimeoutCode(details.details?.code));
   const common =

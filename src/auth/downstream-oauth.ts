@@ -17,7 +17,7 @@ import {
   type RemoteOAuthClient,
 } from "./downstream-client-metadata.js";
 import { SentSecrets } from "../sent-secrets.js";
-import { ConnectorCallError } from "../errors.js";
+import { ConnectorCallError, resendAdvice } from "../errors.js";
 import { oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
 import { deriveContext } from "../derived-context.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
@@ -1175,9 +1175,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** The fixed, retryable failure of a flow a later reset superseded. */
   private flowSuperseded(): ConnectorCallError {
-    return new ConnectorCallError(
-      "unavailable",
-      `Connector "${this.connectorId}" authorization changed while this request was in flight; try again.`,
+    return resendAdvice(
+      new ConnectorCallError(
+        "unavailable",
+        `Connector "${this.connectorId}" authorization changed while this request was in flight.`,
+      ),
+      "; try again",
     );
   }
 
@@ -1186,18 +1189,21 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * attached. Retryable: the grant it held is untouched.
    */
   private credentialWriteError(): ConnectorCallError {
-    return new ConnectorCallError(
-      "unavailable",
-      `Connector "${this.connectorId}" could not store its OAuth credentials; try again shortly.`,
+    return resendAdvice(
+      new ConnectorCallError("unavailable", `Connector "${this.connectorId}" could not store its OAuth credentials.`),
+      "; try again shortly",
     );
   }
 
   /** @internal Other requests kept refreshing faster than this one could join. */
   refreshContended(): ConnectorCallError {
     this.recordRefreshFailure({ kind: "contended" });
-    return new ConnectorCallError(
-      "unavailable",
-      `Connector "${this.connectorId}" could not refresh its OAuth grant while other requests were; retry.`,
+    return resendAdvice(
+      new ConnectorCallError(
+        "unavailable",
+        `Connector "${this.connectorId}" could not refresh its OAuth grant while other requests were.`,
+      ),
+      "; retry",
     );
   }
 

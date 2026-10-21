@@ -4,8 +4,7 @@
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
-import { ConnectorCallError } from "../../errors.js";
-import { resendAdvice } from "../../provider-call.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult } from "../../types.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
 import {
@@ -183,19 +182,17 @@ function stripeFailure(status: number, headers: Headers, body: unknown, withheld
       return resendAdvice(
         new ConnectorCallError(
           "conflict",
-          `${detail} Another request is changing this object and Stripe did not process this one; retry after it finishes. This is a lock conflict, not a rate limit.`,
+          `${detail} Another request is changing this object and Stripe did not process this one. This is a lock conflict, not a rate limit.`,
           { retryable: true, retryAfterMs: 1_000 },
         ),
-        "; retry after it finishes",
+        " Retry after it finishes.",
       );
     }
     const reason = headers.get("stripe-rate-limited-reason");
     return resendAdvice(
-      new ConnectorCallError(
-        "rate_limited",
-        `${detail}${reason ? ` Limited by ${reason}.` : ""} Back off before retrying.`,
-        { retryAfterMs: retryAfterMs(headers) ?? 1_000 },
-      ),
+      new ConnectorCallError("rate_limited", `${detail}${reason ? ` Limited by ${reason}.` : ""}`, {
+        retryAfterMs: retryAfterMs(headers) ?? 1_000,
+      }),
       " Back off before retrying.",
     );
   }

@@ -61,12 +61,12 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
-import { resendAdvice, tracksEveryRequest } from "../../provider-call.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** Every church's API lives at `https://<subdomain>.breezechms.com/api`. */
 export const BREEZE_HOST_SUFFIX = ".breezechms.com";
@@ -197,7 +197,7 @@ function breezeFailure(status: number, headers: Headers, text: string): Connecto
     return resendAdvice(
       new ConnectorCallError(
         "rate_limited",
-        `Breeze is throttling requests (HTTP 429).${detail} Breeze publishes no limit; slow the fan-out before retrying.`,
+        `Breeze is throttling requests (HTTP 429).${detail} Breeze publishes no limit.`,
         wait === undefined ? {} : { retryAfterMs: wait },
       ),
       "; slow the fan-out before retrying",
@@ -272,7 +272,7 @@ function reportedFailure(payload: unknown): ConnectorCallError | undefined {
   return resendAdvice(
     new ConnectorCallError(
       "connector_call_failed",
-      `Breeze reported a failure: ${message}. Breeze does not say whether an argument or a record is at fault; re-check ids with the list tools before retrying.`,
+      `Breeze reported a failure: ${message}. Breeze does not say whether an argument or a record is at fault.`,
       { retryable: false },
     ),
     "; re-check ids with the list tools before retrying",

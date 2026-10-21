@@ -1357,7 +1357,8 @@ and starts no consent. It never permits resending a spent token.
 
 A `remoteMcp()` write the downstream answered with HTTP 401 is never sent
 again (INV-9). The SDK still refreshes the grant, and connecta stops its
-resend before it leaves, so a deliberate repeat uses the fresh token. The call
+resend before it leaves, so any fresh call after the target is reconciled uses
+the fresh token. The call
 fails with a non-retryable `connector_call_failed` whose outcome is unknown.
 If the refresh fails instead, an authorization verdict stays
 `downstream_oauth_required` (never retryable, `reconciliationRequired` and
@@ -2242,7 +2243,8 @@ owner's access token as `Authorization: Bearer` with these rules:
   with `destructiveHint: true` is a write), never the HTTP method: a write sent
   with GET is not resent, and a read sent with POST is. After the recovery,
   the call fails with a non-retryable `connector_call_failed` whose outcome is
-  unknown, and the renewed grant serves the agent's deliberate repeat.
+  unknown, and the renewed grant serves any fresh call the agent makes after
+  reconciling the target.
 - Whatever that recovery meets, a write's failure is never retryable. An
   authorization verdict, such as a [dead refresh](#refresh-failures) or a
   refresh lost after it was sent, stays `downstream_oauth_required`, which the

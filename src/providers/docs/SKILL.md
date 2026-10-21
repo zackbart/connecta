@@ -67,9 +67,10 @@ not exist or is not shared with this person; Google does not say which.
   Google refused it; otherwise read the document first and append only what
   is missing.
 - An edit sent with no answer back, answered with a server error, or
-  redirected says its outcome is unknown: re-read before repeating it, or
-  repeat it with the same `requiredRevisionId`, which Google refuses if the
-  first attempt landed. One Google answered 2xx whose reply was unreadable
+  redirected says its outcome is unknown: re-read the document with
+  `get_document` to check whether it took effect before any fresh call.
+  `requiredRevisionId` is a precondition, not an idempotency key, so it
+  makes no repeat safe. One Google answered 2xx whose reply was unreadable
   says it was applied: do not repeat it.
 - `append_text` joins the last paragraph; begin with `\n` for a new one.
 - `replace_all_text` changes every match at once; read first and make

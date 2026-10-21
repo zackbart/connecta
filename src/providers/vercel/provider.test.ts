@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, ConnectorContext, ToolDef } from "../../types.js";
 import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
-import { ConnectorCallError } from "../../errors.js";
+import { classifyCallError, ConnectorCallError } from "../../errors.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -1568,7 +1568,7 @@ describe("vercel() over an access token", () => {
       respond = () => Response.json({ error: { code: "bad_request", message: "No." } }, { status, headers });
       const failure = await refusal(call(connector, "vercel_api_read", { path: "/v7/deployments" }));
       expect(failure.code, String(status)).toBe(code);
-      expect(failure.message).toContain(message);
+      expect(classifyCallError(failure).message).toContain(message);
       if (status === 429) expect(failure.retryAfterMs).toBeGreaterThan(0);
     }
   });

@@ -182,7 +182,7 @@
           "dispatched": true,
           "error": {
             "code": "rate_limited",
-            "message": "Tithe.ly: Golden 429 failure Tithe.ly publishes no rate limit; wait before retrying, and add a callAdmission budget if this recurs.",
+            "message": "Tithe.ly: Golden 429 failure Tithe.ly publishes no rate limit. Add a callAdmission budget if this recurs. Wait before retrying.",
             "retryable": true,
             "retryAfterMs": 7000
           }
@@ -569,7 +569,7 @@
           "answered": true,
           "error": {
             "code": "rate_limited",
-            "message": "Tithe.ly: Golden 429 failure Tithe.ly publishes no rate limit; wait before retrying, and add a callAdmission budget if this recurs.",
+            "message": "Tithe.ly: Golden 429 failure Tithe.ly publishes no rate limit. Add a callAdmission budget if this recurs. Wait before retrying.",
             "retryable": true,
             "retryAfterMs": 7000
           }

@@ -6,8 +6,7 @@
 import type { ApiTool } from "../../connectors/api-connector.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
-import { ConnectorCallError } from "../../errors.js";
-import { resendAdvice } from "../../provider-call.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
 import { OperationIndex, type RestMethod } from "../_shared/rest/operation-index.js";
 import {
@@ -206,7 +205,7 @@ function notionFailure(
     return resendAdvice(
       new ConnectorCallError(
         "rate_limited",
-        `${labelled}${typeof reason === "string" ? ` (limit: ${reason})` : ""}${scope} Wait out the retry window.`,
+        `${labelled}${typeof reason === "string" ? ` (limit: ${reason})` : ""}${scope}`,
         { retryAfterMs: retryAfter ?? 1_000 },
       ),
       " Wait out the retry window.",
@@ -216,7 +215,7 @@ function notionFailure(
     // Notion documents 529 alongside 429: back off and respect Retry-After.
     // A write it may have saved loses the advice (INV-9).
     return resendAdvice(
-      new ConnectorCallError("unavailable", `${labelled} Notion is overloaded; retry after the reported window.`, {
+      new ConnectorCallError("unavailable", `${labelled} Notion is overloaded.`, {
         retryAfterMs: retryAfter ?? 5_000,
       }),
       "; retry after the reported window",

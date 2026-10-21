@@ -80,8 +80,11 @@ import {
   ConnectorCallError,
   msg,
   networkErrorCode,
+  resendAdvice,
+  resendAdviceOf,
   unavailableCallError,
   WithheldTextError,
+  withResendAdvice,
 } from "../errors.js";
 import {
   attachFailureFacts,
@@ -748,10 +751,11 @@ function isCursorShapeError(err: unknown): boolean {
  * passed the MCP and OAuth boundaries, and the origin and errno connecta
  * derived for it, which a message alone would drop.
  */
+/** An authorization start's failure for authorize_connector: no write's, so its advice stays. */
 function startMessage(err: unknown): string {
   const details = err instanceof ConnectorCallError ? err.details : undefined;
   const facts = [details?.host, details?.code].filter(Boolean).join(", ");
-  return facts ? `${msg(err)} (${facts})` : msg(err);
+  return withResendAdvice(facts ? `${msg(err)} (${facts})` : msg(err), resendAdviceOf(err));
 }
 
 /**
@@ -1741,15 +1745,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       return attachFailureFacts(
         carryFailureFacts(
           err,
-          withheldAs(
-            `Connector "${id}" could not register an OAuth client with ` +
-              `${origin ?? "its authorization server"}: the ` +
-              `registration endpoint answered HTTP ${err.status}` +
-              `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
-              "withheld because it can quote the request or anything the server " +
-              "chose to add. Check the server's client registration policy, then " +
-              "retry authorization.",
-            downstreamCallError(err, undefined, trail.last?.retryAfterMs),
+          resendAdvice(
+            withheldAs(
+              `Connector "${id}" could not register an OAuth client with ` +
+                `${origin ?? "its authorization server"}: the ` +
+                `registration endpoint answered HTTP ${err.status}` +
+                `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
+                "withheld because it can quote the request or anything the server " +
+                "chose to add. Check the server's client registration policy.",
+              downstreamCallError(err, undefined, trail.last?.retryAfterMs),
+            ),
+            ", then retry authorization",
           ),
         ),
         facts,
@@ -1777,12 +1783,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return attachFailureFacts(
       carryFailureFacts(
         err,
-        withheldAs(
-          `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
-            `failed${errorKind(err)}. The error is withheld because its text can ` +
-            "quote what the server sent. Check the server's OAuth metadata, then " +
-            "retry authorization.",
-          classified,
+        resendAdvice(
+          withheldAs(
+            `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
+              `failed${errorKind(err)}. The error is withheld because its text can ` +
+              "quote what the server sent. Check the server's OAuth metadata.",
+            classified,
+          ),
+          ", then retry authorization",
         ),
       ),
       facts,
@@ -2591,10 +2599,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const currentCredential = await readCredential(ctx);
         if (isClosed(state)) throw scopeEndedError();
         if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
-          throw new ConnectorCallError(
-            "connector_call_failed",
-            "The downstream credential changed while connecting; retry the operation.",
-            { retryable: true },
+          throw resendAdvice(
+            new ConnectorCallError("connector_call_failed", "The downstream credential changed while connecting.", {
+              retryable: true,
+            }),
+            "; retry the operation",
           );
         }
         closeHalf(state);
@@ -3219,7 +3228,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async callTool(name, args, ctx, options) {
-      enterProviderBoundary(ctx, connector);
+      enterProviderBoundary(ctx, own);
       // Refusals before this call's dispatch record exists: no tools/call of
       // its can have left, so they are known failures (ledger provenance).
       if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
@@ -3682,6 +3691,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   }
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
+  // This boundary's identity in a logical call: the published, fully wrapped
+  // function, fixed now. Entry records it, never what the property holds by then.
+  const own = connector.callTool;
   if (isOauth)
     registerInvocationAuth(
       connector,

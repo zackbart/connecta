@@ -2012,7 +2012,11 @@ compiling and configuring the real thing.
   (`knownForLogicalCall`) only when at most one boundary was entered and the
   invocation entered that boundary's own `callTool`, or that of a maintained
   connector declared to delegate each call to one boundary
-  (`delegatesEachCall`, GitHub). A boundary marks a write known only when
+  (`delegatesEachCall`, GitHub). Identities are captured, never read back:
+  the invocation reads `callTool` once and invokes that function, each
+  boundary records the published function fixed when it was built, and a
+  delegator is declared at construction, so a connector that reassigns
+  `callTool` mid-call borrows no standing. A boundary marks a write known only when
   every request it dispatched is proven unapplied, so the rule reads: known
   only if every request the logical call dispatched is proven unapplied and
   the failing request carries the refusal. A custom connector that composes
@@ -2031,11 +2035,17 @@ compiling and configuring the real thing.
   The invocation finalizes every served write `classifyWriteOutcome` calls
   unknown before it adds advice: `retryable: false`, `writeOutcome:
   "unknown"`, and no grant-then-retry or correct-and-retry text, so a custom
-  connector's code cannot advertise a retry. Advice to send again inside a
-  provider's message (a rate limit's "back off before retrying") is named
-  with `resendAdvice` where it is written; every verdict that makes a write
-  unknown removes it (`withoutResendAdvice`), direct and served, while a read
-  and a known refusal keep it. An authorization or credential handoff on an
+  connector's code cannot advertise a retry. Advice to send again (a rate
+  limit's "back off before retrying", a token or OAuth preflight's "then
+  retry authorization") is a segment of its own, attached with
+  `resendAdvice` in `src/errors.ts` where it is written and never part of
+  the error's message. Output composes it only once the outcome allows it:
+  `classifyCallError` for a direct caller, unless the write is already
+  unknown, and the invocation after its verdict (it classifies with
+  `classifyWithoutAdvice`). So no redaction of a private argument, no
+  wrapper's rewording, and no preflight failure after an earlier dispatch
+  can leave it on an unknown write, while a read and a known refusal keep it.
+  An authorization or credential handoff on an
   unknown write says to re-read the target before any fresh call instead of
   "retry the original call" (`src/authorization-handoff.ts`). Owning transport attempts is planned for decision 0009's B.2
   guarded `HttpClient`. Reads keep their retry advice. Every maintained

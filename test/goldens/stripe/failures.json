@@ -602,7 +602,7 @@
           "answered": true,
           "error": {
             "code": "rate_limited",
-            "message": "Stripe invalid_request_error golden_429: Golden 429 failure. Request req_golden. Back off before retrying. Idempotency-Key: 00000000-0000-4000-8000-000000000001. Reusing it with the exact original arguments retries this write without repeating it only while the vendor retains the key; after that, look the object up before retrying.",
+            "message": "Stripe invalid_request_error golden_429: Golden 429 failure. Request req_golden. Idempotency-Key: 00000000-0000-4000-8000-000000000001. Reusing it with the exact original arguments retries this write without repeating it only while the vendor retains the key; after that, look the object up before retrying. Back off before retrying.",
             "retryable": true,
             "retryAfterMs": 7000
           }

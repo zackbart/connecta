@@ -26,7 +26,8 @@ const ISSUER = { issuer };
 const TOKEN_URL = `${issuer}/token`;
 const mcpUrl = "https://downstream.example/mcp";
 const resourceMetadataUrl = "https://downstream.example/.well-known/oauth-protected-resource";
-const SUPERSEDED = 'Connector "svc" authorization changed while this request was in flight; try again.';
+// Its advice to try again is a separate segment, composed only at output.
+const SUPERSEDED = 'Connector "svc" authorization changed while this request was in flight.';
 
 const bearer = (access: string, refresh?: string): OAuthTokens => ({
   access_token: access,

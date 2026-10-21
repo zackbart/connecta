@@ -1033,7 +1033,8 @@ call's later request leaves earlier requests' outcomes unknown, and once the
 call's outcome is decided, a request that had not left is never sent. A
 write the downstream answered with HTTP 401 is not resent: the credential is
 renewed (an OAuth refresh, Google Workspace's next token, Infisical's login)
-for a deliberate repeat, and the call reports the same unknown outcome. If
+for any fresh call after the target is reconciled, and the call reports the
+same unknown outcome. If
 renewal fails, an authorization verdict keeps its code with `retryable: false`
 and `reconciliationRequired: true`, and anything else is the unknown outcome.
 A `remoteMcp()` write answered with a redirect is not sent to the new location,
@@ -1055,7 +1056,7 @@ A served read keeps the provider's read retry advice even if its request uses
 POST. Tool defaults and HTTP methods supply a fallback only when no served
 classification exists. A vendor idempotency key does not change an uncertain
 served write into retry advice; its recovery facts still help reconcile the
-target before a deliberate repeat. An operation hint (a whole-resource `PUT`,
+target before any fresh call. An operation hint (a whole-resource `PUT`,
 fixed spreadsheet cells, a content-addressed upload) grants no retry credit on
 any call, direct or served: only an idempotency key the vendor honors, which is
 Stripe's today, keeps a direct write's retry advice.

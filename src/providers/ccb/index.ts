@@ -38,13 +38,13 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { sensitiveFieldsOption, unprojectedResults } from "../_shared/sensitive-fields.js";
 import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
-import { resendAdvice, tracksEveryRequest } from "../../provider-call.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** CCB's v2 media type. The API and its token endpoint both require it. */
 export const CCB_MEDIA_TYPE = "application/vnd.ccbchurch.v2+json";
@@ -383,16 +383,19 @@ function ccbFailure(status: number, headers: Headers, payload: unknown): Connect
     return resendAdvice(
       new ConnectorCallError(
         "rate_limited",
-        `${detail} CCB limits each endpoint per API client; wait before calling this endpoint again.`,
+        `${detail} CCB limits each endpoint per API client.`,
         wait === undefined ? {} : { retryAfterMs: wait },
       ),
       "; wait before calling this endpoint again",
     );
   }
   if (status === 401) {
-    return new ConnectorCallError(
-      "auth_required",
-      `${detail} CCB rejected the connection's access token. Call authorize_connector for this connector, then retry.`,
+    return resendAdvice(
+      new ConnectorCallError(
+        "auth_required",
+        `${detail} CCB rejected the connection's access token. Call authorize_connector for this connector.`,
+      ),
+      ", then retry",
     );
   }
   if (status === 403) {

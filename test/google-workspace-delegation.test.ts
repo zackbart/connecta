@@ -24,7 +24,7 @@ import {
   googleWorkspaceClient,
   workspaceConnection,
 } from "../src/providers/_shared/google/workspace.js";
-import { ConnectorCallError } from "../src/errors.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
@@ -1760,9 +1760,12 @@ describe("the shared client reads bytes and text for the products that need them
       expect(failure).toMatchObject({
         code: "conflict",
         retryable: false,
-        message:
-          "Google Drive refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.",
+        message: "Google Drive refused the write because the item changed after the revision it named.",
       });
+      // Its advice to send it again is a segment of its own, composed at output.
+      expect(classifyCallError(failure).message).toBe(
+        "Google Drive refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.",
+      );
     });
 
     it("applies to bytes and text requests too", async () => {
@@ -1828,7 +1831,7 @@ describe("the shared client reads bytes and text for the products that need them
         .json(write, context(), { revisionGuarded: true })
         .catch((error) => error);
       expect(failure).toMatchObject({ code });
-      expect(failure.message).toContain(words);
+      expect(classifyCallError(failure).message).toContain(words);
     });
 
     it("does not turn an unrelated refusal into a conflict", async () => {

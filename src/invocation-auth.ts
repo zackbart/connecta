@@ -15,10 +15,17 @@ export function registerInvocationAuth(connector: Connector, check: (ctx: Connec
   checks.set(connector, { callTool: connector.callTool, check });
 }
 
-/** Local credential resolution only, before entering any connector call. */
-export async function resolveInvocationAuth(connector: Connector, ctx: ConnectorContext): Promise<void> {
+/**
+ * Local credential resolution only, before entering any connector call.
+ * `callTool` is the function the invocation will invoke, read once.
+ */
+export async function resolveInvocationAuth(
+  connector: Connector,
+  callTool: Connector["callTool"],
+  ctx: ConnectorContext,
+): Promise<void> {
   const entry = checks.get(connector);
-  if (entry?.callTool === connector.callTool) await entry.check(ctx);
+  if (entry?.callTool === callTool) await entry.check(ctx);
 }
 
 interface RequestInvocations {

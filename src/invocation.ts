@@ -11,9 +11,12 @@ import {
   boundedEchoText,
   classificationCode,
   classifyCallError,
+  classifyWithoutAdvice,
   ConnectorCallError,
   echoedCallArgs,
   framingError,
+  resendAdviceOf,
+  withResendAdvice,
   type AuthRecoveryMode,
   type CallErrorDetails,
   type ClassificationCode,
@@ -37,7 +40,6 @@ import {
   knownForLogicalCall,
   knownProviderFailure,
   openLogicalCall,
-  withoutResendAdvice,
 } from "./provider-call.js";
 import { classifyWriteOutcome } from "./write-outcome.js";
 import {
@@ -348,6 +350,9 @@ export class InvocationService {
       let dispatchContext: object | undefined;
       let preInvocationAuthFailure = false;
       let answered = false;
+      // A dispatched failure's advice to send it again, composed by enrich
+      // only once the outcome allows it (resendAdvice).
+      let failureAdvice: string | undefined;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
       context.sentSecrets?.include(sentSecrets);
       // A write gate's refusal that is no attempt; see WriteGateDecision.
@@ -434,14 +439,12 @@ export class InvocationService {
         // retryable, and no advice below may tell the agent to retry it.
         const unknownWrite =
           enteredWrite && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
-        // Nor may its message keep advice to send it again.
-        if (unknownWrite)
-          error = {
-            ...error,
-            message: withoutResendAdvice(error.message, error),
-            retryable: false,
-            writeOutcome: "unknown",
-          };
+        if (unknownWrite) error = { ...error, retryable: false, writeOutcome: "unknown" };
+        // The failure's advice to send it again was kept apart until now, and
+        // joins its message only where the outcome allows it: never on a write
+        // whose outcome is unknown, whatever redaction did to the message.
+        else if (failureAdvice !== undefined)
+          error = { ...error, message: withResendAdvice(error.message, failureAdvice) };
         // Any other dispatched write whose outcome is unknown (a lost response
         // body, a 5xx, an unreadable reply) keeps the facts its connector
         // recorded before dispatch, here and through program write accounting.
@@ -742,7 +745,11 @@ export class InvocationService {
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
             dispatchContext = connectorContext;
-            openLogicalCall(connectorContext, target.connector);
+            // The one function this call invokes, read once: its logical call,
+            // auth check, and dispatch all name it, so a connector that
+            // reassigns its own callTool mid-call changes none of them.
+            const callTool = target.connector.callTool;
+            openLogicalCall(connectorContext, callTool);
             try {
               if (target.connector.credential) {
                 if (!connectorContext.credential) {
@@ -759,7 +766,7 @@ export class InvocationService {
                   );
                 }
               }
-              await resolveInvocationAuth(target.connector, connectorContext);
+              await resolveInvocationAuth(target.connector, callTool, connectorContext);
             } catch (error) {
               const code = classifyCallError(error).code;
               preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
@@ -777,7 +784,8 @@ export class InvocationService {
               },
               target.definition,
             );
-            return await target.connector.callTool(
+            return await callTool.call(
+              target.connector,
               target.toolName,
               args ?? {},
               connectorContext,
@@ -850,7 +858,8 @@ export class InvocationService {
             const attemptError = Cause.squash(attempt.cause);
             answered = answeredFailure(attemptError, write, dispatchContext);
             if (isCallerCancellation(attemptError, context.requestSignal)) return callerCancelledDetails();
-            const details = carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
+            failureAdvice = resendAdviceOf(attemptError);
+            const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
             // An inner call's verdict that does not hold for this one is withdrawn.
             if (write && !answered) forgetProviderFailure(details);
             return details;
@@ -892,9 +901,10 @@ export class InvocationService {
       );
       if (Exit.isFailure(dispatched)) {
         const failure = Cause.squash(dispatched.cause);
+        failureAdvice = resendAdviceOf(failure);
         const details = context.requestSignal?.aborted
           ? callerCancelledDetails()
-          : carryFailureFacts(failure, classifyCallError(sentSecrets.redact(failure)));
+          : carryFailureFacts(failure, classifyWithoutAdvice(sentSecrets.redact(failure)));
         return failed(details);
       }
       if (dispatched.value) return failed(dispatched.value);

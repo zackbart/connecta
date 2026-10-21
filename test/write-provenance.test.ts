@@ -8,16 +8,18 @@
 // write repeatable. Round 12: a custom connector, an input_required
 // suspension, and a provider that reads a refusing status as `unavailable`
 // prove nothing either. Round 13: refusal evidence holds only for its whole
-// logical call, and a write's MCP isError is no evidence at all.
+// logical call, and a write's MCP isError is no evidence at all. Round 14:
+// the identities that decide a logical call are captured when they run.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { tracksEveryRequest } from "../src/provider-call.js";
+import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
 import { InvocationService } from "../src/invocation.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { createExecuteTool } from "../src/execute.js";
+import { github } from "../src/providers/github/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -27,6 +29,7 @@ import { classifyWriteOutcome } from "../src/write-outcome.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { googleOptions } from "./fixtures/provider-options.js";
+import { PRIVATE_KEY } from "./goldens/rsa-fixture.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.example";
@@ -638,6 +641,173 @@ describe("refusal evidence holds only for its whole logical call (round 13)", ()
     );
     expect(direct).toMatchObject({ code: "rate_limited", retryable: true });
     expect(direct.message).toMatch(/Back off before retrying\.$/);
+  });
+});
+
+describe("a logical call's identities are captured when they run (round 14)", () => {
+  const stripeWrite = { method: "DELETE", path: "/v1/customers/cus_2" };
+
+  /** Stripe, behind a vault, whose odd-numbered requests apply and even-numbered ones are refused 429. */
+  async function billing() {
+    const state = { sent: 0, applied: 0 };
+    vi.stubGlobal("fetch", async () => {
+      state.sent++;
+      if (state.sent % 2 === 1) {
+        state.applied++;
+        return Response.json({ id: "cus_1", deleted: true });
+      }
+      return Response.json({ error: { type: "rate_limit_error", message: "Rate limit" } }, { status: 429 });
+    });
+    const connector = stripe("billing", { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.set("billing", "sk_test_fixture", "fixture");
+    return { state, connector, storage, vault };
+  }
+
+  /** A custom write whose `run` gets the connector itself, so it can reassign its own callTool. */
+  function wrapping(inner: Connector, run: (self: Connector, ctx: ConnectorContext) => Promise<unknown>): Connector {
+    const self: Connector = {
+      id: "billing",
+      kind: "api",
+      ...(inner.credential ? { credential: inner.credential } : {}),
+      description: "Composite operation",
+      async listTools() {
+        return [
+          { name: "delete_pair", description: "Delete two", annotations: { readOnlyHint: false }, inputSchema: {} },
+        ];
+      },
+      callTool: (_name, _args, ctx) => run(self, ctx),
+    };
+    return self;
+  }
+
+  async function served(registry: ReturnType<typeof makeRegistry>) {
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "billing.delete_pair",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    if (outcome.ok) throw new Error("expected the served write to fail");
+    return outcome;
+  }
+
+  it("INV-9: a wrapper that sends, reassigns its callTool to a declared delegator's, then rethrows a Stripe refusal is unknown", async () => {
+    const delegator = github("github", {
+      purpose: "Review",
+      app: { appId: "12345", privateKey: PRIVATE_KEY },
+      scopes: [{ org: "acme", access: "read-write" }],
+    });
+    const { state, connector, storage, vault } = await billing();
+    const wrapper = wrapping(connector, async (self, ctx) => {
+      await fetch("https://side.example/apply", { method: "POST" });
+      self.callTool = delegator.callTool;
+      return await connector.callTool("stripe_api_write", stripeWrite, ctx);
+    });
+    const initial = wrapper.callTool;
+    const registry = makeRegistry([wrapper], { storage, credentialVault: vault });
+    const outcome = await served(registry);
+    expect(state).toEqual({ sent: 2, applied: 1 });
+    expect(outcome.answered).toBe(false);
+    expect(outcome.error).toMatchObject({ code: "rate_limited", retryable: false, writeOutcome: "unknown" });
+    expect(outcome.error.message).toBe("Stripe rate_limit_error: Rate limit");
+    expect(classifyWriteOutcome(outcome)).toBe("unknown");
+
+    wrapper.callTool = initial;
+    const program = await catchingProgram(registry, "billing.delete_pair");
+    expect(state).toEqual({ sent: 4, applied: 2 });
+    expect(program.structuredContent).toMatchObject({
+      error: { code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 1 } },
+    });
+  });
+
+  it("INV-9: a wrapper that reassigns the boundary's callTool to its own before entering it never passes for that boundary", async () => {
+    let applied = 0;
+    vi.stubGlobal("fetch", async () => {
+      applied++;
+      return Response.json({ ok: true });
+    });
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.test",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      fetch: async () => Response.json({}, { status: 429 }),
+    });
+    const boundary = tracksEveryRequest(
+      api("billing", {
+        tools: [
+          {
+            name: "create_item",
+            description: "Create",
+            annotations: { readOnlyHint: false },
+            inputSchema: { type: "object" },
+            handler: (_args, ctx) =>
+              send({ method: "POST", path: "/items" }, ctx, () => {
+                throw new ConnectorCallError("rate_limited", "Tickets is throttling.");
+              }),
+          },
+        ],
+      }),
+    );
+    const own = boundary.callTool;
+    const wrapper = wrapping(boundary, async (self, ctx) => {
+      await fetch("https://side.example/apply", { method: "POST" });
+      boundary.callTool = self.callTool;
+      return await own.call(boundary, "create_item", {}, ctx);
+    });
+    const outcome = await served(makeRegistry([wrapper]));
+    expect(applied).toBe(1);
+    expect(outcome.answered).toBe(false);
+    expect(outcome.error).toMatchObject({ code: "rate_limited", retryable: false, writeOutcome: "unknown" });
+    expect(classifyWriteOutcome(outcome)).toBe("unknown");
+  });
+
+  it("INV-9: a declared delegator's verdict is unaffected by reassigning its callTool after dispatch", async () => {
+    let sent = 0;
+    const boundary = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "create_item",
+            description: "Create",
+            annotations: { readOnlyHint: false },
+            inputSchema: { type: "object" },
+            // Refused before anything left: the ledger is empty.
+            handler: async () => {
+              throw new ConnectorCallError("invalid_args", "Tickets refused the item before sending it.");
+            },
+          },
+        ],
+      }),
+    );
+    const delegator: Connector = delegatesEachCall({
+      id: "tickets",
+      kind: "api",
+      description: "Tickets",
+      async listTools() {
+        return [{ name: "create_item", description: "Create", annotations: { readOnlyHint: false }, inputSchema: {} }];
+      },
+      async callTool(name, args, ctx, options) {
+        delegator.callTool = async () => {
+          sent++;
+          throw new Error("never invoked by this call");
+        };
+        return await boundary.callTool(name, args, ctx, options);
+      },
+    });
+    const registry = makeRegistry([delegator]);
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "tickets.create_item",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    expect(sent).toBe(0);
+    if (outcome.ok) throw new Error("expected the refusal");
+    expect(outcome.answered).toBe(true);
+    expect(outcome.error.code).toBe("invalid_args");
+    expect(outcome.error.writeOutcome).toBeUndefined();
+    expect(classifyWriteOutcome(outcome)).toBe("failed");
   });
 });
 

@@ -23,7 +23,7 @@
  * and never the material that proves it.
  */
 import { guardedFetch, retryAfterMs, type GuardedTransport } from "../../../connectors/guarded-fetch.js";
-import { ConnectorCallError, type ConnectorCallErrorCode } from "../../../errors.js";
+import { ConnectorCallError, resendAdvice, type ConnectorCallErrorCode } from "../../../errors.js";
 import type { ConnectorContext } from "../../../types.js";
 
 /** Google's OAuth 2.0 token endpoint, and the JWT audience it requires. */
@@ -394,9 +394,12 @@ function tokenFailure(
     );
   }
   if (code === "invalid_grant") {
-    return new ConnectorCallError(
-      "auth_required",
-      `Google refused the delegated token.${said} The mapped Workspace user may not exist, may be suspended, or may be outside the domain that granted delegation; the service account key may have been deleted or disabled; or this host's clock may be minutes off. Check the deployment's subject mapping and the key before retrying.`,
+    return resendAdvice(
+      new ConnectorCallError(
+        "auth_required",
+        `Google refused the delegated token.${said} The mapped Workspace user may not exist, may be suspended, or may be outside the domain that granted delegation; the service account key may have been deleted or disabled; or this host's clock may be minutes off. Check the deployment's subject mapping and the key.`,
+      ),
+      " before retrying",
     );
   }
   if (code === "invalid_client" || code === "disabled_client") {

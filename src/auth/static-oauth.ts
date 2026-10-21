@@ -14,7 +14,7 @@ import type {
 import { byteReadResponse } from "../byte-read-response.js";
 import { sentSecretsFor, sentSecretsFetch, shortSecretWarning } from "../sent-secrets.js";
 import type { ApiOAuthClientAuthentication, ApiOAuthConfig, ApiOAuthHooks } from "../connectors/api-connector.js";
-import { ConnectorCallError, msg } from "../errors.js";
+import { ConnectorCallError, msg, resendAdviceOf, withResendAdvice } from "../errors.js";
 import { oauthPartitionFor, retainOAuthPartition, retainingOAuthPartition } from "../oauth-partition.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { describeFailure } from "../operator-record.js";
@@ -606,12 +606,15 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         return { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
       }
       // Reaches the agent through authorize_connector. Text already in
-      // connecta's words passes (token responses are rebuilt before the SDK
-      // reads them); anything else is told from its record.
+      // connecta's words passes with its advice to try again, since this is
+      // no write's failure (token responses are rebuilt before the SDK reads
+      // them); anything else is told from its record.
       return {
         state: "error",
         message:
-          error instanceof ConnectorCallError || error instanceof OAuthError ? msg(error) : describeFailure(id, error),
+          error instanceof ConnectorCallError || error instanceof OAuthError
+            ? withResendAdvice(msg(error), resendAdviceOf(error))
+            : describeFailure(id, error),
       };
     }
   };

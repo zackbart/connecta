@@ -58,7 +58,7 @@ import {
 } from "../../connectors/guarded-fetch.js";
 import { deriveContext } from "../../derived-context.js";
 import { sensitiveFieldsOption, unprojectedResults } from "../_shared/sensitive-fields.js";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -71,7 +71,7 @@ import type {
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
-import { resendAdvice, tracksEveryRequest } from "../../provider-call.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** Tithe.ly's two published v1 endpoints, one per environment. */
 export const TITHELY_API_BASE_URLS = {
@@ -261,10 +261,10 @@ function tithelyFailure(status: number, headers: Headers, payload: unknown): Con
     return resendAdvice(
       new ConnectorCallError(
         "rate_limited",
-        `${detail} Tithe.ly publishes no rate limit; wait before retrying, and add a callAdmission budget if this recurs.`,
+        `${detail} Tithe.ly publishes no rate limit. Add a callAdmission budget if this recurs.`,
         wait === undefined ? {} : { retryAfterMs: wait },
       ),
-      "wait before retrying, and ",
+      " Wait before retrying.",
     );
   }
   if (status === 401) {
@@ -318,7 +318,7 @@ function inBandFailure(payload: unknown): ConnectorCallError | undefined {
   return resendAdvice(
     new ConnectorCallError(
       "connector_call_failed",
-      `${detailFor(payload, 200)} (status "${String(status)}"). Tithe.ly reports declined payments, unknown ids, and rejected arguments all this way, without a code; read the reason before retrying.`,
+      `${detailFor(payload, 200)} (status "${String(status)}"). Tithe.ly reports declined payments, unknown ids, and rejected arguments all this way, without a code.`,
       { retryable: false },
     ),
     "; read the reason before retrying",

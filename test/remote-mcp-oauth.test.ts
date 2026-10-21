@@ -1297,7 +1297,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     resume.resolve();
 
     const error = await finishing;
-    expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
+    expect(String(error)).toMatch(/authorization changed while this request was in flight\./);
     expect(await epochOf(storage)).not.toBe(epochA);
     expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
   });
