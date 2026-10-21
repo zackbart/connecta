@@ -1146,15 +1146,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
-            "code": "unavailable",
-            "message": "Could not reach the Infisical API.",
-            "retryable": true,
-            "details": {
-              "host": "https://app.infisical.com",
-              "code": "ECONNREFUSED"
-            }
+            "code": "connector_call_failed",
+            "message": "Could not reach the Infisical API. Whether the write took effect at Infisical is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },

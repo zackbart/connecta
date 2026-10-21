@@ -1426,8 +1426,6 @@ interface CallDispatch {
   write: boolean;
   /** A request for this call was handed to fetch; no other one may be. */
   sent: boolean;
-  /** An HTTP answer arrived: a later network code proves nothing unsent. */
-  responded: boolean;
   /** The answer was a 401, so the SDK renews the grant and resends. */
   unauthorized: boolean;
   /** The answer was a redirect, whose next hop would send the write again. */
@@ -1445,7 +1443,7 @@ interface CallDispatch {
 const DISPATCH = Symbol("connecta.dispatch");
 
 function newDispatch(write: boolean): CallDispatch {
-  return { write, sent: false, responded: false, unauthorized: false, redirected: false, resendRefused: false };
+  return { write, sent: false, unauthorized: false, redirected: false, resendRefused: false };
 }
 
 function withDispatch<T extends object>(params: T, dispatch: CallDispatch): T {
@@ -2374,7 +2372,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         ? await fetch(input, { ...init, redirect: "manual" })
         : await fetch(input, init);
       if (flight?.write) {
-        flight.responded = true;
         if (response.status === 401) flight.unauthorized = true;
         else if (REDIRECT_STATUSES.has(response.status)) flight.redirected = true;
       }
@@ -3329,7 +3326,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
                   "so whether it took effect is unknown: check the target before repeating it.",
                 { retryable: false, writeOutcome: "unknown" },
               )
-            : unknownOutcome({ title: `connector "${id}"` }, failure, dispatch.responded);
+            : unknownOutcome({ title: `connector "${id}"` }, failure);
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
       } finally {
         state.dispatches.delete(dispatch);

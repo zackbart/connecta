@@ -565,7 +565,7 @@ describe("restTools()", () => {
     expect(sent.map((request) => request.headers.has("idempotency-key"))).toEqual([false, false, false, true, false]);
   });
 
-  it("INV-9: treats a reset or 5xx on a write without a key as an unknown outcome, but not a failure before connecting", async () => {
+  it("INV-9: treats a reset, a refused connection, or a 5xx on a write without a key as an unknown outcome", async () => {
     const failing = (code: string) =>
       (async (input: RequestInfo | URL, init?: RequestInit) => {
         sent.push({
@@ -597,9 +597,14 @@ describe("restTools()", () => {
       code: "unavailable",
       retryable: true,
     });
-    // Never connected: nothing was sent, so repeating is safe.
+    // A refusal on fetch's last attempt says nothing about earlier ones.
     globalThis.fetch = failing("ECONNREFUSED");
     expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(await refusal(plain.callTool("acme_api_read", { path: "/v1/widgets" }, ctx()))).toMatchObject({
       code: "unavailable",
       retryable: true,
     });
@@ -612,7 +617,7 @@ describe("restTools()", () => {
     expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({ code: "invalid_args" });
   });
 
-  it("INV-9: exempts a connect-phase code only before a response exists, never while reading a body", async () => {
+  it("INV-9: no connect-phase code proves a write unsent, before a response or while reading its body", async () => {
     const plain = connector();
     const write = { method: "POST", path: "/v1/widgets", body: { name: "a" } };
     for (const code of ["EHOSTUNREACH", "ECONNREFUSED", "ENOTFOUND"]) {
@@ -630,15 +635,16 @@ describe("restTools()", () => {
         retryable: false,
       });
     }
-    // The same code from fetch itself, before any response, proves nothing was sent.
+    // Nor does the same code from fetch itself, before any response.
     globalThis.fetch = (async () => {
       throw Object.assign(new TypeError("fetch failed"), {
         cause: Object.assign(new Error("EHOSTUNREACH"), { code: "EHOSTUNREACH" }),
       });
     }) as typeof fetch;
     expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
-      code: "unavailable",
-      retryable: true,
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
     });
   });
 

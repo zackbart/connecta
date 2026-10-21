@@ -601,7 +601,6 @@ function uncertain(message: string, ctx: ConnectorContext): unknown {
     new ConnectorCallError("connector_call_failed", message, { retryable: false }),
     {
       dispatched: true,
-      responded: true,
       status: 200,
       fallback: "write",
     },

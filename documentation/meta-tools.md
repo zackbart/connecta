@@ -965,17 +965,19 @@ failure or returns early. Multiple uncertain writes use `uncertainCalls`,
 bounded to ten calls with `uncertainCallsTruncated` when more exist.
 
 A dispatched write is never reported as retryable once the downstream may
-have acted on it (INV-9). A 5xx (a gateway's 502 to 504 included), a connection
-lost after sending, or a reply that broke off is a non-retryable
-`connector_call_failed` whose outcome is unknown, from `remoteMcp()`, `api()`
-handlers, and the maintained providers alike; reads keep their retryable
-verdict. A write stays a known failure, with its own advice, only on positive
-evidence that the downstream never had it: a refusal it answered, or a
-connection that was never made. A refused connection proves that only when
-the runtime itself names a connect-phase error, the request was not
-cancelled, no answer arrived, and no request body was streamed (a stream
-fetch read, a `Blob`, or form data); Node names one, workerd does not, so on
-Workers a refused or reset write is an unknown outcome. A failure during a composite
+have acted on it (INV-9). A 5xx (a gateway's 502 to 504 included), any
+network failure of its send (a refused connection included), or a reply that
+broke off is a non-retryable `connector_call_failed` whose outcome is unknown,
+from `remoteMcp()`, `api()` handlers, and the maintained providers alike;
+reads keep their retryable verdict. One send can hide several attempts:
+Node's fetch sends a request again after HTTP 421 and after an HTTP/2
+`REFUSED_STREAM`, both of which servers define as not processed, and an
+operator-installed dispatcher such as undici's `RetryAgent` can retry further,
+so a refusal on the last attempt says nothing about the earlier ones.
+Connecta therefore never reports a transport-failed write as known failed. A
+write stays a known failure, with its own advice, only when connecta refused
+it before it left, or the downstream answered with a response classified as
+not applied (a refusal such as a 4xx). A failure during a composite
 call's later request leaves earlier requests' outcomes unknown, and once the
 call's outcome is decided, a request that had not left is never sent. A
 write the downstream answered with HTTP 401 is not resent: the credential is

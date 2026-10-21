@@ -1610,11 +1610,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Gmail was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },

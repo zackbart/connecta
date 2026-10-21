@@ -4,6 +4,7 @@ import { inputRequired, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { attachCallClassification } from "../src/call-classification.js";
 import { ConnectorCallError, classifyCallError } from "../src/errors.js";
 import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
 import { InvocationFailure } from "../src/invocation.js";
@@ -1737,6 +1738,9 @@ describe("remote MCP transport diagnostics", () => {
       versionNegotiation: "legacy",
     });
     const context = ctx();
+    // Served as a read, so the diagnostics come back as the transport gave
+    // them. A write's network failure is an unknown outcome instead (INV-9).
+    attachCallClassification(context, "read");
     try {
       const error = await connector.callTool("read", {}, context).catch((error) => error);
       expect(classifyCallError(error)).toMatchObject({

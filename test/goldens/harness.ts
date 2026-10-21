@@ -310,15 +310,12 @@ function respond(reply: StubResponse): Response {
 }
 
 /**
- * A refused connection as Node's undici reports it: a connect-phase errno and
- * no answer. It proves a write unsent only together with the guarded
- * transport's own evidence that no body producer could have raised it after
- * bytes left: no body, or one fetch holds whole (JSON, form strings, bytes),
- * on a request whose signal never fired. It is undici's own shape: a
- * network-error `TypeError` wrapping the system error. Every
- * golden write qualifies. This fake reads a request's body to record it, so a
- * streamed body would count as sent, as it must; workerd's own refusals carry
- * no errno and are never proven unsent (`test/write-evidence.test.ts`).
+ * A refused connection as Node's undici reports it: a network-error
+ * `TypeError` wrapping a connect-phase errno, with no answer. It proves
+ * nothing about a write, since fetch can hide earlier attempts behind it, so
+ * every golden write's network row is an unknown outcome; a read's stays
+ * retryable. The synthetic errno also appears on Workers, so the goldens stay
+ * identical across runtimes.
  */
 function networkFailure(): Error {
   return new TypeError("fetch failed", {

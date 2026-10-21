@@ -421,7 +421,6 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
             ctx,
             providerCallFailure(handlerCtx, { title: opts.title ?? id }, failure, {
               dispatched: true,
-              responded: true,
               fallback: write ? "write" : "read",
               finalize: true,
               // Only a declared provider's ledger can see every request.
@@ -462,7 +461,6 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         if (providerRequests(handlerCtx)?.length) throw settle(unreachable);
         throw providerCallFailure(ctx, { title: opts.title ?? id }, unreachable, {
           dispatched: true,
-          responded: true,
           fallback: classifyTool(tool),
         });
       }

@@ -530,11 +530,18 @@ describe("remote MCP writes after an ambiguous failure", () => {
     },
   );
 
-  it("INV-9: a write whose connection was refused before sending stays retryable", async () => {
+  it("INV-9: a write whose send reports a refused connection is unknown; a read stays retryable", async () => {
+    // fetch can hide earlier attempts behind its last one (a 421 or HTTP/2
+    // refused-stream resend, a retrying dispatcher), so a refusal proves
+    // nothing about the write.
     const flow = setup();
     flow.answers.set("create_item", "refused");
     const write = await flow.outcome("create_item", { id: 1 });
-    expect(write.error).toMatchObject({ code: "unavailable", retryable: true });
-    expect(flow.applied).toEqual([]);
+    expect(write.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect(write.error!.message).toContain('Whether the write took effect at connector "svc" is unknown');
+
+    flow.answers.set("list_items", "refused");
+    const read = await flow.outcome("list_items");
+    expect(read.error).toMatchObject({ code: "unavailable", retryable: true });
   });
 });

@@ -627,15 +627,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
-            "code": "unavailable",
-            "message": "Could not reach the Cloudflare API.",
-            "retryable": true,
-            "details": {
-              "host": "https://api.cloudflare.com",
-              "code": "ECONNREFUSED"
-            }
+            "code": "connector_call_failed",
+            "message": "Could not reach the Cloudflare API. Whether the write took effect at Cloudflare is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },

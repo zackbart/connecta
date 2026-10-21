@@ -1902,16 +1902,18 @@ compiling and configuring the real thing.
   resource sends record their dispatch too; OAuth credential checks precede
   the resource dispatch record. Token exchanges, GitHub installation
   and repository binding lookups, token minting, and Cloudflare zone-ownership
-  pin lookups are auxiliary: they cannot perform the logical resource write. A
-  proven pre-connection failure is also distinguished from a possibly
-  executing resource request. The guarded transport gathers that proof itself:
-  the runtime's own network-error `TypeError` wrapping a connect-phase errno,
-  on a request whose signal never fired (an abort rejects with its reason,
-  whatever it looks like); no response; and a body it framed whole (none,
-  JSON, a string, bytes, `URLSearchParams`) or a stream it watched and fetch
-  never pulled. A `Blob`, or `FormData` that may carry one, is read through a
-  `stream()` any code can override, so it counts as possibly sent, and an
-  errno a body producer raised after bytes left proves nothing. Every maintained
+  pin lookups are auxiliary: they cannot perform the logical resource write.
+  No transport rejection proves a dispatched write unsent, whatever errno it
+  names. One `fetch` call can hide several attempts: Node's fetch sends a
+  request again after a 421 (even under `redirect: "manual"`) and after an
+  HTTP/2 `REFUSED_STREAM`, both of which servers define as not processed, and
+  an operator-installed dispatcher such as undici's `RetryAgent` can retry
+  further. A refusal on the last attempt says nothing about the earlier ones,
+  so connecta never reports a transport-failed write as known failed. A write
+  is a known failure only when connecta refused it before dispatch (the ledger
+  proves it never left) or a served HTTP response's classification says it was
+  not applied. Owning transport attempts is planned for decision 0009's B.2
+  guarded `HttpClient`. Reads keep their retry advice. Every maintained
   provider declares (`tracksEveryRequest`) that its handlers send only through
   channels the ledger records; for an undeclared `api()` handler an empty
   ledger is no evidence, so its served write fails unknown once the handler
@@ -1946,17 +1948,20 @@ compiling and configuring the real thing.
   redaction of refusal errors, and concurrent direct-call ledger isolation.
   The round-6 cases cover a composite write's early refusal while siblings
   await credentials or are in flight, requests started after the call ended,
-  connect-phase errnos with each body kind (a pulled stream and a `Blob` or
-  `FormData` with its own producer included), a request aborted with a
-  refusal-shaped reason, an errno outside fetch's network error, and
+  connect-phase errnos with each body kind (all unknown for a write, and a
+  direct read stays retryable), a request aborted with a refusal-shaped
+  reason, an errno outside fetch's network error, and
   undeclared handlers whose untracked send precedes a typed failure. Each
   catalog case also checks that the ledger recorded every resource request
   the network saw, and the inventory that every API connector declares it.
   `test/write-evidence.test.ts` uses real refused, reset, and held sockets on
-  both runtimes, including a write aborted with another fetch's real refusal
-  as its reason after the server read its body;
-  `test/write-evidence.node.test.ts` streams a body, and a `Blob` with an
-  overridden `stream()`, that undici partly sends before its producer fails.
+  both runtimes: a refused write is unknown and a refused read retryable,
+  including a write aborted with another fetch's real refusal as its reason
+  after the server read its body; `test/write-evidence.node.test.ts` covers a
+  Planning Center POST that undici resends after a 421 to a closed listener, a
+  DELETE that a `RetryAgent` resends after a reset, and a streamed body and a
+  `Blob` with an overridden `stream()` that undici partly sends before its
+  producer fails. Each has the server holding the write and reports unknown.
   Additional tests:
   `test/remote-mcp-write-once.test.ts` (real SDK transport),
   `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each

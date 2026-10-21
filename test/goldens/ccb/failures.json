@@ -746,15 +746,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
-            "code": "unavailable",
-            "message": "Could not reach the CCB API.",
-            "retryable": true,
-            "details": {
-              "host": "https://api.ccbchurch.com",
-              "code": "ECONNREFUSED"
-            }
+            "code": "connector_call_failed",
+            "message": "Could not reach the CCB API. Whether the write took effect at CCB is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },

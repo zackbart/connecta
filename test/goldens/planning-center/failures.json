@@ -747,15 +747,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
-            "code": "unavailable",
-            "message": "Could not reach the Planning Center API.",
-            "retryable": true,
-            "details": {
-              "host": "https://api.planningcenteronline.com",
-              "code": "ECONNREFUSED"
-            }
+            "code": "connector_call_failed",
+            "message": "Could not reach the Planning Center API. Whether the write took effect at Planning Center is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },

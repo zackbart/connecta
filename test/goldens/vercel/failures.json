@@ -651,15 +651,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
-            "code": "unavailable",
-            "message": "Could not reach the Vercel API.",
-            "retryable": true,
-            "details": {
-              "host": "https://api.vercel.com",
-              "code": "ECONNREFUSED"
-            }
+            "code": "connector_call_failed",
+            "message": "Could not reach the Vercel API. Whether the write took effect at Vercel is unknown; check the target before repeating it.",
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },

@@ -720,13 +720,15 @@ describe("typed failures (H11)", () => {
       code: "connector_call_failed",
       retryable: false,
     });
-    // Nothing connected, so nothing was sent: safe to repeat.
+    // A refused connection proves nothing either: fetch may have made an
+    // earlier attempt behind it.
     vi.mocked(globalThis.fetch).mockRejectedValueOnce(
       Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }),
     );
     await expect(call(connection(), "tithely_api_mutate", mutate)).rejects.toMatchObject({
-      code: "unavailable",
-      retryable: true,
+      code: "connector_call_failed",
+      retryable: false,
+      writeOutcome: "unknown",
     });
     queue({ status: 503, text: "<html>down</html>" });
     await expect(call(connection(), "get_charge", { chargeId: "ch_1" })).rejects.toMatchObject({

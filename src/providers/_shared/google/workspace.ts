@@ -733,7 +733,6 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     if (status < 500) return undefined;
     const decision = providerCallFailure(ctx, { title: provider }, mapped, {
       dispatched: true,
-      responded: true,
       status,
       fallback: method === "GET" ? "read" : "write",
       repeatable: requestOptions.idempotent === true,
@@ -854,7 +853,6 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     const mapped = carryFailureFacts(error, settledFailure(error, facts, method, ctx, requestOptions));
     const decision = providerCallFailure(ctx, { title: provider }, mapped, {
       dispatched: facts.dispatched,
-      responded: facts.status !== undefined,
       ...(facts.status === undefined ? {} : { status: facts.status }),
       fallback: method === "GET" ? "read" : "write",
       repeatable: requestOptions.idempotent === true,

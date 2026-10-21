@@ -13,7 +13,6 @@ export interface ProviderRequest {
   auxiliary: boolean;
   provider: string;
   repeatable: boolean;
-  neverConnected?: boolean;
 }
 interface ProviderCall {
   requests: ProviderRequest[];

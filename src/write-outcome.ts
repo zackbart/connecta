@@ -68,34 +68,17 @@ const REFUSALS = new Set([
 ]);
 
 /**
- * Network failures that prove nothing was sent, but only when `fetch` itself
- * rejected before any response existed: no connection was ever established,
- * so the vendor cannot have acted. Once a response arrived, the same codes
- * while reading its body prove nothing of the kind. Nor do they when a body
- * producer outside the runtime may have raised one after bytes left: the
- * guarded transport accepts the errno only for a request it saw stream no
- * body bytes of its own (`neverConnected`).
- */
-export const NEVER_CONNECTED: ReadonlySet<string> = new Set([
-  "ECONNREFUSED",
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "EAI_FAIL",
-  "EHOSTUNREACH",
-]);
-
-/**
  * A request that is not safe to repeat (a write without an idempotency key)
  * must never be advertised as retryable after it may have reached the vendor
  * (INV-9): a 5xx, a gateway's 502 to 504, a broken-off reply, or a connection
- * lost after sending. Definite answers pass through: refusals and 4xx
- * verdicts (a 429 or a lock conflict included), a failure proven to precede
- * any connection, and timeouts (`timeout`, `ETIMEDOUT`, `*_TIMEOUT`), which
- * the invocation layer already reports as `write_outcome_unknown`.
- * `contacted` is whether the vendor may have been reached: any HTTP answer
- * arrived, or the transport could not prove it never connected.
+ * lost after sending. No network failure proves a write unsent: one send can
+ * hide several attempts (a 421 or HTTP/2 refused-stream resend, a retrying
+ * dispatcher), so a refusal on the last says nothing about the first.
+ * Definite answers pass through: refusals and 4xx verdicts (a 429 or a lock
+ * conflict included), and timeouts (`timeout`, `ETIMEDOUT`, `*_TIMEOUT`),
+ * which the invocation layer already reports as `write_outcome_unknown`.
  */
-export function unknownOutcome(vendor: { title: string }, error: unknown, contacted: boolean): unknown {
+export function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
   if (error instanceof WithheldTextError) {
     if (!error.retryable || error.timeout) return error;
   } else {
@@ -103,7 +86,6 @@ export function unknownOutcome(vendor: { title: string }, error: unknown, contac
     if (error.code !== "unavailable" && error.code !== "connector_call_failed") return error;
     const code = error.details?.code;
     if (code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT")) return error;
-    if (!contacted && code !== undefined && NEVER_CONNECTED.has(code)) return error;
   }
   return new ConnectorCallError(
     "connector_call_failed",
@@ -117,8 +99,8 @@ export function unknownOutcome(vendor: { title: string }, error: unknown, contac
  * One failure decision for API providers. The served verdict outranks every
  * transport default and replay-safety hint. Dispatch facts come from the
  * transport, never from a provider's interpretation of its HTTP method.
- * Definite refusals and proven pre-connection failures remain known failures;
- * a write is a known failure only on that positive evidence.
+ * A write is a known failure only on positive evidence: a definite refusal
+ * served by the vendor, or a request connecta refused before it left.
  */
 export function providerCallFailure(
   ctx: ConnectorContext,
@@ -126,9 +108,6 @@ export function providerCallFailure(
   error: unknown,
   facts: {
     dispatched: boolean;
-    responded: boolean;
-    /** The transport's own proof, when it gathered any; else an errno with no answer is accepted. */
-    neverConnected?: boolean;
     status?: number;
     fallback: "read" | "write";
     repeatable?: boolean;
@@ -148,9 +127,7 @@ export function providerCallFailure(
     // around it: nothing it saw rules out a request it did not see.
     if (facts.untracked) return uncertainProviderFailure(vendor, error);
     // In flight counts as sent. The call is closed, so nothing else leaves.
-    const dispatched = requests.filter(
-      (request) => request.dispatched && !request.auxiliary && !request.neverConnected,
-    );
+    const dispatched = requests.filter((request) => request.dispatched && !request.auxiliary);
     if (dispatched.length === 0) return knownProviderFailure(error);
     const refusal = refusalRequest(error);
     // An explicit unknown marker (notably the existing 401 handoff) wins.
@@ -167,13 +144,9 @@ export function providerCallFailure(
   // A direct transport user may prove idempotency. A deployment's served
   // write verdict still requires reconciliation rather than retry advice.
   if (served === undefined && facts.repeatable === true) return error;
-  // Whether the vendor may have been reached: a transport's own evidence
-  // decides, so an errno it could not trust counts as possible contact.
-  const contact = facts.responded || facts.neverConnected === false;
-  if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error, contact);
+  if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error);
   if (error.writeOutcome === "unknown") return error;
   const code = error.details?.code;
-  if (!contact && code !== undefined && NEVER_CONNECTED.has(code)) return error;
   if (error.code === "timeout" || code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT")) {
     return error; // The invocation owns timeout/cancellation outcomes.
   }
@@ -195,7 +168,7 @@ export function providerCallFailure(
       ),
     );
   }
-  const converted = unknownOutcome(vendor, error, contact);
+  const converted = unknownOutcome(vendor, error);
   if (converted instanceof ConnectorCallError && converted !== error) return carryFailureFacts(error, converted);
   return carryFailureFacts(
     error,

@@ -1627,11 +1627,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "Google Drive was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Find it with search_files or list_folder_items before creating it again: a second call makes a second one.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },

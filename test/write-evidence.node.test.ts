@@ -1,14 +1,120 @@
-// Node-only: streams a request body over undici with `duplex: "half"`; workerd ends a request whose body stream errors and reports success.
-// The reviewer's case: the server received body bytes before the body's own
-// producer raised a connect-phase errno, so the errno proves nothing.
+// Node-only: drives undici itself (a 421 resend, a RetryAgent dispatcher, a `duplex: "half"` stream body), which workerd's fetch does not have.
+// One send can hide several attempts, so the rejection fetch reports says
+// nothing about what the server already received. Each case here had the
+// server holding the write while connecta reported a retryable failure.
+import { createServer } from "node:http";
+import { Agent, RetryAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { expect, inject, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { tracksEveryRequest } from "../src/provider-call.js";
 import { InvocationService } from "../src/invocation.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { CredentialVault } from "../src/credentials.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { planningCenter } from "../src/providers/planning-center/index.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { makeRegistry } from "./helpers.js";
+
+/** A server whose first request gets `answer`; it reports what it received. */
+async function listen(answer: (close: () => void, response: import("node:http").ServerResponse) => void) {
+  const received: Array<{ method: string; bytes: number }> = [];
+  const server = createServer((request, response) => {
+    const exchange = { method: request.method ?? "", bytes: 0 };
+    received.push(exchange);
+    request.on("data", (chunk: Buffer) => (exchange.bytes += chunk.byteLength));
+    request.on("end", () => {
+      if (received.length === 1) answer(() => server.close(), response);
+      else response.writeHead(200, { "content-type": "application/json" }).end("{}");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("The fixture server has no TCP address.");
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    received,
+    async close() {
+      server.closeAllConnections();
+      if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+/** A Planning Center write served through the invocation, as an agent sends one. */
+async function planningCenterWrite(baseUrl: string, args: Record<string, unknown>) {
+  const connector = planningCenter("pco", { purpose: "Giving batches", baseUrl });
+  const storage = memoryStorage();
+  const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+  await vault.setAll("pco", { applicationId: "fixture-application", secret: "fixture-secret" }, "fixture");
+  const registry = makeRegistry([connector], { storage, credentialVault: vault });
+  const result = await new InvocationService(registry, new CatalogService(registry, "https://connecta.example")).invoke(
+    "pco.pco_api_mutate",
+    args,
+    { source: "call_destructive_tool" },
+  );
+  if (result.ok) throw new Error("expected the write to fail");
+  return {
+    error: result.error,
+    state: classifyWriteOutcome({
+      ok: false,
+      dispatched: result.dispatched,
+      answered: result.answered === true,
+      error: result.error,
+    }),
+  };
+}
+
+it("INV-9: a write fetch resent after a 421 to a closed listener is unknown, though the server has its body", async () => {
+  // undici answers a 421 by sending the request again on a new connection,
+  // even under `redirect: "manual"`; the listener is gone by then, so the
+  // only rejection fetch reports is the second attempt's ECONNREFUSED.
+  const server = await listen((close, response) => {
+    close();
+    response.writeHead(421, { "content-type": "application/json", connection: "close" });
+    response.end('{"errors":[{"status":"421","title":"Misdirected"}]}');
+  });
+  const body = { data: { type: "Batch", attributes: { description: "Fixture" } } };
+  try {
+    const { error, state } = await planningCenterWrite(server.baseUrl, {
+      method: "POST",
+      path: "/giving/v2/batches",
+      body,
+    });
+    expect(server.received).toEqual([{ method: "POST", bytes: JSON.stringify(body).length }]);
+    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect(state).toBe("unknown");
+  } finally {
+    await server.close();
+  }
+});
+
+it("INV-9: a write a RetryAgent sent again after a reset is unknown, though its last attempt was refused", async () => {
+  // An operator-installed dispatcher can retry below fetch: the DELETE is
+  // received, the connection reset, and the retry refused.
+  const original = getGlobalDispatcher();
+  const agent = new RetryAgent(new Agent({ connections: 1 }), { minTimeout: 1, maxTimeout: 1, maxRetries: 1 });
+  const server = await listen((close, response) => {
+    close();
+    response.socket?.destroy();
+  });
+  setGlobalDispatcher(agent);
+  try {
+    const { error, state } = await planningCenterWrite(server.baseUrl, {
+      method: "DELETE",
+      path: "/giving/v2/batches/1",
+    });
+    expect(server.received).toEqual([{ method: "DELETE", bytes: 0 }]);
+    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect(state).toBe("unknown");
+  } finally {
+    setGlobalDispatcher(original);
+    await agent.close();
+    await server.close();
+  }
+});
+
+// Round-7 controls: a body producer's own errno was once read as evidence.
 
 it("INV-9: a streamed write whose producer raised ECONNREFUSED after the server read 20 bytes is unknown", async () => {
   const id = crypto.randomUUID();

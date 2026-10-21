@@ -717,8 +717,9 @@ describe("round-6 write evidence sweep", () => {
     expect(requests).toHaveLength(0);
   });
 
-  // The guarded transport's evidence for "never connected": a connect-phase
-  // errno, no answer, and no body bytes a producer of its own could have sent.
+  // No network failure proves a write unsent: one send can hide several
+  // attempts (a 421 or HTTP/2 refused-stream resend, a retrying dispatcher).
+  // Whatever the body, a refusal on the last attempt leaves the write unknown.
   function streamed(bytes: number): ReadableStream<Uint8Array> {
     let pulls = 0;
     return new ReadableStream<Uint8Array>(
@@ -751,14 +752,14 @@ describe("round-6 write evidence sweep", () => {
     });
 
   it.each([
-    ["a streamed body pulled before its producer raised ECONNREFUSED", "pulled", true],
-    ["a streamed body fetch never pulled", "unpulled", false],
-    ["no body", "none", false],
-    ["a JSON body", "json", false],
-    ["a body of no type fetch holds whole", "opaque", true],
-    ["a Blob whose stream() streamed bytes before ECONNREFUSED", "blob", true],
-    ["FormData carrying such a Blob", "form", true],
-  ] as const)("INV-9: a write refused at connect with %s", async (_name, body, unknown) => {
+    ["a streamed body pulled before its producer raised ECONNREFUSED", "pulled"],
+    ["a streamed body fetch never pulled", "unpulled"],
+    ["no body", "none"],
+    ["a JSON body", "json"],
+    ["a body of no type fetch holds whole", "opaque"],
+    ["a Blob whose stream() streamed bytes before ECONNREFUSED", "blob"],
+    ["FormData carrying such a Blob", "form"],
+  ] as const)("INV-9: a write refused at connect with %s is unknown", async (_name, body) => {
     const received: number[] = [];
     const send = guardedFetch({
       provider: "Tickets",
@@ -832,11 +833,8 @@ describe("round-6 write evidence sweep", () => {
     );
     const result = await invoke(connector, "send", "write");
     if (body === "pulled" || body === "blob" || body === "form") expect(received).toEqual([20]);
-    expect(result).toMatchObject({
-      ok: false,
-      error: unknown ? { retryable: false, writeOutcome: "unknown" } : { code: "unavailable", retryable: true },
-    });
-    expect(stateOf(result)).toBe(unknown ? "unknown" : "failed");
+    expect(result).toMatchObject({ ok: false, error: { retryable: false, writeOutcome: "unknown" } });
+    expect(stateOf(result)).toBe("unknown");
   });
 
   it.each([
@@ -879,7 +877,7 @@ describe("round-6 write evidence sweep", () => {
     if (kind === "untyped") expect(direct).toMatchObject({ retryable: false, writeOutcome: "unknown" });
   });
 
-  it("INV-9: a direct guarded write without a ledger needs the same body evidence", async () => {
+  it("INV-9: a direct guarded write without a ledger is unknown after any refusal; a read stays retryable", async () => {
     const send = guardedFetch({
       provider: "Tickets",
       baseUrl: "https://tickets.example",
@@ -898,7 +896,10 @@ describe("round-6 write evidence sweep", () => {
     );
     expect(pulled).toMatchObject({ retryable: false, writeOutcome: "unknown" });
     const bodiless = await send({ method: "POST", path: "/t" }, ctx, (r) => r.json()).catch((e: unknown) => e);
-    expect(bodiless).toMatchObject({ code: "unavailable", retryable: true, details: { code: "ECONNREFUSED" } });
+    expect(bodiless).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    const read = await send({ method: "GET", path: "/t" }, ctx, (r) => r.json()).catch((e: unknown) => e);
+    expect(read).toMatchObject({ code: "unavailable", retryable: true, details: { code: "ECONNREFUSED" } });
+    expect((read as ConnectorCallError).writeOutcome).toBeUndefined();
   });
 
   function custom(handler: (ctx: Parameters<Connector["callTool"]>[2]) => Promise<unknown>, tracked = false) {

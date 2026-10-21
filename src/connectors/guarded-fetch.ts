@@ -22,7 +22,7 @@ import {
   providerRequest,
   vendorRefusal,
 } from "../provider-call.js";
-import { NEVER_CONNECTED, providerCallFailure } from "../write-outcome.js";
+import { providerCallFailure } from "../write-outcome.js";
 import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
@@ -498,42 +498,18 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     const dispatch = providerRequest(ctx, auxiliary, provider, request.repeatable);
     let dispatched = false;
     let response: Response | undefined;
-    // Whether body bytes may have come from a producer outside the runtime's
-    // fetch, which could fail with any errno after some of them left.
-    let produced = false;
-    // Whether the send rejected with the runtime's own connect-phase failure,
-    // never an abort reason that merely looks like one.
-    let refused = false;
     try {
       return await requestOnce(request, ctx, map);
     } catch (error) {
-      // Proof the vendor never had the request, gathered here and nowhere
-      // else: the runtime's own connect-phase failure, no answer, and no body
-      // bytes a producer could have streamed out before raising that errno.
-      dispatch.neverConnected = refused && !response && !produced;
+      // No rejection proves a dispatched write unsent: fetch may have made
+      // several attempts behind it (a 421 or HTTP/2 refused-stream resend, a
+      // retrying dispatcher), whatever the last one reports.
       throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
         dispatched: dispatched && !auxiliary,
-        responded: response !== undefined,
-        neverConnected: dispatch.neverConnected,
         ...(response ? { status: response.status } : {}),
         fallback: request.classification ?? (request.method === "GET" || request.method === "HEAD" ? "read" : "write"),
         ...(request.repeatable === undefined ? {} : { repeatable: request.repeatable }),
       });
-    }
-
-    /**
-     * The body as sent. One the runtime holds whole is written only after a
-     * connection exists. A stream is watched instead: once fetch pulls it, a
-     * connection may exist and bytes may have left. Anything else, a `Blob`
-     * or `FormData` included, is unproven.
-     */
-    function framed(body: BodyInit | undefined): BodyInit | undefined {
-      if (body === undefined || heldWhole(body)) return body;
-      if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) {
-        return watched(body as ReadableStream<Uint8Array>, () => (produced = true));
-      }
-      produced = true;
-      return body;
     }
 
     async function requestOnce<T>(
@@ -569,10 +545,9 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         sentSecretsFor(ctx).header(value);
       }
 
-      let init: RequestInit | undefined;
       try {
-        const body = request.body !== undefined ? JSON.stringify(request.body) : framed(request.rawBody);
-        init = {
+        const body = request.body !== undefined ? JSON.stringify(request.body) : request.rawBody;
+        const init: RequestInit = {
           method: request.method,
           headers,
           ...(body !== undefined ? { body } : {}),
@@ -598,7 +573,6 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         dispatch.status = response.status;
       } catch (cause) {
         if (cause instanceof ConnectorCallError) throw cause;
-        refused = dispatched && connectFailure(cause, [ctx.signal, init?.signal]);
         throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);
       }
       if (REDIRECT_STATUSES.has(response.status)) {
@@ -626,55 +600,6 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       return await map(boundedResponse(provider, response, limit), ctx);
     }
   };
-}
-
-/**
- * Whether a send's rejection is the runtime's own report that it never
- * connected: the Fetch standard's network-error `TypeError`, wrapping a
- * system error that names a connect-phase errno. An aborted request rejects
- * with its signal's reason, whatever that looks like (even another fetch's
- * real refusal), so a request whose signal fired is never eligible.
- */
-function connectFailure(failure: unknown, signals: readonly (AbortSignal | null | undefined)[]): boolean {
-  if (signals.some((signal) => signal && (signal.aborted || failure === signal.reason))) return false;
-  if (!(failure instanceof TypeError) || (failure as { code?: unknown }).code !== undefined) return false;
-  const cause: unknown = failure.cause;
-  if (!cause || typeof cause !== "object" || cause === failure) return false;
-  const code = (cause as { code?: unknown }).code;
-  return typeof code === "string" && NEVER_CONNECTED.has(code);
-}
-
-/**
- * A body fetch frames from memory, with no producer of its own. A `Blob` is
- * not one: fetch reads it through its `stream()`, which any code may
- * override, and `FormData` may carry one.
- */
-function heldWhole(body: BodyInit): boolean {
-  return (
-    typeof body === "string" ||
-    body instanceof ArrayBuffer ||
-    ArrayBuffer.isView(body) ||
-    body instanceof URLSearchParams
-  );
-}
-
-/** The same stream, calling `pulled` the first time fetch asks it for bytes. */
-function watched(body: ReadableStream<Uint8Array>, pulled: () => void): ReadableStream<Uint8Array> {
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  return new ReadableStream<Uint8Array>(
-    {
-      async pull(controller) {
-        pulled();
-        reader ??= body.getReader();
-        const { done, value } = await reader.read();
-        if (done) controller.close();
-        else controller.enqueue(value);
-      },
-      cancel: (reason) => (reader ?? body).cancel(reason),
-    },
-    // Zero, so constructing the stream never pulls it ahead of fetch.
-    { highWaterMark: 0 },
-  );
 }
 
 /** The stored spelling of a header already present, case-insensitively. */

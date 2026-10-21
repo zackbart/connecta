@@ -1688,11 +1688,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "connector_call_failed",
             "message": "The outcome of this edit is unknown: Google Docs was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it. Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it. Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat.",
-            "retryable": false
+            "retryable": false,
+            "writeOutcome": "unknown"
           }
         }
       },

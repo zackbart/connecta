@@ -1,7 +1,8 @@
-// A write is a known failure only on evidence the guarded transport itself
-// gathered: real refused and reset connections, through each runtime's own
-// fetch. Node's undici names a refused connect's errno; workerd names none,
-// so there a failed write without an answer is never proven unsent.
+// No transport rejection proves a write unsent, over real refused and reset
+// connections through each runtime's own fetch: one send can hide several
+// attempts (a 421 or HTTP/2 refused-stream resend, a retrying dispatcher),
+// so a refusal on the last says nothing about the first. Reads keep their
+// retry advice.
 import { describe, expect, inject, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch, type GuardedRequest } from "../src/connectors/guarded-fetch.js";
@@ -62,17 +63,45 @@ describe("write evidence over real connections", () => {
   it.each([
     ["no body", { method: "DELETE", path: "/tickets/1" }],
     ["a JSON body", { method: "POST", path: "/tickets", body: { title: "Fixture" } }],
-  ] as const)("INV-9: a write whose connection is refused, with %s", async (_name, request) => {
-    const { error, state } = await write(inject("refusedHttpOrigin"), request);
-    if (WORKERD) {
-      // "Network connection lost." with no errno: nothing proves it unsent.
-      expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+  ] as const)(
+    "INV-9: a write whose connection is refused, with %s, is unknown on every runtime",
+    async (_name, request) => {
+      const { error, state } = await write(inject("refusedHttpOrigin"), request);
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
       expect(state).toBe("unknown");
-    } else {
-      expect(error).toMatchObject({ code: "unavailable", retryable: true, details: { code: "ECONNREFUSED" } });
-      expect(error).not.toHaveProperty("writeOutcome");
-      expect(state).toBe("failed");
-    }
+    },
+  );
+
+  it("INV-9: a read whose connection is refused stays retryable on every runtime", async () => {
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: inject("refusedHttpOrigin"),
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+    });
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "list",
+            description: "List tickets",
+            annotations: { readOnlyHint: true },
+            handler: (_args, ctx) => send({ method: "GET", path: "/tickets" }, ctx, (response) => response.json()),
+          },
+        ],
+      }),
+    );
+    const registry = makeRegistry([connector]);
+    const result = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "tickets.list",
+      {},
+      { source: "call_tool" },
+    );
+    if (result.ok) throw new Error("expected the read to fail");
+    expect(result.error).toMatchObject({ code: "unavailable", retryable: true });
+    expect(result.error).not.toHaveProperty("writeOutcome");
+    // workerd reports "Network connection lost." with no errno.
+    if (!WORKERD) expect(result.error).toMatchObject({ details: { code: "ECONNREFUSED" } });
   });
 
   it("INV-9: a write the server received before the connection reset is unknown on every runtime", async () => {
@@ -88,6 +117,8 @@ describe("write evidence over real connections", () => {
   });
 });
 
+// Controls from round 7: an abort reason or a body producer was once read as
+// evidence. Nothing is now, so these hold trivially and stay as guards.
 describe("an aborted write never proves itself unsent", () => {
   const tickets = (baseUrl: string) => {
     const send = guardedFetch({ provider: "Tickets", baseUrl, authenticate: () => ({}), maxResponseBytes: 1024 });
@@ -152,15 +183,10 @@ describe("an aborted write never proves itself unsent", () => {
     }
   });
 
-  it("INV-9: a refused write with no body and a live signal stays a known failure on Node", async () => {
+  it("INV-9: a genuinely refused write with no body and a live signal is unknown on every runtime", async () => {
     const { connector, registry } = tickets(inject("refusedHttpOrigin"));
     const ctx = registry.contextFor("tickets", BASE, undefined, { signal: new AbortController().signal });
     const error = await failure(connector.callTool("send", { method: "DELETE", path: "/tickets/1" }, ctx));
-    if (WORKERD) {
-      expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    } else {
-      expect(error).toMatchObject({ code: "unavailable", retryable: true, details: { code: "ECONNREFUSED" } });
-      expect((error as { writeOutcome?: unknown }).writeOutcome).toBeUndefined();
-    }
+    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
   });
 });
