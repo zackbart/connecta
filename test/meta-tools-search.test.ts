@@ -39,8 +39,6 @@ function expectStructurallyCompleteTypeShape(text: string): void {
   expect(text).not.toContain("\uFFFD");
 }
 
-describe("structured result compatibility", () => {});
-
 describe("describe recovery", () => {
   it("classifies and bounds catalog failures without call-path detail", async () => {
     const unavailable: Connector = connectorWith({

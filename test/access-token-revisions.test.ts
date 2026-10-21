@@ -357,5 +357,3 @@ describe("concurrent conditional revocations", () => {
     expect(await admits(manager, issued.token)).toBe(false);
   });
 });
-
-describe("manager preconditions", () => {});

@@ -1581,5 +1581,3 @@ describe("review round 7", () => {
     expect(failureRecord({}, sent().redact(typed))).toMatchObject({ errorClass: "RoundSevenHttpError" });
   });
 });
-
-describe("mutation checks", () => {});

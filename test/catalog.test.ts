@@ -236,12 +236,6 @@ describe("compactSchema $ref handling", () => {
   });
 });
 
-describe("compactSchema depth limit", () => {});
-
-describe("compactSchema caching", () => {});
-
-describe("compactSchema 2020-12 keyword compatibility", () => {});
-
 function branchingSchema(width: number, onLeafRead?: () => void): JsonSchema {
   const $defs: Record<string, unknown> = {};
   for (let level = 0; level < 4; level += 1) {

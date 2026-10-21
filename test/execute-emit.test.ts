@@ -380,5 +380,3 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
     expect(quietEnvelope.diagnostics.emitted).toBeUndefined();
   });
 });
-
-describe("emit budget defaults", () => {});

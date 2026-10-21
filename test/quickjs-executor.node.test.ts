@@ -607,8 +607,6 @@ describe("quickJsExecutor", () => {
   });
 });
 
-describe("the advertised discovery example", () => {});
-
 describe("authenticated host failures (E1, X11)", () => {
   it.each(["x", "😀"])("bounds 50 KB downstream errors containing %j before framing", async (character) => {
     const connector = connectorWith({
