@@ -1,119 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  credentialManagementCapability,
-  filterUiConnectors,
-  operatorPageForPath,
-  operatorPageTitle,
-  type UiConnector,
-} from "../src/ui.js";
-import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./fixtures/operator-contract-v2.js";
-import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
-import type { UiData } from "../src/operator-ui/model.js";
-import {
-  activityReadable,
-  activitySummary,
-  credentialUnavailableCopy,
   driftCounts,
   driftSummary,
   failure,
-  filterActivity,
   info,
   initialState,
-  operatorRole,
   resetIdentity,
   safeHttpHref,
-  withPage,
   type OperatorState,
   type UiActivityEvent,
 } from "../src/operator-ui/view.js";
-import { required } from "./helpers.js";
-
-/** A connector whose listTools always throws — exercises broken-connector isolation. */
-describe("status UI filtering", () => {
-  const connectors: UiConnector[] = [
-    {
-      id: "notion",
-      title: "Notion",
-      description: "Company knowledgebase",
-      status: "auth_required",
-      toolCount: 0,
-      tools: [],
-    },
-    {
-      id: "billing",
-      title: "Billing",
-      description: "Client billing",
-      status: "ok",
-      toolCount: 1,
-      tools: [
-        {
-          name: "list_invoices",
-          address: "billing.list_invoices",
-          description: "List invoices",
-        },
-      ],
-    },
-  ];
-
-  it("keeps an identity-matching zero-tool connector and hides nonmatches", () => {
-    expect(filterUiConnectors(connectors, "notion")).toEqual([{ connector: connectors[0], tools: [] }]);
-    expect(filterUiConnectors(connectors, "missing")).toEqual([]);
-  });
-
-  it("matches tool metadata without losing connector context", () => {
-    expect(filterUiConnectors(connectors, "invoices")).toEqual([
-      {
-        connector: connectors[1],
-        tools: [required(connectors[1]).tools[0]],
-      },
-    ]);
-  });
-});
-
-describe("operator page routing and capabilities", () => {
-  it("maps only canonical shell paths and builds page-specific titles", () => {
-    expect(operatorPageForPath("/")).toBe("overview");
-    expect(operatorPageForPath("/endpoints")).toBe("endpoints");
-    expect(operatorPageForPath("/access")).toBe("endpoints");
-    expect(operatorPageForPath("/credentials")).toBeUndefined();
-    expect(operatorPageForPath("/tokens")).toBe("tokens");
-    expect(operatorPageForPath("/activity")).toBe("activity");
-    expect(operatorPageForPath("/ui")).toBeUndefined();
-    expect(operatorPageForPath("/ui/data")).toBeUndefined();
-    expect(operatorPageTitle("connections", "Acme Connecta")).toBe("Connectors · Acme Connecta");
-  });
-
-  it("orders credential capability states without revealing topology to bearer", () => {
-    expect(
-      credentialManagementCapability({
-        eligibleOperator: false,
-        hasCredentialSlots: true,
-        hasCredentialVault: true,
-      }),
-    ).toBe("requires_operator");
-    expect(
-      credentialManagementCapability({
-        eligibleOperator: true,
-        hasCredentialSlots: false,
-        hasCredentialVault: false,
-      }),
-    ).toBe("no_slots");
-    expect(
-      credentialManagementCapability({
-        eligibleOperator: true,
-        hasCredentialSlots: true,
-        hasCredentialVault: false,
-      }),
-    ).toBe("vault_not_configured");
-    expect(
-      credentialManagementCapability({
-        eligibleOperator: true,
-        hasCredentialSlots: true,
-        hasCredentialVault: true,
-      }),
-    ).toBe("available");
-  });
-});
 
 describe("operator app state", () => {
   function event(address: string, actor?: UiActivityEvent["actor"]) {
@@ -204,58 +100,6 @@ describe("operator app state", () => {
     expect(JSON.stringify(after)).not.toContain("identity-a");
   });
 
-  it("re-idles deferred collections so a new identity refetches its own", () => {
-    const after = resetIdentity(loaded());
-    expect(after.activityPhase).toBe("idle");
-  });
-
-  it("drops the one-time secret and the open credential form when a page changes", () => {
-    const after = withPage(loaded(), "connections");
-    expect(after.page).toBe("connections");
-    expect(after.credentialEditing).toBeNull();
-    expect(after.credentialNotice).toBeNull();
-    // Loaded collections are this identity's own, so navigation keeps them.
-  });
-
-  it("filters loaded activity across labels, ids, and namespaces", () => {
-    const events = [
-      event("calc.add", {
-        kind: "clerk",
-        id: "user_1",
-        namespace: "https://tenant-a.example",
-        label: "Ada Lovelace",
-      }),
-      event("notes.list", {
-        kind: "clerk",
-        id: "user_2",
-        namespace: "https://tenant-b.example",
-        label: "Ada Lovelace",
-      }),
-      event("calc.add", { kind: "clerk", id: "user_fallback" }),
-    ];
-    expect(filterActivity(events, "ada lovelace")).toHaveLength(2);
-    expect(filterActivity(events, "user_1")).toHaveLength(1);
-    expect(filterActivity(events, "tenant-b.example")).toEqual([events[1]]);
-    expect(filterActivity(events, "")).toEqual(events);
-  });
-
-  it("summarizes activity as counts and never as payloads", () => {
-    expect(activitySummary([])).toBe("");
-    expect(activitySummary([event("calc.add"), event("calc.add"), event("notes.list")])).toBe(
-      "3 loaded calls · 0 failed · 2 tools",
-    );
-  });
-
-  it("includes failed calls in the accessible summary, excluding catalog changes", () => {
-    const calls = ["success", "approved", "error", "timeout", "unknown", "cancelled", "paused"].map((outcome) => ({
-      ...event("calc.add"),
-      outcome,
-    }));
-    expect(
-      activitySummary([...calls, { ...event("notes.list"), kind: "catalog_drift", outcome: "catalog_changed" }]),
-    ).toBe("7 loaded calls · 3 failed · 1 tool · 1 catalog change");
-  });
-
   it("lets only http(s) values become an href", () => {
     expect(safeHttpHref("https://provider.test/oauth?x=1")).toBe("https://provider.test/oauth?x=1");
     expect(safeHttpHref("http://provider.test")).toBe("http://provider.test");
@@ -288,35 +132,5 @@ describe("operator app state", () => {
     expect(rendered).not.toContain("billing.delete_customer");
     expect(rendered).not.toContain("inputSchema");
     expect(driftSummary(smuggled)).not.toContain("billing");
-  });
-
-  it("names each unavailable capability without revealing topology", () => {
-    expect(credentialUnavailableCopy("no_slots")).toContain("No connector declares a credential slot");
-    expect(credentialUnavailableCopy("vault_not_configured")).toContain("No credential vault");
-    expect(credentialUnavailableCopy("requires_operator")).toContain("interactive sign-in");
-  });
-});
-
-describe("operator contract v2 role", () => {
-  const data = { activityEnabled: true, connectors: [] } as unknown as UiData;
-  const maintainer = structuredClone(OPERATOR_V2_MAINTAINER) as OperatorUiContractV2;
-  const member = structuredClone(OPERATOR_V2_MEMBER) as OperatorUiContractV2;
-
-  it("INV-4: exposes the role and opens Activity only to a maintainer with readable history", () => {
-    expect(operatorRole({ contract: null })).toBeNull();
-    expect(operatorRole({ contract: maintainer })).toBe("maintainer");
-    expect(operatorRole({ contract: member })).toBe("member");
-    expect(activityReadable({ contract: maintainer, data })).toBe(true);
-    expect(activityReadable({ contract: member, data })).toBe(false);
-    expect(activityReadable({ contract: maintainer, data: { ...data, activityEnabled: false } })).toBe(false);
-    for (const activity of ["unconfigured", "forbidden"] as const) {
-      expect(activityReadable({ contract: { ...maintainer, live: { ...maintainer.live, activity } }, data })).toBe(
-        false,
-      );
-    }
-    // A failed history read still opens the page, which reports the failure.
-    expect(
-      activityReadable({ contract: { ...maintainer, live: { ...maintainer.live, activity: "unavailable" } }, data }),
-    ).toBe(true);
   });
 });

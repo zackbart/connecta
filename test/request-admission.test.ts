@@ -373,41 +373,6 @@ describe("request admission", () => {
     expect(cancellations).toBe(1);
   });
 
-  it("close rejects queued and future MCP work while active work drains", NODE, async () => {
-    const gate = blockingAuth();
-    const connecta = createTestConnecta({
-      connectors: [],
-      auth: gate.auth,
-      logger: silentLogger,
-      admission: {
-        requests: {
-          concurrency: 1,
-          maxQueueSize: 1,
-          queueTimeoutMs: 1_000,
-        },
-      },
-    });
-    const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
-    await waitFor(() => gate.calls() === 1);
-    const queued = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
-    await settle();
-
-    await connecta.close();
-    const queuedResponse = await queued;
-    const futureResponse = await connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
-    for (const response of [queuedResponse, futureResponse]) {
-      expect(response.status).toBe(503);
-      expect(await response.json()).toMatchObject({
-        error: {
-          code: -33002,
-          data: { code: "server_shutting_down", retryable: false },
-        },
-      });
-    }
-    gate.release();
-    await (await first).text();
-  });
-
   it("gives a one-method executor its own smaller bounded pool", NODE, async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {

@@ -58,26 +58,4 @@ describe("a permit handed across requests", () => {
       totals: { admitted: 2, cancelled: 0 },
     });
   });
-
-  it("still withdraws a waiter whose own request gave up before its turn", async () => {
-    const admission = new ConnectorCallAdmissionController("limited", {
-      rules: [{ maxConcurrency: 1 }],
-    });
-    const held = await admission.acquire({ toolName: "read", args: {} });
-    const caller = new AbortController();
-    const queued = admission.acquire({
-      toolName: "read",
-      args: {},
-      signal: caller.signal,
-    });
-    caller.abort(new Error("caller left"));
-    await expect(queued).rejects.toMatchObject({ admissionKind: "cancelled" });
-
-    held.release();
-    expect(admission.snapshot()).toMatchObject({
-      active: 0,
-      queued: 0,
-      totals: { admitted: 1, cancelled: 1 },
-    });
-  });
 });

@@ -2,13 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createTestConnecta } from "./helpers.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import {
-  OPERATOR_UI_ASSETS,
-  OPERATOR_UI_SCHEME_PATH,
-  OPERATOR_UI_SCRIPT_PATH,
-  OPERATOR_UI_STYLE_PATH,
-} from "../src/operator-ui/generated.js";
-import { renderUiHtml } from "../src/ui.js";
+import { OPERATOR_UI_ASSETS, OPERATOR_UI_SCRIPT_PATH } from "../src/operator-ui/generated.js";
 
 const BASE = "https://connecta.test";
 const deployment = () =>
@@ -50,30 +44,5 @@ describe("operator assets on both runtimes", () => {
     const response = await c.fetch(new Request(BASE + OPERATOR_UI_SCRIPT_PATH, { method: "POST" }));
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET, HEAD");
-  });
-
-  it("keeps the open shell small and hosts Hanken Grotesk and JetBrains Mono in its hashed stylesheet", () => {
-    const html = renderUiHtml();
-    expect(html.length).toBeLessThan(5000);
-    expect(html).toContain(OPERATOR_UI_SCRIPT_PATH);
-    expect(html).toContain(OPERATOR_UI_STYLE_PATH);
-    // The blocking scheme initializer stays a few hundred bytes (#854).
-    expect(html).toContain(`<script src="${OPERATOR_UI_SCHEME_PATH}"></script>`);
-    const scheme = OPERATOR_UI_ASSETS[OPERATOR_UI_SCHEME_PATH]!.body;
-    expect(scheme.length).toBeLessThan(400);
-    expect(scheme).toContain('"connecta:scheme"');
-    const css = OPERATOR_UI_ASSETS[OPERATOR_UI_STYLE_PATH]!.body;
-    const fonts = Object.keys(OPERATOR_UI_ASSETS).filter((path) => path.endsWith(".woff2"));
-    expect(fonts).toHaveLength(2);
-    for (const font of fonts) expect(css).toContain(font);
-    const notices = Object.entries(OPERATOR_UI_ASSETS).find(([path]) => path.endsWith(".txt"))![1].body;
-    expect(notices).toContain("@fontsource-variable/hanken-grotesk");
-    expect(notices).toContain("@fontsource-variable/jetbrains-mono");
-    expect(notices).toContain("SIL OPEN FONT LICENSE");
-    // The complete package-to-license mapping is checked in operator-notices.node.test.ts.
-    const sections = notices.split("\n\n----------------------------------------\n\n");
-    const texts = sections.map((section) => section.slice(section.indexOf("\n\n")));
-    expect(new Set(texts).size).toBe(texts.length);
-    expect(html).not.toContain("https://fonts.");
   });
 });

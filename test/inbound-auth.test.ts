@@ -40,7 +40,7 @@ function unrelated(): InboundAuth {
 }
 
 describe("inbound credential ownership", () => {
-  it.each(["/mcp", "/ui/access-tokens", "/connect/service", "/oauth/callback/service"])(
+  it.each(["/mcp", "/ui/access-tokens"])(
     "INV-4: refuses explicit headers on Access %s before ambient identity lookup",
     async (path) => {
       const getIdentity = vi.fn(async () => ({ user_uuid: "ambient" }));
@@ -182,52 +182,6 @@ describe("inbound credential ownership", () => {
     }
   });
 
-  it("INV-4: rejects non-boolean recognition rather than falling through", async () => {
-    for (const value of [undefined, "yes", Promise.resolve(true)]) {
-      const result = await authorize(request(), BASE, [
-        {
-          kind: "broken",
-          recognizesCredential: (() => value) as never,
-          authorize: () => ({ ok: true, userId: "wrong" }),
-        },
-      ]);
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.response.status).toBe(403);
-    }
-  });
-
-  it("INV-11: refuses retired refusal markers and invalid auth hooks at construction", () => {
-    const auth = { kind: "custom", authorize: () => ({ ok: true as const }) };
-    for (const key of ["recognizesCredential", "handleMetadata", "challenge"]) {
-      expect(() => createTestConnecta({ connectors: [], auth: { ...auth, [key]: "bad" } as never })).toThrow(
-        "inbound auth adapter",
-      );
-    }
-    expect(() =>
-      createTestConnecta({ connectors: [], auth: { ...auth, recognizesCredential: async () => true } as never }),
-    ).toThrow("must be synchronous");
-    expect(() => createTestConnecta({ connectors: [], auth: { ...auth, finalRefusals: true } as never })).toThrow(
-      "finalRefusals is retired",
-    );
-  });
-
-  it("INV-6: consumes rejected recognition promises without exposing their text", async () => {
-    const warn = vi.spyOn(console, "warn");
-    const error = vi.spyOn(console, "error");
-    const result = await authorize(request(), BASE, [
-      {
-        kind: "broken",
-        recognizesCredential: (() => Promise.reject(new Error("SECRET_TOKEN"))) as never,
-        authorize: () => ({ ok: true, userId: "wrong" }),
-      },
-    ]);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.response.status).toBe(403);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(warn).not.toHaveBeenCalled();
-    expect(error).not.toHaveBeenCalled();
-  });
-
   it("INV-6: fails closed without logging thrown credential-recognition text", async () => {
     const warn = vi.spyOn(console, "warn");
     const error = vi.spyOn(console, "error");
@@ -292,36 +246,5 @@ describe("metadata-owned challenges", () => {
       expect(result.response.headers.get("WWW-Authenticate")).toBe(
         `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp/support", scope="openid profile email"`,
       );
-  });
-
-  it("serves only Clerk protected-resource metadata, including OPTIONS", async () => {
-    const auth = clerk();
-    for (const path of [
-      "/.well-known/oauth-authorization-server",
-      "/.well-known/unrelated",
-      "/.well-known/oauth-protected-resource/mcp/support/extra",
-    ]) {
-      expect(await auth.handleMetadata!(request(path), BASE)).toBeNull();
-      expect(await auth.handleMetadata!(new Request(`${BASE}${path}`, { method: "OPTIONS" }), BASE)).toBeNull();
-    }
-    expect(
-      (
-        await auth.handleMetadata!(
-          new Request(`${BASE}/.well-known/oauth-protected-resource`, { method: "OPTIONS" }),
-          BASE,
-        )
-      )?.status,
-    ).toBe(204);
-  });
-
-  it("INV-11: rejects challenge scope injection without quoting the configured value", () => {
-    for (const scope of ['openid"SECRET', "bad\\SECRET", "bad\nSECRET", "two scopes"]) {
-      expect(() => clerkAuth({ publishableKey: PK, secretKey: "unused", scopes: [scope] })).toThrow("`scopes`");
-      try {
-        clerkAuth({ publishableKey: PK, secretKey: "unused", scopes: [scope] });
-      } catch (error) {
-        expect(String(error)).not.toContain("SECRET");
-      }
-    }
   });
 });

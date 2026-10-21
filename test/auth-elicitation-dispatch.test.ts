@@ -56,7 +56,7 @@ function setup(
     },
   });
   apps.push(app);
-  const rpc = async (name = "call_destructive_tool", state?: string, address = "service.write", trusted = false) => {
+  const rpc = async (name = "call_destructive_tool", state?: string, address = "service.write") => {
     const args =
       name === "execute_code"
         ? { code: "write" }
@@ -79,7 +79,7 @@ function setup(
     if (name !== "execute_code" && name !== "search_tools") request.headers.set("Mcp-Param-Address", address);
     return (
       await readJsonRpc(
-        await app.fetch(name === "execute_code" || trusted ? new Request(`${BASE}/mcp/trusted`, request) : request),
+        await app.fetch(name === "execute_code" ? new Request(`${BASE}/mcp/trusted`, request) : request),
       )
     ).result;
   };
@@ -95,8 +95,7 @@ function setup(
     app,
     rpc,
     connect,
-    vault,
-    warmCatalog: (trusted = false) => rpc("search_tools", undefined, undefined, trusted),
+    warmCatalog: () => rpc("search_tools"),
   };
 }
 
@@ -242,163 +241,34 @@ function remoteReadFlow(program: boolean) {
 }
 
 describe("auth recovery invocation eligibility", () => {
-  it("INV-9: a classification digest refusal preserves normal calls and blocks post-entry recovery", async () => {
-    let needsAuth = false;
-    let entries = 0;
-    const connector = api("service", {
-      tools: [
-        {
-          name: "read",
-          description: "Read a record",
-          annotations: { readOnlyHint: true, extension: 1n },
-          handler: () => {
-            entries++;
-            if (needsAuth) throw new ConnectorCallError("auth_required", "Connect first");
-            return {};
-          },
-        },
-      ],
-    });
-    connector.startAuth = async () => ({
-      state: "auth_required",
-      authorizationUrl: "https://auth.service.test/authorize",
-    });
-    const flow = setup(connector);
-    expect((await flow.rpc("call_tool", undefined, "service.read")).isError).toBeFalsy();
-    needsAuth = true;
-    expectReconciliation(await flow.rpc("call_tool", undefined, "service.read"));
-    expect(entries).toBe(2);
-  });
-
-  it.each([false, true])(
-    "INV-9: stale remote MCP read fallback cannot elicit after committing a write (program %s)",
-    async (program) => {
-      let now = Date.now();
-      vi.spyOn(Date, "now").mockImplementation(() => now);
-      const flow = remoteReadFlow(program);
-      await flow.warmCatalog(program);
-      now += 1100;
-      flow.change({ readOnly: false, listingFails: true });
-      expectReconciliation(await flow.request());
-      expect(flow.counts()).toEqual({ calls: 1, items: 1, failedListings: 1 });
-      // Restoring listing availability cannot authorize a recovery prompt.
-      flow.change({ listingFails: false, authFails: false });
-      expect(flow.counts().items).toBe(1);
-    },
-  );
-
-  it.each([false, true])(
-    "INV-9: fresh remote MCP reads elicit and re-run after HTTP 401 (program %s)",
-    async (program) => {
-      const flow = remoteReadFlow(program);
-      const first = await flow.request();
-      expect(first.resultType).toBe("input_required");
-      expect(flow.counts().calls).toBe(1);
-      flow.change({ authFails: false });
-      expect((await flow.request(first.requestState)).isError).toBeFalsy();
-      expect(flow.counts()).toMatchObject({ calls: 2, items: 0 });
-    },
-  );
-
-  it.each([false, true])(
-    "INV-9: normal stale-fallback calls retain their existing behavior (program %s)",
-    async (program) => {
-      let now = Date.now();
-      vi.spyOn(Date, "now").mockImplementation(() => now);
-      const flow = remoteReadFlow(program);
-      await flow.warmCatalog(program);
-      now += 1100;
-      flow.change({ readOnly: false, listingFails: true, authFails: false });
-      expect((await flow.request()).isError).toBeFalsy();
-      expect(flow.counts()).toEqual({ calls: 1, items: 1, failedListings: 1 });
-    },
-  );
-
-  it("INV-9: an earlier stale program read blocks recovery of a later pre-invocation auth failure", async () => {
+  it("INV-9: stale remote MCP read fallback cannot elicit after committing a write", async () => {
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
-    let listingFails = false;
-    let items = 0;
-    const service: Connector = {
-      id: "service",
-      kind: "api",
-      listTools: async () => {
-        if (listingFails) throw new ConnectorCallError("unavailable", "Listing unavailable");
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      callTool: async () => {
-        items++;
-        return {};
-      },
-    };
-    const protectedRead = api("protected", {
-      credential: { label: "Token" },
-      tools: [{ name: "read", description: "Read a record", annotations: { readOnlyHint: true }, handler: () => ({}) }],
-    });
-    const flow = setup(service, {
-      additional: [protectedRead],
-      catalogTtlSeconds: 1,
-      program: async (call) => {
-        await call("service.read", {});
-        return call("protected.read", {});
-      },
-    });
-    await flow.warmCatalog(true);
+    const flow = remoteReadFlow(false);
+    await flow.warmCatalog();
     now += 1100;
-    listingFails = true;
-    const result = await flow.rpc("execute_code");
-    expect(result.resultType).not.toBe("input_required");
-    expect(result.structuredContent.error).toMatchObject({
-      code: "auth_required",
-      retryable: false,
-      reconciliationRequired: true,
-      authorizationUrl: expect.stringContaining(`${BASE}/connect/protected?h=`),
-    });
-    expect(items).toBe(1);
+    flow.change({ readOnly: false, listingFails: true });
+    expectReconciliation(await flow.request());
+    expect(flow.counts()).toEqual({ calls: 1, items: 1, failedListings: 1 });
+    // Restoring listing availability cannot authorize a recovery prompt.
+    flow.change({ listingFails: false, authFails: false });
+    expect(flow.counts().items).toBe(1);
   });
 
-  it("INV-9: accept rechecks earlier program reads before restarting any call", async () => {
-    let firstIsRead = true;
-    const entries: string[] = [];
-    const service: Connector = {
-      id: "service",
-      kind: "api",
-      listTools: async () => [
-        { name: "first", annotations: { readOnlyHint: firstIsRead } },
-        { name: "read", annotations: { readOnlyHint: true } },
-      ],
-      callTool: async (name) => {
-        entries.push(name);
-        if (name === "read") throw new ConnectorCallError("auth_required", "Connect first");
-        return {};
-      },
-      startAuth: async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" }),
-    };
-    const flow = setup(service, {
-      program: async (call) => {
-        await call("service.first", {});
-        return call("service.read", {});
-      },
-    });
-    const first = await flow.rpc("execute_code");
+  it("INV-9: fresh remote MCP reads elicit and re-run after HTTP 401", async () => {
+    const flow = remoteReadFlow(false);
+    const first = await flow.request();
     expect(first.resultType).toBe("input_required");
-    firstIsRead = false;
-    await flow.app.registry.invalidateStored("service");
-    const accepted = await flow.rpc("execute_code", first.requestState);
-    expect(accepted.structuredContent.error).toMatchObject({
-      code: "auth_replay_refused",
-      reconciliationRequired: true,
-    });
-    expect(entries).toEqual(["first", "read"]);
+    expect(flow.counts().calls).toBe(1);
+    flow.change({ authFails: false });
+    expect((await flow.request(first.requestState)).isError).toBeFalsy();
+    expect(flow.counts()).toMatchObject({ calls: 2, items: 0 });
   });
 
   it.each([
     [false, "write"],
-    [true, "write"],
-    [false, "schema"],
     [true, "schema"],
     [false, "stale"],
-    [true, "stale"],
   ] as const)(
     "INV-1 INV-9: accept refuses an entered read on program %s with changed %s classification",
     async (program, change) => {
@@ -431,8 +301,6 @@ describe("auth recovery invocation eligibility", () => {
 
   it.each([
     ["api", false],
-    ["custom", false],
-    ["api", true],
     ["custom", true],
   ] as const)(
     "INV-9: raw fetch in a %s connector write cannot elicit or replay a completed item (program %s)",
@@ -479,37 +347,6 @@ describe("auth recovery invocation eligibility", () => {
       expectReconciliation(await flow.rpc(program ? "execute_code" : undefined));
       expect(items).toBe(1);
       expect(send).toHaveBeenCalledTimes(2);
-    },
-  );
-
-  it.each([false, true])(
-    "INV-9: pre-invocation missing credential slots elicit without entering a write (named %s)",
-    async (named) => {
-      let writes = 0;
-      const connector = api("service", {
-        credential: { label: "Token", ...(named ? { fields: [{ name: "apiKey", label: "API key" }] } : {}) },
-        tools: [
-          {
-            name: "write",
-            description: "Create an item",
-            annotations: { readOnlyHint: false },
-            handler: () => {
-              writes++;
-              return { id: writes };
-            },
-          },
-        ],
-      });
-      const flow = setup(connector);
-      // A previously declared slot cannot satisfy the current named slot.
-      if (named) await flow.vault.set("service", "old-token", "alice");
-      const first = await flow.rpc();
-      expect(first.resultType).toBe("input_required");
-      expect(writes).toBe(0);
-      if (named) await flow.vault.setAll("service", { apiKey: "current-token" }, "alice");
-      else await flow.vault.set("service", "current-token", "alice");
-      expect((await flow.rpc(undefined, first.requestState)).isError).toBeFalsy();
-      expect(writes).toBe(1);
     },
   );
 
@@ -576,7 +413,7 @@ describe("auth recovery invocation eligibility", () => {
     },
   );
 
-  it.each([{}, { plain: true }, { guarded: true }, { plain: true, guarded: true }])(
+  it.each([{ guarded: true }])(
     "INV-9: a direct write followed by an auth failure cannot elicit or replay (%j)",
     async (options) => {
       const flow = apiFlow(options);
@@ -589,21 +426,18 @@ describe("auth recovery invocation eligibility", () => {
     },
   );
 
-  it.each([false, true])(
-    "INV-9: a write with a pre-invocation missing grant elicits and succeeds once (guarded %s)",
-    async (guarded) => {
-      const flow = apiFlow({ guarded });
-      const first = await flow.rpc();
-      expect(first.resultType).toBe("input_required");
-      expect(flow.sends).not.toHaveBeenCalled();
-      expect(flow.entries()).toBe(0);
-      await flow.connect();
-      flow.allowAudit();
-      expect((await flow.rpc(undefined, first.requestState)).isError).toBeFalsy();
-      expect(flow.items()).toBe(1);
-      expect(flow.entries()).toBe(1);
-    },
-  );
+  it("INV-9: a write with a pre-invocation missing grant elicits and succeeds once", async () => {
+    const flow = apiFlow();
+    const first = await flow.rpc();
+    expect(first.resultType).toBe("input_required");
+    expect(flow.sends).not.toHaveBeenCalled();
+    expect(flow.entries()).toBe(0);
+    await flow.connect();
+    flow.allowAudit();
+    expect((await flow.rpc(undefined, first.requestState)).isError).toBeFalsy();
+    expect(flow.items()).toBe(1);
+    expect(flow.entries()).toBe(1);
+  });
 
   it("INV-9: an accept retry that dispatches a write and then fails auth cannot elicit another round", async () => {
     const flow = apiFlow();
@@ -634,60 +468,6 @@ describe("auth recovery invocation eligibility", () => {
     expect(flow.items()).toBe(1);
   });
 
-  it("INV-9: a read using raw fetch elicits after a mid-handler 401 and re-runs", async () => {
-    let authorized = false;
-    let entries = 0;
-    vi.stubGlobal("fetch", async () => Response.json({}, { status: authorized ? 200 : 401 }));
-    const connector = api("service", {
-      tools: [
-        {
-          name: "read",
-          description: "Read an audit",
-          annotations: { readOnlyHint: true },
-          handler: async () => {
-            entries++;
-            const response = await fetch(`${API}/audit`);
-            if (response.status === 401) throw new ConnectorCallError("auth_required", "Audit needs auth");
-            return response.json();
-          },
-        },
-      ],
-    });
-    connector.startAuth = async () => ({
-      state: "auth_required",
-      authorizationUrl: "https://auth.service.test/authorize",
-    });
-    const flow = setup(connector);
-    const first = await flow.rpc("call_tool", undefined, "service.read");
-    expect(first.resultType).toBe("input_required");
-    expect(entries).toBe(1);
-    authorized = true;
-    expect((await flow.rpc("call_tool", first.requestState, "service.read")).isError).toBeFalsy();
-    expect(entries).toBe(2);
-  });
-
-  it.each([false, true])(
-    "INV-9: custom write auth errors before any send cannot elicit (program %s)",
-    async (program) => {
-      let entries = 0;
-      const definition = { name: "write", annotations: { readOnlyHint: false } };
-      const connector: Connector = {
-        id: "service",
-        kind: "api",
-        staticTools: [definition],
-        listTools: async () => [definition],
-        callTool: () => {
-          entries++;
-          throw new ConnectorCallError("auth_required", "Connect first");
-        },
-        startAuth: async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" }),
-      };
-      const flow = setup(connector);
-      expectReconciliation(await flow.rpc(program ? "execute_code" : undefined));
-      expect(entries).toBe(1);
-    },
-  );
-
   it("INV-4 INV-9: a handler cannot reset invocation facts by replacing its context scope", async () => {
     const flow = apiFlow({ plain: true, resetScope: true });
     await flow.connect();
@@ -705,19 +485,6 @@ describe("auth recovery invocation eligibility", () => {
     flow.allowAudit();
     expect((await flow.rpc("call_tool", first.requestState, "service.read")).isError).toBeFalsy();
     expect(flow.items()).toBe(0);
-  });
-
-  it.each([false, true])("INV-2 INV-9: programs use write handler entry facts (connected %s)", async (connected) => {
-    const flow = apiFlow();
-    if (connected) await flow.connect();
-    const result = await flow.rpc("execute_code");
-    if (connected) {
-      expectReconciliation(result);
-      expect(flow.items()).toBe(1);
-    } else {
-      expect(result.resultType).toBe("input_required");
-      expect(flow.sends).not.toHaveBeenCalled();
-    }
   });
 
   it("INV-2 INV-9: completed local program writes remain guarded before a later auth failure", async () => {

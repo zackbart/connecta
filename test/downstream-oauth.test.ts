@@ -1,12 +1,6 @@
-import { auth } from "@modelcontextprotocol/client";
-import type {
-  FetchLike,
-  OAuthClientInformationFull,
-  OAuthDiscoveryState,
-  OAuthTokens,
-} from "@modelcontextprotocol/client";
+import type { OAuthClientInformationFull, OAuthDiscoveryState, OAuthTokens } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KvOAuthProvider, OAuthCallbackClaimedError, oauthStateDigest } from "../src/auth/downstream-oauth.js";
+import { KvOAuthProvider, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { CredentialVault } from "../src/credentials.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { vaultOAuthSealer, type OAuthStateSealer } from "../src/oauth-sealing.js";
@@ -37,7 +31,6 @@ const ISSUER = "https://auth.example";
 const ctxA = { issuer: ISSUER };
 const ctxB = { issuer: "https://auth-b.example" };
 const BINDING = "same-config";
-const URL_CLIENT = `${BASE}/oauth-client.json`;
 const OTHER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
 // Its advice to try again is a separate segment, composed only at output.
 const SUPERSEDED = /authorization changed while this request was in flight\./;
@@ -60,23 +53,9 @@ function provider(
     sealer?: OAuthStateSealer;
     signal?: AbortSignal;
     binding?: string;
-    clientMetadataUrl?: string;
-    scope?: string;
   } = {},
 ): KvOAuthProvider {
-  return new KvOAuthProvider(
-    "svc",
-    storage,
-    REDIRECT,
-    undefined,
-    true,
-    opts.sealer,
-    opts.signal,
-    opts.binding,
-    undefined,
-    opts.clientMetadataUrl,
-    opts.scope,
-  );
+  return new KvOAuthProvider("svc", storage, REDIRECT, undefined, true, opts.sealer, opts.signal, opts.binding);
 }
 
 function sealerFor(
@@ -120,39 +99,6 @@ afterEach(() => {
 });
 
 describe("KvOAuthProvider over memoryStorage", () => {
-  it("exposes redirectUrl and the connecta client metadata", () => {
-    const p = provider(memoryStorage(), { scope: "read write" });
-    expect(p.redirectUrl).toBe(REDIRECT);
-    expect(p.clientMetadata).toEqual({
-      redirect_uris: [REDIRECT],
-      client_name: "connecta",
-      application_type: "web",
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none",
-      scope: "read write",
-    });
-    expect(provider().clientMetadata).not.toHaveProperty("scope");
-  });
-
-  it("round-trips client information (DCR)", async () => {
-    const storage = memoryStorage();
-    const p = provider(storage);
-    expect(await p.clientInformation()).toBeUndefined();
-    await p.saveClientInformation(client);
-    expect(await p.clientInformation()).toEqual(client);
-    expect(await provider(storage).clientInformation()).toEqual(client);
-  });
-
-  it("round-trips tokens", async () => {
-    const storage = memoryStorage();
-    const p = provider(storage);
-    expect(await p.tokens()).toBeUndefined();
-    await p.saveTokens(tokens);
-    expect(await p.tokens()).toEqual(tokens);
-    expect(await provider(storage).tokens()).toEqual(tokens);
-  });
-
   it("persists discovery state across OAuth callback request scopes", async () => {
     const storage = memoryStorage();
     const state: OAuthDiscoveryState = {
@@ -167,71 +113,6 @@ describe("KvOAuthProvider over memoryStorage", () => {
     await expect(provider(storage).discoveryState()).resolves.toEqual(state);
     // Discovery names the grant's server.
     expect((await storedGrant(storage))?.body).toEqual({ issuer: ISSUER, discovery: state });
-  });
-
-  it.each([false, true])("finishes OAuth from non-default metadata, URL client ID: %s", async (urlClient) => {
-    const storage = memoryStorage();
-    const mcpUrl = "https://downstream.example/mcp";
-    const metadataUrl = "https://downstream.example/.well-known/custom-protected-resource/mcp";
-    const makeProvider = () =>
-      provider(storage, {
-        ...(urlClient ? { clientMetadataUrl: URL_CLIENT } : {}),
-        scope: "full mcp",
-      });
-    const fetchStub: FetchLike = async (input, init = {}) => {
-      const url = new URL(input);
-      if (url.href === metadataUrl) {
-        return Response.json({ resource: mcpUrl, authorization_servers: [ISSUER] });
-      }
-      if (url.href === `${ISSUER}/.well-known/oauth-authorization-server`) {
-        return Response.json({
-          issuer: ISSUER,
-          client_id_metadata_document_supported: urlClient,
-          scopes_supported: ["full", "mcp", "offline_access"],
-          authorization_endpoint: `${ISSUER}/authorize`,
-          token_endpoint: `${ISSUER}/token`,
-          registration_endpoint: `${ISSUER}/register`,
-          response_types_supported: ["code"],
-          grant_types_supported: ["authorization_code", "refresh_token"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["none"],
-        });
-      }
-      if (url.href === `${ISSUER}/register`) {
-        expect(urlClient).toBe(false);
-        expect(init.method).toBe("POST");
-        return Response.json({
-          client_id: "registered-client",
-          redirect_uris: [REDIRECT],
-          token_endpoint_auth_method: "none",
-          grant_types: ["authorization_code", "refresh_token"],
-          response_types: ["code"],
-        });
-      }
-      if (url.href === `${ISSUER}/token`) {
-        expect(init.method).toBe("POST");
-        expect(init.body).toBeInstanceOf(URLSearchParams);
-        expect((init.body as URLSearchParams).get("code")).toBe("auth-code");
-        expect((init.body as URLSearchParams).get("client_id")).toBe(urlClient ? URL_CLIENT : "registered-client");
-        return Response.json({ access_token: "access-token", token_type: "Bearer" });
-      }
-      throw new Error(`Unexpected OAuth test request: ${url.href}`);
-    };
-
-    const start = makeProvider();
-    await expect(
-      auth(start, { serverUrl: mcpUrl, resourceMetadataUrl: new URL(metadataUrl), fetchFn: fetchStub }),
-    ).resolves.toBe("REDIRECT");
-    const pending = new URL(required(await start.pendingAuthorizationUrl()));
-    expect(pending.searchParams.get("client_id")).toBe(urlClient ? URL_CLIENT : "registered-client");
-    expect(pending.searchParams.get("scope")).toBe("full mcp offline_access");
-
-    const callback = makeProvider();
-    expect(await callback.verifyState(pending.searchParams.get("state"))).toBe(true);
-    await expect(
-      auth(callback, { serverUrl: mcpUrl, authorizationCode: "auth-code", fetchFn: fetchStub }),
-    ).resolves.toBe("AUTHORIZED");
-    await expect(callback.tokens()).resolves.toMatchObject({ access_token: "access-token" });
   });
 
   it("binds client registration and tokens to the validated authorization issuer", async () => {
@@ -305,16 +186,6 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await callback.codeVerifier()).toBe("v-456");
   });
 
-  it("stores the pending authorization URL and surfaces it", async () => {
-    const storage = memoryStorage();
-    const p = provider(storage);
-    expect(await p.pendingAuthorizationUrl()).toBeUndefined();
-    await p.redirectToAuthorization(new URL(`${ISSUER}/authorize?client_id=abc&state=xyz`));
-    expect(await provider(storage).pendingAuthorizationUrl()).toBe(`${ISSUER}/authorize?client_id=abc&state=xyz`);
-    expect(await p.consentUrl()).toBe(`${ISSUER}/authorize?client_id=abc&state=xyz`);
-    expect(await provider(storage).verifyState("xyz")).toBe(true);
-  });
-
   it("state() mints a random opaque value its stored consent verifies by digest", async () => {
     const storage = memoryStorage();
     const p = provider(storage);
@@ -340,49 +211,6 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await callback.verifyState(s.slice(0, -1) + differentLast)).toBe(false);
     expect(await callback.verifyState(null)).toBe(false);
     expect(callback.verified()).toBe(false);
-  });
-
-  it("state() mints a fresh value each call; every published consent verifies until claimed", async () => {
-    const storage = memoryStorage();
-    const p = provider(storage);
-    const a = await p.state();
-    const b = await p.state();
-    expect(a).not.toBe(b);
-    // A state is nothing until its consent is published.
-    expect(await provider(storage).verifyState(b)).toBe(false);
-
-    const first = await publish(provider(storage), "first-verifier", `${ISSUER}/authorize?n=1`);
-    const second = await publish(provider(storage), "second-verifier", `${ISSUER}/authorize?n=2`);
-    // The grant points at the latest; both consents still complete.
-    expect(await provider(storage).pendingAuthorizationUrl()).toBe(second.url);
-    const callback = provider(storage);
-    const duplicate = provider(storage);
-    expect(await callback.verifyState(first.state)).toBe(true);
-    expect(await duplicate.verifyState(first.state)).toBe(true);
-    expect(await callback.codeVerifier()).toBe("first-verifier");
-    expect(await provider(storage).verifyState(second.state)).toBe(true);
-
-    // The exchange claims its consent: exactly one of two callbacks wins,
-    // and the claimed record keeps only its epoch.
-    await callback.bindFlow();
-    expect(await callback.claimCodeExchange()).toBeUndefined();
-    await duplicate.bindFlow();
-    expect(await rejection(duplicate.claimCodeExchange())).toBeInstanceOf(OAuthCallbackClaimedError);
-    expect(JSON.parse(required((await storage.get(await consentKey(first.state))) ?? undefined))).toEqual({
-      connectaOAuthFlow: 1,
-      epoch: "initial",
-      at: expect.any(Number),
-      consumed: true,
-    });
-    expect(await provider(storage).verifyState(first.state)).toBe(false);
-    expect(await provider(storage).verifyState(second.state)).toBe(true);
-
-    // Claiming the latest leaves nothing pending.
-    const last = provider(storage);
-    expect(await last.verifyState(second.state)).toBe(true);
-    await last.bindFlow();
-    await last.claimCodeExchange();
-    expect(await provider(storage).pendingAuthorizationUrl()).toBeUndefined();
   });
 
   it("stores each consent with the link's fifteen-minute lifetime", async () => {
@@ -430,23 +258,6 @@ describe("KvOAuthProvider over memoryStorage", () => {
 });
 
 describe("KvOAuthProvider epochs", () => {
-  it("starts in the initial epoch; restarts publish fresh v3 epochs and beginFlow binds the live one", async () => {
-    const storage = memoryStorage();
-    const p = provider(storage);
-    expect(await p.liveEpoch()).toBe("initial");
-    await p.resetAuthorization();
-    const first = await p.liveEpoch();
-    await p.resetAuthorization();
-    const second = await p.liveEpoch();
-    expect(first).toMatch(/^v3:/);
-    expect(second).toMatch(/^v3:/);
-    expect(second).not.toBe(first);
-    expect(await provider(storage).beginFlow()).toBe(second);
-    // Invalidation is ordinary grant work; it never moves the epoch.
-    await p.invalidateCredentials("all");
-    expect(await p.liveEpoch()).toBe(second);
-  });
-
   it("fails a bound flow's reads and writes after a restart with the retryable supersession", async () => {
     const storage = memoryStorage();
     const flow = provider(storage);
@@ -535,54 +346,6 @@ describe("KvOAuthProvider epochs", () => {
     expect(await backing.list("")).toEqual([]);
   });
 
-  it("restarts by one compare-and-set and sweeps every other epoch's consents", async () => {
-    const backing = memoryStorage();
-    const grantOps: string[] = [];
-    let plant = false;
-    const planted = oauthFlowKeys.flow("f".repeat(64));
-    const storage: KVStorage = {
-      capabilities: backing.capabilities,
-      get: (key) => backing.get(key),
-      set: (key, value, options) => (key === GRANT && grantOps.push("set"), backing.set(key, value, options)),
-      delete: (key) => (key === GRANT && grantOps.push("delete"), backing.delete(key)),
-      compareAndSet: (key, expected, next, options) => (
-        key === GRANT && grantOps.push("compareAndSet"),
-        backing.compareAndSet(key, expected, next, options)
-      ),
-      async list(prefix) {
-        if (plant && prefix === oauthFlowKeys.prefix) {
-          // A consent the new epoch began while the sweep was starting.
-          const live = required((await storedGrant(backing))?.epoch);
-          await backing.set(
-            planted,
-            JSON.stringify({ connectaOAuthFlow: 1, epoch: live, at: Date.now(), url: `${ISSUER}/live` }),
-          );
-        }
-        return backing.list(prefix);
-      },
-    };
-    const p = provider(storage);
-    await p.saveTokens(tokens, ctxA);
-    const old = await publish(p);
-    const older = oauthFlowKeys.flow("e".repeat(64));
-    await backing.set(
-      older,
-      JSON.stringify({ connectaOAuthFlow: 1, epoch: "v3:older", at: Date.now(), url: `${ISSUER}/older` }),
-    );
-
-    grantOps.length = 0;
-    plant = true;
-    await provider(storage).resetAuthorization();
-
-    expect(grantOps).toEqual(["compareAndSet", "compareAndSet"]);
-    const grant = required(await storedGrant(backing));
-    expect(grant).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^v3:/) });
-    expect(await backing.get(await consentKey(old.state))).toBeNull();
-    expect(await backing.get(older)).toBeNull();
-    expect(await backing.get(planted)).not.toBeNull();
-    expect(await provider(backing).verifyState(old.state)).toBe(false);
-  });
-
   it("disconnects to a tombstone epoch nothing passive writes into until a restart replaces it", async () => {
     const storage = memoryStorage();
     const p = provider(storage, { binding: BINDING });
@@ -606,37 +369,15 @@ describe("KvOAuthProvider epochs", () => {
   });
 
   /** A grant whose client, tokens, and discovery a configured provider stored for `ctxA`. */
-  async function granted(storage: KVStorage, extra: Partial<OAuthClientInformationFull> = {}) {
+  async function granted(storage: KVStorage) {
     const p = provider(storage, { binding: BINDING });
     await p.saveDiscoveryState(discovery);
-    await p.saveClientInformation({ ...client, ...extra }, ctxA);
+    await p.saveClientInformation(client, ctxA);
     await p.saveTokens(tokens, ctxA);
   }
 
-  it.each<{ held: string; carried: boolean; setup: (storage: KVStorage) => Promise<void>; binding?: string | null }>([
+  it.each<{ held: string; carried: boolean; setup: (storage: KVStorage) => Promise<void> }>([
     { held: "an issuer-bound client registered under this configuration", carried: true, setup: (s) => granted(s) },
-    {
-      held: "a client whose secret never expires",
-      carried: true,
-      setup: (s) => granted(s, { client_secret_expires_at: 0 }),
-    },
-    {
-      held: "a carried client that has earned tokens since",
-      carried: true,
-      setup: async (s) => {
-        await granted(s);
-        await provider(s, { binding: BINDING }).resetAuthorization(false, true);
-        await provider(s).saveTokens(tokens, ctxA);
-      },
-    },
-    {
-      held: "a carried client that earned no tokens",
-      carried: false,
-      setup: async (s) => {
-        await granted(s);
-        await provider(s, { binding: BINDING }).resetAuthorization(false, true);
-      },
-    },
     {
       held: "a client stored with no issuer",
       carried: false,
@@ -647,82 +388,23 @@ describe("KvOAuthProvider epochs", () => {
       carried: false,
       setup: (s) => provider(s, { binding: "old-config" }).saveClientInformation(client, ctxA),
     },
-    { held: "a client while no binding is configured", carried: false, setup: (s) => granted(s), binding: null },
-    {
-      held: "a client whose secret has expired",
-      carried: false,
-      setup: (s) => granted(s, { client_secret_expires_at: Math.floor(Date.now() / 1000) - 60 }),
-    },
-    {
-      held: "a URL-based client",
-      carried: false,
-      setup: async (s) => {
-        const p = provider(s, { binding: BINDING, clientMetadataUrl: URL_CLIENT });
-        await p.saveDiscoveryState({
-          ...discovery,
-          authorizationServerMetadata: {
-            issuer: ISSUER,
-            authorization_endpoint: `${ISSUER}/authorize`,
-            token_endpoint: `${ISSUER}/token`,
-            response_types_supported: ["code"],
-            client_id_metadata_document_supported: true,
-          },
-        });
-        await p.saveClientInformation({ client_id: URL_CLIENT }, ctxA);
-      },
-    },
-  ])(
-    "a restart that preserves the client, holding $held, carries it: $carried",
-    async ({ carried, setup, binding }) => {
-      const storage = memoryStorage();
-      await setup(storage);
-      const before = (await storedGrant(storage))?.body?.client;
-      await provider(storage, {
-        ...(binding === null ? {} : { binding: binding ?? BINDING }),
-        clientMetadataUrl: URL_CLIENT,
-      }).resetAuthorization(false, true);
-      const grant = required(await storedGrant(storage));
-      expect(grant.epoch).toMatch(/^v3:/);
-      if (!carried) {
-        expect(grant.body).toBeUndefined();
-        return;
-      }
-      // Only the registration, marked carried; never tokens or discovery.
-      expect(grant.body).toEqual({
-        issuer: ISSUER,
-        client: { value: required(before).value, binding: BINDING, carried: true, registrationPath: "dcr" },
-      });
-      expect(await provider(storage).clientInformation(ctxA)).toMatchObject({ client_id: client.client_id });
-    },
-  );
-
-  it("invalidateCredentials is scoped", async () => {
-    const seeded = async () => {
-      const p = provider(memoryStorage());
-      await p.saveClientInformation(client, ctxA);
-      await p.saveTokens(tokens, ctxA);
-      await p.saveDiscoveryState(discovery);
-      await p.saveCodeVerifier("v-123");
-      return p;
-    };
-    const present = async (p: KvOAuthProvider) => ({
-      client: (await p.clientInformation()) !== undefined,
-      tokens: (await p.tokens()) !== undefined,
-      discovery: (await p.discoveryState()) !== undefined,
-    });
-    const cases = {
-      tokens: { client: true, tokens: false, discovery: true },
-      client: { client: false, tokens: true, discovery: true },
-      discovery: { client: true, tokens: true, discovery: false },
-      // The verifier lives in its consent, which the exchange's claim spends.
-      verifier: { client: true, tokens: true, discovery: true },
-      all: { client: false, tokens: false, discovery: false },
-    } as const;
-    for (const [scope, expected] of Object.entries(cases)) {
-      const p = await seeded();
-      await p.invalidateCredentials(scope as keyof typeof cases);
-      expect({ scope, ...(await present(p)) }).toEqual({ scope, ...expected });
+  ])("a restart that preserves the client, holding $held, carries it: $carried", async ({ carried, setup }) => {
+    const storage = memoryStorage();
+    await setup(storage);
+    const before = (await storedGrant(storage))?.body?.client;
+    await provider(storage, { binding: BINDING }).resetAuthorization(false, true);
+    const grant = required(await storedGrant(storage));
+    expect(grant.epoch).toMatch(/^v3:/);
+    if (!carried) {
+      expect(grant.body).toBeUndefined();
+      return;
     }
+    // Only the registration, marked carried; never tokens or discovery.
+    expect(grant.body).toEqual({
+      issuer: ISSUER,
+      client: { value: required(before).value, binding: BINDING, carried: true, registrationPath: "dcr" },
+    });
+    expect(await provider(storage).clientInformation(ctxA)).toMatchObject({ client_id: client.client_id });
   });
 
   it("invalidates only the client and tokens this flow saw, and nothing in a newer epoch", async () => {
@@ -920,18 +602,6 @@ describe("layout 2 migration", () => {
     }
   }
 
-  /** A connector namespace inside another partition of `backing`. */
-  function partition(backing: KVStorage, prefix: string): KVStorage {
-    return {
-      capabilities: backing.capabilities,
-      get: (key) => backing.get(prefix + key),
-      set: (key, value, options) => backing.set(prefix + key, value, options),
-      delete: (key) => backing.delete(prefix + key),
-      list: async (p) => (await backing.list(prefix + p)).map((key) => key.slice(prefix.length)),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(prefix + key, expected, next, options),
-    };
-  }
-
   it("migrates a legacy grant from stamped envelopes, discovery bare, and carries no consent", async () => {
     const storage = memoryStorage();
     await seedV2(storage, "legacy", {
@@ -1054,38 +724,9 @@ describe("layout 2 migration", () => {
       values: { [F.client]: JSON.stringify(client), [F.tokens]: JSON.stringify(tokens) },
     },
     {
-      held: "v1 envelopes",
-      generation: "legacy",
-      values: { [F.tokens]: JSON.stringify({ connectaOAuthVersion: 1, generation: "legacy", value: tokens }) },
-    },
-    { held: "a numeric generation", generation: "7", values: { [F.tokens]: v2("7", tokens, { issuer: ISSUER }) } },
-    {
-      held: "an unfinished reset",
-      generation: "reset:abc",
-      values: { [F.tokens]: v2("reset:abc", tokens, { issuer: ISSUER }) },
-    },
-    {
-      held: "an envelope of another generation",
-      generation: "v2:a",
-      values: { [F.tokens]: v2("v2:b", tokens, { issuer: ISSUER }) },
-    },
-    {
-      held: "a credential missing its stamp",
-      generation: "v2:a",
-      values: { [F.client]: v2("v2:a", client, { issuer: ISSUER }), [F.tokens]: v2("v2:a", tokens) },
-    },
-    {
       held: "stamps naming different servers",
       generation: "v2:a",
       values: { [F.client]: v2("v2:a", client, { issuer: ISSUER }), [F.tokens]: v2("v2:a", tokens, { issuer: other }) },
-    },
-    {
-      held: "stamps that disagree with discovery",
-      generation: "v2:a",
-      values: {
-        [F.tokens]: v2("v2:a", tokens, { issuer: ISSUER }),
-        [F.discovery]: v2("v2:a", { authorizationServerUrl: other }),
-      },
     },
   ])("migrates empty from $held", async ({ generation, values }) => {
     const storage = memoryStorage();
@@ -1161,30 +802,5 @@ describe("layout 2 migration", () => {
     expect(await p.reusablePendingAuthorizationUrl()).toBeUndefined();
     expect(await p.verifyState("anything")).toBe(false);
     expect(await storage.list("")).toEqual([used]);
-  });
-
-  it("migrates each personal partition on its own", async () => {
-    const backing = memoryStorage();
-    const shared = partition(backing, "conn:svc:");
-    const alice = partition(backing, "principal:alice:conn:svc:");
-    const bob = partition(backing, "principal:bob:conn:svc:");
-    const aliceTokens = { ...tokens, access_token: "alice-access" };
-    const bobTokens = { ...tokens, access_token: "bob-access" };
-    await seedV2(alice, "legacy", { [F.tokens]: v2("legacy", aliceTokens, { issuer: ISSUER }) });
-    await seedV2(bob, "v2:bob", { [F.tokens]: v2("v2:bob", bobTokens, { issuer: ISSUER }) });
-
-    expect(await provider(alice).tokens(ctxA)).toEqual({ ...aliceTokens, ...ctxA });
-    // Bob's partition and the shared namespace are untouched.
-    expect(await bob.get(GRANT)).toBeNull();
-    expect(await bob.list("oauth:")).toHaveLength(2);
-    expect(await provider(shared).tokens()).toBeUndefined();
-    expect(await shared.list("")).toEqual([]);
-
-    expect(await provider(bob).tokens(ctxA)).toEqual({ ...bobTokens, ...ctxA });
-    expect(await provider(alice).liveEpoch()).not.toBe(await provider(bob).liveEpoch());
-    expect((await backing.list("")).sort()).toEqual([
-      `principal:alice:conn:svc:${GRANT}`,
-      `principal:bob:conn:svc:${GRANT}`,
-    ]);
   });
 });

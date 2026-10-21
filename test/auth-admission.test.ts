@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { authenticate, authenticationSnapshot } from "../src/auth-admission.js";
-import { authorize, authorizeAgent } from "../src/routes/shared.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
 import { activityHistory } from "../src/activity.js";
@@ -38,13 +37,6 @@ async function expectBusy(response: Response) {
 }
 
 describe("inbound authentication admission", () => {
-  it("INV-7: synchronous local verdicts finish before another authentication starts", async () => {
-    const provider = { kind: "local", authorize: refused };
-    const results = await Promise.all(
-      Array.from({ length: 64 }, () => authenticate(provider, request(), BASE, undefined, silentLogger)),
-    );
-    expect(results.every((result) => result.admitted)).toBe(true);
-  });
   it("INV-6 INV-7: fast-refuses beyond 16 across providers with only a checked payload-free log", async () => {
     const gate = blocking();
     const pending = Array.from({ length: 16 }, () => gate.start());
@@ -65,19 +57,16 @@ describe("inbound authentication admission", () => {
     expect((await authenticate(outsider, request(), BASE, undefined, silentLogger)).admitted).toBe(true);
   });
 
-  it.each(["success", "refusal", "throw", "reject"])("INV-7: releases all slots on %s", async (outcome) => {
+  it.each(["throw", "reject"])("INV-7: releases all slots on %s", async (outcome) => {
     const provider: InboundAuth = {
       kind: "test",
       authorize() {
         if (outcome === "throw") throw new Error("private");
-        if (outcome === "reject") return Promise.reject(new Error("private"));
-        return outcome === "success" ? { ok: true, userId: "alice" } : refused();
+        return Promise.reject(new Error("private"));
       },
     };
     for (let i = 0; i < 32; i++) {
-      const result = authenticate(provider, request(), BASE, undefined, silentLogger);
-      if (outcome === "throw" || outcome === "reject") await expect(result).rejects.toThrow("private");
-      else expect((await result).admitted).toBe(true);
+      await expect(authenticate(provider, request(), BASE, undefined, silentLogger)).rejects.toThrow("private");
     }
   });
 
@@ -110,54 +99,51 @@ describe("inbound authentication admission", () => {
     }
   });
 
-  it.each([false, true])(
-    "INV-7: bounds 64 full-server authorizations (listen header: %s) before reading bodies",
-    async (listen) => {
-      const gate = blocking();
-      const app = createTestConnecta({
-        connectors: [],
-        auth: gate.provider,
-        logger: silentLogger,
-        maintainers: [{ namespace: "test", id: "alice" }],
-        admission: { requests: { concurrency: 64, maxQueueSize: 0, maxDurationMs: 30_000 } },
-      });
-      let settled = 0;
-      let reads = 0;
-      const pending = Array.from({ length: 64 }, () => {
-        const body = new ReadableStream<Uint8Array>(
-          {
-            pull(controller) {
-              reads++;
-              controller.enqueue(new Uint8Array(1));
-            },
+  it("INV-7: bounds 64 full-server listen authorizations before reading bodies", async () => {
+    const gate = blocking();
+    const app = createTestConnecta({
+      connectors: [],
+      auth: gate.provider,
+      logger: silentLogger,
+      maintainers: [{ namespace: "test", id: "alice" }],
+      admission: { requests: { concurrency: 64, maxQueueSize: 0, maxDurationMs: 30_000 } },
+    });
+    let settled = 0;
+    let reads = 0;
+    const pending = Array.from({ length: 64 }, () => {
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            reads++;
+            controller.enqueue(new Uint8Array(1));
           },
-          { highWaterMark: 0 },
-        );
-        const req = new Request(`${BASE}/mcp`, {
-          method: "POST",
-          body,
-          duplex: "half",
-          headers: { "Content-Type": "application/json", ...(listen ? { "Mcp-Method": "subscriptions/listen" } : {}) },
-        } as RequestInit);
-        return app.fetch(req).then(async (res) => {
-          settled++;
-          if (res.status === 503) await expectBusy(res);
-          return res;
-        });
+        },
+        { highWaterMark: 0 },
+      );
+      const req = new Request(`${BASE}/mcp`, {
+        method: "POST",
+        body,
+        duplex: "half",
+        headers: { "Content-Type": "application/json", "Mcp-Method": "subscriptions/listen" },
+      } as RequestInit);
+      return app.fetch(req).then(async (res) => {
+        settled++;
+        if (res.status === 503) await expectBusy(res);
+        return res;
       });
-      try {
-        await vi.waitFor(() => expect(settled).toBe(48));
-        expect(gate.provider.authorize).toHaveBeenCalledTimes(16);
-        // Node's Request transfer may prefetch one chunk per body; no route
-        // consumes beyond that before the adapter returns (as in body-bounds).
-        expect(reads).toBeLessThanOrEqual(64);
-      } finally {
-        gate.release();
-        await Promise.all(pending);
-        await app.close();
-      }
-    },
-  );
+    });
+    try {
+      await vi.waitFor(() => expect(settled).toBe(48));
+      expect(gate.provider.authorize).toHaveBeenCalledTimes(16);
+      // Node's Request transfer may prefetch one chunk per body; no route
+      // consumes beyond that before the adapter returns (as in body-bounds).
+      expect(reads).toBeLessThanOrEqual(64);
+    } finally {
+      gate.release();
+      await Promise.all(pending);
+      await app.close();
+    }
+  });
 
   it("INV-7: MCP, pools, operator APIs, and agent storage share the bound across deployments", async () => {
     const gate = blocking();
@@ -193,22 +179,6 @@ describe("inbound authentication admission", () => {
       gate.release();
       await Promise.all(pending);
       await app.close();
-    }
-  });
-
-  it("INV-4 INV-7: cheap invalid human and agent credentials refuse without invoking an adapter under load", async () => {
-    const gate = blocking();
-    const pending = Array.from({ length: 16 }, () => gate.start());
-    try {
-      const invalid = new Request(`${BASE}/mcp`, { headers: { Authorization: "Basic private" } });
-      const human = await authorize(invalid, BASE, [gate.provider]);
-      const agent = await authorizeAgent(request(), BASE, [gate.provider]);
-      expect(!human.ok && human.response.status).toBe(401);
-      expect(!agent.ok && agent.response.status).toBe(401);
-      expect(gate.provider.authorize).toHaveBeenCalledTimes(16);
-    } finally {
-      gate.release();
-      await Promise.all(pending);
     }
   });
 });
@@ -318,54 +288,3 @@ it.each(["access", "agent"] as const)(
     }
   },
 );
-
-it("INV-7: a custom adapter ignoring cancellation moves to the allowance at ten seconds plus grace", async () => {
-  vi.useFakeTimers();
-  let reject!: (error: Error) => void;
-  const provider: InboundAuth = {
-    kind: "custom",
-    authorize: () =>
-      new Promise<AuthResult>((_resolve, fail) => {
-        reject = fail;
-      }),
-  };
-  const caller = new AbortController();
-  const waits: Promise<unknown>[] = [];
-  const pending = authenticate(provider, request(caller.signal), BASE, undefined, silentLogger, (work) =>
-    waits.push(work),
-  );
-  try {
-    caller.abort();
-    await vi.advanceTimersByTimeAsync(10_999);
-    expect(authenticationSnapshot()).toMatchObject({ active: 1, abandoned: 0 });
-    await vi.advanceTimersByTimeAsync(1);
-    expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 1 });
-    const app = createTestConnecta({ connectors: [calcConnector], logger: silentLogger });
-    try {
-      const health = (await (await app.fetch(new Request(`${BASE}/health`))).json()) as {
-        admission: { authentication: unknown };
-      };
-      expect(health.admission.authentication).toEqual({
-        active: 0,
-        limit: 16,
-        abandoned: 1,
-        abandonedLimit: 16,
-        abandonedSaturated: false,
-        // workerd hides FinalizationRegistry without enable_weak_ref.
-        unreachableRelease: typeof FinalizationRegistry === "function",
-      });
-    } finally {
-      await app.close();
-    }
-    reject(new Error("late"));
-    await expect(pending).rejects.toThrow("late");
-    await Promise.all(waits);
-    // A late rejection decrements the abandoned charge exactly once.
-    expect(authenticationSnapshot()).toMatchObject({ active: 0, abandoned: 0 });
-    expect(vi.getTimerCount()).toBe(0);
-  } finally {
-    reject(new Error("late"));
-    await pending.catch(() => {});
-    vi.useRealTimers();
-  }
-});

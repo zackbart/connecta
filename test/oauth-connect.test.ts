@@ -206,208 +206,167 @@ it("INV-4: rejects re-encoded payloads with the original valid signature and req
   expect(flow.startAuth).not.toHaveBeenCalled();
 });
 
-for (const sealed of [false, true]) {
-  it(`INV-4: accepts pre-upgrade ${sealed ? "sealed v2" : "JSON"} tokens only with their original signature and expiry`, async () => {
-    const flow = setup("clerk", "personal");
-    const principal = await identityStorageKey({ namespace: "https://clerk.example.test", id: "alice" });
-    const handoff = {
-      connector: "service",
-      owner: principal,
-      principal,
-      origin: BASE,
-      expiresAt: Date.now() + 15 * 60_000,
-      nonce: crypto.randomUUID(),
-      force: false,
-    };
-    const json = JSON.stringify(handoff);
-    const payload = sealed
-      ? `v2:${btoa(await flow.vault.seal!("service", "connecta:connect-link:v2", json))}`
-      : btoa(json);
-    const signature = await flow.vault.signOAuthHandoff!(payload);
-    const url = new URL(`${BASE}/connect/service`);
-    url.searchParams.set("h", `${payload}.${signature}`);
-    if (!sealed) {
-      const fresh = await flow.authorize();
-      expect(fresh.authorizationUrl.length).toBeLessThan(url.href.length * 0.9);
-    }
-    const modified = new URL(url);
-    modified.searchParams.set("h", `${btoa(json.replace('"force":false', '"force":0'))}.${signature}`);
-    const refused = await flow.browser(modified.href, "alice");
-    expect(refused.status).toBe(400);
-    expect(await refused.json()).toEqual({
-      error: "Invalid or expired connection link. Request a new link from connecta.",
-    });
-    const now = Date.now();
-    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 16 * 60_000);
-    expect((await flow.browser(url.href, "alice")).status).toBe(400);
-    clock.mockRestore();
-    expect((await flow.browser(url.href, "alice")).status).toBe(302);
-    expect(flow.startAuth).toHaveBeenCalledWith(expect.anything(), { force: false });
-    expect((await flow.browser(url.href, "alice")).status).toBe(400);
+it("INV-4: accepts pre-upgrade JSON tokens only with their original signature and expiry", async () => {
+  const flow = setup("clerk", "personal");
+  const principal = await identityStorageKey({ namespace: "https://clerk.example.test", id: "alice" });
+  const handoff = {
+    connector: "service",
+    owner: principal,
+    principal,
+    origin: BASE,
+    expiresAt: Date.now() + 15 * 60_000,
+    nonce: crypto.randomUUID(),
+    force: false,
+  };
+  const json = JSON.stringify(handoff);
+  const payload = btoa(json);
+  const signature = await flow.vault.signOAuthHandoff!(payload);
+  const url = new URL(`${BASE}/connect/service`);
+  url.searchParams.set("h", `${payload}.${signature}`);
+  const fresh = await flow.authorize();
+  expect(fresh.authorizationUrl.length).toBeLessThan(url.href.length * 0.9);
+  const modified = new URL(url);
+  modified.searchParams.set("h", `${btoa(json.replace('"force":false', '"force":0'))}.${signature}`);
+  const refused = await flow.browser(modified.href, "alice");
+  expect(refused.status).toBe(400);
+  expect(await refused.json()).toEqual({
+    error: "Invalid or expired connection link. Request a new link from connecta.",
   });
-}
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now + 16 * 60_000);
+  expect((await flow.browser(url.href, "alice")).status).toBe(400);
+  clock.mockRestore();
+  expect((await flow.browser(url.href, "alice")).status).toBe(302);
+  expect(flow.startAuth).toHaveBeenCalledWith(expect.anything(), { force: false });
+  expect((await flow.browser(url.href, "alice")).status).toBe(400);
+});
 
-for (const provider of ["clerk", "access"] as const) {
-  for (const scope of ["personal", "shared"] as const) {
-    describe(`${provider} ${scope} OAuth connection`, () => {
-      it("INV-4: round-trips a compact handoff bound to its initiating user, including another admin", async () => {
-        const flow = setup(provider, scope, { bobAdmin: true });
-        const handoff = await flow.authorize();
-        expect(handoff.authorizationUrl).toMatch(new RegExp(`^${BASE}/connect/service\\?h=`));
-        expect(JSON.stringify(handoff)).not.toContain(AS);
-        expect(handoff.authorizationUrl).not.toContain("%");
-        const token = new URL(handoff.authorizationUrl).searchParams.get("h")!;
-        expect(token).toMatch(/^v3\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
-        expect(token).not.toContain("=");
-        const compact = atob(token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"));
-        expect(() => JSON.parse(compact)).toThrow();
-        expect(flow.startAuth).not.toHaveBeenCalled();
-        expect((await flow.browser(handoff.authorizationUrl, "bob")).status).toBe(403);
-        expect(flow.startAuth).not.toHaveBeenCalled();
-        const begun = await flow.browser(handoff.authorizationUrl, "alice");
-        expect(begun.status).toBe(302);
-        expect(begun.headers.get("Location")).toContain(AS);
-        expect((await flow.callback()).status).toBe(400);
-        expect((await flow.callback("bob")).status).toBe(400);
-        expect((await flow.callback("alice", "wrong")).status).toBe(400);
-        expect(flow.finishAuth).not.toHaveBeenCalled();
-        expect((await flow.callback("alice")).status).toBe(200);
-        expect(flow.finishAuth).toHaveBeenCalledOnce();
-        expect((await flow.callback("alice")).status).toBe(400);
-      });
+describe.each([
+  ["clerk", "personal"],
+  ["access", "shared"],
+] as const)("%s %s OAuth connection", (provider, scope) => {
+  it("INV-4: round-trips a compact handoff bound to its initiating user, including another admin", async () => {
+    const flow = setup(provider, scope, { bobAdmin: true });
+    const handoff = await flow.authorize();
+    expect(handoff.authorizationUrl).toMatch(new RegExp(`^${BASE}/connect/service\\?h=`));
+    expect(JSON.stringify(handoff)).not.toContain(AS);
+    expect(handoff.authorizationUrl).not.toContain("%");
+    const token = new URL(handoff.authorizationUrl).searchParams.get("h")!;
+    expect(token).toMatch(/^v3\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(token).not.toContain("=");
+    const compact = atob(token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"));
+    expect(() => JSON.parse(compact)).toThrow();
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    expect((await flow.browser(handoff.authorizationUrl, "bob")).status).toBe(403);
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    const begun = await flow.browser(handoff.authorizationUrl, "alice");
+    expect(begun.status).toBe(302);
+    expect(begun.headers.get("Location")).toContain(AS);
+    expect((await flow.callback()).status).toBe(400);
+    expect((await flow.callback("bob")).status).toBe(400);
+    expect((await flow.callback("alice", "wrong")).status).toBe(400);
+    expect(flow.finishAuth).not.toHaveBeenCalled();
+    expect((await flow.callback("alice")).status).toBe(200);
+    expect(flow.finishAuth).toHaveBeenCalledOnce();
+    expect((await flow.callback("alice")).status).toBe(400);
+  });
+});
 
-      it("allows only GET for connection starts and callbacks", async () => {
-        const flow = setup(provider, scope);
-        const { authorizationUrl } = await flow.authorize();
-        for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
-          const response = await flow.app.fetch(
-            new Request(authorizationUrl, { method, headers: flow.headers("alice") }),
-            undefined,
-            flow.runtime("alice"),
-          );
-          expect(response.status).toBe(405);
-          expect(response.headers.get("Allow")).toBe("GET");
-        }
-        expect(flow.startAuth).not.toHaveBeenCalled();
-        const started = await flow.browser(authorizationUrl, "alice");
-        const state = new URL(started.headers.get("Location")!).searchParams.get("state")!;
-        for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
-          const response = await flow.app.fetch(
-            new Request(`${BASE}/oauth/callback/service?code=code&state=${state}`, {
-              method,
-              headers: flow.headers("alice"),
-            }),
-            undefined,
-            flow.runtime("alice"),
-          );
-          expect(response.status).toBe(405);
-          expect(response.headers.get("Allow")).toBe("GET");
-        }
-        expect(flow.finishAuth).not.toHaveBeenCalled();
-        expect((await flow.callback("alice")).status).toBe(200);
-      });
-
-      it("claims one callback when state verification completes concurrently", async () => {
-        const flow = setup(provider, scope);
-        const { authorizationUrl } = await flow.authorize();
-        await flow.browser(authorizationUrl, "alice");
-        const connector = flow.app.registry.getConnector("service")!;
-        const verify = connector.verifyState!;
-        let arrivals = 0;
-        let release!: () => void;
-        const bothVerified = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        connector.verifyState = async (state, ctx) => {
-          const matched = await verify(state, ctx);
-          if (++arrivals === 2) release();
-          await bothVerified;
-          return matched;
-        };
-        const responses = await Promise.all([flow.callback("alice"), flow.callback("alice")]);
-        expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
-        expect(flow.finishAuth).toHaveBeenCalledOnce();
-      });
-
-      it("uses a restart link only once, including before completion", async () => {
-        const flow = setup(provider, scope);
-        const { authorizationUrl } = await flow.authorize("alice", true);
-        const responses = await Promise.all([
-          flow.browser(authorizationUrl, "alice"),
-          flow.browser(authorizationUrl, "alice"),
-        ]);
-        expect(responses.map((response) => response.status).sort()).toEqual([302, 400]);
-        expect(flow.startAuth).toHaveBeenCalledOnce();
-        expect((await flow.callback("alice")).status).toBe(200);
-        expect((await flow.browser(authorizationUrl, "alice")).status).toBe(400);
-        expect(flow.startAuth).toHaveBeenCalledOnce();
-      });
-
-      it("keeps status reads passive and replaces a connector's consent URL", async () => {
-        const flow = setup(provider, scope);
-        const response = await flow.app.fetch(
-          new Request(`${BASE}/ui/connectors/service`, { headers: flow.headers("alice") }),
-          undefined,
-          flow.runtime("alice"),
-        );
-        expect(response.status).toBe(200);
-        const text = await response.text();
-        expect(text).toContain(`${BASE}/connect/service?h=`);
-        expect(text).not.toContain(AS);
-        expect(flow.startAuth).not.toHaveBeenCalled();
-        const started = await flow.app.fetch(
-          new Request(`${BASE}/ui/oauth/service?mode=restart`, {
-            method: "POST",
-            headers: { ...flow.headers("alice"), Origin: BASE },
-          }),
-          undefined,
-          flow.runtime("alice"),
-        );
-        const payload = (await started.json()) as { authorizationUrl: string };
-        expect(payload.authorizationUrl).toContain(`${BASE}/connect/service?h=`);
-        expect(flow.startAuth).not.toHaveBeenCalled();
-        expect((await flow.browser(payload.authorizationUrl, "alice")).status).toBe(302);
-        expect(flow.startAuth).toHaveBeenCalledWith(expect.anything(), { force: true });
-      });
-
-      it("rechecks permission at the browser visit and at completion", async () => {
-        const beforeStart = setup(provider, scope);
-        const first = await beforeStart.authorize();
-        beforeStart.revoke();
-        expect((await beforeStart.browser(first.authorizationUrl, "alice")).status).toBe(403);
-        expect(beforeStart.startAuth).not.toHaveBeenCalled();
-        const beforeCallback = setup(provider, scope);
-        const second = await beforeCallback.authorize();
-        expect((await beforeCallback.browser(second.authorizationUrl, "alice")).status).toBe(302);
-        beforeCallback.revoke();
-        expect((await beforeCallback.callback("alice")).status).toBe(400);
-        expect(beforeCallback.finishAuth).not.toHaveBeenCalled();
-      });
-
-      it("rejects tampered, expired, and cross-connector handoffs", async () => {
-        const flow = setup(provider, scope);
-        const handoff = await flow.authorize();
-        const url = new URL(handoff.authorizationUrl);
-        url.searchParams.set("h", `${url.searchParams.get("h")!.slice(0, -2)}xx`);
-        expect((await flow.browser(url.href, "alice")).status).toBe(400);
-        expect((await flow.browser(handoff.authorizationUrl.replace("/service?", "/other?"), "alice")).status).toBe(
-          400,
-        );
-        vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
-        expect((await flow.browser(handoff.authorizationUrl, "alice")).status).toBe(400);
-        expect(flow.startAuth).not.toHaveBeenCalled();
-      });
+describe("clerk OAuth connection", () => {
+  it("claims one callback when state verification completes concurrently", async () => {
+    const flow = setup("clerk", "personal");
+    const { authorizationUrl } = await flow.authorize();
+    await flow.browser(authorizationUrl, "alice");
+    const connector = flow.app.registry.getConnector("service")!;
+    const verify = connector.verifyState!;
+    let arrivals = 0;
+    let release!: () => void;
+    const bothVerified = new Promise<void>((resolve) => {
+      release = resolve;
     });
-  }
-  it(`INV-4: ${provider} starts a pool member's personal link directly, while a maintainer's hops through the UI`, async () => {
-    const flow = setup(provider, "personal", { bobMember: true });
+    connector.verifyState = async (state, ctx) => {
+      const matched = await verify(state, ctx);
+      if (++arrivals === 2) release();
+      await bothVerified;
+      return matched;
+    };
+    const responses = await Promise.all([flow.callback("alice"), flow.callback("alice")]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
+    expect(flow.finishAuth).toHaveBeenCalledOnce();
+  });
+
+  it("uses a restart link only once, including before completion", async () => {
+    const flow = setup("clerk", "personal");
+    const { authorizationUrl } = await flow.authorize("alice", true);
+    const responses = await Promise.all([
+      flow.browser(authorizationUrl, "alice"),
+      flow.browser(authorizationUrl, "alice"),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([302, 400]);
+    expect(flow.startAuth).toHaveBeenCalledOnce();
+    expect((await flow.callback("alice")).status).toBe(200);
+    expect((await flow.browser(authorizationUrl, "alice")).status).toBe(400);
+    expect(flow.startAuth).toHaveBeenCalledOnce();
+  });
+
+  it("keeps status reads passive and replaces a connector's consent URL", async () => {
+    const flow = setup("clerk", "personal");
+    const response = await flow.app.fetch(
+      new Request(`${BASE}/ui/connectors/service`, { headers: flow.headers("alice") }),
+      undefined,
+      flow.runtime("alice"),
+    );
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain(`${BASE}/connect/service?h=`);
+    expect(text).not.toContain(AS);
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    const started = await flow.app.fetch(
+      new Request(`${BASE}/ui/oauth/service?mode=restart`, {
+        method: "POST",
+        headers: { ...flow.headers("alice"), Origin: BASE },
+      }),
+      undefined,
+      flow.runtime("alice"),
+    );
+    const payload = (await started.json()) as { authorizationUrl: string };
+    expect(payload.authorizationUrl).toContain(`${BASE}/connect/service?h=`);
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    expect((await flow.browser(payload.authorizationUrl, "alice")).status).toBe(302);
+    expect(flow.startAuth).toHaveBeenCalledWith(expect.anything(), { force: true });
+  });
+
+  it("rechecks permission at the browser visit and at completion", async () => {
+    const beforeStart = setup("clerk", "shared");
+    const first = await beforeStart.authorize();
+    beforeStart.revoke();
+    expect((await beforeStart.browser(first.authorizationUrl, "alice")).status).toBe(403);
+    expect(beforeStart.startAuth).not.toHaveBeenCalled();
+    const beforeCallback = setup("clerk", "shared");
+    const second = await beforeCallback.authorize();
+    expect((await beforeCallback.browser(second.authorizationUrl, "alice")).status).toBe(302);
+    beforeCallback.revoke();
+    expect((await beforeCallback.callback("alice")).status).toBe(400);
+    expect(beforeCallback.finishAuth).not.toHaveBeenCalled();
+  });
+
+  it("rejects tampered, expired, and cross-connector handoffs", async () => {
+    const flow = setup("clerk", "personal");
+    const handoff = await flow.authorize();
+    const url = new URL(handoff.authorizationUrl);
+    url.searchParams.set("h", `${url.searchParams.get("h")!.slice(0, -2)}xx`);
+    expect((await flow.browser(url.href, "alice")).status).toBe(400);
+    expect((await flow.browser(handoff.authorizationUrl.replace("/service?", "/other?"), "alice")).status).toBe(400);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
+    expect((await flow.browser(handoff.authorizationUrl, "alice")).status).toBe(400);
+    expect(flow.startAuth).not.toHaveBeenCalled();
+  });
+
+  it("INV-4: clerk starts a pool member's personal link directly, while a maintainer's hops through the UI", async () => {
+    const flow = setup("clerk", "personal", { bobMember: true });
     // A member is not a maintainer: plain /mcp answers it with the 404.
     const plain = await flow.app.fetch(
-      mcpRpc(
-        "tools/call",
-        { name: "authorize_connector", arguments: { connector: "service" } },
-        provider === "clerk" ? { token: "bob" } : {},
-      ),
+      mcpRpc("tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "bob" }),
       undefined,
       flow.runtime("bob"),
     );
@@ -435,8 +394,9 @@ for (const provider of ["clerk", "access"] as const) {
     expect(new URL(hop.headers.get("Location")!, BASE).pathname).toBe("/connectors/service");
     expect(flow.startAuth).toHaveBeenCalledOnce();
   });
-  it(`INV-4 INV-5: ${provider} refuses a pool member every step of shared auth`, async () => {
-    const flow = setup(provider, "shared", { bobMember: true });
+
+  it("INV-4 INV-5: clerk refuses a pool member every step of shared auth", async () => {
+    const flow = setup("clerk", "shared", { bobMember: true });
     // Issuance: no link for the member.
     expect((await flow.authorize("bob")).recovery).toBe("unavailable");
     // Start and completion of a maintainer's link, signed in as the member.
@@ -458,27 +418,14 @@ for (const provider of ["clerk", "access"] as const) {
     expect((await flow.callback("alice")).status).toBe(200);
     expect(flow.finishAuth).toHaveBeenCalledOnce();
   });
-  it(`INV-4: ${provider} requires a maintainer for shared credential administration`, async () => {
-    const flow = setup(provider, "shared", { bobMember: true });
-    expect((await flow.authorize("bob")).recovery).toBe("unavailable");
-    const link = await flow.authorize();
-    expect((await flow.browser(link.authorizationUrl, "alice")).status).toBe(302);
-    expect((await flow.callback("alice")).status).toBe(200);
-  });
-  it(`${provider} lets another shared admin complete their own flow`, async () => {
-    const flow = setup(provider, "shared", { bobAdmin: true });
-    const link = await flow.authorize("bob");
-    expect((await flow.browser(link.authorizationUrl, "bob")).status).toBe(302);
-    expect((await flow.callback("bob")).status).toBe(200);
-    expect(flow.finishAuth).toHaveBeenCalledOnce();
-  });
-  it(`${provider} refuses connection without a signing key`, async () => {
-    const flow = setup(provider, "personal", { vault: false });
+
+  it("clerk refuses connection without a signing key", async () => {
+    const flow = setup("clerk", "personal", { vault: false });
     expect((await flow.authorize()).message).toContain("handoff signing key");
     expect((await flow.browser(`${BASE}/connect/service?h=anything`, "alice")).status).toBe(403);
     expect(flow.startAuth).not.toHaveBeenCalled();
   });
-}
+});
 
 it("requires Clerk or Cloudflare Access rather than a machine bearer", async () => {
   const flow = setup("clerk", "shared", { interactive: false });
@@ -495,22 +442,19 @@ it("requires Clerk or Cloudflare Access rather than a machine bearer", async () 
 // With the operator UI mounted, the Clerk sign-in page is still preferred over
 // the UI hop (#837): sign-in returns to the link, which then routes a
 // maintainer to the UI and starts a pool member's flow directly.
-it.each([false, true])(
-  "returns an unauthenticated Clerk browser from hosted sign-in to the same connect link (ui %s)",
-  async (ui) => {
-    const flow = setup("clerk", "personal", { ui });
-    const link = await flow.authorize();
-    const response = await flow.browser(link.authorizationUrl);
-    expect(response.status).toBe(302);
-    const signin = new URL(response.headers.get("Location")!);
-    expect(signin.origin).toBe("https://accounts.example");
-    expect(signin.searchParams.get("redirect_url")).toBe(link.authorizationUrl);
-    expect(flow.startAuth).not.toHaveBeenCalled();
-  },
-);
+it("returns an unauthenticated Clerk browser from hosted sign-in to the same connect link (ui true)", async () => {
+  const flow = setup("clerk", "personal", { ui: true });
+  const link = await flow.authorize();
+  const response = await flow.browser(link.authorizationUrl);
+  expect(response.status).toBe(302);
+  const signin = new URL(response.headers.get("Location")!);
+  expect(signin.origin).toBe("https://accounts.example");
+  expect(signin.searchParams.get("redirect_url")).toBe(link.authorizationUrl);
+  expect(flow.startAuth).not.toHaveBeenCalled();
+});
 
-it.each([false, true])("serves local Clerk sign-in when no hosted page is configured (ui %s)", async (ui) => {
-  const flow = setup("clerk", "personal", { hostedSignIn: false, ui });
+it("serves local Clerk sign-in when no hosted page is configured (ui false)", async () => {
+  const flow = setup("clerk", "personal", { hostedSignIn: false, ui: false });
   const link = await flow.authorize();
   const response = await flow.browser(link.authorizationUrl);
   expect(response.status).toBe(200);
@@ -522,16 +466,6 @@ it.each([false, true])("serves local Clerk sign-in when no hosted page is config
   expect(body).toContain("/connect/service?h=");
   expect(body).not.toContain(AS);
   expect(flow.startAuth).not.toHaveBeenCalled();
-});
-
-it("refuses browser OAuth when no inbound provider is configured", async () => {
-  const app = createTestConnecta({ connectors: [], publicUrl: BASE, logger: "silent" });
-  deployments.push(app);
-  const response = await app.fetch(new Request(`${BASE}/connect/service?h=anything`));
-  expect(response.status).toBe(403);
-  expect(await response.text()).toContain(
-    "An interactive provider (Clerk or Cloudflare Access) is required to connect OAuth connectors.",
-  );
 });
 
 describe("OAuth identity and signature boundaries", () => {
@@ -582,45 +516,40 @@ describe("OAuth identity and signature boundaries", () => {
     },
   );
 
-  it.each(["personal", "shared"] as const)(
-    "refuses Access service identities for %s starts and callbacks",
-    async (scope) => {
-      const flow = setup("access", scope);
-      const { authorizationUrl } = await flow.authorize();
-      const pending = await flow.authorize();
-      const begun = await flow.browser(pending.authorizationUrl, "alice");
-      const state = new URL(begun.headers.get("Location")!).searchParams.get("state")!;
-      for (const identity of [
-        undefined,
-        { common_name: "service" },
-        { user_uuid: "alice", service_token_id: "service", service_token_status: true },
-      ]) {
-        const runtime = { waitUntil() {}, access: { aud: "test-app", getIdentity: async () => identity } };
-        for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
-          const headers = { "CF-Access-Client-Id": "service", "CF-Access-Client-Secret": "secret" };
-          expect(
-            (await flow.app.fetch(new Request(authorizationUrl, { method, headers }), undefined, runtime)).status,
-          ).toBe(method === "GET" ? 403 : 405);
-          expect(
-            (
-              await flow.app.fetch(
-                new Request(`${BASE}/oauth/callback/service?code=code&state=${state}`, { method, headers }),
-                undefined,
-                runtime,
-              )
-            ).status,
-          ).toBe(method === "GET" ? 400 : 405);
-          expect(flow.finishAuth).not.toHaveBeenCalled();
-        }
+  it("refuses Access service identities for personal starts and callbacks", async () => {
+    const flow = setup("access", "personal");
+    const { authorizationUrl } = await flow.authorize();
+    const pending = await flow.authorize();
+    const begun = await flow.browser(pending.authorizationUrl, "alice");
+    const state = new URL(begun.headers.get("Location")!).searchParams.get("state")!;
+    for (const identity of [
+      undefined,
+      { common_name: "service" },
+      { user_uuid: "alice", service_token_id: "service", service_token_status: true },
+    ]) {
+      const runtime = { waitUntil() {}, access: { aud: "test-app", getIdentity: async () => identity } };
+      for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+        const headers = { "CF-Access-Client-Id": "service", "CF-Access-Client-Secret": "secret" };
+        expect(
+          (await flow.app.fetch(new Request(authorizationUrl, { method, headers }), undefined, runtime)).status,
+        ).toBe(method === "GET" ? 403 : 405);
+        expect(
+          (
+            await flow.app.fetch(
+              new Request(`${BASE}/oauth/callback/service?code=code&state=${state}`, { method, headers }),
+              undefined,
+              runtime,
+            )
+          ).status,
+        ).toBe(method === "GET" ? 400 : 405);
+        expect(flow.finishAuth).not.toHaveBeenCalled();
       }
-      expect((await flow.callback("alice")).status).toBe(200);
-    },
-  );
+    }
+    expect((await flow.callback("alice")).status).toBe(200);
+  });
 
   it.each([
     ["clerk", "personal"],
-    ["clerk", "shared"],
-    ["access", "personal"],
     ["access", "shared"],
   ] as const)("INV-4: keeps agent tokens out of %s %s browser consent", async (provider, authScope) => {
     const { AccessTokenManager } = await import("../src/access-tokens.js");

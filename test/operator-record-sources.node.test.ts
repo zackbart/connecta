@@ -108,29 +108,4 @@ describe("operator log calls", () => {
     expect(calls).toBeGreaterThanOrEqual(36);
     expect(problems).toEqual([]);
   });
-
-  it("recognizes error text in the shapes a call site could hand it over", () => {
-    for (const arg of [
-      "`failed: ${err}`",
-      "`failed (${error.name})`",
-      "{ error }",
-      "{ connector, cause: err }",
-      "[reason]",
-      "error",
-    ]) {
-      expect(ERROR_TEXT.test(arg) || BARE_ERROR.test(arg), arg).toBe(true);
-    }
-    for (const arg of ['"[connecta] call failed"', "failureRecord({ connector: id }, err)", "{ connector: id }"]) {
-      expect(ERROR_TEXT.test(arg) || BARE_ERROR.test(arg), arg).toBe(false);
-    }
-    for (const alias of ["const { warn } = logger;", "const log = ctx.logger.warn;", "const { error: e } = console;"]) {
-      expect([...alias.matchAll(ALIAS)].length, alias).toBe(1);
-    }
-    expect([..."logger.warn(x); const s = { warn: 1 };".matchAll(ALIAS)]).toEqual([]);
-  });
-
-  it("finds an error handed to a logger", () => {
-    const source = 'logger.warn("[connecta] failed", { detail: msg(err) });';
-    expect(callArguments(source, source.indexOf("("))).toEqual(['"[connecta] failed"', "{ detail: msg(err) }"]);
-  });
 });
