@@ -33,6 +33,13 @@ const PUBLISHABLE_KEY = "pk_test_" + Buffer.from("example.clerk.accounts.dev$", 
 const VAULT_KEY = Buffer.alloc(32, 7).toString("base64");
 
 describe("deployment shapes", () => {
+  it("keeps the Worker sandbox loader-only", () => {
+    const options = [...readWorker("src", "connecta.config.ts").matchAll(/workerExecutor\(\{([^}]*)\}\)/g)].map(
+      (match) => match[1]?.trim(),
+    );
+    expect(options).toEqual(["loader: env.LOADER"]);
+  });
+
   // Alchemy deploys the Worker; wrangler.jsonc stays for `wrangler dev`.
   it("deploys the Worker with an Alchemy stack that keeps its state and secrets", () => {
     const stack = readWorker("alchemy.run.ts");

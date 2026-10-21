@@ -82,6 +82,75 @@ test("assembles every category deterministically, preserves narrative and histor
   });
 });
 
+test("printed git command restores byte-identical committed inputs after a partial unlink failure or SIGTERM, then permits retry", () => {
+  fixture(({ root, command, assemble, commit, git }) => {
+    writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\r\n\r\n## 0.28.1 — 2026-10-05\r\n\r\nPrevious release.\r\n");
+    writeFileSync(join(root, ".changes/a.md"), "---\r\ntype: fixed\r\n---\r\n\r\nFirst fix.  \r\n");
+    writeFileSync(join(root, ".changes/b.md"), "---\ntype: added\n---\n\nSecond entry.\n\n");
+    writeFileSync(join(root, ".changes/.gitkeep"), "");
+    commit();
+    const names = readdirSync(join(root, ".changes")).sort();
+    const before = new Map(
+      ["CHANGELOG.md", ...names.map((name) => `.changes/${name}`)].map((file) => [
+        file,
+        readFileSync(join(root, file)),
+      ]),
+    );
+    // Patch the actual CLI's filesystem boundary without relying on platform
+    // permissions or immutable-file support. The first unlink must land.
+    const fault = join(root, "fault.mjs");
+    writeFileSync(
+      fault,
+      `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import assert from "node:assert/strict";
+const unlink = fs.unlinkSync;
+fs.unlinkSync = (file) => {
+  if (file.endsWith("/b.md")) {
+    assert.equal(fs.existsSync(file.replace(/b\\.md$/, "a.md")), false);
+    assert.match(fs.readFileSync("CHANGELOG.md", "utf8"), /## 0\\.29\\.0/);
+    throw Object.assign(new Error("injected unlink failure"), { code: "EPERM" });
+  }
+  return unlink(file);
+};
+syncBuiltinESMExports();
+`,
+    );
+    for (const interrupted of [false, true]) {
+      if (interrupted) {
+        writeFileSync(
+          fault,
+          readFileSync(fault, "utf8").replace(
+            'throw Object.assign(new Error("injected unlink failure"), { code: "EPERM" });',
+            'process.kill(process.pid, "SIGTERM");',
+          ),
+        );
+      }
+      const result = command(assemble, ["--import", fault]);
+      assert.notEqual(result.status, 0);
+      if (interrupted) assert.equal(result.signal, "SIGTERM");
+      else assert.match(result.stderr, /injected unlink failure/);
+      const recovery = result.stdout.match(/Recovery if assembly fails or is interrupted: (git restore[^\n]+)/)?.[1];
+      assert.equal(recovery, "git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes");
+      if (!interrupted) assert.ok(result.stderr.includes(`Recover with: ${recovery}`));
+      assert.equal(readdirSync(join(root, ".changes")).includes("a.md"), false);
+      assert.match(readFileSync(join(root, "CHANGELOG.md"), "utf8"), /## 0\.29\.0/);
+      // Restore both index and worktree, even if the partial state was staged.
+      git("add", "CHANGELOG.md", ".changes");
+      git(...recovery.split(" ").slice(1));
+      assert.deepEqual(readdirSync(join(root, ".changes")).sort(), names);
+      for (const [file, bytes] of before) assert.deepEqual(readFileSync(join(root, file)), bytes, file);
+    }
+    const retry = command(assemble);
+    assert.equal(retry.status, 0, retry.stderr);
+    const output = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+    assert.equal([...output.matchAll(/## 0\.29\.0/g)].length, 1);
+    assert.equal([...output.matchAll(/First fix\./g)].length, 1);
+    assert.equal([...output.matchAll(/Second entry\./g)].length, 1);
+    assert.deepEqual(readdirSync(join(root, ".changes")), [".gitkeep"]);
+  });
+});
+
 test("rejects malformed metadata and empty entries without changing history or consuming fragments", () => {
   for (const text of [
     "No frontmatter",
@@ -101,6 +170,40 @@ test("rejects malformed metadata and empty entries without changing history or c
       assert.notEqual(command(assemble).status, 0, text);
       assert.equal(readFileSync(join(root, "CHANGELOG.md"), "utf8"), before);
       assert.equal(readFileSync(join(root, ".changes/bad.md"), "utf8"), text);
+    });
+  }
+});
+
+test("refuses dirty, staged, untracked, and ignored untracked inputs before writing", () => {
+  for (const kind of [
+    "dirty changelog",
+    "dirty fragment",
+    "staged fragment",
+    "untracked fragment",
+    "ignored fragment",
+    "untracked changelog",
+  ]) {
+    fixture(({ root, command, assemble, commit, git }) => {
+      const fragment = join(root, ".changes/good.md");
+      writeFileSync(fragment, "---\ntype: fixed\n---\n\nFix.\n");
+      commit();
+      if (kind === "dirty changelog") writeFileSync(join(root, "CHANGELOG.md"), "Dirty history\n");
+      if (kind === "dirty fragment" || kind === "staged fragment") writeFileSync(fragment, "Changed fragment\n");
+      if (kind === "staged fragment") git("add", ".changes");
+      if (kind === "ignored fragment") writeFileSync(join(root, ".gitignore"), ".changes/untracked.md\n");
+      if (kind === "untracked fragment") writeFileSync(join(root, ".changes/untracked.md"), "Untracked\n");
+      if (kind === "ignored fragment") writeFileSync(join(root, ".changes/untracked.md"), "Ignored\n");
+      if (kind === "untracked changelog") git("rm", "--cached", "CHANGELOG.md");
+      const files = ["CHANGELOG.md", ...readdirSync(join(root, ".changes")).map((file) => `.changes/${file}`)];
+      const before = files.map((file) => readFileSync(join(root, file)));
+      const result = command(assemble);
+      assert.notEqual(result.status, 0, kind);
+      assert.match(result.stderr, /Commit .*before assembling/, kind);
+      assert.deepEqual(
+        files.map((file) => readFileSync(join(root, file))),
+        before,
+        kind,
+      );
     });
   }
 });

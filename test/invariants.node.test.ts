@@ -60,7 +60,14 @@ describe("principles backed by tests", () => {
         stderr: "",
         stdout: expect.stringContaining("explicit partial run"),
       });
+      writeFileSync(active, 'import { it } from "vitest"; it.only("INV-9: evidence", () => {});');
+      await expect(runGate()).rejects.toMatchObject({
+        stderr: expect.stringContaining("Unexpected .only modifier"),
+      });
       writeFileSync(active, 'import { it } from "vitest"; it("INV-9: evidence", () => {});');
+      await expect(runGate("omit")).rejects.toMatchObject({
+        stderr: expect.stringContaining("test/other.test.ts: collected suite did not execute in an unfiltered run"),
+      });
       await expect(runGate()).resolves.toMatchObject({
         stderr: "",
         stdout: expect.stringContaining("1 invariants and 1 spec references backed by passing tests"),

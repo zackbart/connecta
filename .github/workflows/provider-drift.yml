@@ -2,7 +2,7 @@ name: Provider drift
 
 # Public vendor contracts only. This workflow reports evidence and never
 # participates in CI's check gate or accepts a new baseline. Every run scans
-# every public provider, which takes about a minute: weekly, on demand, and
+# every public provider: weekly, on demand, and
 # for pull requests that touch providers or the drift tooling.
 on:
   pull_request:

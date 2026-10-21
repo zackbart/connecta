@@ -31,6 +31,11 @@ const WORKERS_SUITES = [
   "test/remote-mcp.test.ts",
   "test/server.test.ts",
   "test/unhandled-rejections.test.ts",
+  // Native response reads can print sensitive downstream text below JS sinks.
+  // workerd-native-output.node.test.ts also invokes these three by filename.
+  "test/operator-sinks.test.ts",
+  "test/clerk-operator-output.test.ts",
+  "test/byte-read-response.test.ts",
   "test/write-evidence.test.ts",
   "test/write-provenance.test.ts",
   // Web Crypto: access tokens, the credential vault, Clerk and Access JWTs.

@@ -53,54 +53,60 @@ instructions in `examples/` and `documentation/`.
 
 ## Verification
 
-`pnpm run check:fast` is the inner loop. It runs the static checks, the
-purity, package-surface and deployment-shape guards, and `vitest run
---changed origin/main` concurrently. Vitest selects the suites whose imports
-reach a file changed since the merge base, uncommitted and untracked files
-included, and reruns every suite when `package.json` or a Vitest config
-changed. The run is partial, so the coverage reporter skips the INV and spec
-checks. `--base <ref>` compares against another ref.
+`pnpm run check:fast` runs `check:static`, then Vitest's built-in
+`--changed origin/main` selection on the Node project. It is a partial inner
+loop: INV and spec evidence checks are skipped. Fetch `origin/main` before
+using it. Changed package manifests or Vitest configuration can select every
+suite; deleted modules require the full `check` because their import graph
+is gone. Use ordinary Vitest file/name filters for a focused run.
 
-`pnpm run check` must pass before you claim anything is done. It runs
-`check:static` (formatting, generated providers, docs links, changelog
-fragments, operator UI and Clerk SDK freshness, Oxlint, Knip, typecheck),
-`test` (both Vitest projects), `check:build` (build, declarations, bundle
-budget, examples), then `test:browser` in Chromium. Run
-`pnpm run test:browser:install` once per machine. `release:check` adds
-`check:security` (`pnpm audit`) and `check:package` (the package and Docker
-smoke); use it when touching packaging, dependencies, or exports.
+`pnpm run check` must pass before you claim anything is done. It runs:
 
-CI runs every job for every pull request and every push to main, with no
-path or tier selection. Each job maps to a script:
+- `check:static`: format, generated providers, documentation links, changelog
+  fragments and their tests, operator UI and Clerk SDK freshness, Oxlint,
+  Knip, and typecheck.
+- `test`: the complete Node project and the selected workerd suites.
+- `check:build`: build, declarations, bundle budget, and example typechecks.
+- `test:browser`: Chromium; run `pnpm run test:browser:install` once per machine.
 
-| Job        | Runs                                                                  |
-| ---------- | --------------------------------------------------------------------- |
-| `static`   | `check:static`                                                        |
-| `node`     | `test:node`: the complete Node project, with INV and spec enforcement |
-| `workers`  | `test:workers`: the workerd project                                   |
-| `build`    | `check:build`, then `check:package` on that `dist/`                   |
-| `security` | `check:security`                                                      |
-| `browser`  | `test:browser`, uploading `playwright-report` on any failed attempt   |
-| `check`    | the aggregate gate                                                    |
+`release:check` adds `check:security` (production dependency audit) and
+`check:package` (published-package, generated deployment, and Docker smoke).
+Use it when touching packaging, dependencies, or exports. Package smoke
+reuses the built `dist/` and packs with `--ignore-scripts`.
 
-`check` is the single required status. It always runs and fails unless every
-other job succeeded; a failed, cancelled or skipped job blocks the merge.
-Superseded PR runs are cancelled. An upstream advisory fails `security` on
-every PR until a dependency PR fixes it; publishing audits again. Playwright's
-`visual` project (pixel comparisons) never retries; `behavior` and
-`@unstable`-tagged comparisons keep two CI retries. The advisory Provider
-drift workflow scans every provider weekly, on demand, and for PRs touching
-`src/providers/` or the drift scripts, outside the gate.
+CI runs six jobs in parallel on every pull request and main push: `static`,
+`node`, `workers`, `build`, `browser`, and `security`. They run `check:static`,
+`test:node`, `test:workers`, `check:build` plus `check:package`, `test:browser`,
+and `check:security`, respectively. There is no path, planning-only, or goldens
+tier selector. Provider goldens always use the full tier. Each dependency
+install uses the frozen lockfile and shared pnpm cache.
 
-`test:node` uses `vitest.config.node.ts`, the Node project without a
-`--project` filter, because the coverage reporter treats any filter as a
-partial run. An unfiltered run of `test` or `test:node` fails when an INV
-ID or a `spec/coverage.json` reference loses its last passing test.
+`check` is the single required status and depends on all six jobs. Its
+`if: always()` runs the gate after a dependency fails; it fails unless every
+result is `success`, including when a job is cancelled or unexpectedly skipped.
+Superseded PR runs are cancelled; each main push retains its own full gate.
+Branch protection needs only the existing `check` status.
 
-The provider exemption ratchet (`test/provider-standard.node.test.ts`) needs
-the comparison commit. The `node` job sets `CONNECTA_STANDARD_BASE` to the PR
-base SHA, or the pre-push SHA on main, and fetches it. Locally it compares
-against the `origin/main` merge base, or HEAD's first parent when that is HEAD.
+`test:node` uses `vitest.config.node.ts` without a `--project` filter so the
+coverage reporter enforces every INV ID, spec reference, and collected suite.
+A full Node run fails when a cited test is removed, skipped, or focused away
+with `.only`; filename/name/project filters intentionally skip this enforcement.
+The existing reporter is shared with the complete two-project `test` run.
+
+The provider exemption ratchet still compares against the PR base SHA or the
+pre-push SHA on main, passed as `CONNECTA_STANDARD_BASE`. The Node job fetches
+that commit explicitly. Locally the guard uses the `origin/main` merge base,
+or HEAD's first parent if the base equals HEAD. Missing history and empty or
+all-zero configured bases fail closed; fetch the base and sufficient history
+to resolve them.
+
+Playwright's visual comparisons never retry; behavior and `@unstable`
+comparisons keep two CI retries. Any failed attempt uploads the HTML report,
+diffs, and traces as `playwright-report`. The nightly Security workflow audits
+main even without new commits, and publishing audits again. Provider drift is
+advisory, outside `check`: it scans every provider weekly, on demand, and on
+PRs touching providers or drift tooling. Operator snapshots remain an on-demand
+artifact workflow; publishing remains release/tag driven.
 
 ## Source map
 

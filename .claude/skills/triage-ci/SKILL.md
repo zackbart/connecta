@@ -69,7 +69,8 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   controllable clock when supported; do not relax correctness or performance
   assertions to hide a failure.
 - **pnpm audit.** A new upstream advisory fails `security` on every PR and
-  main push, whatever the PR changed. Fix it in its own PR that moves the
+  main push, whatever the PR changed. The nightly Security workflow also
+  audits main without a new commit. Fix it in its own PR that moves the
   dependency, then rebase; publishing stays blocked until audit passes.
 - **Coverage reporter.** `Test-backed coverage failed` comes from the full,
   unfiltered Node run, including CI's Node-only config: an `INV-n` lost its
@@ -81,6 +82,7 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
 ## Locally
 
-`pnpm run check:fast` is the partial inner loop. `pnpm run check` runs CI's
+`pnpm run check:fast` runs static checks and Vitest’s built-in
+`--changed origin/main` selection on Node as the partial inner loop. `pnpm run check` runs CI's
 jobs serially, except `security` and package smoke, which `release:check` adds. Other agents
 share this machine; check `uptime` before blaming a timeout on your change.
