@@ -134,9 +134,17 @@ Humans write sources, reasons, and dates; tools write lists and digests.
   keyed by an `operation` from `generated.operations`, with digests written by
   `providers:check --record` in that spelling. ReadMe operation pages name
   their `page` on each row, not in `specification.pages`. A manifest
-  operation no row records is a finding.
+  operation no row records is an `operation-unrecorded` finding for the
+  provider, with or without an endpoint check. To add one, write its row
+  without `contract`: `providers:generate` accepts a row awaiting its digest,
+  `providers:check --record --provider <name>` writes it, and the standard
+  suite refuses a committed row without one.
 - `mcp-docs` and `oauth-discovery` checks compare documented names with
   `generated.hosted`; `reviewedAccess` may name only those.
+- A record must also be one `providers:check` can read:
+  `scripts/drift-validate.mjs` is the one offline validator, shared by
+  `providers:check`, `providers:generate` and the standard suite, which
+  report what it rejects as `D3: providers:check rejects …`.
 - `providers:check` reports each manual check last verified more than 180
   days ago as `manual-stale`. No test fails as the calendar moves.
 
@@ -247,7 +255,9 @@ vendors"). The steps:
    vendor that publishes no JSON document pins its published bytes with
    `vendored: true` and keeps the reviewed JSON conversion in
    `evidence/openapi.document.json`; `providers:spec` compiles that offline,
-   and the pin moves only by review, never by `--record`.
+   and the pin moves only by review, never by `--record`. The generated
+   index states that document's digest, so `check:providers-generated` reads
+   it as stale once the document changes: rerun `providers:spec`.
 2. Write the table with the shared `refuse`, `redact`, and `safe` helpers
    from `../_shared/rest/value-safety.ts`: one verdict per candidate, each with
    a reason, `fields` for names reviewed once across the API, and, when

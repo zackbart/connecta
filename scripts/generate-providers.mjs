@@ -7,7 +7,8 @@ import { access, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
-import { DRIFT_VERSION, generatedBlock, serializeDrift } from "./drift-record.mjs";
+import { generatedBlock, serializeDrift } from "./drift-record.mjs";
+import { DRIFT_VERSION } from "./drift-validate.mjs";
 import { checkOpenApiOutputs } from "./generate-openapi.mjs";
 import { parseGuide, renderConventions } from "./provider-guide.mjs";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
@@ -329,6 +330,8 @@ export async function generateProviders({ root = repositoryRoot, check = false }
       outputs.set(provider.drift, driftText);
     }
     // Decision 0011's Enforcement: refuse D past step 1 and G past step 2.
+    // D includes what providers:check cannot read (drift-validate.mjs); a new
+    // endpoint row may await the contract `providers:check --record` writes.
     const files = walk(provider.directory).sort();
     const facts = {
       name: provider.name,
@@ -344,7 +347,7 @@ export async function generateProviders({ root = repositoryRoot, check = false }
       blockKeys: keys,
     };
     const found = [
-      ...(pending.step1.has(provider.name) ? [] : rules.driftViolations(facts, today)),
+      ...(pending.step1.has(provider.name) ? [] : rules.driftViolations(facts, today, { recording: true })),
       ...(provider.standard ? rules.guideViolations(facts, documentation) : []),
     ];
     violations.push(...found.map((finding) => `providers/${provider.name}: ${finding}`));

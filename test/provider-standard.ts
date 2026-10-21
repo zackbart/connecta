@@ -16,6 +16,7 @@
  * outlive its reason. A name never joins these lists. A provider folder
  * created after them meets the whole standard from its first commit.
  */
+import { driftRecordProblems } from "../scripts/drift-validate.mjs";
 import type { Connector, ConnectorContext } from "../src/types.js";
 
 export const PENDING = {
@@ -335,8 +336,19 @@ export function evidenceViolations(provider: ProviderFacts, today: string): stri
   return found;
 }
 
-/** D: drift.json v2. Humans write sources, reasons, and dates; tools write lists and digests. */
-export function driftViolations(provider: ProviderFacts, today: string): string[] {
+/**
+ * D: drift.json v2. Humans write sources, reasons, and dates; tools write
+ * lists and digests. A record that meets these rules must also be one
+ * `providers:check` can read, by the validator it uses (drift-validate.mjs).
+ * `recording` admits an endpoint row awaiting the contract `--record` writes:
+ * `providers:generate` passes it, so a new operation's row can be generated
+ * and then recorded, while this suite requires every contract.
+ */
+export function driftViolations(
+  provider: ProviderFacts,
+  today: string,
+  { recording = false }: { recording?: boolean } = {},
+): string[] {
   const found: string[] = [];
   const drift = parse(provider.read("drift.json"));
   if (!record(drift) || drift["version"] !== 2 || drift["provider"] !== provider.name) {
@@ -412,7 +424,11 @@ export function driftViolations(provider: ProviderFacts, today: string): string[
       }
     }
   }
-  return found;
+  if (found.length > 0) return found;
+  const catalog = parse(provider.read("evidence/catalog.json"));
+  return driftRecordProblems(drift, provider.name, { catalog, today, recording }).map(
+    (problem) => `D3: providers:check rejects ${problem}`,
+  );
 }
 
 /** G: SKILL.md carries agent-facing domain guidance only, rendered by the one guide renderer. */

@@ -2164,12 +2164,18 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
         { encoding: "utf8" },
       );
     const unrecorded = {
-      kind: "operation-unrecorded",
-      method: "DELETE",
-      path: "/items/{id}",
-      detail: expect.any(String),
+      provider: "vendor",
+      findings: [
+        {
+          kind: "operation-unrecorded",
+          method: "DELETE",
+          path: "/items/{id}",
+          detail: expect.stringContaining("DELETE /items/{id}"),
+        },
+      ],
     };
-    expect(JSON.parse(run(["--record"]).stdout).specs[0].findings).toEqual([unrecorded]);
+    const recordedRun = JSON.parse(run(["--record"]).stdout);
+    expect(recordedRun.specs).toEqual([unrecorded, expect.objectContaining({ check: 0, findings: [] })]);
     const path = join(directory, "vendor", "drift.json");
     const text = await readFile(path, "utf8");
     const recorded = JSON.parse(text);
@@ -2180,9 +2186,9 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
       { operation: "POST /items", page: "create-item", specRevision: "7", contract: expect.stringMatching(/^sha256:/) },
     ]);
     expect(text).toBe(`${JSON.stringify(recorded, null, 2)}\n`);
-    expect(JSON.parse(run().stdout).specs[0].findings).toEqual([unrecorded]);
+    expect(JSON.parse(run().stdout).specs).toEqual([unrecorded, expect.objectContaining({ check: 0, findings: [] })]);
     await writeFile(join(pages, "create-item.md"), page("post", "/items", "changed"));
-    expect(JSON.parse(run().stdout).specs[0].findings).toEqual(
+    expect(JSON.parse(run().stdout).specs[1].findings).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: "contract-changed", method: "POST", path: "/items" })]),
     );
     for (const row of [
@@ -2195,9 +2201,61 @@ describe("version 2 drift records (decision 0011, D)", { timeout: CASE_TIMEOUT_M
           checks: [{ ...(record.checks[0] as object), endpoints: [{ ...row, page: "list-items" }] }],
         },
       });
-      expect(evidenceInvalid(JSON.parse(reportFor(invalid, ["--specs"]).output))).toEqual([
+      expect(
+        evidenceInvalid(JSON.parse(reportFor(invalid, ["--specs"]).output)).filter(
+          (finding: any) => finding.kind !== "operation-unrecorded",
+        ),
+      ).toEqual([
         expect.objectContaining({ kind: "evidence-invalid", detail: expect.stringContaining("keyed by an operation") }),
       ]);
+    }
+  });
+
+  it("reports unrecorded manifest operations at the provider's level, with no endpoint check or a failing one", async () => {
+    const generatedOperations = {
+      generated: {
+        operations: ["GET /items"],
+        hosted: [],
+        evidence: { "openapi.json": `sha256:${"0".repeat(64)}` },
+      },
+    };
+    const unrecorded = (report: any) =>
+      report.specs.flatMap((entry: any) => entry.findings).filter((item: any) => item.kind === "operation-unrecorded");
+    const finding = {
+      kind: "operation-unrecorded",
+      method: "GET",
+      path: "/items",
+      detail: expect.stringContaining("GET /items"),
+    };
+    // Only a valid manual check: the manifest still names an operation nothing records.
+    const manualOnly = await recordWorkspace({ vendor: v2([manual(day(10))], generatedOperations) });
+    expect(unrecorded(JSON.parse(reportFor(manualOnly).output))).toEqual([finding]);
+    expect(unrecorded(JSON.parse(reportFor(manualOnly, ["--specs", "--provider", "vendor"]).output))).toEqual([
+      finding,
+    ]);
+    expect(JSON.parse(reportFor(manualOnly, ["--manual"]).output).specs).toEqual([]);
+    // A first endpoint check that fails, structurally or on its source, still reports it.
+    const endpoints = (rows: unknown[]) => ({
+      type: "endpoints",
+      specification: { url: "https://docs.vendor.example/reference/", format: "readme-operation-pages" },
+      endpoints: rows,
+    });
+    for (const failing of [
+      endpoints([{ operation: "POST /items", specRevision: "0" }]),
+      endpoints([{ operation: "POST /items", page: "create-item", specRevision: "0" }]),
+    ]) {
+      const directory = await recordWorkspace({
+        vendor: v2([failing, manual(day(10))], {
+          generated: { ...generatedOperations.generated, operations: ["GET /items", "POST /items"] },
+        }),
+      });
+      const report = JSON.parse(
+        reportFor(directory, ["--specs", "--spec", `vendor=${join(directory, "missing")}`]).output,
+      );
+      expect(report.specs.flatMap((entry: any) => entry.findings)).toEqual(
+        expect.arrayContaining([expect.objectContaining({ kind: expect.stringMatching(/invalid|unavailable/) })]),
+      );
+      expect(unrecorded(report)).toEqual([finding]);
     }
   });
 

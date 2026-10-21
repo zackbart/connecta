@@ -546,4 +546,42 @@ describe("the provider standard's rules", () => {
       ]),
     );
   });
+
+  it("refuses a drift record providers:check cannot read, by the validator providers:check uses", () => {
+    const folder = standard();
+    const drift = JSON.parse(folder.read("drift.json")!);
+    const violations = (checks: unknown[], options?: { recording?: boolean }) =>
+      driftViolations(
+        {
+          ...folder,
+          read: (path) => (path === "drift.json" ? JSON.stringify({ ...drift, checks }) : folder.read(path)),
+        },
+        today,
+        options,
+      );
+    const contract = `sha256:${"0".repeat(64)}`;
+    const readme = (row: object) => ({
+      type: "endpoints",
+      specification: { url: "https://docs.acme.example/reference/", format: "readme-operation-pages" },
+      endpoints: [{ operation: "GET /customers", specRevision: "1", ...row }],
+    });
+    const docs = (reviewedAccess: object) => ({
+      type: "mcp-docs",
+      setup: "https://acme.example/mcp",
+      endpoints: ["https://mcp.acme.example/mcp"],
+      reviewedAccess,
+    });
+    expect(violations([readme({ page: "list-customers", contract }), docs({ get_customer: "read" })])).toEqual([]);
+    expect(violations([readme({ contract })])).toEqual([
+      "D3: providers:check rejects checks[0]: GET /customers names its reference page",
+    ]);
+    expect(violations([docs({ ghost: "read" })])).toEqual([
+      "D3: providers:check rejects checks[0]: reviewed access must name generated hosted tools",
+    ]);
+    // A row awaiting its contract is generated (recording) but never committed.
+    expect(violations([readme({ page: "list-customers" })])).toEqual([
+      "D3: providers:check rejects checks[0]: invalid contract digest: GET /customers",
+    ]);
+    expect(violations([readme({ page: "list-customers" })], { recording: true })).toEqual([]);
+  });
 });

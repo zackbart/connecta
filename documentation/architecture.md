@@ -1034,15 +1034,20 @@ step 2 that breaks the guide rules: `drift.json` version 2's `generated` block
 classification, evidence digests), and a guide's `## Conventions`, rendered
 from the definition's declarations into `skill.generated.ts`.
 `ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
-with the definition's `blocks`. `providers:check` reads both record versions
-and lists manual checks last verified more than 180 days ago.
+with the definition's `blocks`. `providers:check` reads both record versions,
+reports a manifest operation no endpoint row records at the provider's level,
+and lists manual checks last verified more than 180 days ago. Its offline
+record validator, `scripts/drift-validate.mjs`, also gates `providers:generate`
+and the standard suite, so a record they accept is one `providers:check` reads.
 
 The generic REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `pnpm run providers:spec` compiles offline from the
 provider's pin (`evidence/openapi.json`; `openapi.source.json` until its step 1)
 into `openapi.generated.ts`. A `vendored: true` pin compiles the reviewed
-conversion in `evidence/openapi.document.json` instead of fetching.
+conversion in `evidence/openapi.document.json` instead of fetching, and the
+generated header records that document's digest beside the pin's, so the
+offline freshness check sees a changed conversion.
 Each call is matched to an operation and checked against its parameters before
 transport; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
 its handler, since classification is per tool name. Vendors configure only a

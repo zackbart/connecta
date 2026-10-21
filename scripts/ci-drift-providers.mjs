@@ -13,6 +13,7 @@ const TOOLING = new Set([
   "scripts/ci-drift-providers.mjs",
   "scripts/drift-check.mjs",
   "scripts/drift-record.mjs",
+  "scripts/drift-validate.mjs",
   "scripts/generate-openapi.mjs",
   "scripts/providers.mjs",
   "scripts/value-safety.mjs",

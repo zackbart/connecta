@@ -608,6 +608,36 @@ describe("decision 0011 guides and drift records", () => {
       },
       "D4: checks[0] entries are keyed by an operation in generated.operations",
     ],
+    [
+      "a ReadMe endpoint row without its page, which providers:check cannot read",
+      {
+        definition: KIT,
+        checks: [
+          {
+            type: "endpoints",
+            specification: { url: "https://docs.vendor.example/reference/", format: "readme-operation-pages" },
+            endpoints: [{ operation: "GET /a", specRevision: "1", contract: `sha256:${"0".repeat(64)}` }],
+          },
+        ],
+      },
+      "D3: providers:check rejects checks[0]: GET /a names its reference page",
+    ],
+    [
+      "reviewed access to a tool generated.hosted does not serve",
+      {
+        kind: "mcp" as const,
+        definition: 'classify: { tools: { list_items: "read" } },',
+        checks: [
+          {
+            type: "mcp-docs",
+            setup: "https://vendor.example/mcp",
+            endpoints: ["https://mcp.vendor.example/mcp"],
+            reviewedAccess: { ghost: "read" },
+          },
+        ],
+      },
+      "D3: providers:check rejects checks[0]: reviewed access must name generated hosted tools",
+    ],
   ])("refuses %s past its step before writing anything", (_label, options, finding) => {
     const root = repository();
     standardProvider(root, "alpha", options);
@@ -617,6 +647,71 @@ describe("decision 0011 guides and drift records", () => {
     expect(result.stderr).toContain(`providers/alpha: ${finding}`);
     expect(snapshot(root)).toEqual(before);
     expect(run(root, true).status).toBe(1);
+  });
+
+  it("generates an endpoint row awaiting its contract, which providers:check --record then writes", async () => {
+    const { driftViolations } = await import("./provider-standard.js");
+    const root = repository();
+    const pages = join(root, "pages");
+    mkdirSync(pages);
+    for (const [file, method, path] of [
+      ["list-a", "get", "/a"],
+      ["create-b", "post", "/b"],
+    ]) {
+      const snippet = {
+        openapi: "3.1.0",
+        info: { version: "3" },
+        paths: { [path!]: { [method!]: { responses: {} } } },
+      };
+      write(root, `pages/${file}.md`, `# OpenAPI definition\n\n\`\`\`json\n${JSON.stringify(snippet)}\n\`\`\`\n`);
+    }
+    standardProvider(root, "alpha", {
+      definition: KIT,
+      checks: [
+        {
+          type: "endpoints",
+          specification: { url: "https://docs.vendor.example/reference/", format: "readme-operation-pages" },
+          endpoints: [
+            { operation: "GET /a", page: "list-a", specRevision: "0" },
+            { operation: "POST /b", page: "create-b", specRevision: "0" },
+          ],
+        },
+      ],
+    });
+    const facts = () => ({
+      name: "alpha",
+      kind: "api",
+      display: "Vendor alpha",
+      files: ["drift.json"],
+      read: (path: string) => (path === "drift.json" ? read(root, "src/providers/alpha/drift.json") : undefined),
+    });
+    // Generation accepts the rows --record will complete; the suite does not accept them committed.
+    expect(run(root).status).toBe(0);
+    expect(driftViolations(facts(), "2026-10-20")).toEqual([
+      "D3: providers:check rejects checks[0]: invalid contract digest: GET /a",
+    ]);
+    const recorded = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../scripts/drift-check.mjs", import.meta.url)),
+        "--specs",
+        "--record",
+        "--provider-dir",
+        join(root, "src/providers"),
+        "--provider",
+        "alpha",
+        "--spec",
+        `alpha=${pages}/`,
+      ],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    expect(recorded.status, recorded.stdout + recorded.stderr).toBe(0);
+    expect(json(root, "src/providers/alpha/drift.json").checks[0].endpoints).toEqual([
+      { operation: "GET /a", page: "list-a", specRevision: "3", contract: expect.stringMatching(/^sha256:/) },
+      { operation: "POST /b", page: "create-b", specRevision: "3", contract: expect.stringMatching(/^sha256:/) },
+    ]);
+    expect(driftViolations(facts(), "2026-10-20")).toEqual([]);
+    expect(run(root, true).status).toBe(0);
   });
 
   it("refuses a version-1 record past step 1, and excuses G only while step 2 is pending", () => {
@@ -1448,6 +1543,35 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     await expect(readOpenApiSource(directory)).rejects.toThrow("evidence/openapi.document.json is missing");
     const legacy = folder({ "openapi.source.json": JSON.stringify(pin) });
     await expect(readOpenApiSource(legacy.directory)).rejects.toThrow("vendored is true, beside");
+  });
+
+  it("reads a vendored index as stale once its conversion document changes", async () => {
+    const { checkOpenApiOutputs, sha256, specProvider } = await spec();
+    const pin = {
+      url: "https://vendor.example/openapi.yaml",
+      revision: "1.0.0",
+      digest: sha256("openapi: 3.0.0\n"),
+      vendored: true,
+    };
+    const { root, directory, provider } = folder({
+      "evidence/openapi.json": JSON.stringify(pin),
+      "evidence/openapi.document.json": document,
+    });
+    await specProvider(provider);
+    const output = join(directory, "openapi.generated.ts");
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual([]);
+    // The published-byte pin is unchanged, but the index it would compile is not.
+    const moved = document.replace('"version":"1"', '"version":"2"');
+    writeFileSync(join(directory, "evidence/openapi.document.json"), moved);
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual(["acme/openapi.generated.ts"]);
+    await specProvider(provider);
+    expect(readFileSync(output, "utf8")).toContain('version: "2"');
+    expect(readFileSync(output, "utf8")).toContain(`// document: ${sha256(moved)}`);
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual([]);
+    // A non-vendored module states no conversion digest.
+    writeFileSync(join(directory, "evidence/openapi.json"), JSON.stringify({ ...pin, vendored: undefined }));
+    unlinkSync(join(directory, "evidence/openapi.document.json"));
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual(["acme/openapi.generated.ts"]);
   });
 
   it("refuses a folder that pins OpenAPI under both names, and keeps legacy names until step 1", async () => {

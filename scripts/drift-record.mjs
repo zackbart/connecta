@@ -3,6 +3,8 @@
 // `providers:generate` writes the `generated` block from the provider's
 // definition and its evidence bytes, and `drift-check.mjs` reads both
 // versions. Version 1 stays readable for providers still in PENDING.step1.
+// The record's offline structure is `drift-validate.mjs`, shared with the
+// provider-standard suite.
 //
 // {
 //   "version": 2,
@@ -18,19 +20,10 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export const DRIFT_VERSION = 2;
 /** Evidence files whose bytes `generated.evidence` pins, sorted. */
 export const HASHED_EVIDENCE = ["catalog.json", "openapi.document.json", "openapi.json", "value-safety.json"];
-/** An operation key: `"METHOD /path"`, the kit manifest's spelling. */
-export const OPERATION = /^(GET|HEAD|POST|PUT|PATCH|DELETE) (\/\S*)$/;
 /** `providers:check` reports a manual check verified longer ago than this; no test fails as the calendar moves. */
 export const STALE_AFTER_DAYS = 180;
-
-/** `{ method, path }` of an operation key, or undefined when it is not one. */
-export function parseOperation(key) {
-  const match = typeof key === "string" ? OPERATION.exec(key) : null;
-  return match ? { method: match[1], path: match[2] } : undefined;
-}
 
 function digest(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -61,9 +54,4 @@ export async function generatedBlock({ directory, kind, kit, classify }) {
 export function serializeDrift(record) {
   const { version, provider, generated, ...rest } = record;
   return `${JSON.stringify({ version, provider, generated, ...rest }, null, 2)}\n`;
-}
-
-/** Whole days from a `YYYY-MM-DD` day to `now`, in UTC. */
-export function daysSince(day, now = new Date()) {
-  return Math.floor((now.getTime() - Date.parse(`${day}T00:00:00Z`)) / 86_400_000);
 }
