@@ -17,18 +17,58 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every core check runs for every change. Share static/build setup; `check`
-# is the only required status. Browser, audit and package smoke report separately.
+# is the only required status. Applicable browser/audit failures also block it.
 jobs:
   static:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      changed-files: ${{ steps.changes.outcome }}
+      browser: ${{ steps.changes.outputs.browser }}
+      audit: ${{ steps.changes.outputs.audit }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Select browser and audit checks
+        id: changes
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          base=${PR_BASE:-HEAD^1}
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT" != pull_request ]]; then
+            echo 'browser=true' >> "$GITHUB_OUTPUT"
+            echo 'audit=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test -n "$PR_BASE"
+          git fetch --no-tags --depth=1 origin "$PR_BASE"
+          git diff --name-only --no-renames "$base" HEAD > "$RUNNER_TEMP/changed-files"
+          # Canonical browser input list. The build reads operator-ui/{app,styles},
+          # tokens/page CSS, fonts and LICENSE. Playwright fixtures import the real
+          # server through helpers.ts, so src/ covers their shared auth/routes/core;
+          # fixtures/helpers cover their local dependencies; node.ts uses bin/ tool names.
+          if grep -Eq '^(src/|bin/|test/(browser/|fixtures/|helpers/|helpers\.ts$)|scripts/(build-operator-ui\.mjs|ci-settle-apt\.sh)$|playwright[^/]*\.config\.[^/]+$|tsconfig[^/]*\.json$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|LICENSE$|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
+            echo 'browser=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'browser=false' >> "$GITHUB_OUTPUT"
+          fi
+          if grep -Eq '(^|/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$|^\.github/workflows/ci\.yml$' "$RUNNER_TEMP/changed-files"; then
+            echo 'audit=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'audit=false' >> "$GITHUB_OUTPUT"
+          fi
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
+      - name: Reject new provider exemptions (decision 0011)
+        env:
+          BASE: ${{ steps.changes.outputs.base }}
+        run: git show "$BASE:test/provider-pending-baseline.json" | node scripts/check-provider-exemptions.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check:static
       - run: pnpm run check:build
@@ -39,6 +79,7 @@ jobs:
     timeout-minutes: 20
     env:
       VITEST_MAX_WORKERS: 4
+      CONNECTA_GOLDENS_DETERMINISM: ${{ github.event_name == 'schedule' && '1' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -65,18 +106,86 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test:workers
 
-  # Branch protection requires this name. It runs even when a job fails, and
-  # passes only when every job it needs succeeded: failed, cancelled and
-  # skipped jobs all fail it.
+  browser:
+    needs: static
+    if: needs.static.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Read installed Playwright version
+        id: playwright
+        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+      # Even a cache hit needs the runner's system libraries.
+      - name: Install Chromium and system dependencies
+        id: install
+        timeout-minutes: 5
+        continue-on-error: true
+        run: pnpm run test:browser:install --with-deps
+      # A timed-out first attempt can leave apt-get holding the dpkg lock.
+      - name: Retry Chromium installation once
+        if: steps.install.outcome == 'failure'
+        timeout-minutes: 9
+        run: |
+          bash scripts/ci-settle-apt.sh
+          pnpm run test:browser:install --with-deps
+      - name: Run browser tests
+        run: pnpm run test:browser
+      # test-results/ holds output only for failed attempts, flaky ones included.
+      # A run that fails before any test still uploads its HTML report.
+      - name: Upload Playwright report, diffs and traces
+        if: ${{ !cancelled() && (failure() || hashFiles('test-results/**') != '') }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  audit:
+    needs: static
+    if: needs.static.outputs.audit == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: pnpm --config.verify-deps-before-run=false run check:security
+
+  # Branch protection requires this name. Core jobs and classification must
+  # succeed; browser/audit may skip only when explicitly inapplicable.
   check:
-    needs: [static, node, workers]
+    needs: [static, node, workers, browser, audit]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every job to succeed
+      - name: Require core and applicable checks
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
-          jq -e 'length > 0 and all(.[]; .result == "success")' <<< "$NEEDS" > /dev/null
+          jq -e '
+            . as $jobs |
+            all(["static", "node", "workers"][]; $jobs[.].result == "success") and
+            .static.outputs["changed-files"] == "success" and
+            all(["browser", "audit"][];
+              . as $job | $jobs.static.outputs[$job] as $applies |
+              ($applies == "true" and $jobs[$job].result == "success") or
+              ($applies == "false" and $jobs[$job].result == "skipped"))
+          ' <<< "$NEEDS" > /dev/null

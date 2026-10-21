@@ -1710,17 +1710,18 @@ provider, never the spec or harness.
 `test/goldens.test.ts` compares every provider on Node and workerd. It fails
 if a provider folder is neither covered nor listed as remote-MCP-only, a tool
 has no call, or a golden file is missing or extra. Ordinary checks never write.
-Each provider gets one canonical capture under a fresh module graph per runtime,
-compared byte for byte with the stored canonical observation. Projection removes
-variants only at harness observation positions, never from vendor fields or
-schemas. Fixture updates still record both forward and reverse observations.
+Node compares forward and reverse observations byte for byte; workerd compares
+canonical observations. Each order starts a fresh module graph. Workers projection
+removes variants only at harness observation positions, never from vendor fields
+or schemas. Fixture updates retain both orders.
 There are no characterization tiers, path classifiers, or planning-only runs.
 
 `test/goldens-harness.test.ts` keeps the source and mutation guards on Node:
 replaced Authorization headers, changed auxiliary/login bytes, writes sent
 early or twice, and missing secret-encoding redaction must alter a capture or
-fail it. Its source checks use one schedule. Repeated provider captures and
-the jitter matrix no longer run. Small native-source probes also run on
+fail it. Ordinary runs use one source-probe schedule. Nightly Node runs set
+`CONNECTA_GOLDENS_DETERMINISM=1` for an identical repeat, provider jitter seeds
+1 and 2, and the complete source-probe jitter matrix. Small native-source probes also run on
 workerd: `scheduler.wait`, CompressionStream, saved timers/microtasks and
 Effect scheduling, prebound crypto/clocks, module freshness, runner clocks,
 and Blob/TextDecoderStream promise settlement. Runtime-specific cases carry
@@ -1733,10 +1734,13 @@ filenames alone do not enroll a new file in workerd.
 
 Required PR CI runs static/build, the complete Node suite with INV/spec evidence
 enforcement, and the selected workerd cases, then the fail-closed `check` gate.
-Browser, dependency audit, examples and package/Docker smoke report separately
-on main and nightly; native workflow path filters also run browser/audit on
-relevant PRs. Provider drift runs weekly and manually. Local `check` mirrors
-the required PR checks; `release:check` adds the moved checks. Repository
+An inline changed-files step selects browser and dependency audit on relevant
+PRs; both block `check` when selected and always run on main and nightly.
+Its path expressions and import rationale live in `.github/workflows/ci.yml`.
+Examples and package/Docker smoke report separately on main and nightly.
+Provider drift runs weekly and manually. Local `check` runs unconditional PR
+checks; run browser/audit locally when applicable. `release:check` adds every
+moved check. Repository
 verification policy and exact commands live in `AGENTS.md`.
 
 JWT fixture specs import fixed, public throwaway RSA PEM keys, with an

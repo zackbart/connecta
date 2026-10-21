@@ -25,7 +25,8 @@ import planningCenter from "./goldens/planning-center/spec.js";
 import { canonicalGolden } from "./goldens/canonical.js";
 import { PRIVATE_KEY, PUBLIC_KEY } from "./goldens/rsa-fixture.js";
 
-// Tests use the same tier/order policy as the provider byte comparison.
+// Small source probes use one order. Nightly's Node job exercises every seed.
+const determinism = process.env.CONNECTA_GOLDENS_DETERMINISM === "1";
 const captureCall: typeof captureCallBoth = (spec, label, options) =>
   captureCallBoth(spec, label, { orders: "canonical", ...options });
 const captureGoldens: typeof captureGoldensBoth = (spec, options) =>
@@ -325,7 +326,8 @@ describe(suiteName, { timeout: 120_000 }, () => {
           return "done";
         });
         const rows = new Set<string>();
-        for (const jitter of [1]) rows.add(await captureCall(spec, "probe", { jitter }));
+        for (const jitter of determinism ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : [1])
+          rows.add(await captureCall(spec, "probe", { jitter }));
         expect(rows.size).toBe(1);
         const capture = [...rows][0]!;
         const row = JSON.parse(capture) as Row;
@@ -350,7 +352,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
       [{ status: 201 }, { status: 202 }],
       [{ headers: { "x-probe": "first" } }, { headers: { "x-probe": "second" } }],
     ]) {
-      for (const jitter of [1]) {
+      for (const jitter of determinism ? [1, 2, 3, 4, 5, 6] : [1]) {
         await expect(captureCall(probeSpec(work, replies), "probe", { jitter })).rejects.toThrow(
           /fixture authoring error: indistinguishable concurrent requests.*distinct queued replies/,
         );
@@ -376,7 +378,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
         }
         return send(input, init);
       };
-      for (const jitter of [1]) {
+      for (const jitter of determinism ? [1, 2, 3, 4, 5, 6] : [1]) {
         await expect(captureCall(planningCenter, "get_plan", { seam: compressedItems, jitter })).rejects.toThrow(
           /Unsupported asynchronous source: CompressionStream/,
         );
@@ -465,7 +467,8 @@ describe(suiteName, { timeout: 120_000 }, () => {
   for (const [name, work] of probes) {
     it(`controls ${name} captured before provider imports`, WORKERS, async () => {
       const rows = new Set<string>();
-      for (const jitter of [1]) rows.add(await captureCall(probeSpec(work), "probe", { jitter }));
+      for (const jitter of determinism ? [1, 2, 3, 4, 5, 6] : [1])
+        rows.add(await captureCall(probeSpec(work), "probe", { jitter }));
       expect(rows.size, name).toBe(1);
       const row = JSON.parse([...rows][0]!) as Row;
       expect(row.result, name).toMatchObject({ ok: true });
@@ -516,7 +519,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
       const load = async () => probeSpec((await import("./goldens/load-probe.js")).sample);
       const spec = await load();
       const rows = [];
-      for (const jitter of [1]) rows.push(await captureCall(spec, "probe", { jitter, load }));
+      for (const jitter of determinism ? [1, 2, 3] : [1]) rows.push(await captureCall(spec, "probe", { jitter, load }));
       expect(new Set(rows).size).toBe(1);
       const row = JSON.parse(rows[0]!) as Row;
       expect(row.variants).toBeUndefined();
@@ -656,7 +659,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
       };
     });
     const rows = [];
-    for (const jitter of [1]) rows.push(await captureCall(spec, "probe", { jitter }));
+    for (const jitter of determinism ? [1, 2, 3] : [1]) rows.push(await captureCall(spec, "probe", { jitter }));
     expect(new Set(rows).size).toBe(1);
     expect((JSON.parse(rows[0]!) as Row).result).toMatchObject({
       ok: true,
@@ -679,7 +682,7 @@ describe(suiteName, { timeout: 120_000 }, () => {
       expect(stepSizes(plan)).toEqual([3]);
       for (const ms of [0, 1, 5, 50]) {
         const rows = new Set<string>();
-        for (const jitter of [undefined]) {
+        for (const jitter of determinism ? [undefined, 1, 2, 3, 4, 5, 6] : [undefined]) {
           rows.add(
             await captureCall(planningCenter, "get_plan", { seam: itemsAfter(ms), ...(jitter ? { jitter } : {}) }),
           );

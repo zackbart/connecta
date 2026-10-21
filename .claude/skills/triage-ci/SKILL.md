@@ -7,29 +7,35 @@ description: Diagnose a red connecta CI run - read the aggregate check gate, rec
 
 ## Read the gate
 
-[ci.yml](../../../.github/workflows/ci.yml) runs three work jobs and the
-required `check` gate for every PR, main push and nightly. `check` uses
-`if: always()` and fails unless all three dependencies succeeded, including
-when a dependency was cancelled or unexpectedly skipped. Superseded PR runs
-are cancelled; inspect the newest head's run.
+[ci.yml](../../../.github/workflows/ci.yml) runs three core jobs and the
+required `check` gate for every PR, main push and nightly. The inline
+changed-files step in `static` selects browser/audit on relevant PRs; main,
+nightly and manual runs select both. The canonical path expressions and
+browser import rationale live in that workflow. `check` uses `if: always()`:
+core jobs and classification must succeed; selected jobs must succeed;
+unselected jobs must skip. Missing outputs, failures, cancellations and
+unexpected skips fail the gate. Superseded PR runs are cancelled; inspect the
+newest head's run.
 
 - `static`: `check:static` (format, generated freshness, docs, fragments,
   lint, Knip, typecheck), then `check:build` (build, declarations, bundle cap).
+  The exemption guard rejects names absent from the PR base (or HEAD's first
+  parent on main/nightly/manual); it fails on missing comparison history.
 - `node`: unfiltered `test:node` through `vitest.config.node.ts`, including
-  INV/spec evidence and collection enforcement.
-- `workers`: `test:workers`, the runtime-sensitive `WORKERS_SUITES` in
+  INV/spec evidence and collection enforcement. Goldens compare forward and
+  reverse observations; nightly adds repeats/jitter via
+  `CONNECTA_GOLDENS_DETERMINISM=1`.
+- `workers`: `test:workers`, runtime-sensitive `WORKERS_SUITES` in
   [vitest.config.ts](../../../vitest.config.ts). Mixed suites tag native cases
-  `workers`; the Workers project skips cases tagged `node`. Node runs both.
+  `workers`; workerd skips cases tagged `node`. Node runs both. Goldens compare
+  one canonical observation; small native-source probes include `scheduler.wait`.
+- `browser`: Playwright `behavior` retries twice in CI; `visual` never retries.
+  Any failed attempt, including a flaky pass, uploads `playwright-report` with
+  HTML, diffs and traces.
+- `audit`: `check:security` without an install.
 
-Separate workflows report status without participating in `check`:
+Separate workflows report status outside `check`:
 
-- [Browser](../../../.github/workflows/browser.yml): main, nightly, manual,
-  and PRs matching native UI/browser/config paths. Playwright `behavior` and
-  `visual-unstable` retry twice in CI; `visual` never retries. A failed attempt,
-  including a flaky pass, uploads `playwright-report` with HTML, diffs/traces.
-- [Security](../../../.github/workflows/security.yml): main, nightly, manual,
-  and PRs matching native dependency-file paths; `check:security` without an
-  install.
 - [Package smoke](../../../.github/workflows/package.yml): main, nightly and
   manual; build, example typechecks, then `check:package`, including Docker.
 - [Provider drift](../../../.github/workflows/provider-drift.yml): weekly and
@@ -46,10 +52,6 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   `*-actual.png`, `*-expected.png` and `*-diff.png` files. Intentional changes
   need new baselines from the Operator snapshots workflow
   ([documentation/operator-tests.md](../../../documentation/operator-tests.md)).
-  A comparison that flakes without a code change gets the `@unstable` tag in
-  `UNSTABLE_VARIANTS`, for the flaking scheme only, until its cause is found. `overview-trace` and
-  `narrow-matrix` (dark) each failed one first attempt in 150 runs with a
-  stable capture, then passed the retry; no cause has been found.
 - **Chromium install.** The first install can time out; the retry runs
   [scripts/ci-settle-apt.sh](../../../scripts/ci-settle-apt.sh), which waits up
   to 180 s for a leftover apt/dpkg, finishes interrupted configuration, and
@@ -67,7 +69,7 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   failure after dispatch. Keep deadline assertions deterministic with a
   controllable clock when supported; do not relax correctness or performance
   assertions to hide a failure.
-- **pnpm audit.** A new upstream advisory fails the independent Security workflow on
+- **pnpm audit.** A new upstream advisory fails `audit` and `check` on
   dependency-changing PRs and every main push. The nightly run also
   audits main without a new commit. Fix it in its own PR that moves the
   dependency, then rebase; publishing stays blocked until audit passes.
@@ -83,6 +85,6 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
 `pnpm run check:fast` runs static checks and Vitest’s built-in
 `--changed origin/main` selection on Node as the partial inner loop. `pnpm run check` runs CI's
-core checks locally; `release:check` adds Chromium, examples, audit and
+core checks locally; run browser/audit too when applicable. `release:check` adds Chromium, examples, audit and
 package/Docker smoke. Other agents
 share this machine; check `uptime` before blaming a timeout on your change.

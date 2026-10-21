@@ -60,8 +60,9 @@ Configuration changes and deleted modules need the full `check`, since a
 deleted module's import graph is gone. Use ordinary Vitest file/name filters
 for focused runs.
 
-`pnpm run check` mirrors required PR CI and must pass before claiming work is
-done. It runs `check:static` (format, generated providers, documentation links,
+`pnpm run check` runs the unconditional PR checks and must pass before claiming work is
+done. Run `test:browser` and `check:security` too when their CI paths apply.
+It runs `check:static` (format, generated providers, documentation links,
 changelog fragments and their tests, operator UI and Clerk SDK freshness,
 Oxlint, Knip, typecheck), `test` (all Node suites and the selected workerd
 suites), and `check:build` (build, declarations, bundle cap).
@@ -72,27 +73,35 @@ packaging, dependencies, exports and releases. Run
 `pnpm run test:browser:install` once per machine. Package smoke reuses the
 built `dist/` and packs with `--ignore-scripts`.
 
-CI's required workflow runs three jobs in parallel on every PR, main push,
-and nightly: `static` runs both `check:static` and `check:build` with one
-install; `node` runs `test:node`; `workers` runs `test:workers`. Both runtime
-jobs use four Vitest workers on the four-core runner. Installs use the frozen
-lockfile and shared pnpm store cache. There are no custom path classifiers,
-planning exceptions, or goldens tiers. Every provider golden gets one fresh
-canonical capture per runtime, compared byte for byte with the stored
-canonical observation. Golden updates retain both observation orders in the
-fixture format. Source controls and harness mutation checks remain on Node,
-with one schedule; repeated captures and the jitter matrix no longer run.
+CI runs `static`, `node`, and `workers` in parallel on every PR, main push,
+and nightly. `static` runs `check:static` and `check:build` with one install;
+`node` runs `test:node`; `workers` runs `test:workers`. Runtime jobs use four
+Vitest workers on the four-core runner. Installs use the frozen lockfile and
+shared pnpm store cache. A single inline changed-files step in `static` selects
+PR browser/audit jobs with `git diff --name-only` against the PR base. Their
+canonical path expressions and the browser import rationale live only in
+[ci.yml](.github/workflows/ci.yml). Main, nightly and manual runs always select
+both. There are no planning exceptions, goldens tiers or classifier scripts.
+
+Node compares each golden's forward and reverse observations byte for byte;
+workerd compares its canonical observation. Each order starts a fresh module
+graph. Normal runs capture once. The nightly Node job sets
+`CONNECTA_GOLDENS_DETERMINISM=1`: one identical repeat, jitter seeds 1 and 2,
+and the complete source-probe jitter matrix. Use the same flag locally to
+reproduce it. Golden updates retain both orders in the fixture format.
 Small golden native-source probes also run on workerd. Mixed boundary suites
 use Vitest tags: `workers` marks native cases, while the Workers project skips
-`node` cases. Node runs both tags. The brace-glob selection tolerates deleted
+`node` cases. Node runs both tags. Brace-glob selection tolerates deleted
 files; portable filenames alone do not enroll a new suite in workerd.
 
-`check` is the single required status, with `needs: [static, node, workers]`
-and `if: always()`. It passes only if every dependency's result is `success`:
-a failure, cancellation, or unexpected skip fails the gate. Build failures
-fail `static` and therefore fail `check`. Superseded PR runs are cancelled;
-each main push retains its own full run. Branch protection needs only the
-existing `check` status.
+`check` is the single required status, with `needs: [static, node, workers,
+browser, audit]` and `if: always()`. Core jobs and the changed-files step must
+succeed. Browser/audit must succeed when selected, and must be skipped when
+explicitly unselected. Missing or invalid outputs, failures, cancellations,
+and unexpected skips fail the gate. Build failures fail `static` and hence
+`check`. Superseded PR runs are cancelled; each main push retains a full run.
+Branch protection should require `check` and an up-to-date branch so the
+merge checkout includes current main. Repository settings are managed separately.
 
 `test:node` uses `vitest.config.node.ts` without a CLI project filter. Its
 reporter enforces every INV ID, spec reference, and collected suite; removing,
@@ -101,21 +110,21 @@ name, project, changed-file and shard filters skip enforcement, so they are
 for partial runs only. The same reporter enforces the complete `test` run.
 
 Decision 0011's provider layout, evidence, drift, guide and surface checks
-remain, as do current exemption-inventory consistency and stale-exemption
-checks. CI no longer fetches Git history or compares old exemption lists;
-review additions to those lists as changes to the migration plan.
+remain, along with exemption-inventory consistency and stale-exemption checks.
+The static job compares `test/provider-pending-baseline.json` with the PR base
+(or HEAD's first parent on main/nightly/manual runs). Each step's names may
+only shrink. Missing history or an unreadable baseline fails the job. No
+`CONNECTA_STANDARD_BASE` setting or local history fallback is needed; the
+small guard's test runs in `check:static`.
 
-The following independent workflows report their own status and are outside
-`check`; failures on main remain visible in Actions:
+Browser and audit participate in `check` when selected. Browser visual
+comparisons never retry; behavior tests keep two CI retries. Any failed
+attempt uploads the HTML report, diffs and traces as `playwright-report`.
+Audit runs `check:security` without installing dependencies.
 
-- Browser: every main push, nightly, on demand, and PRs matching native
-  `paths:` for `src/operator-ui/**`, `test/browser/**`, Playwright config, or
-  the browser workflow. Visual comparisons never retry; behavior and
-  `@unstable` comparisons keep two CI retries. Any failed attempt uploads
-  the HTML report, diffs and traces as `playwright-report`.
-- Security: every main push, nightly, on demand, and PRs changing the root
-  manifest, lockfile, workspace config, `.npmrc`, or security workflow.
-  It audits without installing dependencies.
+Two independent workflows report their own status outside `check`; failures
+on main remain visible in Actions:
+
 - Package smoke: every main push, nightly, and on demand; builds the package,
   checks examples, then runs consumer and Docker smoke.
 - Provider drift: weekly and on demand, scanning all public providers. It
