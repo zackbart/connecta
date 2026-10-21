@@ -69,8 +69,11 @@ const folders = await Promise.all(
     const directory = join(root, name);
     const module = (await import(pathToFileURL(join(directory, "index.ts")).href)) as Record<string, unknown>;
     const factory = Object.values(module).find(
-      (value): value is { definition: { kind: string; title: string; readme?: string } } =>
-        typeof value === "function" && "definition" in value,
+      (
+        value,
+      ): value is {
+        definition: { kind: string; title: string; readme?: string; blocks?: { keys: readonly string[] } };
+      } => typeof value === "function" && "definition" in value,
     );
     const files = walk(directory).sort();
     const facts: ProviderFacts = {
@@ -79,6 +82,7 @@ const folders = await Promise.all(
       display: factory?.definition.readme ?? factory?.definition.title ?? name,
       files,
       read: (path) => (files.includes(path) ? readFileSync(join(directory, path), "utf8") : undefined),
+      ...(factory?.definition.blocks ? { blockKeys: factory.definition.blocks.keys } : {}),
     };
     // Hosted tools are the vendor's (P1); the S rules read surfaces connecta authors.
     const createAuthored = authoredFixtures[name];
@@ -394,6 +398,7 @@ function standard(): ProviderFacts {
     display: "Acme",
     files: Object.keys(files).sort(),
     read: (path) => files[path],
+    blockKeys: ["api", "hosted"],
   };
 }
 
@@ -491,6 +496,34 @@ describe("the provider standard's rules", () => {
     );
   });
 
+  it("holds when-blocks to declared keys on their own lines, and dual guides to hosted and api", () => {
+    const folder = standard();
+    const guide = (body: string, facts: Partial<ProviderFacts> = {}) =>
+      guideViolations(
+        {
+          ...folder,
+          ...facts,
+          read: (path) =>
+            path === "SKILL.md" ? `---\n{ "name": "acme", "instructionsHeading": "Acme" }\n---\n${body}` : undefined,
+        },
+        "## Acme\n",
+      );
+    expect(guide("\n## Ids\n\n<!-- when: hosted -->\nSelect the account.\n<!-- end -->\n")).toEqual([]);
+    expect(guide("\n<!-- when: region -->\nUS only.\n<!-- end -->\n")).toEqual([
+      "G2: SKILL.md uses the undeclared when-block key region",
+    ]);
+    expect(guide("\nText <!-- when: hosted -->inline<!-- end -->\n")).toContain(
+      "G2: a when-block marker stands alone on its line",
+    );
+    expect(guide("\n<!-- when: hosted -->\n<!-- when: api -->\n<!-- end -->\n")).toContain(
+      "G2: SKILL.md when-blocks must open and close in turn, unnested",
+    );
+    expect(guide("\n## Ids\n", { blockKeys: ["hosted"] })).toEqual([
+      "G2: a dual provider declares the hosted and api block keys",
+    ]);
+    expect(guide("\n## Ids\n", { kind: "api", blockKeys: [] })).toEqual([]);
+  });
+
   it("names the drift record's renamed and hand-kept fields", () => {
     const folder = standard();
     const drift = JSON.parse(folder.read("drift.json")!);
@@ -512,5 +545,43 @@ describe("the provider standard's rules", () => {
         expect.stringMatching(/^D4: checks\[2\] entries are keyed by an operation/),
       ]),
     );
+  });
+
+  it("refuses a drift record providers:check cannot read, by the validator providers:check uses", () => {
+    const folder = standard();
+    const drift = JSON.parse(folder.read("drift.json")!);
+    const violations = (checks: unknown[], options?: { recording?: boolean }) =>
+      driftViolations(
+        {
+          ...folder,
+          read: (path) => (path === "drift.json" ? JSON.stringify({ ...drift, checks }) : folder.read(path)),
+        },
+        today,
+        options,
+      );
+    const contract = `sha256:${"0".repeat(64)}`;
+    const readme = (row: object) => ({
+      type: "endpoints",
+      specification: { url: "https://docs.acme.example/reference/", format: "readme-operation-pages" },
+      endpoints: [{ operation: "GET /customers", specRevision: "1", ...row }],
+    });
+    const docs = (reviewedAccess: object) => ({
+      type: "mcp-docs",
+      setup: "https://acme.example/mcp",
+      endpoints: ["https://mcp.acme.example/mcp"],
+      reviewedAccess,
+    });
+    expect(violations([readme({ page: "list-customers", contract }), docs({ get_customer: "read" })])).toEqual([]);
+    expect(violations([readme({ contract })])).toEqual([
+      "D3: providers:check rejects checks[0]: GET /customers names its reference page",
+    ]);
+    expect(violations([docs({ ghost: "read" })])).toEqual([
+      "D3: providers:check rejects checks[0]: reviewed access must name generated hosted tools",
+    ]);
+    // A row awaiting its contract is generated (recording) but never committed.
+    expect(violations([readme({ page: "list-customers" })])).toEqual([
+      "D3: providers:check rejects checks[0]: invalid contract digest: GET /customers",
+    ]);
+    expect(violations([readme({ page: "list-customers" })], { recording: true })).toEqual([]);
   });
 });
