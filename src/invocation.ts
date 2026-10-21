@@ -745,11 +745,12 @@ export class InvocationService {
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
             dispatchContext = connectorContext;
-            // The one function this call invokes, read once: its logical call,
-            // auth check, and dispatch all name it, so a connector that
-            // reassigns its own callTool mid-call changes none of them.
-            const callTool = target.connector.callTool;
-            openLogicalCall(connectorContext, callTool);
+            // The one object and function this call invokes, read once: its
+            // logical call, auth check, and dispatch all name them, so a
+            // connector that reassigns its own callTool mid-call changes none.
+            const connector = target.connector;
+            const callTool = connector.callTool;
+            openLogicalCall(connectorContext, connector, callTool);
             try {
               if (target.connector.credential) {
                 if (!connectorContext.credential) {
@@ -766,7 +767,7 @@ export class InvocationService {
                   );
                 }
               }
-              await resolveInvocationAuth(target.connector, callTool, connectorContext);
+              await resolveInvocationAuth(connector, callTool, connectorContext);
             } catch (error) {
               const code = classifyCallError(error).code;
               preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
@@ -784,8 +785,9 @@ export class InvocationService {
               },
               target.definition,
             );
-            return await callTool.call(
-              target.connector,
+            // Reflect.apply, never the function's own `call` or `apply`
+            // property, which anyone holding the function could replace.
+            return await Reflect.apply(callTool, connector, [
               target.toolName,
               args ?? {},
               connectorContext,
@@ -793,7 +795,7 @@ export class InvocationService {
               // invocation's classification and schema private, even during
               // this call, and give every dispatch its own deep copy.
               { definition: structuredClone(target.definition), ...defined({ input }) },
-            );
+            ]);
           };
           // The permit belongs to this scope, so success, failure, and the
           // deadline's interruption all release it. Interruption stops the

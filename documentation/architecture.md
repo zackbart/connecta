@@ -2010,13 +2010,19 @@ compiling and configuring the real thing.
   every `api()` and `remoteMcp()` `callTool` entered beneath it joins it
   (`enterProviderBoundary`). A served write's mark stands
   (`knownForLogicalCall`) only when at most one boundary was entered and the
-  invocation entered that boundary's own `callTool`, or that of a maintained
-  connector declared to delegate each call to one boundary
-  (`delegatesEachCall`, GitHub). Identities are captured, never read back:
-  the invocation reads `callTool` once and invokes that function, each
-  boundary records the published function fixed when it was built, and a
-  delegator is declared at construction, so a connector that reassigns
-  `callTool` mid-call borrows no standing. A boundary marks a write known only when
+  invocation invoked that boundary object with its own `callTool`, or a
+  maintained connector object declared to delegate each call to one boundary
+  (`delegatesEachCall`, GitHub) with its declared function. Identities are
+  captured, never read back: the invocation reads the connector and its
+  `callTool` once and invokes that function with `Reflect.apply`, never
+  through the function's own `call` or `apply` property; each boundary
+  records its object with the published function when it is built
+  (`providerBoundary`) and names that object, from its closure, on entry;
+  and a delegator is declared at construction. A connector that reassigns
+  `callTool` mid-call, or a copy (`{ ...boundary }`, `Object.assign`) that
+  shares a boundary's or delegator's function, borrows no standing;
+  `defineProvider`'s inheriting stamp keeps its connector's
+  (`aliasCallIdentity`). A boundary marks a write known only when
   every request it dispatched is proven unapplied, so the rule reads: known
   only if every request the logical call dispatched is proven unapplied and
   the failing request carries the refusal. A custom connector that composes

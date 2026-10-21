@@ -56,6 +56,9 @@ export const github = defineProvider<GitHubOptions>({
     const policy = new ScopePolicy(parseScopes(options.scopes));
     const auth = new AppAuth(options.app, policy);
     const rest = restConnector(id, auth, policy);
+    // Delegation invokes these captured functions with Reflect.apply, never
+    // through a property or a function's own `call`.
+    const restCall = rest.callTool;
     const usageGuide = provider.usageGuide({
       context: [`Act as the GitHub App. Reachable configuration: ${policy.summary()}.`, `Purpose: ${options.purpose}`],
       summary: "GitHub App scopes, installation routing, confined search and workflow-file limits.",
@@ -155,13 +158,15 @@ export const github = defineProvider<GitHubOptions>({
           } catch (error) {
             throw knownProviderFailure(error);
           }
-          return withHosted(token, ctx, (client) => client.callTool(name, args, ctx, callOptions));
+          return withHosted(token, ctx, (client) =>
+            Reflect.apply(client.callTool, client, [name, args, ctx, callOptions]),
+          );
         }
         if (!Object.hasOwn(CLASSIFICATION.tools, name))
           throw knownProviderFailure(
             new ConnectorCallError("invalid_args", "This GitHub tool is not in the reviewed allowlist."),
           );
-        const result = await rest.callTool(name, args, ctx, callOptions);
+        const result = await Reflect.apply(restCall, rest, [name, args, ctx, callOptions]);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       },
       async status() {

@@ -24,16 +24,29 @@ type CallContext = ConnectorContext & { [CALL]?: ProviderCall };
 const refusals = new WeakMap<object, ProviderRequest>();
 const knownFailures = new WeakSet<object>();
 const trackedConnectors = new WeakSet<object>();
-const delegatingCalls = new WeakSet<CallTool>();
 
-// One invocation's logical call: the `callTool` function it invoked and the
-// function of every api() or remoteMcp() boundary entered beneath it, each
-// captured when it ran, never read back from a connector's mutable property.
-// Keyed like every call side table so a derived context shares it.
+// Call identities, each bound to the connector object it was built as and
+// the `callTool` function it had then. A copy (`{ ...boundary }`,
+// `Object.assign`) is another object and is in neither table, so it can
+// share a boundary's function but never its standing; reassigning the
+// property on the original leaves the recorded function behind.
 type CallTool = Connector["callTool"];
+interface Boundary {
+  /** The api() or remoteMcp() object whose own code enters the logical call. */
+  boundary: object;
+  own: CallTool;
+}
+const boundaries = new WeakMap<object, Boundary>();
+const delegators = new WeakMap<object, CallTool>();
+
+// One invocation's logical call: the connector object and the `callTool`
+// function it invoked, and the object of every boundary entered beneath it,
+// each captured when it ran, never read back from a mutable property. Keyed
+// like every call side table so a derived context shares it.
 interface LogicalCall {
+  target: object;
   entered: CallTool;
-  boundaries: CallTool[];
+  boundaries: object[];
 }
 const logicalCalls = new WeakMap<object, LogicalCall>();
 
@@ -107,45 +120,70 @@ export function tracksRequests(connector: object): boolean {
  * Declare a maintained connector whose `callTool` hands each call to at most
  * one api() or remoteMcp() boundary and sends nothing else that could apply
  * it (GitHub). Only then may that boundary's verdict stand for the call. The
- * function is recorded now, at construction: a later assignment to the
- * property declares nothing.
+ * object and its function are recorded now, at construction: a later
+ * assignment to the property, or a copy of the object, declares nothing.
  */
 export function delegatesEachCall<T extends Connector>(connector: T): T {
-  delegatingCalls.add(connector.callTool);
+  delegators.set(connector, connector.callTool);
   return connector;
 }
 
 /**
- * The invocation opens one logical call on the context it hands a connector,
- * naming the exact `callTool` function it is about to invoke.
+ * Record a just-built api() or remoteMcp() object as a boundary, with its
+ * published `callTool`. Its own code then names the same object, from its
+ * closure, in {@link enterProviderBoundary}.
  */
-export function openLogicalCall(ctx: ConnectorContext, entered: CallTool): void {
-  logicalCalls.set(contextKey(ctx), { entered, boundaries: [] });
+export function providerBoundary(connector: Connector): void {
+  boundaries.set(connector, { boundary: connector, own: connector.callTool });
+}
+
+/**
+ * `alias` serves `base` itself (`defineProvider`'s inheriting stamp), so it
+ * takes `base`'s recorded identities. Only construction code calls this.
+ */
+export function aliasCallIdentity(alias: object, base: object): void {
+  const boundary = boundaries.get(base);
+  const delegator = delegators.get(base);
+  if (boundary) boundaries.set(alias, boundary);
+  if (delegator) delegators.set(alias, delegator);
+}
+
+/**
+ * The invocation opens one logical call on the context it hands a connector,
+ * naming the exact object and `callTool` function it is about to invoke.
+ */
+export function openLogicalCall(ctx: ConnectorContext, target: object, entered: CallTool): void {
+  logicalCalls.set(contextKey(ctx), { target, entered, boundaries: [] });
 }
 
 /**
  * An api() or remoteMcp() boundary was entered under `ctx`'s logical call.
- * `own` is the boundary's published `callTool`, fixed when it was built.
+ * `boundary` is the object it was built as, from its own closure, never `this`.
  */
-export function enterProviderBoundary(ctx: ConnectorContext, own: CallTool): void {
-  logicalCalls.get(contextKey(ctx))?.boundaries.push(own);
+export function enterProviderBoundary(ctx: ConnectorContext, boundary: object): void {
+  logicalCalls.get(contextKey(ctx))?.boundaries.push(boundary);
 }
 
 /**
  * Whether a failure's known mark holds for its whole logical call (INV-9).
  * A boundary marks a write known only when every request it dispatched is
  * proven unapplied, so the mark stands when that boundary owned the call:
- * the function the invocation invoked was the boundary's own `callTool`, or
- * a declared delegator's, and no other boundary was entered. Only the
- * identities captured at dispatch and at entry decide it, so a wrapper that
- * reassigns `callTool` mid-call cannot borrow a boundary's or delegator's
- * standing. A wrapper that composed several calls, or could send around
- * them, never inherits an inner verdict.
+ * the invocation invoked a boundary object with the function recorded for
+ * it at construction, and that boundary was the one entered; or a declared
+ * delegator object, likewise, entered at most one boundary. Only identities
+ * captured at construction, dispatch and entry decide it, so a wrapper that
+ * reassigns `callTool` mid-call, or a copy that shares a boundary's
+ * function, cannot borrow its standing. A wrapper that composed several
+ * calls, or could send around them, never inherits an inner verdict.
  */
 export function knownForLogicalCall(ctx: object, error: unknown): boolean {
   const call = logicalCalls.get(contextKey(ctx));
   if (!call || !isKnownProviderFailure(error) || call.boundaries.length > 1) return false;
-  return call.boundaries[0] === call.entered || delegatingCalls.has(call.entered);
+  const boundary = boundaries.get(call.target);
+  return (
+    (boundary?.own === call.entered && boundary.boundary === call.boundaries[0]) ||
+    delegators.get(call.target) === call.entered
+  );
 }
 
 // OAuth does credential checks before the actual send. Associate a guarded

@@ -115,7 +115,7 @@ import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./res
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
-import { enterProviderBoundary, knownProviderFailure } from "../provider-call.js";
+import { enterProviderBoundary, knownProviderFailure, providerBoundary } from "../provider-call.js";
 import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
@@ -796,7 +796,7 @@ function terminateSession(transport: Transport, logger: Logger, connectorId: str
   return Effect.raceAllFirst([
     // The SDK issues no request at all when no `mcp-session-id` was captured,
     // so a stateless downstream never sees a spurious DELETE.
-    promised(() => Promise.resolve(terminate.call(transport))).pipe(
+    promised(() => Promise.resolve(Reflect.apply(terminate, transport, []))).pipe(
       Effect.catch((error) =>
         // The SDK's error quotes the downstream's status text, and its `data`
         // the body, so the record keeps only the status it answered with.
@@ -1937,7 +1937,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
     };
     adapted.onUnauthorized = (ctx) =>
-      flow((trace) => onUnauthorized.call(adapted, { ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }));
+      flow((trace) => Reflect.apply(onUnauthorized, adapted, [{ ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }]));
     internals._stepUpAuthorize = (challenge, retries) =>
       flow((trace) => {
         const traced = trace(internals._fetchWithInit ?? fetch);
@@ -1947,7 +1947,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
           set: (target, key, value) => Reflect.set(target, key, value, target),
         });
-        return stepUp.call(self, challenge, retries);
+        return Reflect.apply(stepUp, self, [challenge, retries]);
       });
   };
 
@@ -3228,7 +3228,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async callTool(name, args, ctx, options) {
-      enterProviderBoundary(ctx, own);
+      enterProviderBoundary(ctx, connector);
       // Refusals before this call's dispatch record exists: no tools/call of
       // its can have left, so they are known failures (ledger provenance).
       if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
@@ -3691,9 +3691,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   }
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
-  // This boundary's identity in a logical call: the published, fully wrapped
-  // function, fixed now. Entry records it, never what the property holds by then.
-  const own = connector.callTool;
+  // This boundary's identity in a logical call: this object with its
+  // published, fully wrapped function, fixed now, never what the property or
+  // a copy holds by then.
+  providerBoundary(connector);
   if (isOauth)
     registerInvocationAuth(
       connector,

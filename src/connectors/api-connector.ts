@@ -13,6 +13,7 @@ import {
   closeProviderCall,
   enterProviderBoundary,
   knownProviderFailure,
+  providerBoundary,
   providerCallContext,
   providerFetch,
   providerRequests,
@@ -371,7 +372,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
     },
     async callTool(name, args, ctx) {
       trackCredentialReads(ctx);
-      enterProviderBoundary(ctx, own);
+      enterProviderBoundary(ctx, connector);
       const tool = byName.get(name);
       // Refusals before the handler runs are known failures: nothing was sent.
       if (!tool) {
@@ -476,9 +477,9 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       return redactSentSecrets(ctx, result);
     },
   };
-  // This boundary's identity in a logical call, fixed now: entry records this
-  // function, never whatever the property holds by then.
-  const own = connector.callTool;
+  // This boundary's identity in a logical call, fixed now: this object with
+  // this function, never whatever the property or a copy holds by then.
+  providerBoundary(connector);
   if (oauth)
     registerInvocationAuth(connector, async (ctx) => {
       // The built-in static OAuth status only reads the stored grant. It never

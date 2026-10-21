@@ -502,6 +502,9 @@ export function restTools(vendor: RestVendor): ApiTool[] {
     op.method === "HEAD" ||
     readPosts.some(([method, path]) => method === op.method && path === op.path);
   const writeMethods = index.methods.filter((method) => method !== "GET" && method !== "HEAD");
+  // The methods an idempotency key is sent with: never DELETE (see the handler).
+  const keyed = vendor.idempotencyHeader ? writeMethods.filter((method) => method !== "DELETE") : [];
+  const keyedText = keyed.join(" or ");
   const head = index.methods.includes("HEAD");
   const readMethods = [...new Set(["GET", ...(head ? ["HEAD"] : []), ...readPosts.map(([method]) => method)])];
   const routeOf = (op: Operation) => (reads(op) ? tool("read") : tool("write"));
@@ -663,7 +666,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
       name: tool("write"),
       description:
         `Call a ${title} API write (${writeMethods.join(", ")}); method and path are stated for approval. ` +
-        `Checked against the pinned index first.${vendor.idempotencyHeader ? " Pass idempotencyKey to retry safely." : ""}`,
+        `Checked against the pinned index first.${keyed.length ? ` Pass idempotencyKey to retry a ${keyedText} safely${keyed.length < writeMethods.length ? "; a DELETE sends no key" : ""}.` : ""}`,
       annotations: DESTRUCTIVE,
       inputSchema: closed(
         {
@@ -681,7 +684,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
                   type: "string",
                   minLength: 1,
                   maxLength: IDEMPOTENCY_KEY_MAX_LENGTH,
-                  description: "Reuse to retry this exact write; one is generated and returned when omitted.",
+                  description: `Reuse to retry this exact ${keyedText}; one is generated and returned when omitted.`,
                 },
               }
             : {}),

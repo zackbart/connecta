@@ -410,6 +410,47 @@ describe("resend advice is a segment of its own (round 14)", () => {
   });
 });
 
+describe("a shared token flight hands each caller the refusal's advice (round 15)", () => {
+  it.each([
+    ["write", "docs.create_document", { title: "Review" }, "call_destructive_tool"],
+    ["read", "docs.get_document", { documentId: "document_1" }, "call_tool"],
+  ] as const)(
+    "INV-9: two concurrent %ss refused by one shared token mint get identical messages and advice",
+    async (_kind, address, args, source) => {
+      let mints = 0;
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        expect(String(input)).toBe("https://oauth2.googleapis.com/token");
+        mints++;
+        await pending;
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      });
+      const registry = makeRegistry([
+        docs("docs", {
+          purpose: "Review",
+          serviceAccount: { clientEmail: "delegate@project.iam.gserviceaccount.com", privateKey: PRIVATE_KEY },
+          subject: "alice@example.com",
+        }),
+      ]);
+      const invocation = new InvocationService(registry, new CatalogService(registry, BASE));
+      const calls = [0, 1].map(() => invocation.invoke(address, args, { source }));
+      // Long enough for the second caller to join the first one's flight.
+      setTimeout(release, 250);
+      const [owner, follower] = await Promise.all(calls);
+      expect(mints).toBe(1);
+      if (owner!.ok || follower!.ok) throw new Error("expected both refusals");
+      expect(owner!.error.writeOutcome).toBeUndefined();
+      expect(follower!.error.writeOutcome).toBeUndefined();
+      expect(owner!.error.message).toMatch(/Check the deployment's subject mapping and the key before retrying\.$/);
+      expect(follower!.error.message).toBe(owner!.error.message);
+      expect(follower!.error).toEqual(owner!.error);
+    },
+  );
+});
+
 describe("no unknown write's agent-visible text says to retry or resend it", () => {
   /** A tracked api() write that sends two requests; the second is refused with resend advice. */
   function twoRequests() {

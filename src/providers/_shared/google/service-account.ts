@@ -23,7 +23,7 @@
  * and never the material that proves it.
  */
 import { guardedFetch, retryAfterMs, type GuardedTransport } from "../../../connectors/guarded-fetch.js";
-import { ConnectorCallError, resendAdvice, type ConnectorCallErrorCode } from "../../../errors.js";
+import { ConnectorCallError, resendAdvice, resendAdviceOf, type ConnectorCallErrorCode } from "../../../errors.js";
 import type { ConnectorContext } from "../../../types.js";
 
 /** Google's OAuth 2.0 token endpoint, and the JWT audience it requires. */
@@ -489,7 +489,14 @@ async function mint(
  */
 type FlightOutcome =
   | { kind: "token"; minted: Minted }
-  | { kind: "refused"; code: ConnectorCallErrorCode; message: string; retryAfterMs: number | undefined }
+  | {
+      kind: "refused";
+      code: ConnectorCallErrorCode;
+      message: string;
+      retryAfterMs: number | undefined;
+      /** The refusal's resend advice, a segment of its own (`resendAdvice`). */
+      advice: string | undefined;
+    }
   | { kind: "abandoned" };
 
 interface Flight {
@@ -597,7 +604,8 @@ function follow(flight: Flight, signal: AbortSignal | undefined): Promise<Flight
  * what happened inside its own request — a token, Google's refusal, or
  * `abandoned` for anything else — and a follower that hears `abandoned`, or
  * reaches the deadline first, mints for itself. A refusal is rebuilt for each
- * follower from its code and message, never handed over as the owner's object.
+ * follower from its code, message and resend advice, never handed over as the
+ * owner's object.
  */
 export async function delegatedToken(request: DelegatedTokenRequest, ctx: ConnectorContext): Promise<string> {
   const key = await cacheKey(request);
@@ -611,11 +619,12 @@ export async function delegatedToken(request: DelegatedTokenRequest, ctx: Connec
       const outcome = await follow(flight, ctx.signal);
       if (outcome.kind === "token") return outcome.minted.accessToken;
       if (outcome.kind === "refused") {
-        throw new ConnectorCallError(
+        const refused = new ConnectorCallError(
           outcome.code,
           outcome.message,
           outcome.retryAfterMs === undefined ? {} : { retryAfterMs: outcome.retryAfterMs },
         );
+        throw outcome.advice === undefined ? refused : resendAdvice(refused, outcome.advice);
       }
       if (flights.get(key) === flight) flights.delete(key);
       continue;
@@ -641,6 +650,7 @@ export async function delegatedToken(request: DelegatedTokenRequest, ctx: Connec
               code: error.code,
               message: error.message,
               retryAfterMs: error.retryAfterMs,
+              advice: resendAdviceOf(error),
             }
           : { kind: "abandoned" },
       );

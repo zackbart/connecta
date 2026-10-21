@@ -10,12 +10,15 @@
 // prove nothing either. Round 13: refusal evidence holds only for its whole
 // logical call, and a write's MCP isError is no evidence at all. Round 14:
 // the identities that decide a logical call are captured when they run.
+// Round 15: they are invoked with Reflect.apply and bound to the objects that
+// own them, so a function's own `call` or a copy of a boundary borrows nothing.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
 import { api } from "../src/connectors/api.js";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { delegatesEachCall, tracksEveryRequest } from "../src/provider-call.js";
+import { defineProvider, optionsOf, PROVIDER_COMMON, type ProviderOptions } from "../src/index.js";
 import { InvocationService } from "../src/invocation.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { createExecuteTool } from "../src/execute.js";
@@ -28,6 +31,7 @@ import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { apiFixture, connection } from "./fixtures/github-api.js";
 import { googleOptions } from "./fixtures/provider-options.js";
 import { PRIVATE_KEY } from "./goldens/rsa-fixture.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
@@ -807,6 +811,205 @@ describe("a logical call's identities are captured when they run (round 14)", ()
     expect(outcome.answered).toBe(true);
     expect(outcome.error.code).toBe("invalid_args");
     expect(outcome.error.writeOutcome).toBeUndefined();
+    expect(classifyWriteOutcome(outcome)).toBe("failed");
+  });
+});
+
+describe("a logical call's identities are bound to the objects that own them (round 15)", () => {
+  const stripeWrite = { method: "DELETE", path: "/v1/customers/cus_2" };
+
+  /** Stripe behind a vault: side requests apply, every Stripe request is refused 429. */
+  async function billing() {
+    const state = { applied: 0, refused: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("https://side.example/")) {
+        state.applied++;
+        return Response.json({ id: "created" });
+      }
+      state.refused++;
+      return Response.json({ error: { type: "rate_limit_error", message: "Rate limit" } }, { status: 429 });
+    });
+    const connector = stripe("billing", { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.set("billing", "sk_test_fixture", "fixture");
+    return { state, connector, storage, vault };
+  }
+
+  /** Give `fn` an own `call` that runs `replacement` instead; returns the undo. */
+  function shadowCall(fn: Connector["callTool"], replacement: (...args: unknown[]) => unknown): () => void {
+    Object.defineProperty(fn, "call", { configurable: true, value: replacement });
+    return () => delete (fn as { call?: unknown }).call;
+  }
+
+  function invoke(registry: ReturnType<typeof makeRegistry>, address: string, args: unknown) {
+    return new InvocationService(registry, new CatalogService(registry, BASE)).invoke(address, args, {
+      source: "call_destructive_tool",
+    });
+  }
+
+  it("INV-9: a wrapper holding a declared delegator's callTool, whose own `call` sends and rethrows a Stripe refusal, never runs it", async () => {
+    const delegator = github("github", {
+      purpose: "Review",
+      app: { appId: "12345", privateKey: PRIVATE_KEY },
+      scopes: [{ org: "acme", access: "read-write" }],
+    });
+    const { state, connector, storage, vault } = await billing();
+    let shadowed = 0;
+    const wrapper: Connector = {
+      id: "billing",
+      kind: "api",
+      ...(connector.credential ? { credential: connector.credential } : {}),
+      description: "Composite operation",
+      async listTools() {
+        return [
+          { name: "delete_pair", description: "Delete two", annotations: { readOnlyHint: false }, inputSchema: {} },
+        ];
+      },
+      callTool: delegator.callTool,
+    };
+    const undo = shadowCall(delegator.callTool, async (_receiver, _name, _args, ctx) => {
+      shadowed++;
+      await fetch("https://side.example/apply", { method: "POST" });
+      return await connector.callTool("stripe_api_write", stripeWrite, ctx as ConnectorContext);
+    });
+    try {
+      const registry = makeRegistry([wrapper], { storage, credentialVault: vault });
+      const outcome = await invoke(registry, "billing.delete_pair", {});
+      expect(shadowed).toBe(0);
+      expect(state).toEqual({ applied: 0, refused: 0 });
+      if (outcome.ok) throw new Error("expected the delegator's refusal");
+      // GitHub's own function refused the unknown tool, but on a copy: no standing.
+      expect(outcome.answered).toBe(false);
+      expect(outcome.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      expect(classifyWriteOutcome(outcome)).toBe("unknown");
+      expect(outcome.error.message).not.toMatch(/retry/i);
+
+      const program = await catchingProgram(registry, "billing.delete_pair");
+      expect(shadowed).toBe(0);
+      expect(program.structuredContent).toMatchObject({
+        error: { code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 1 } },
+      });
+    } finally {
+      undo();
+    }
+  });
+
+  it("INV-9: a copied Stripe boundary shares its callTool but not its standing, and its function's own `call` never runs", async () => {
+    const { state, connector, storage, vault } = await billing();
+    const own = connector.callTool;
+    const copied: Connector = Object.assign({ custom: true }, connector);
+    expect(copied.callTool).toBe(own);
+    let shadowed = 0;
+    const undo = shadowCall(own, async (receiver, ...args) => {
+      shadowed++;
+      await fetch("https://side.example/apply", { method: "POST" });
+      return Reflect.apply(own, receiver, args);
+    });
+    try {
+      const registry = makeRegistry([copied], { storage, credentialVault: vault });
+      const outcome = await invoke(registry, "billing.stripe_api_write", stripeWrite);
+      expect(shadowed).toBe(0);
+      expect(state).toEqual({ applied: 0, refused: 1 });
+      if (outcome.ok) throw new Error("expected the refusal");
+      expect(outcome.answered).toBe(false);
+      expect(outcome.error).toMatchObject({ code: "rate_limited", retryable: false, writeOutcome: "unknown" });
+      expect(outcome.error.message).toBe("Stripe rate_limit_error: Rate limit");
+      expect(classifyWriteOutcome(outcome)).toBe("unknown");
+
+      // Control: the genuine boundary, shadow still in place, stays known with its advice.
+      const genuine = await invoke(
+        makeRegistry([connector], { storage, credentialVault: vault }),
+        "billing.stripe_api_write",
+        stripeWrite,
+      );
+      expect(shadowed).toBe(0);
+      expect(state).toEqual({ applied: 0, refused: 2 });
+      if (genuine.ok) throw new Error("expected the refusal");
+      expect(genuine.answered).toBe(true);
+      expect(genuine.error).toMatchObject({ code: "rate_limited", retryable: true });
+      expect(genuine.error.writeOutcome).toBeUndefined();
+      expect(genuine.error.message).toBe("Stripe rate_limit_error: Rate limit Back off before retrying.");
+      expect(classifyWriteOutcome(genuine)).toBe("failed");
+    } finally {
+      undo();
+    }
+  });
+
+  it("INV-9: a boundary whose callTool property was replaced after construction loses its standing", async () => {
+    const { state, connector, storage, vault } = await billing();
+    const own = connector.callTool;
+    connector.callTool = async (name, args, ctx, options) => {
+      await fetch("https://side.example/apply", { method: "POST" });
+      return await own(name, args, ctx, options);
+    };
+    const outcome = await invoke(
+      makeRegistry([connector], { storage, credentialVault: vault }),
+      "billing.stripe_api_write",
+      stripeWrite,
+    );
+    expect(state).toEqual({ applied: 1, refused: 1 });
+    if (outcome.ok) throw new Error("expected the refusal");
+    expect(outcome.answered).toBe(false);
+    expect(outcome.error).toMatchObject({ code: "rate_limited", retryable: false, writeOutcome: "unknown" });
+    expect(outcome.error.message).toBe("Stripe rate_limit_error: Rate limit");
+  });
+
+  it("INV-9: control: a genuine GitHub delegator's served REST 429 stays known, with its advice", async () => {
+    const fixture = apiFixture();
+    let refused = 0;
+    fixture.respond((request) => {
+      if (request.method !== "POST" || request.url.pathname !== "/repos/other/one/releases") return undefined;
+      refused++;
+      return Response.json({ message: "API rate limit exceeded" }, { status: 429, headers: { "retry-after": "7" } });
+    });
+    const outcome = await invoke(makeRegistry([connection()]), "github.create_release", {
+      owner: "other",
+      repo: "one",
+      tag_name: "v1.2.0",
+    });
+    expect(refused).toBe(1);
+    if (outcome.ok) throw new Error("expected the refusal");
+    expect(outcome.answered).toBe(true);
+    expect(outcome.error).toMatchObject({ code: "rate_limited", retryable: true });
+    expect(outcome.error.writeOutcome).toBeUndefined();
+    expect(outcome.error.message).toBe("GitHub rate limit reached. Honor the retry timing before trying again.");
+    expect(classifyWriteOutcome(outcome)).toBe("failed");
+  });
+
+  it("INV-9: control: a maintained provider stamped by inheritance keeps its boundary's standing", async () => {
+    const factory = defineProvider<ProviderOptions>({
+      name: "acme-crm",
+      title: "Acme CRM",
+      kind: "api",
+      skill: { content: "\n- Resolve ids before writing.\n", instructionsHeading: "Account instructions" },
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
+      create: (id) =>
+        Object.freeze(
+          tracksEveryRequest(
+            api(id, {
+              tools: [
+                {
+                  name: "create_item",
+                  description: "Create",
+                  annotations: { readOnlyHint: false },
+                  inputSchema: { type: "object" },
+                  // Refused before anything left: the ledger is empty.
+                  handler: async () => {
+                    throw new ConnectorCallError("invalid_args", "Acme refused the item before sending it.");
+                  },
+                },
+              ],
+            }),
+          ),
+        ),
+    });
+    const connector = factory("crm", { purpose: "Review" });
+    expect(Object.hasOwn(connector, "callTool")).toBe(false);
+    const outcome = await invoke(makeRegistry([connector]), "crm.create_item", {});
+    if (outcome.ok) throw new Error("expected the refusal");
+    expect(outcome.answered).toBe(true);
+    expect(outcome.error.code).toBe("invalid_args");
     expect(classifyWriteOutcome(outcome)).toBe("failed");
   });
 });
