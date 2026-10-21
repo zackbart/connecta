@@ -1313,6 +1313,15 @@ describe("get_page and list_layouts: every page, element, and layout is reachabl
         call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p", cursor: first.page.nextCursor }),
       ).rejects.toMatchObject({ code: "conflict" });
     });
+
+    it("continues an unchanged deck, revision or not", async () => {
+      for (const revision of ["rev-1", undefined]) {
+        const connector = connection();
+        const cursor = await firstPage(connector, three(revision));
+        const next = await call(connector, "get_presentation", { presentationId: "deck1", limit: 1, cursor });
+        expect(next.slides.map((slide: any) => slide.objectId)).toEqual(["B"]);
+      }
+    });
   });
 
   it("refuses, explicitly, a result it cannot fit rather than returning it", async () => {
