@@ -44,6 +44,7 @@ import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSch
 import { keys, optionsOf } from "../../config-schema.js";
 import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** CCB's v2 media type. The API and its token endpoint both require it. */
 export const CCB_MEDIA_TYPE = "application/vnd.ccbchurch.v2+json";
@@ -2083,35 +2084,37 @@ function ccbConnector(id: string, options: CcbOptions): Connector {
   const { environment, mode } = options;
   const endpoints = CCB_ENVIRONMENTS[environment];
 
-  return api(id, {
-    title: options.title ?? defaultTitle(environment, mode, writable),
-    description: `Church Community Builder (Pushpay ChMS) — ${routingLine(environment, mode, writable)}: ${purpose}`,
-    // System Auth is one administrator's approval for the whole church, so
-    // the grant is the deployment's; a personal one would send every user to
-    // find a Master Administrator. Identity Auth acts as the person who
-    // signed in, so sharing it would let everyone act as whoever connected
-    // first. The mode decides, and there is no separate override to contradict it.
-    authScope: mode === "identity" ? "personal" : "shared",
-    oauth: {
-      authorizationEndpoint: endpoints.authorizationEndpoint,
-      tokenEndpoint: `${endpoints.apiOrigin}/oauth/token`,
-      clientId: options.clientId,
-      clientSecret: options.clientSecret,
-      scope: scopes.join(" "),
-      authorizationParams: {
-        ...(mode === "identity" ? { resource_owner_auth: "true" } : {}),
-        ...(subdomain ? { subdomain } : {}),
+  return tracksEveryRequest(
+    api(id, {
+      title: options.title ?? defaultTitle(environment, mode, writable),
+      description: `Church Community Builder (Pushpay ChMS) — ${routingLine(environment, mode, writable)}: ${purpose}`,
+      // System Auth is one administrator's approval for the whole church, so
+      // the grant is the deployment's; a personal one would send every user to
+      // find a Master Administrator. Identity Auth acts as the person who
+      // signed in, so sharing it would let everyone act as whoever connected
+      // first. The mode decides, and there is no separate override to contradict it.
+      authScope: mode === "identity" ? "personal" : "shared",
+      oauth: {
+        authorizationEndpoint: endpoints.authorizationEndpoint,
+        tokenEndpoint: `${endpoints.apiOrigin}/oauth/token`,
+        clientId: options.clientId,
+        clientSecret: options.clientSecret,
+        scope: scopes.join(" "),
+        authorizationParams: {
+          ...(mode === "identity" ? { resource_owner_auth: "true" } : {}),
+          ...(subdomain ? { subdomain } : {}),
+        },
+        tokenRequestHeaders: { Accept: CCB_MEDIA_TYPE },
+        apiOrigins: [endpoints.apiOrigin],
       },
-      tokenRequestHeaders: { Accept: CCB_MEDIA_TYPE },
-      apiOrigins: [endpoints.apiOrigin],
-    },
-    usageGuide: {
-      content: usageGuide(purpose, environment, mode, scopes, writable, sensitiveFields, options.instructions),
-      summary: `${environment === "sandbox" ? "Sandbox" : "Production"} CCB, ${mode === "identity" ? "per person" : "church-wide"}: id resolution, sensitive data, paging, rate limits, hatches.`,
-      required: true,
-    },
-    callAdmission: options.callAdmission === undefined ? CCB_ADMISSION : options.callAdmission,
-    ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
-    tools: tools(ccbTransport(endpoints.apiOrigin), defaultPerPage, writable, sensitiveFields),
-  });
+      usageGuide: {
+        content: usageGuide(purpose, environment, mode, scopes, writable, sensitiveFields, options.instructions),
+        summary: `${environment === "sandbox" ? "Sandbox" : "Production"} CCB, ${mode === "identity" ? "per person" : "church-wide"}: id resolution, sensitive data, paging, rate limits, hatches.`,
+        required: true,
+      },
+      callAdmission: options.callAdmission === undefined ? CCB_ADMISSION : options.callAdmission,
+      ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
+      tools: tools(ccbTransport(endpoints.apiOrigin), defaultPerPage, writable, sensitiveFields),
+    }),
+  );
 }

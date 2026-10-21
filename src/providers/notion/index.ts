@@ -6,6 +6,7 @@ import { keys, optionsOf, variants } from "../../config-schema.js";
 import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
 import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
 import { MAX_PAGE_SIZE, notionRest } from "./rest.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export { NOTION_API_BASE_URL, NOTION_API_VERSION } from "./rest.js";
 
@@ -395,26 +396,28 @@ function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider
     throw new Error(`notion() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
   }
   const rest = notionRest(defaultPageSize);
-  return apiConnector(id, {
-    ...provider.connectorOptions,
-    title: options.title ?? "Notion integration",
-    description: `Notion internal integration: ${options.purpose}`,
-    credential: {
-      label: options.credentialLabel ?? "Notion integration token",
-      description:
-        "Internal integration token from notion.so/profile/integrations. Every page or database the agent should reach must also be shared with that integration, and its capabilities decide which tools succeed — comment capabilities are off by default.",
-      placeholder: "Paste the integration token",
-    },
-    testCredential: rest.testCredential,
-    callAdmission: options.callAdmission === undefined ? NOTION_ADMISSION : options.callAdmission,
-    usageGuide: {
-      content: tokenUsageGuide(options.purpose, options.instructions),
-      summary:
-        "Internal integration over REST. Flattened reads, authoring helpers, and the pinned API index for the rest.",
-      required: true,
-    },
-    tools: rest.tools,
-  });
+  return tracksEveryRequest(
+    apiConnector(id, {
+      ...provider.connectorOptions,
+      title: options.title ?? "Notion integration",
+      description: `Notion internal integration: ${options.purpose}`,
+      credential: {
+        label: options.credentialLabel ?? "Notion integration token",
+        description:
+          "Internal integration token from notion.so/profile/integrations. Every page or database the agent should reach must also be shared with that integration, and its capabilities decide which tools succeed — comment capabilities are off by default.",
+        placeholder: "Paste the integration token",
+      },
+      testCredential: rest.testCredential,
+      callAdmission: options.callAdmission === undefined ? NOTION_ADMISSION : options.callAdmission,
+      usageGuide: {
+        content: tokenUsageGuide(options.purpose, options.instructions),
+        summary:
+          "Internal integration over REST. Flattened reads, authoring helpers, and the pinned API index for the rest.",
+        required: true,
+      },
+      tools: rest.tools,
+    }),
+  );
 }
 
 /**

@@ -47,6 +47,7 @@ import type {
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /**
  * Overflow's two published environments. They are separate deployments with
@@ -1763,61 +1764,63 @@ function overflowConnector(id: string, options: OverflowOptions): Connector {
   const send = overflowTransport(options.baseUrl?.trim() || OVERFLOW_API_BASE_URLS[environment]);
   const label = environment === "production" ? "production" : "staging";
 
-  return api(id, {
-    ...defined({ authScope: options.authScope, maxResultBytes: options.maxResultBytes }),
-    title: options.title ?? `Overflow (${label})`,
-    description: `Overflow nonprofit giving, ${label}: ${purpose}`,
-    credential: API_KEY_CREDENTIAL,
-    async testCredentials(values, ctx) {
-      // Overflow has no identity endpoint, and /health answers without a
-      // credential, so it proves nothing. One location is the cheapest
-      // authenticated read: every nonprofit has at least its default one, and
-      // its name is the closest thing to "which organization is this?" the
-      // API will say.
-      try {
-        const payload = asRecord(
-          await callOverflow(
-            send,
-            { method: "GET", path: "/locations", query: { limit: 1, sortBy: "displayOrder" } },
-            deriveContext(ctx, {
-              credential: {
-                get: async (field?: string) => (field ? (values[field] ?? null) : null),
-                getAll: async () => values,
-              },
-            }),
-          ),
-        );
-        const first = asRecord(asArray(payload["data"])[0]);
-        const total = payload["totalCount"];
-        const where =
-          typeof first["name"] === "string"
-            ? ` The nonprofit's first location is "${first["name"]}"${typeof total === "number" ? ` of ${total}` : ""}.`
-            : "";
-        return {
-          ok: true,
-          message: `Overflow ${label} accepted the client id and API key.${where}`,
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          message:
-            error instanceof ConnectorCallError
-              ? error.message
-              : `Overflow ${label} rejected the client id and API key.`,
-        };
-      }
-    },
-    callAdmission: options.callAdmission === undefined ? OVERFLOW_ADMISSION : options.callAdmission,
-    usageGuide: {
-      content: usageGuide(purpose, environment, options.instructions),
-      summary: `Overflow ${label}: money units per field, final statuses, deposits, donor-PII care, and writes via mutate.`,
-      // Required because correct use depends on facts no schema carries:
-      // which statuses are final per asset type, which money unit each field
-      // and write body uses (cents, dollars, or unstated), and
-      // that every write is a mutate-hatch call whose body comes from
-      // Overflow's reference.
-      required: true,
-    },
-    tools: tools(send, defaultPageSize),
-  });
+  return tracksEveryRequest(
+    api(id, {
+      ...defined({ authScope: options.authScope, maxResultBytes: options.maxResultBytes }),
+      title: options.title ?? `Overflow (${label})`,
+      description: `Overflow nonprofit giving, ${label}: ${purpose}`,
+      credential: API_KEY_CREDENTIAL,
+      async testCredentials(values, ctx) {
+        // Overflow has no identity endpoint, and /health answers without a
+        // credential, so it proves nothing. One location is the cheapest
+        // authenticated read: every nonprofit has at least its default one, and
+        // its name is the closest thing to "which organization is this?" the
+        // API will say.
+        try {
+          const payload = asRecord(
+            await callOverflow(
+              send,
+              { method: "GET", path: "/locations", query: { limit: 1, sortBy: "displayOrder" } },
+              deriveContext(ctx, {
+                credential: {
+                  get: async (field?: string) => (field ? (values[field] ?? null) : null),
+                  getAll: async () => values,
+                },
+              }),
+            ),
+          );
+          const first = asRecord(asArray(payload["data"])[0]);
+          const total = payload["totalCount"];
+          const where =
+            typeof first["name"] === "string"
+              ? ` The nonprofit's first location is "${first["name"]}"${typeof total === "number" ? ` of ${total}` : ""}.`
+              : "";
+          return {
+            ok: true,
+            message: `Overflow ${label} accepted the client id and API key.${where}`,
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            message:
+              error instanceof ConnectorCallError
+                ? error.message
+                : `Overflow ${label} rejected the client id and API key.`,
+          };
+        }
+      },
+      callAdmission: options.callAdmission === undefined ? OVERFLOW_ADMISSION : options.callAdmission,
+      usageGuide: {
+        content: usageGuide(purpose, environment, options.instructions),
+        summary: `Overflow ${label}: money units per field, final statuses, deposits, donor-PII care, and writes via mutate.`,
+        // Required because correct use depends on facts no schema carries:
+        // which statuses are final per asset type, which money unit each field
+        // and write body uses (cents, dollars, or unstated), and
+        // that every write is a mutate-hatch call whose body comes from
+        // Overflow's reference.
+        required: true,
+      },
+      tools: tools(send, defaultPageSize),
+    }),
+  );
 }

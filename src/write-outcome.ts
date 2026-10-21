@@ -71,9 +71,12 @@ const REFUSALS = new Set([
  * Network failures that prove nothing was sent, but only when `fetch` itself
  * rejected before any response existed: no connection was ever established,
  * so the vendor cannot have acted. Once a response arrived, the same codes
- * while reading its body prove nothing of the kind.
+ * while reading its body prove nothing of the kind. Nor do they when a body
+ * producer outside the runtime may have raised one after bytes left: the
+ * guarded transport accepts the errno only for a request it saw stream no
+ * body bytes of its own (`neverConnected`).
  */
-const NEVER_CONNECTED: ReadonlySet<string> = new Set([
+export const NEVER_CONNECTED: ReadonlySet<string> = new Set([
   "ECONNREFUSED",
   "ENOTFOUND",
   "EAI_AGAIN",
@@ -89,9 +92,10 @@ const NEVER_CONNECTED: ReadonlySet<string> = new Set([
  * verdicts (a 429 or a lock conflict included), a failure proven to precede
  * any connection, and timeouts (`timeout`, `ETIMEDOUT`, `*_TIMEOUT`), which
  * the invocation layer already reports as `write_outcome_unknown`.
- * `responded` is whether any HTTP answer arrived.
+ * `contacted` is whether the vendor may have been reached: any HTTP answer
+ * arrived, or the transport could not prove it never connected.
  */
-export function unknownOutcome(vendor: { title: string }, error: unknown, responded: boolean): unknown {
+export function unknownOutcome(vendor: { title: string }, error: unknown, contacted: boolean): unknown {
   if (error instanceof WithheldTextError) {
     if (!error.retryable || error.timeout) return error;
   } else {
@@ -99,7 +103,7 @@ export function unknownOutcome(vendor: { title: string }, error: unknown, respon
     if (error.code !== "unavailable" && error.code !== "connector_call_failed") return error;
     const code = error.details?.code;
     if (code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT")) return error;
-    if (!responded && code !== undefined && NEVER_CONNECTED.has(code)) return error;
+    if (!contacted && code !== undefined && NEVER_CONNECTED.has(code)) return error;
   }
   return new ConnectorCallError(
     "connector_call_failed",
@@ -113,7 +117,8 @@ export function unknownOutcome(vendor: { title: string }, error: unknown, respon
  * One failure decision for API providers. The served verdict outranks every
  * transport default and replay-safety hint. Dispatch facts come from the
  * transport, never from a provider's interpretation of its HTTP method.
- * Definite refusals and proven pre-connection failures remain known failures.
+ * Definite refusals and proven pre-connection failures remain known failures;
+ * a write is a known failure only on that positive evidence.
  */
 export function providerCallFailure(
   ctx: ConnectorContext,
@@ -122,10 +127,14 @@ export function providerCallFailure(
   facts: {
     dispatched: boolean;
     responded: boolean;
+    /** The transport's own proof, when it gathered any; else an errno with no answer is accepted. */
+    neverConnected?: boolean;
     status?: number;
     fallback: "read" | "write";
     repeatable?: boolean;
     finalize?: boolean;
+    /** The handler ran and may have sent requests the ledger never saw. */
+    untracked?: boolean;
   },
 ): unknown {
   const served = callClassification(ctx);
@@ -135,6 +144,10 @@ export function providerCallFailure(
   // has ended. Google may add phases or recovery words in the meantime.
   if (requests && !facts.finalize) return error;
   if (requests) {
+    // An empty or partial ledger is no proof for a handler that can send
+    // around it: nothing it saw rules out a request it did not see.
+    if (facts.untracked) return uncertainProviderFailure(vendor, error);
+    // In flight counts as sent. The call is closed, so nothing else leaves.
     const dispatched = requests.filter(
       (request) => request.dispatched && !request.auxiliary && !request.neverConnected,
     );
@@ -154,10 +167,13 @@ export function providerCallFailure(
   // A direct transport user may prove idempotency. A deployment's served
   // write verdict still requires reconciliation rather than retry advice.
   if (served === undefined && facts.repeatable === true) return error;
-  if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error, facts.responded);
+  // Whether the vendor may have been reached: a transport's own evidence
+  // decides, so an errno it could not trust counts as possible contact.
+  const contact = facts.responded || facts.neverConnected === false;
+  if (!(error instanceof ConnectorCallError)) return unknownOutcome(vendor, error, contact);
   if (error.writeOutcome === "unknown") return error;
   const code = error.details?.code;
-  if (!facts.responded && code !== undefined && NEVER_CONNECTED.has(code)) return error;
+  if (!contact && code !== undefined && NEVER_CONNECTED.has(code)) return error;
   if (error.code === "timeout" || code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT")) {
     return error; // The invocation owns timeout/cancellation outcomes.
   }
@@ -179,7 +195,7 @@ export function providerCallFailure(
       ),
     );
   }
-  const converted = unknownOutcome(vendor, error, facts.responded);
+  const converted = unknownOutcome(vendor, error, contact);
   if (converted instanceof ConnectorCallError && converted !== error) return carryFailureFacts(error, converted);
   return carryFailureFacts(
     error,

@@ -37,6 +37,7 @@ import {
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export type {
   GoogleServiceAccount,
@@ -2012,33 +2013,35 @@ function gmailConnector(id: string, options: GmailOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Gmail (drafts only)",
+        description: `Gmail as the signed-in Workspace user: read mail and write drafts, never send — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
+          // Required: whose mailbox it is, and that update_draft replaces the
+          // body, are conventions no schema can carry.
+          required: true,
+        },
+        // Every tool's result passes the whole-size postcondition on its way out.
+        tools: tools(client).map((tool) => ({
+          ...tool,
+          handler: async (args, ctx) =>
+            deliverable(
+              tool.name,
+              await tool.handler(args, ctx),
+              tool.name === "get_attachment" && typeof args["maxBytes"] === "number"
+                ? args["maxBytes"]
+                : RESULT_BUDGET_BYTES,
+            ),
+        })),
       }),
-      title: options.title ?? "Gmail (drafts only)",
-      description: `Gmail as the signed-in Workspace user: read mail and write drafts, never send — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
-        // Required: whose mailbox it is, and that update_draft replaces the
-        // body, are conventions no schema can carry.
-        required: true,
-      },
-      // Every tool's result passes the whole-size postcondition on its way out.
-      tools: tools(client).map((tool) => ({
-        ...tool,
-        handler: async (args, ctx) =>
-          deliverable(
-            tool.name,
-            await tool.handler(args, ctx),
-            tool.name === "get_attachment" && typeof args["maxBytes"] === "number"
-              ? args["maxBytes"]
-              : RESULT_BUDGET_BYTES,
-          ),
-      })),
-    }),
+    ),
   );
 }

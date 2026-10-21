@@ -4,6 +4,7 @@ import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
 import { SentSecrets } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -87,20 +88,24 @@ function fixture(
   const connector =
     kind === "mcp"
       ? remoteMcp("echo", { url: downstream.url })
-      : api("echo", {
-          tools: tools.map((tool) => ({
-            ...tool,
-            handler: async (args: unknown) => {
-              const text = echo(args);
-              if (error)
-                throw new ConnectorCallError("invalid_args", text, {
-                  cause: new Error(text),
-                  retryAfterMs: 100,
-                });
-              return boundary ? text : { text, echo: forms(privateValue(args)), padding };
-            },
-          })),
-        });
+      : // No I/O at all, so its ledger sees every request: a refusal it throws
+        // stays a known failure, and the program's error keeps its echo.
+        tracksEveryRequest(
+          api("echo", {
+            tools: tools.map((tool) => ({
+              ...tool,
+              handler: async (args: unknown) => {
+                const text = echo(args);
+                if (error)
+                  throw new ConnectorCallError("invalid_args", text, {
+                    cause: new Error(text),
+                    retryAfterMs: 100,
+                  });
+                return boundary ? text : { text, echo: forms(privateValue(args)), padding };
+              },
+            })),
+          }),
+        );
   return {
     connector,
     received,

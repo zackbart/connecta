@@ -969,7 +969,14 @@ have acted on it (INV-9). A 5xx (a gateway's 502 to 504 included), a connection
 lost after sending, or a reply that broke off is a non-retryable
 `connector_call_failed` whose outcome is unknown, from `remoteMcp()`, `api()`
 handlers, and the maintained providers alike; reads keep their retryable
-verdict, and a connection refused before anything was sent stays retryable. A
+verdict. A write stays a known failure, with its own advice, only on positive
+evidence that the downstream never had it: a refusal it answered, or a
+connection that was never made. A refused connection proves that only when
+the runtime names a connect-phase error, no answer arrived, and no streamed
+request body was read; Node names one, workerd does not, so on Workers a
+refused or reset write is an unknown outcome. A failure during a composite
+call's later request leaves earlier requests' outcomes unknown, and once the
+call's outcome is decided, a request that had not left is never sent. A
 write the downstream answered with HTTP 401 is not resent: the credential is
 renewed (an OAuth refresh, Google Workspace's next token, Infisical's login)
 for a deliberate repeat, and the call reports the same unknown outcome. If

@@ -49,6 +49,7 @@ import type {
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** Planning Center's REST origin. Override only for a proxy or test double. */
 export const PLANNING_CENTER_API_BASE_URL = "https://api.planningcenteronline.com";
@@ -2975,57 +2976,59 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
   const call = planningCenterCall(send, PLANNING_CENTER_API_VERSIONS, excluded);
   const surface = tools(call, defaultPageSize, excluded);
 
-  return api(id, {
-    ...(options.authScope ? { authScope: options.authScope } : {}),
-    title: options.title ?? "Planning Center",
-    description: `Planning Center church management — ${series(
-      DESCRIBED_APPS.filter((app) => !excluded.has(app)).map((app) => APP_TITLES[app]),
-    )}: ${purpose}`,
-    credential: auth.credential,
-    async testCredentials(values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult> {
-      try {
-        const document = asRecord(
-          await call(
-            { method: "GET", path: "/people/v2/me", query: { include: "organization" } },
-            deriveContext(ctx, {
-              credential: {
-                get: async (field?: string) => (field ? (values[field] ?? null) : null),
-                getAll: async () => values,
-              },
-            }),
-          ),
-        );
-        const me = created(document, "person record");
-        const organization = resources(document["included"]).find((row) => row.type === "Organization");
-        const name = attribute(me, "name") ?? `person ${me.id}`;
-        const where = attribute(organization, "name");
-        return {
-          ok: true,
-          message: `Authenticated as ${String(name)} (person ${me.id})${where ? ` in ${String(where)}` : ""}.`,
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof ConnectorCallError ? error.message : "Planning Center rejected the token.",
-        };
-      }
-    },
-    callAdmission: options.callAdmission === undefined ? PLANNING_CENTER_ADMISSION : options.callAdmission,
-    usageGuide: {
-      content: usageGuide(purpose, options.instructions, excluded),
-      summary:
-        "Person ids join every product, offset paging, per-product write limits, JSON:API hatches, pinned versions.",
-      // Deliberately not `required`. Every named tool's schema is complete
-      // enough to call it on its own; the guide carries the cross-product
-      // facts (merges, write limits, hatch framing) an agent needs only when
-      // it leaves the named surface or hits one of them.
-    },
-    ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
-    tools: [
-      ...surface.hatches,
-      ...PLANNING_CENTER_APPS.flatMap((app) => (excluded.has(app) ? [] : surface.apps[app])).filter(
-        (tool) => excluded.size === 0 || !LIST_TOOLS.has(tool.name),
-      ),
-    ],
-  });
+  return tracksEveryRequest(
+    api(id, {
+      ...(options.authScope ? { authScope: options.authScope } : {}),
+      title: options.title ?? "Planning Center",
+      description: `Planning Center church management — ${series(
+        DESCRIBED_APPS.filter((app) => !excluded.has(app)).map((app) => APP_TITLES[app]),
+      )}: ${purpose}`,
+      credential: auth.credential,
+      async testCredentials(values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult> {
+        try {
+          const document = asRecord(
+            await call(
+              { method: "GET", path: "/people/v2/me", query: { include: "organization" } },
+              deriveContext(ctx, {
+                credential: {
+                  get: async (field?: string) => (field ? (values[field] ?? null) : null),
+                  getAll: async () => values,
+                },
+              }),
+            ),
+          );
+          const me = created(document, "person record");
+          const organization = resources(document["included"]).find((row) => row.type === "Organization");
+          const name = attribute(me, "name") ?? `person ${me.id}`;
+          const where = attribute(organization, "name");
+          return {
+            ok: true,
+            message: `Authenticated as ${String(name)} (person ${me.id})${where ? ` in ${String(where)}` : ""}.`,
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            message: error instanceof ConnectorCallError ? error.message : "Planning Center rejected the token.",
+          };
+        }
+      },
+      callAdmission: options.callAdmission === undefined ? PLANNING_CENTER_ADMISSION : options.callAdmission,
+      usageGuide: {
+        content: usageGuide(purpose, options.instructions, excluded),
+        summary:
+          "Person ids join every product, offset paging, per-product write limits, JSON:API hatches, pinned versions.",
+        // Deliberately not `required`. Every named tool's schema is complete
+        // enough to call it on its own; the guide carries the cross-product
+        // facts (merges, write limits, hatch framing) an agent needs only when
+        // it leaves the named surface or hits one of them.
+      },
+      ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
+      tools: [
+        ...surface.hatches,
+        ...PLANNING_CENTER_APPS.flatMap((app) => (excluded.has(app) ? [] : surface.apps[app])).filter(
+          (tool) => excluded.size === 0 || !LIST_TOOLS.has(tool.name),
+        ),
+      ],
+    }),
+  );
 }

@@ -663,7 +663,11 @@
         },
         {
           "file": "test/auth-elicitation-dispatch.test.ts",
-          "title": "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials"
+          "title": "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials (tracked: true)"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials (tracked: false)"
         },
         {
           "file": "test/downstream-input.test.ts",

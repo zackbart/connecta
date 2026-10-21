@@ -134,7 +134,7 @@
           "dispatched": true,
           "error": {
             "code": "unavailable",
-            "message": "Notion golden_409: Golden 409 failure Notion reported a write conflict; this is safe to retry.",
+            "message": "Notion conflict_error: Golden 409 failure Notion reported a write conflict; this is safe to retry.",
             "retryable": true,
             "retryAfterMs": 1000
           }
@@ -561,10 +561,9 @@
           "dispatched": true,
           "answered": true,
           "error": {
-            "code": "unavailable",
-            "message": "Notion golden_409: Notion answered HTTP 409; its message is withheld because this operation handles credentials. Notion reported a write conflict; this is safe to retry.",
-            "retryable": true,
-            "retryAfterMs": 1000
+            "code": "conflict",
+            "message": "Notion conflict_error: Notion answered HTTP 409; its message is withheld because this operation handles credentials. Notion reported a conflicting transaction. Re-read the target and decide whether the write is still needed; do not repeat it automatically.",
+            "retryable": false
           }
         }
       },

@@ -10,6 +10,7 @@ import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
 import { providerFailureMessage, unsentAfterUnauthorized } from "../../write-outcome.js";
 import { skill } from "./skill.generated.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export const INFISICAL_API_BASE_URL = "https://app.infisical.com/api";
 /** Connecta's response ceiling, before JSON parsing; not an Infisical limit. */
@@ -177,38 +178,41 @@ export const infisical = defineProvider<InfisicalOptions>({
         throw error;
       }
     };
-    return api(id, {
-      ...provider.connectorOptions,
-      title: options.title ?? "Infisical",
-      description: `Infisical secrets management — ${options.purpose}`,
-      credential: {
-        label: "Machine identity",
-        description: "Universal Auth credentials. Project membership and roles bound this connection's access.",
-        fields: [
-          { name: "clientId", label: "Client ID", inputType: "text", placeholder: "Universal Auth client ID" },
-          { name: "clientSecret", label: "Client secret", inputType: "password", placeholder: "Paste client secret" },
-        ],
-      },
-      async testCredentials(values, ctx) {
-        const clientId = values["clientId"]?.trim(),
-          clientSecret = values["clientSecret"]?.trim();
-        if (!clientId || !clientSecret) return { ok: false, message: "Client ID and client secret are both required." };
-        try {
-          await exchange(clientId, clientSecret, ctx);
-          return { ok: true };
-        } catch (error) {
-          return {
-            ok: false,
-            message: error instanceof ConnectorCallError ? error.message : "Infisical login failed.",
-          };
-        }
-      },
-      usageGuide: provider.usageGuide({
-        context: [`Use this Infisical machine identity at ${baseUrl} for ${options.purpose}.`],
-        summary: "Find projects and environments first; secret values are omitted from lists unless requested.",
+    return tracksEveryRequest(
+      api(id, {
+        ...provider.connectorOptions,
+        title: options.title ?? "Infisical",
+        description: `Infisical secrets management — ${options.purpose}`,
+        credential: {
+          label: "Machine identity",
+          description: "Universal Auth credentials. Project membership and roles bound this connection's access.",
+          fields: [
+            { name: "clientId", label: "Client ID", inputType: "text", placeholder: "Universal Auth client ID" },
+            { name: "clientSecret", label: "Client secret", inputType: "password", placeholder: "Paste client secret" },
+          ],
+        },
+        async testCredentials(values, ctx) {
+          const clientId = values["clientId"]?.trim(),
+            clientSecret = values["clientSecret"]?.trim();
+          if (!clientId || !clientSecret)
+            return { ok: false, message: "Client ID and client secret are both required." };
+          try {
+            await exchange(clientId, clientSecret, ctx);
+            return { ok: true };
+          } catch (error) {
+            return {
+              ok: false,
+              message: error instanceof ConnectorCallError ? error.message : "Infisical login failed.",
+            };
+          }
+        },
+        usageGuide: provider.usageGuide({
+          context: [`Use this Infisical machine identity at ${baseUrl} for ${options.purpose}.`],
+          summary: "Find projects and environments first; secret values are omitted from lists unless requested.",
+        }),
+        tools: tools(call),
       }),
-      tools: tools(call),
-    });
+    );
   },
 });
 

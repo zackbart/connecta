@@ -309,7 +309,15 @@ function respond(reply: StubResponse): Response {
   return new Response(status === 204 || status === 304 ? null : text, { status, headers });
 }
 
-/** A runtime-shaped transport failure: what a refused connection rejects with. */
+/**
+ * A refused connection as Node's undici reports it: a connect-phase errno and
+ * no answer. It proves a write unsent only together with the guarded
+ * transport's own evidence that no body producer could have raised it after
+ * bytes left: no body, or one fetch holds whole (JSON, form, bytes). Every
+ * golden write qualifies. This fake reads a request's body to record it, so a
+ * streamed body would count as sent, as it must; workerd's own refusals carry
+ * no errno and are never proven unsent (`test/write-evidence.test.ts`).
+ */
 function networkFailure(): Error {
   return new TypeError("fetch failed", {
     cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),

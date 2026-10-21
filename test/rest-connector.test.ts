@@ -5,6 +5,7 @@ import { attachCallClassification } from "../src/call-classification.js";
 // own configuration is tested in src/providers/stripe/provider.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiConnector } from "../src/connectors/api-connector.js";
+import { tracksEveryRequest } from "../src/provider-call.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { OperationIndex, type OpenApiData, type SchemaNode } from "../src/providers/_shared/rest/operation-index.js";
 import { restTools, restTransport, type RestVendor } from "../src/providers/_shared/rest/tools.js";
@@ -116,7 +117,7 @@ function vendor(overrides: Partial<RestVendor> = {}, timeoutMs = 30_000): RestVe
 }
 
 function connector(overrides: Partial<RestVendor> = {}, timeoutMs?: number): Connector {
-  return apiConnector("acme", { tools: restTools(vendor(overrides, timeoutMs)) });
+  return tracksEveryRequest(apiConnector("acme", { tools: restTools(vendor(overrides, timeoutMs)) }));
 }
 
 const ctx = (): ConnectorContext => connectorContext();
@@ -645,16 +646,18 @@ describe("restTools()", () => {
     globalThis.fetch = (async () => Response.json({ message: "down" }, { status: 503 })) as typeof fetch;
     const app = createTestConnecta({
       connectors: [
-        apiConnector("acme", {
-          tools: restTools(
-            vendor({
-              failure: (status) =>
-                status >= 500
-                  ? new ConnectorCallError("unavailable", `Acme ${status}.`)
-                  : new ConnectorCallError("invalid_args", `Acme ${status}.`),
-            }),
-          ),
-        }),
+        tracksEveryRequest(
+          apiConnector("acme", {
+            tools: restTools(
+              vendor({
+                failure: (status) =>
+                  status >= 500
+                    ? new ConnectorCallError("unavailable", `Acme ${status}.`)
+                    : new ConnectorCallError("invalid_args", `Acme ${status}.`),
+              }),
+            ),
+          }),
+        ),
       ],
       logger: silentLogger,
     });
@@ -689,7 +692,11 @@ describe("restTools()", () => {
         { headers: { "content-type": "application/json" } },
       );
     const app = createTestConnecta({
-      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      connectors: [
+        tracksEveryRequest(
+          apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
+        ),
+      ],
       logger: silentLogger,
     });
     try {
@@ -737,7 +744,11 @@ describe("restTools()", () => {
       });
     }) as typeof fetch;
     const app = createTestConnecta({
-      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      connectors: [
+        tracksEveryRequest(
+          apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
+        ),
+      ],
       logger: silentLogger,
     });
     try {
@@ -772,7 +783,11 @@ describe("restTools()", () => {
 
   it("INV-9: rejects a 256-character idempotency key per the write schema before dispatch", async () => {
     const app = createTestConnecta({
-      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      connectors: [
+        tracksEveryRequest(
+          apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) }),
+        ),
+      ],
       logger: silentLogger,
     });
     try {

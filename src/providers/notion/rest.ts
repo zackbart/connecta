@@ -169,7 +169,13 @@ function retryGuidance(additional: unknown): string {
  * (`sanitizeLinks`, as on success), since a message can echo the Markdown it
  * rejected.
  */
-function notionFailure(status: number, headers: Headers, payload: unknown, withheld = false): ConnectorCallError {
+function notionFailure(
+  status: number,
+  headers: Headers,
+  payload: unknown,
+  withheld = false,
+  write = false,
+): ConnectorCallError {
   const body = isRecord(payload) ? payload : undefined;
   const code = typeof body?.["code"] === "string" ? body["code"] : undefined;
   const additional = body?.["additional_data"];
@@ -235,6 +241,16 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
     return new ConnectorCallError("invalid_args", labelled);
   }
   if (status === 409) {
+    // Notion's conflict_error: the transaction could not be completed. Its
+    // documentation suggests retrying but guarantees no partial effect, so a
+    // write is a definite refusal to reconcile, never to repeat automatically.
+    if (write) {
+      return new ConnectorCallError(
+        "conflict",
+        `${labelled} Notion reported a conflicting transaction. Re-read the target and decide whether the write is still needed; do not repeat it automatically.`,
+        { retryable: false },
+      );
+    }
     return new ConnectorCallError(
       "unavailable",
       `${labelled} Notion reported a write conflict; this is safe to retry.`,
@@ -366,8 +382,8 @@ const VENDOR: RestVendor = {
       ? notionTransport()
       : `This operation is served from ${server}, which this connector does not reach.`;
   },
-  failure: (status, headers, payload, call) =>
-    notionFailure(status, headers, sanitizeLinks(payload), call ? SAFETY.withholdsErrors(call.op) : false),
+  failure: (status, headers, payload, call, write) =>
+    notionFailure(status, headers, sanitizeLinks(payload), call ? SAFETY.withholdsErrors(call.op) : false, write),
   readPosts: READ_POSTS,
   valueSafety: SAFETY,
   // Not an envelope to unwrap: page Markdown carries pre-signed file links

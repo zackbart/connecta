@@ -66,6 +66,7 @@ import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSch
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** Every church's API lives at `https://<subdomain>.breezechms.com/api`. */
 export const BREEZE_HOST_SUFFIX = ".breezechms.com";
@@ -1680,56 +1681,58 @@ function breezeConnector(id: string, options: BreezeOptions): Connector {
   }
   const send = breezeTransport(subdomain);
 
-  return api(id, {
-    ...defined({
-      authScope: options.authScope,
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
-    }),
-    title: options.title ?? `Breeze ChMS (${subdomain})`,
-    description: `Breeze ChMS church database at ${subdomain}${BREEZE_HOST_SUFFIX}: ${purpose}`,
-    credential: {
-      label: "Breeze API key",
-      description: `The church's API key from Breeze → Extensions → API (https://${subdomain}${BREEZE_HOST_SUFFIX}/extensions/api). It has no scopes: it reaches the whole account, giving included. The connector sends it only to ${subdomain}${BREEZE_HOST_SUFFIX}.`,
-      placeholder: "Paste Breeze API key",
-    },
-    testCredential: async (value, ctx) => {
-      try {
-        const account = asRecord(
-          await callBreeze(
-            send,
-            { method: "GET", path: "/account/summary" },
-            deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
-          ),
-        );
-        const reported = typeof account["subdomain"] === "string" ? account["subdomain"].toLowerCase() : undefined;
-        if (reported && reported !== subdomain) {
+  return tracksEveryRequest(
+    api(id, {
+      ...defined({
+        authScope: options.authScope,
+        callAdmission: options.callAdmission,
+        maxResultBytes: options.maxResultBytes,
+      }),
+      title: options.title ?? `Breeze ChMS (${subdomain})`,
+      description: `Breeze ChMS church database at ${subdomain}${BREEZE_HOST_SUFFIX}: ${purpose}`,
+      credential: {
+        label: "Breeze API key",
+        description: `The church's API key from Breeze → Extensions → API (https://${subdomain}${BREEZE_HOST_SUFFIX}/extensions/api). It has no scopes: it reaches the whole account, giving included. The connector sends it only to ${subdomain}${BREEZE_HOST_SUFFIX}.`,
+        placeholder: "Paste Breeze API key",
+      },
+      testCredential: async (value, ctx) => {
+        try {
+          const account = asRecord(
+            await callBreeze(
+              send,
+              { method: "GET", path: "/account/summary" },
+              deriveContext(ctx, { credential: { get: async () => value, getAll: async () => ({ value }) } }),
+            ),
+          );
+          const reported = typeof account["subdomain"] === "string" ? account["subdomain"].toLowerCase() : undefined;
+          if (reported && reported !== subdomain) {
+            return {
+              ok: false,
+              message: `The key belongs to ${reported}${BREEZE_HOST_SUFFIX}, not ${subdomain}${BREEZE_HOST_SUFFIX}.`,
+            };
+          }
+          return {
+            ok: true,
+            message: `Authenticated to ${String(account["name"] ?? "the church account")} (${subdomain}${BREEZE_HOST_SUFFIX}).`,
+          };
+        } catch (error) {
           return {
             ok: false,
-            message: `The key belongs to ${reported}${BREEZE_HOST_SUFFIX}, not ${subdomain}${BREEZE_HOST_SUFFIX}.`,
+            message: error instanceof ConnectorCallError ? error.message : "Breeze rejected the key.",
           };
         }
-        return {
-          ok: true,
-          message: `Authenticated to ${String(account["name"] ?? "the church account")} (${subdomain}${BREEZE_HOST_SUFFIX}).`,
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof ConnectorCallError ? error.message : "Breeze rejected the key.",
-        };
-      }
-    },
-    usageGuide: {
-      content: usageGuide(subdomain, purpose, options.instructions),
-      summary:
-        "Sensitive church data, fieldId decoding, two id kinds, undocumented giving reads, and endpoint-split hatches.",
-      // Required because correct use rests on conventions no schema carries:
-      // person details are keyed by profile fieldId, filters and multiple-
-      // choice values are option ids joined by '-', and the giving reads ride
-      // undocumented endpoints whose failures mean something different.
-      required: true,
-    },
-    tools: tools(send, defaultPageSize),
-  });
+      },
+      usageGuide: {
+        content: usageGuide(subdomain, purpose, options.instructions),
+        summary:
+          "Sensitive church data, fieldId decoding, two id kinds, undocumented giving reads, and endpoint-split hatches.",
+        // Required because correct use rests on conventions no schema carries:
+        // person details are keyed by profile fieldId, filters and multiple-
+        // choice values are option ids joined by '-', and the giving reads ride
+        // undocumented endpoints whose failures mean something different.
+        required: true,
+      },
+      tools: tools(send, defaultPageSize),
+    }),
+  );
 }

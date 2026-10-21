@@ -1902,8 +1902,19 @@ compiling and configuring the real thing.
   resource sends record their dispatch too; OAuth credential checks precede
   the resource dispatch record. Token exchanges, GitHub installation
   and repository binding lookups, token minting, and Cloudflare zone-ownership
-  pin lookups are auxiliary: they cannot perform the logical resource write. A proven pre-connection failure is also
-  distinguished from a possibly executing resource request.
+  pin lookups are auxiliary: they cannot perform the logical resource write. A
+  proven pre-connection failure is also distinguished from a possibly
+  executing resource request. The guarded transport gathers that proof itself:
+  a connect-phase errno, no response, and a body it framed whole (none, JSON,
+  form, bytes) or a stream it watched and fetch never pulled, so an errno a
+  body producer raised after bytes left proves nothing. Every maintained
+  provider declares (`tracksEveryRequest`) that its handlers send only through
+  channels the ledger records; for an undeclared `api()` handler an empty
+  ledger is no evidence, so its served write fails unknown once the handler
+  has run. When the handler settles, `api()` closes the ledger before any
+  decision: a resource request still waiting to leave (a sibling reading its
+  credential) is refused before its credential read and again before send,
+  and one in flight already counts as dispatched.
   `providerCallFailure` in `src/write-outcome.ts` finalizes the call once at the
   `api()` boundary, including handler-thrown typed errors. For a served write,
   no resource dispatch keeps the failure's own advice. A vendor's own 4xx
@@ -1929,6 +1940,15 @@ compiling and configuring the real thing.
   handler errors after successful sends, Forms cursor conflicts after 200,
   generic-code vendor refusals, auxiliary failures after resource dispatch,
   redaction of refusal errors, and concurrent direct-call ledger isolation.
+  The round-6 cases cover a composite write's early refusal while siblings
+  await credentials or are in flight, requests started after the call ended,
+  connect-phase errnos with each body kind (a pulled stream included), and
+  undeclared handlers whose untracked send precedes a typed failure. Each
+  catalog case also checks that the ledger recorded every resource request
+  the network saw, and the inventory that every API connector declares it.
+  `test/write-evidence.test.ts` uses real refused and reset sockets on both
+  runtimes; `test/write-evidence.node.test.ts` streams a body undici partly
+  sends before its producer fails.
   Additional tests:
   `test/remote-mcp-write-once.test.ts` (real SDK transport),
   `test/api-oauth.test.ts`, `test/google-workspace-delegation.test.ts`, and each

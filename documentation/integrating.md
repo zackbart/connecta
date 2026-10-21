@@ -353,14 +353,20 @@ writes use `call_destructive_tool` or a program, within the caller's grants; a
 tool definition. Use declared output
 schemas when known; runtime observations cannot replace them.
 
-A write leaves once. When a write-classified tool's handler fails with a raw
-network error, `api()` reports a non-retryable `connector_call_failed` whose
-outcome is unknown, because the handler may have sent its request before the
-failure; a read's stays a retryable `unavailable`. `ctx.oauth.fetch` never
-resends a write the API answered with HTTP 401 (see
-[Downstream OAuth on api()](./auth.md#downstream-oauth-on-api)). A handler
-that throws its own `ConnectorCallError` after sending a write must not mark
-it `retryable`.
+A write leaves once. Once a write-classified tool's handler has run, any
+failure it ends with is non-retryable with `writeOutcome: "unknown"`, whatever
+its code: a handler can reach the network in ways `api()` cannot observe, so
+nothing it reports proves its write was not sent. A raw network error or an
+`unavailable` becomes `connector_call_failed`; any other `ConnectorCallError`
+keeps its code. Failures before
+the handler runs stay ordinary refusals: argument validation against
+`inputSchema` and missing authorization. Declare input constraints in
+`inputSchema` so a malformed write is refused before the handler starts. A
+read's failure keeps its own advice, so a network error stays a retryable
+`unavailable`. `ctx.oauth.fetch` never resends a write the API answered with
+HTTP 401 (see [Downstream OAuth on api()](./auth.md#downstream-oauth-on-api)).
+When the handler settles, the call ends: a `ctx.fetch` or `ctx.oauth.fetch`
+request it starts afterwards fails without being sent.
 
 ## Separate ownership from visibility
 

@@ -29,6 +29,7 @@
 // such as an account pin), `result` (unwrap a vendor envelope), a reviewed
 // `headers` allowlist, and `textBodies`. Named tools reuse `restCall` and
 // `callRest` to share the same validation-free request path.
+import { callClassification } from "../../../call-classification.js";
 import { providerFailureMessage } from "../../../write-outcome.js";
 import type { ApiTool } from "../../../connectors/api-connector.js";
 import {
@@ -102,8 +103,12 @@ export interface RestVendor {
    * origin), or a refusal that says where to go instead.
    */
   transport(server: string | undefined): GuardedTransport | string;
-  /** Map a failed response to what the caller does next (H11); `call` lets a vendor withhold text for secret families. */
-  failure(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError;
+  /**
+   * Map a failed response to what the caller does next (H11); `call` lets a
+   * vendor withhold text for secret families. `write` is the served verdict,
+   * else the operation's own, for a status whose advice differs by it.
+   */
+  failure(status: number, headers: Headers, body: unknown, call?: RestCall, write?: boolean): ConnectorCallError;
   /** Reviewed POSTs that only read; `_api_read` admits exactly these. */
   readonly readPosts?: readonly RestReadPost[];
   /**
@@ -320,8 +325,9 @@ export async function callRest(
         ? { body: framing.body }
         : {}),
   };
+  const write = (callClassification(ctx) ?? request.classification) === "write";
   return await send(request, ctx, async (response) => {
-    if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call);
+    if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call, write);
     // HEAD answers with headers alone; they are its data.
     const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
     // Order: unwrap the vendor's envelope, then redact (every success, HEAD

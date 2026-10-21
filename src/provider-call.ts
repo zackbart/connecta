@@ -3,6 +3,7 @@
 // if a direct caller reuses its context concurrently. No request facts escape
 // into the agent envelope or operator records.
 import { deriveContext } from "./derived-context.js";
+import { ConnectorCallError } from "./errors.js";
 import type { ConnectorContext } from "./types.js";
 
 export interface ProviderRequest {
@@ -14,17 +15,54 @@ export interface ProviderRequest {
   repeatable: boolean;
   neverConnected?: boolean;
 }
+interface ProviderCall {
+  requests: ProviderRequest[];
+  /** The handler settled: its outcome may be reported, so nothing more leaves. */
+  closed: boolean;
+}
 const CALL = Symbol("provider call");
-type CallContext = ConnectorContext & { [CALL]?: ProviderRequest[] };
+type CallContext = ConnectorContext & { [CALL]?: ProviderCall };
 const refusals = new WeakMap<object, ProviderRequest>();
 const knownFailures = new WeakSet<object>();
+const trackedConnectors = new WeakSet<object>();
 
 export function providerCallContext(ctx: ConnectorContext): ConnectorContext {
-  return deriveContext<CallContext>(ctx, { [CALL]: [] });
+  return deriveContext<CallContext>(ctx, { [CALL]: { requests: [], closed: false } });
 }
 
 export function providerRequests(ctx: ConnectorContext): readonly ProviderRequest[] | undefined {
-  return (ctx as CallContext)[CALL];
+  return (ctx as CallContext)[CALL]?.requests;
+}
+
+/**
+ * End the call's ledger before its outcome is decided. A request still in
+ * flight already counts as dispatched; one that has not left yet (a sibling
+ * still reading its credential, say) is refused by {@link dispatchProviderRequest}
+ * and never leaves after the failure is reported.
+ */
+export function closeProviderCall(ctx: ConnectorContext): void {
+  const call = (ctx as CallContext)[CALL];
+  if (call) call.closed = true;
+}
+
+/**
+ * Refuse a resource request whose call has ended, before credential reads
+ * and again immediately before it is sent. Auxiliary requests (token mints,
+ * lookups) cannot perform the write and may be shared with other calls.
+ */
+export function assertProviderCallOpen(ctx: ConnectorContext, provider: string, auxiliary: boolean): void {
+  if (auxiliary || (ctx as CallContext)[CALL]?.closed !== true) return;
+  throw new ConnectorCallError(
+    "connector_call_failed",
+    `This ${provider} request belongs to a call that has already ended, so it was not sent.`,
+    { retryable: false },
+  );
+}
+
+/** Record that a request leaves now; synchronous with the send that follows it. */
+export function dispatchProviderRequest(ctx: ConnectorContext, request: ProviderRequest): void {
+  assertProviderCallOpen(ctx, request.provider, request.auxiliary);
+  request.dispatched = true;
 }
 
 export function providerRequest(
@@ -34,8 +72,24 @@ export function providerRequest(
   repeatable = false,
 ): ProviderRequest {
   const request: ProviderRequest = { dispatched: false, answered: false, auxiliary, provider, repeatable };
-  (ctx as CallContext)[CALL]?.push(request);
+  (ctx as CallContext)[CALL]?.requests.push(request);
   return request;
+}
+
+/**
+ * Declare that every request the connector's handlers send goes through a
+ * channel the call ledger records: a guarded transport, `ctx.fetch`, or
+ * `ctx.oauth.fetch`. Only then does an empty ledger prove that a failed
+ * write never left. Maintained providers declare it; an arbitrary `api()`
+ * handler can reach the network some other way, so its ledger proves nothing.
+ */
+export function tracksEveryRequest<T extends object>(connector: T): T {
+  trackedConnectors.add(connector);
+  return connector;
+}
+
+export function tracksRequests(connector: object): boolean {
+  return trackedConnectors.has(connector);
 }
 
 // OAuth does credential checks before the actual send. Associate a guarded
@@ -57,7 +111,7 @@ export function providerFetch(
 ): typeof fetch {
   return async (input, init) => {
     const request = providerRequest(ctx, auxiliary, provider);
-    request.dispatched = true;
+    dispatchProviderRequest(ctx, request);
     const response = await send(input, init);
     request.answered = true;
     request.status = response.status;

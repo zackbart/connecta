@@ -45,6 +45,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export type {
   GoogleServiceAccount,
@@ -1942,22 +1943,24 @@ function driveConnector(id: string, options: DriveOptions): Connector {
   const upload = googleWorkspaceClient({ ...shared, baseUrl: uploadBaseUrl(baseUrl) });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Drive",
+        description: `Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
+          // Required: whose Drive it is, the first-sheet CSV, and what
+          // update_file_content replaces are conventions no schema can carry.
+          required: true,
+        },
+        tools: guarded(tools(client, upload)),
       }),
-      title: options.title ?? "Google Drive",
-      description: `Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
-        // Required: whose Drive it is, the first-sheet CSV, and what
-        // update_file_content replaces are conventions no schema can carry.
-        required: true,
-      },
-      tools: guarded(tools(client, upload)),
-    }),
+    ),
   );
 }

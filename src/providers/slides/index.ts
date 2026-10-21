@@ -58,6 +58,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export type {
   GoogleServiceAccount,
@@ -3169,22 +3170,24 @@ function slidesConnector(id: string, options: SlidesOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Slides",
+        description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary:
+            "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
+          // Required: whose decks they are, that listing is Drive's, and the
+          // revision discipline on writes are conventions no schema can carry.
+          required: true,
+        },
+        tools: tools(client),
       }),
-      title: options.title ?? "Google Slides",
-      description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary:
-          "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
-        // Required: whose decks they are, that listing is Drive's, and the
-        // revision discipline on writes are conventions no schema can carry.
-        required: true,
-      },
-      tools: tools(client),
-    }),
+    ),
   );
 }

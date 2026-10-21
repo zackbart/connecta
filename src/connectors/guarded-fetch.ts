@@ -15,8 +15,14 @@
  * public surface. Web APIs only.
  */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
-import { bindProviderRequest, providerRequest, vendorRefusal } from "../provider-call.js";
-import { providerCallFailure } from "../write-outcome.js";
+import {
+  assertProviderCallOpen,
+  bindProviderRequest,
+  dispatchProviderRequest,
+  providerRequest,
+  vendorRefusal,
+} from "../provider-call.js";
+import { NEVER_CONNECTED, providerCallFailure } from "../write-outcome.js";
 import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
@@ -486,30 +492,45 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   const send = options.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
 
   return async function guarded(request, ctx, map) {
-    const dispatch = providerRequest(
-      ctx,
-      options.auxiliary === true || request.auxiliary === true,
-      provider,
-      request.repeatable,
-    );
+    const auxiliary = options.auxiliary === true || request.auxiliary === true;
+    // A call that already ended sends nothing more, not even a credential read.
+    assertProviderCallOpen(ctx, provider, auxiliary);
+    const dispatch = providerRequest(ctx, auxiliary, provider, request.repeatable);
     let dispatched = false;
     let response: Response | undefined;
+    // Whether body bytes may have come from a producer outside the runtime's
+    // fetch, which could fail with any errno after some of them left.
+    let produced = false;
     try {
       return await requestOnce(request, ctx, map);
     } catch (error) {
-      if (
-        !response &&
-        error instanceof ConnectorCallError &&
-        ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EAI_FAIL", "EHOSTUNREACH"].includes(error.details?.code ?? "")
-      )
-        dispatch.neverConnected = true;
+      // Proof the vendor never had the request, gathered here and nowhere
+      // else: a connect-phase errno, no answer, and no body bytes a producer
+      // could have streamed out before raising that errno itself.
+      dispatch.neverConnected =
+        !response && !produced && error instanceof ConnectorCallError && NEVER_CONNECTED.has(error.details?.code ?? "");
       throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
-        dispatched: dispatched && options.auxiliary !== true && request.auxiliary !== true,
+        dispatched: dispatched && !auxiliary,
         responded: response !== undefined,
+        neverConnected: dispatch.neverConnected,
         ...(response ? { status: response.status } : {}),
         fallback: request.classification ?? (request.method === "GET" || request.method === "HEAD" ? "read" : "write"),
         ...(request.repeatable === undefined ? {} : { repeatable: request.repeatable }),
       });
+    }
+
+    /**
+     * The body as sent. One the runtime holds whole is written only after a
+     * connection exists. A stream is watched instead: once fetch pulls it, a
+     * connection may exist and bytes may have left. Anything else is unproven.
+     */
+    function framed(body: BodyInit | undefined): BodyInit | undefined {
+      if (body === undefined || heldWhole(body)) return body;
+      if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) {
+        return watched(body as ReadableStream<Uint8Array>, () => (produced = true));
+      }
+      produced = true;
+      return body;
     }
 
     async function requestOnce<T>(
@@ -546,14 +567,11 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       }
 
       try {
+        const body = request.body !== undefined ? JSON.stringify(request.body) : framed(request.rawBody);
         const init: RequestInit = {
           method: request.method,
           headers,
-          ...(request.body !== undefined
-            ? { body: JSON.stringify(request.body) }
-            : request.rawBody !== undefined
-              ? { body: request.rawBody }
-              : {}),
+          ...(body !== undefined ? { body } : {}),
           // A redirect is an instruction to re-send the credential to whatever
           // origin `Location` names, and a confinement a redirect can undo was
           // never one. Refused below rather than followed.
@@ -569,7 +587,8 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           headers[name] = value;
         }
         bindProviderRequest(init, dispatch);
-        dispatched = dispatch.dispatched = true;
+        dispatchProviderRequest(ctx, dispatch);
+        dispatched = true;
         response = await send(url.toString(), init, ctx);
         dispatch.answered = true;
         dispatch.status = response.status;
@@ -602,6 +621,37 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       return await map(boundedResponse(provider, response, limit), ctx);
     }
   };
+}
+
+/** A body fetch frames from memory, with no producer of its own. */
+function heldWhole(body: BodyInit): boolean {
+  return (
+    typeof body === "string" ||
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body) ||
+    body instanceof URLSearchParams ||
+    (typeof Blob !== "undefined" && body instanceof Blob) ||
+    (typeof FormData !== "undefined" && body instanceof FormData)
+  );
+}
+
+/** The same stream, calling `pulled` the first time fetch asks it for bytes. */
+function watched(body: ReadableStream<Uint8Array>, pulled: () => void): ReadableStream<Uint8Array> {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        pulled();
+        reader ??= body.getReader();
+        const { done, value } = await reader.read();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      },
+      cancel: (reason) => (reader ?? body).cancel(reason),
+    },
+    // Zero, so constructing the stream never pulls it ahead of fetch.
+    { highWaterMark: 0 },
+  );
 }
 
 /** The stored spelling of a header already present, case-insensitively. */

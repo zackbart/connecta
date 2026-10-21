@@ -71,6 +71,7 @@ import type {
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 /** Tithe.ly's two published v1 endpoints, one per environment. */
 export const TITHELY_API_BASE_URLS = {
@@ -1307,25 +1308,27 @@ function tithelyConnector(id: string, options: TithelyOptions): Connector {
   const sensitiveFields = sensitiveFieldsOption("tithely", options.sensitiveFields);
   const send = tithelyTransport(options.baseUrl?.trim() || TITHELY_API_BASE_URLS[environment], operatorKeyPair);
   const live = environment === "live";
-  return api(id, {
-    ...defined({
-      authScope: options.authScope,
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
+  return tracksEveryRequest(
+    api(id, {
+      ...defined({
+        authScope: options.authScope,
+        callAdmission: options.callAdmission,
+        maxResultBytes: options.maxResultBytes,
+      }),
+      title: options.title ?? (live ? "Tithe.ly Giving" : "Tithe.ly Giving (test)"),
+      description: live
+        ? `Tithe.ly giving — live donors and real money — ${purpose}`
+        : `Tithe.ly giving (test environment, no real money) — ${purpose}`,
+      credential: KEY_PAIR_CREDENTIAL,
+      testCredentials: (values, ctx) => testKeyPair(send, environment, values, ctx),
+      usageGuide: {
+        content: usageGuide(purpose, environment, sensitiveFields, options.instructions),
+        summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, cursor paging, and the form-encoded write hatch.`,
+        // Required: the reduction rule for donor data and the write map behind
+        // the mutate hatch live only here. No schema can carry either.
+        required: true,
+      },
+      tools: tools(send, defaultPageSize, sensitiveFields),
     }),
-    title: options.title ?? (live ? "Tithe.ly Giving" : "Tithe.ly Giving (test)"),
-    description: live
-      ? `Tithe.ly giving — live donors and real money — ${purpose}`
-      : `Tithe.ly giving (test environment, no real money) — ${purpose}`,
-    credential: KEY_PAIR_CREDENTIAL,
-    testCredentials: (values, ctx) => testKeyPair(send, environment, values, ctx),
-    usageGuide: {
-      content: usageGuide(purpose, environment, sensitiveFields, options.instructions),
-      summary: `${live ? "Live" : "Test"} giving: donor-data reduction, cents and ISO dates, cursor paging, and the form-encoded write hatch.`,
-      // Required: the reduction rule for donor data and the write map behind
-      // the mutate hatch live only here. No schema can carry either.
-      required: true,
-    },
-    tools: tools(send, defaultPageSize, sensitiveFields),
-  });
+  );
 }

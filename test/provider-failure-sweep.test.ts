@@ -16,6 +16,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { callClassification } from "../src/call-classification.js";
 import * as outcomes from "../src/write-outcome.js";
 import { api } from "../src/connectors/api.js";
+import { providerRequests, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
 import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { deriveContext } from "../src/derived-context.js";
@@ -109,6 +110,8 @@ describe("API provider failure sweep", () => {
             .flatMap((connector) => connector.staticTools!.map(({ name }) => name)),
         ),
       ].sort();
+      for (const connector of modes.filter(({ kind }) => kind === "api"))
+        expect(tracksRequests(connector), `${provider.name}: its ledger sees every request`).toBe(true);
       expect(
         provider.catalog.map(({ name }) => name).sort(),
         `${provider.name}: cover tools from every API mode`,
@@ -236,12 +239,20 @@ describe("API provider failure sweep", () => {
               const { message } = (result.structuredContent as { error: { message: string } }).error;
               if (/so its outcome is unknown|may or may not have been applied/.test(message))
                 expect(message).not.toContain("Whether the write took effect at");
-              if (decision)
+              if (decision) {
                 expect(
                   decision.mock.calls.some(
                     ([ctx, , , facts]) => facts.dispatched && callClassification(ctx) === classification,
                   ),
                 ).toBe(true);
+                // The declaration is what lets an empty ledger prove a write
+                // unsent: the call's ledger recorded every resource request.
+                const finals = decision.mock.calls.filter(([, , , facts]) => facts.finalize === true);
+                expect(finals).toHaveLength(1);
+                expect(
+                  providerRequests(finals[0]![0])!.filter((request) => request.dispatched && !request.auxiliary),
+                ).toHaveLength(requests.length);
+              }
             },
           );
         }
@@ -250,43 +261,55 @@ describe("API provider failure sweep", () => {
   }
 });
 
+/** One call through the invocation layer; `read` may hold the nth credential read back. */
+async function invoke(
+  connector: Connector,
+  tool: string,
+  classification: "read" | "write",
+  args = {},
+  read?: (index: number) => Promise<void>,
+) {
+  const storage = memoryStorage();
+  const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+  const values = credential(connector.id);
+  await vault.setAll(connector.id, values, "fixture");
+  vi.spyOn(vault, "get").mockImplementation(async (_id, field = "value") => values[field] ?? null);
+  let reads = 0;
+  vi.spyOn(vault, "getAll").mockImplementation(async () => {
+    await read?.(++reads);
+    return values;
+  });
+  const registry = makeRegistry([connector], {
+    storage,
+    credentialVault: vault,
+    classification: { [connector.id]: { [tool]: classification } },
+  });
+  return new InvocationService(registry, new CatalogService(registry, BASE)).invoke(`${connector.id}.${tool}`, args, {
+    source: classification === "write" ? "call_destructive_tool" : "call_tool",
+  });
+}
+
+function provider(name: string) {
+  return providers.find((p) => p.name === name)!.create();
+}
+
+function googleFetch(resource: (request: Request) => Response | Promise<Response>) {
+  const requests: Request[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).hostname === "oauth2.googleapis.com")
+        return Response.json({ access_token: "fixture-token", expires_in: 3600, token_type: "Bearer" });
+      requests.push(request);
+      return resource(request);
+    }),
+  );
+  return requests;
+}
+
 // Whole-call failures, beyond the first resource request covered above.
 describe("round-5 whole-call failure sweep", () => {
-  async function invoke(connector: Connector, tool: string, classification: "read" | "write", args = {}) {
-    const storage = memoryStorage();
-    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
-    const values = credential(connector.id);
-    await vault.setAll(connector.id, values, "fixture");
-    vi.spyOn(vault, "get").mockImplementation(async (_id, field = "value") => values[field] ?? null);
-    vi.spyOn(vault, "getAll").mockResolvedValue(values);
-    const registry = makeRegistry([connector], {
-      storage,
-      credentialVault: vault,
-      classification: { [connector.id]: { [tool]: classification } },
-    });
-    return new InvocationService(registry, new CatalogService(registry, BASE)).invoke(`${connector.id}.${tool}`, args, {
-      source: classification === "write" ? "call_destructive_tool" : "call_tool",
-    });
-  }
-
-  function provider(name: string) {
-    return providers.find((p) => p.name === name)!.create();
-  }
-  function googleFetch(resource: (request: Request) => Response) {
-    const requests: Request[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = new Request(input, init);
-        if (new URL(request.url).hostname === "oauth2.googleapis.com")
-          return Response.json({ access_token: "fixture-token", expires_in: 3600, token_type: "Bearer" });
-        requests.push(request);
-        return resource(request);
-      }),
-    );
-    return requests;
-  }
-
   it.each([
     ["single refusal", false, false, "rate_limited", 429, false],
     ["generic refusal", false, false, "unavailable", 404, false],
@@ -302,22 +325,24 @@ describe("round-5 whole-call failure sweep", () => {
         maxResponseBytes: 1024,
         fetch: async (url) => Response.json({}, { status: url.endsWith("/first") ? 200 : status }),
       });
-      const connector = api("tickets", {
-        tools: [
-          {
-            name: "send",
-            description: "Send a ticket",
-            annotations: { readOnlyHint: false },
-            handler: async (_args, ctx) => {
-              if (earlyAuxiliary || lateAuxiliary)
-                await send({ method: "POST", path: "/first", auxiliary: earlyAuxiliary }, ctx, (r) => r.json());
-              return send({ method: "POST", path: "/last", auxiliary: lateAuxiliary }, ctx, () => {
-                throw new ConnectorCallError(code, "Refused fixture-secret", { retryAfterMs: 1000 });
-              });
+      const connector = tracksEveryRequest(
+        api("tickets", {
+          tools: [
+            {
+              name: "send",
+              description: "Send a ticket",
+              annotations: { readOnlyHint: false },
+              handler: async (_args, ctx) => {
+                if (earlyAuxiliary || lateAuxiliary)
+                  await send({ method: "POST", path: "/first", auxiliary: earlyAuxiliary }, ctx, (r) => r.json());
+                return send({ method: "POST", path: "/last", auxiliary: lateAuxiliary }, ctx, () => {
+                  throw new ConnectorCallError(code, "Refused fixture-secret", { retryAfterMs: 1000 });
+                });
+              },
             },
-          },
-        ],
-      });
+          ],
+        }),
+      );
       const result = await invoke(connector, "send", "write");
       expect(result).toMatchObject({ ok: false, error: { retryable: !unknown, retryAfterMs: 1000 } });
       if (result.ok) throw new Error("expected failure");
@@ -342,26 +367,28 @@ describe("round-5 whole-call failure sweep", () => {
       maxResponseBytes: 1024,
       fetch: async (url) => Response.json({}, { status: url.endsWith("/refused") ? 429 : 200 }),
     });
-    const connector = api("tickets", {
-      tools: [
-        {
-          name: "send",
-          description: "Send a ticket",
-          annotations: { readOnlyHint: false },
-          handler: async (args, ctx) => {
-            await send(
-              { method: "POST", path: args.refused ? "/refused" : "/accepted" },
-              deriveContext(ctx, {}),
-              async (r) => {
-                if (!r.ok) throw new ConnectorCallError("rate_limited", "Vendor refusal");
-                return r.json();
-              },
-            );
-            throw new ConnectorCallError("unavailable", "Handler failed");
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Send a ticket",
+            annotations: { readOnlyHint: false },
+            handler: async (args, ctx) => {
+              await send(
+                { method: "POST", path: args.refused ? "/refused" : "/accepted" },
+                deriveContext(ctx, {}),
+                async (r) => {
+                  if (!r.ok) throw new ConnectorCallError("rate_limited", "Vendor refusal");
+                  return r.json();
+                },
+              );
+              throw new ConnectorCallError("unavailable", "Handler failed");
+            },
           },
-        },
-      ],
-    });
+        ],
+      }),
+    );
     const ctx = makeRegistry([connector]).contextFor("tickets", BASE);
     const [accepted, refused] = await Promise.all([
       connector.callTool("send", {}, ctx).catch((e: unknown) => e),
@@ -379,22 +406,24 @@ describe("round-5 whole-call failure sweep", () => {
       maxResponseBytes: 1024,
       ...oauthBearer("Tickets"),
     });
-    const connector = api("tickets", {
-      oauth: {
-        authorizationEndpoint: "https://tickets.example/authorize",
-        tokenEndpoint: "https://tickets.example/token",
-        clientId: "fixture-client",
-        apiOrigins: ["https://tickets.example"],
-      },
-      tools: [
-        {
-          name: "send",
-          description: "Send a ticket",
-          annotations: { readOnlyHint: false },
-          handler: (_args, ctx) => send({ method: "POST", path: "/tickets" }, ctx, (r) => r.json()),
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        oauth: {
+          authorizationEndpoint: "https://tickets.example/authorize",
+          tokenEndpoint: "https://tickets.example/token",
+          clientId: "fixture-client",
+          apiOrigins: ["https://tickets.example"],
         },
-      ],
-    });
+        tools: [
+          {
+            name: "send",
+            description: "Send a ticket",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) => send({ method: "POST", path: "/tickets" }, ctx, (r) => r.json()),
+          },
+        ],
+      }),
+    );
     const error = await connector
       .callTool("send", {}, makeRegistry([connector]).contextFor("tickets", BASE))
       .catch((e: unknown) => e);
@@ -433,19 +462,21 @@ describe("round-5 whole-call failure sweep", () => {
           authenticate: () => ({}),
           maxResponseBytes: 1024,
         });
-        const connector = api("tickets", {
-          tools: [
-            {
-              name: "send",
-              description: "Send a ticket",
-              annotations: { readOnlyHint: false },
-              handler: async (_args, ctx) => {
-                await send({ method: "POST", path: "/tickets" }, deriveContext(ctx, {}), (r) => r.json());
-                throw new ConnectorCallError(code, "Handler could not complete.");
+        const connector = tracksEveryRequest(
+          api("tickets", {
+            tools: [
+              {
+                name: "send",
+                description: "Send a ticket",
+                annotations: { readOnlyHint: false },
+                handler: async (_args, ctx) => {
+                  await send({ method: "POST", path: "/tickets" }, deriveContext(ctx, {}), (r) => r.json());
+                  throw new ConnectorCallError(code, "Handler could not complete.");
+                },
               },
-            },
-          ],
-        });
+            ],
+          }),
+        );
         const result = await invoke(connector, "send", classification);
         expect(requests).toHaveLength(1);
         expect(result).toMatchObject({
@@ -578,5 +609,297 @@ describe("round-5 whole-call failure sweep", () => {
         error: result.error,
       }),
     ).toBe("failed");
+  });
+});
+
+// A write is a known failure only on positive evidence: every scenario here
+// once reported one without it.
+describe("round-6 write evidence sweep", () => {
+  /** Let every timer and microtask the released work schedules run out. */
+  async function drained(): Promise<void> {
+    for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  function stateOf(result: Awaited<ReturnType<typeof invoke>>) {
+    if (result.ok) throw new Error("expected failure");
+    return outcomes.classifyWriteOutcome({
+      ok: false,
+      dispatched: result.dispatched,
+      answered: result.answered === true,
+      error: result.error,
+    });
+  }
+
+  it("INV-9: a write's early refusal closes the call, so siblings awaiting credentials never leave", async () => {
+    const requests = googleFetch(() =>
+      Response.json({ errors: [{ status: "429", title: "Too many requests" }] }, { status: 429 }),
+    );
+    // The three requests start together and each reads its credential
+    // twice. The siblings' first reads (the 2nd and 3rd) wait, as a slow
+    // credential read can, until after the outcome is reported.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const result = await invoke(
+      provider("planning-center"),
+      "get_plan",
+      "write",
+      argumentsTable["planning-center"]!["get_plan"]!,
+      async (index) => {
+        if (index === 2 || index === 3) await held;
+      },
+    );
+    expect(requests).toHaveLength(1);
+    // Nothing else left: the sole resource request's own refusal is known.
+    expect(result).toMatchObject({ ok: false, error: { code: "rate_limited", retryable: true } });
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).not.toHaveProperty("writeOutcome");
+    expect(stateOf(result)).toBe("failed");
+    release();
+    await drained();
+    expect(requests).toHaveLength(1);
+  });
+
+  it("INV-9: a write's early refusal with siblings still in flight is unknown, and nothing more leaves", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const requests = googleFetch(async () => {
+      if (requests.length > 1) {
+        await held;
+        return Response.json({ data: [] });
+      }
+      return Response.json({ errors: [{ status: "429", title: "Too many requests" }] }, { status: 429 });
+    });
+    const result = await invoke(
+      provider("planning-center"),
+      "get_plan",
+      "write",
+      argumentsTable["planning-center"]!["get_plan"]!,
+    );
+    expect(requests).toHaveLength(3);
+    expect(result).toMatchObject({ ok: false, error: { retryable: false, writeOutcome: "unknown" } });
+    expect(stateOf(result)).toBe("unknown");
+    release();
+    await drained();
+    expect(requests).toHaveLength(3);
+  });
+
+  it("INV-9: a request a handler starts after its call settled is refused before credential reads and send", async () => {
+    const requests = googleFetch(() => Response.json({}));
+    let later!: Promise<unknown>;
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+    });
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Send a ticket",
+            annotations: { readOnlyHint: false },
+            handler: async (_args, ctx) => {
+              later = Promise.resolve().then(() => send({ method: "POST", path: "/late" }, ctx, (r) => r.json()));
+              later.catch(() => {});
+              throw new ConnectorCallError("invalid_args", "Refused before any request.");
+            },
+          },
+        ],
+      }),
+    );
+    const result = await invoke(connector, "send", "write");
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    await expect(later).rejects.toMatchObject({
+      code: "connector_call_failed",
+      message: expect.stringContaining("already ended"),
+    });
+    expect(requests).toHaveLength(0);
+  });
+
+  // The guarded transport's evidence for "never connected": a connect-phase
+  // errno, no answer, and no body bytes a producer of its own could have sent.
+  function streamed(bytes: number): ReadableStream<Uint8Array> {
+    let pulls = 0;
+    return new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (pulls++ === 0) controller.enqueue(new Uint8Array(bytes).fill(65));
+          else controller.error(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+  }
+  const refusedErrno = () =>
+    new TypeError("fetch failed", {
+      cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+    });
+
+  it.each([
+    ["a streamed body pulled before its producer raised ECONNREFUSED", "pulled", true],
+    ["a streamed body fetch never pulled", "unpulled", false],
+    ["no body", "none", false],
+    ["a JSON body", "json", false],
+    ["a body of no type fetch holds whole", "opaque", true],
+  ] as const)("INV-9: a write refused at connect with %s", async (_name, body, unknown) => {
+    const received: number[] = [];
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      // A runtime-shaped fetch: it streams what it pulls, then rejects with
+      // the failure it met, as undici does with `duplex: "half"`.
+      fetch: async (_url, init) => {
+        if (body === "pulled") {
+          const reader = (init.body as ReadableStream<Uint8Array>).getReader();
+          try {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              received.push(value.byteLength);
+            }
+          } catch (cause) {
+            throw new TypeError("fetch failed", { cause });
+          }
+        }
+        throw refusedErrno();
+      },
+    });
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "send",
+            description: "Send a ticket",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) =>
+              send(
+                {
+                  method: "POST",
+                  path: "/tickets",
+                  ...(body === "pulled" || body === "unpulled"
+                    ? { rawBody: streamed(20) }
+                    : body === "json"
+                      ? { body: { title: "Fixture" } }
+                      : body === "opaque"
+                        ? { rawBody: { [Symbol.asyncIterator]: async function* () {} } as unknown as BodyInit }
+                        : {}),
+                },
+                ctx,
+                (r) => r.json(),
+              ),
+          },
+        ],
+      }),
+    );
+    const result = await invoke(connector, "send", "write");
+    if (body === "pulled") expect(received).toEqual([20]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: unknown ? { retryable: false, writeOutcome: "unknown" } : { code: "unavailable", retryable: true },
+    });
+    expect(stateOf(result)).toBe(unknown ? "unknown" : "failed");
+  });
+
+  it("INV-9: a direct guarded write without a ledger needs the same body evidence", async () => {
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.example",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      fetch: async (_url, init) => {
+        await new Response(init.body).arrayBuffer().catch((cause: unknown) => {
+          throw new TypeError("fetch failed", { cause });
+        });
+        throw refusedErrno();
+      },
+    });
+    const ctx = makeRegistry([]).contextFor("tickets", BASE);
+    const pulled = await send({ method: "POST", path: "/t", rawBody: streamed(20) }, ctx, (r) => r.json()).catch(
+      (e: unknown) => e,
+    );
+    expect(pulled).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    const bodiless = await send({ method: "POST", path: "/t" }, ctx, (r) => r.json()).catch((e: unknown) => e);
+    expect(bodiless).toMatchObject({ code: "unavailable", retryable: true, details: { code: "ECONNREFUSED" } });
+  });
+
+  function custom(handler: (ctx: Parameters<Connector["callTool"]>[2]) => Promise<unknown>, tracked = false) {
+    const connector = api("tickets", {
+      tools: [
+        {
+          name: "send",
+          description: "Send a ticket",
+          inputSchema: { type: "object", properties: { title: { type: "string" } }, additionalProperties: false },
+          annotations: { readOnlyHint: false },
+          handler: (_args, ctx) => handler(ctx),
+        },
+      ],
+    });
+    return tracked ? tracksEveryRequest(connector) : connector;
+  }
+
+  it("INV-9: an untracked handler's successful global fetch, then a typed failure, is unknown", async () => {
+    const requests = googleFetch(() => Response.json({ id: "ticket-1" }));
+    const result = await invoke(
+      custom(async () => {
+        await globalThis.fetch("https://tickets.example/tickets", { method: "POST", body: "{}" });
+        throw new ConnectorCallError("connector_call_failed", "Ticket follow-up failed.", { retryable: false });
+      }),
+      "send",
+      "write",
+    );
+    expect(requests).toHaveLength(1);
+    expect(result).toMatchObject({ ok: false, error: { retryable: false, writeOutcome: "unknown" } });
+    expect(stateOf(result)).toBe("unknown");
+  });
+
+  it.each([
+    ["an untracked handler served write", false, "write", true],
+    ["a tracked handler served write", true, "write", false],
+    ["an untracked handler served read", false, "read", false],
+  ] as const)("INV-9: %s refusing before any request", async (_name, tracked, classification, unknown) => {
+    const requests = googleFetch(() => Response.json({}));
+    const result = await invoke(
+      custom(async () => {
+        throw new ConnectorCallError("invalid_args", "Ticket title is required.");
+      }, tracked),
+      "send",
+      classification,
+    );
+    expect(requests).toHaveLength(0);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", retryable: false, ...(unknown ? { writeOutcome: "unknown" } : {}) },
+    });
+    if (!unknown && !result.ok) expect(result.error).not.toHaveProperty("writeOutcome");
+    if (classification === "write") expect(stateOf(result)).toBe(unknown ? "unknown" : "failed");
+  });
+
+  it("INV-9: failures before an untracked handler runs stay known: argument validation and authorization", async () => {
+    const requests = googleFetch(() => Response.json({}));
+    const handler = vi.fn(async () => ({}));
+    const invalid = await invoke(custom(handler), "send", "write", { title: 7 });
+    expect(invalid).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    if (invalid.ok) throw new Error("expected failure");
+    expect(invalid.error).not.toHaveProperty("writeOutcome");
+    expect(stateOf(invalid)).toBe("failed");
+    const oauth = api("tickets", {
+      oauth: {
+        authorizationEndpoint: "https://tickets.example/authorize",
+        tokenEndpoint: "https://tickets.example/token",
+        clientId: "fixture-client",
+        apiOrigins: ["https://tickets.example"],
+      },
+      tools: [{ name: "send", description: "Send a ticket", annotations: { readOnlyHint: false }, handler }],
+    });
+    const unauthorized = await invoke(oauth, "send", "write");
+    expect(unauthorized).toMatchObject({ ok: false, error: { code: "downstream_oauth_required" } });
+    if (unauthorized.ok) throw new Error("expected failure");
+    expect(unauthorized.error).not.toHaveProperty("writeOutcome");
+    expect(stateOf(unauthorized)).toBe("failed");
+    expect(handler).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(0);
   });
 });

@@ -40,6 +40,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { asProviderFactory } from "../../provider.js";
+import { tracksEveryRequest } from "../../provider-call.js";
 
 export type {
   GoogleServiceAccount,
@@ -1424,21 +1425,23 @@ function formsConnector(id: string, options: FormsOptions): Connector {
   });
   return workspaceConnector(
     connection,
-    api(id, {
-      ...defined({
-        callAdmission: options.callAdmission,
-        maxResultBytes: options.maxResultBytes,
+    tracksEveryRequest(
+      api(id, {
+        ...defined({
+          callAdmission: options.callAdmission,
+          maxResultBytes: options.maxResultBytes,
+        }),
+        title: options.title ?? "Google Forms",
+        description: `Google Forms as the signed-in Workspace user: read and edit forms, read responses — ${connection.purpose}`,
+        usageGuide: {
+          content: usageGuide(connection.purpose, options.instructions),
+          summary: "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
+          // Required: whose forms they are, that Drive lists them, and the
+          // revision-checked edit sequence are conventions no schema can carry.
+          required: true,
+        },
+        tools: tools(client),
       }),
-      title: options.title ?? "Google Forms",
-      description: `Google Forms as the signed-in Workspace user: read and edit forms, read responses — ${connection.purpose}`,
-      usageGuide: {
-        content: usageGuide(connection.purpose, options.instructions),
-        summary: "Each caller's own forms: questions by id, labeled responses, revision-checked batch edits.",
-        // Required: whose forms they are, that Drive lists them, and the
-        // revision-checked edit sequence are conventions no schema can carry.
-        required: true,
-      },
-      tools: tools(client),
-    }),
+    ),
   );
 }

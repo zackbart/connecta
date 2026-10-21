@@ -9,7 +9,13 @@ import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
-import { providerCallContext, providerRequests, providerFetch } from "../provider-call.js";
+import {
+  closeProviderCall,
+  providerCallContext,
+  providerFetch,
+  providerRequests,
+  tracksRequests,
+} from "../provider-call.js";
 import { providerCallFailure } from "../write-outcome.js";
 import { deriveContext } from "../derived-context.js";
 import type {
@@ -399,9 +405,13 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
         fetch: providerFetch(callCtx, opts.title ?? id, false, sentSecretsFetch(ctx)),
         ...(oauth ? { oauth: oauth.access(callCtx, { write }) } : {}),
       });
+      let result: unknown;
       try {
-        return redactSentSecrets(ctx, await tool.handler(input, handlerCtx));
+        result = await tool.handler(input, handlerCtx);
       } catch (error) {
+        // Settled before anything is decided or reported: a request that has
+        // not left by now (a sibling awaiting its credential) never will.
+        closeProviderCall(callCtx);
         // The request's own abort reason, by identity, is the caller's.
         if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
         // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
@@ -414,6 +424,8 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
               responded: true,
               fallback: write ? "write" : "read",
               finalize: true,
+              // Only a declared provider's ledger can see every request.
+              untracked: !tracksRequests(connector),
             }),
           );
         if (error instanceof ConnectorCallError) throw settle(error);
@@ -454,6 +466,8 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
           fallback: classifyTool(tool),
         });
       }
+      closeProviderCall(callCtx);
+      return redactSentSecrets(ctx, result);
     },
   };
   if (oauth)

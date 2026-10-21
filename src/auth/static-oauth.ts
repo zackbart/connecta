@@ -1,4 +1,9 @@
-import { boundProviderRequest, providerRequest } from "../provider-call.js";
+import {
+  assertProviderCallOpen,
+  boundProviderRequest,
+  dispatchProviderRequest,
+  providerRequest,
+} from "../provider-call.js";
 import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
   AuthorizationServerMetadata,
@@ -447,6 +452,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     input: string | URL,
     init: RequestInit = {},
   ): Promise<Response> => {
+    // A call that already ended reads no token and sends nothing more.
+    assertProviderCallOpen(ctx, id, false);
     const dispatch = boundProviderRequest(init) ?? providerRequest(ctx, false, id);
     dispatch.dispatched = false;
     const url = new URL(input);
@@ -483,7 +490,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       // The handler reads the answer with `.json()` or `.text()`, which read
       // bytes here: workerd quotes a text read's non-text Content-Type in
       // its own log, out of the handler's reach.
-      dispatch.dispatched = true;
+      dispatchProviderRequest(ctx, dispatch);
       const response = await sentSecretsFetch(ctx)(url, {
         ...init,
         headers: sent,
