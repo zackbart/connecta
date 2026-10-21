@@ -844,11 +844,16 @@ data: prototype `Object.prototype`, `Array.prototype` or `null`, no `toJSON` on
 its chain, no symbol-keyed field, every field a data property it read (an
 array's holes read through its prototypes), and nothing in it changed. Anything
 else is a copy of writable, configurable data properties, so a frozen input
-never throws: an error always, as its own class, with its stack and every
-accessor its class defines read once into checked fields and its `toJSON`
-shadowed; an object of another class as plain data; an array that is not plain
-as a plain array of its indices; a `toJSON` result, called once and checked;
-typed arrays and `ArrayBuffer`s checked as bytes and copied. An own accessor is
+never throws, and every value returned is JSON data, a fresh built-in
+`Uint8Array`, or an error copy: an error always, as its own class, with its
+stack and every accessor its class defines read once into checked fields, its
+`toJSON` shadowed unread and no function in a field; an object of another class
+as plain data; an array that is not plain as a plain array of its indices; a
+`String`, `Number` or `Boolean` wrapper as its primitive; a `toJSON` result,
+called once and checked; a function or symbol as the placeholder; a typed array,
+`DataView` or `ArrayBuffer` as a fresh `Uint8Array` of its bytes, which are
+checked as bytes and, with the elements it held, as the numbers JSON shows for
+them. The type table is in [auth.md](./auth.md). An own accessor is
 never invoked: an object's copy leaves it out, an array index holds the
 placeholder. A change copies the containers on its path on first write, so a
 caller's value is never mutated. An array's non-index fields are never read:
@@ -856,7 +861,11 @@ JSON, which every exit and executor marshals with, never serializes them.
 Facts kept beside a value by identity (failure facts, classifications, statuses,
 Google's reasons and outcomes) register with `redaction-identity.ts` and follow
 its copies, arrays' included.
-Object keys and declared binary fields are checked on their own. Only fixed
+One checker, `checked()`, matches every output-bound string under the whole
+lattice: the projection's leaves as one lane, and alone each object key,
+scalar, cursor claim, encoding Connecta produces and structural field;
+provider lanes and bounded reads call it too. Its matching steps run nowhere
+else. Only fixed
 words are kept whatever was sent: envelope keys, MCP and JSON-RPC member names
 and tag values, booleans under outcome names, and on an error Connecta's code
 constructed, its classification code and class name; a number or string under
@@ -935,9 +944,11 @@ is decoded and checked as bytes, as UTF-8 when a registered form is not ASCII,
 as its base64 text, and through any base64 the bytes carry, so an echo at any
 byte alignment is found. Decoded views take payload text's short-value rules. A
 match withholds the whole field as the base64 of `[redacted]`, never partially
-scrubbed bytes. Base64 or base64url in any other text leaf is decoded too, in
-each of its text views: raw, one layer of JSON escapes decoded, and percent
-escapes decoded (a `+` both as itself and as a form-encoded space). A view that
+scrubbed bytes; content that is not valid base64 as it stands still gets every
+text view. Base64 or base64url in any string, key or declared field is decoded
+in each of its text views: raw, one layer of JSON escapes decoded, percent
+escapes decoded, and the form decoding (a `+` as a space, generated whenever
+a `+` appears). A view that
 is wholly base64 is decoded from six units; a run inside one from six units
 when payload rules apply and a four-to-seven-unit private value is registered,
 otherwise from eleven. A run of L units decodes to floor(3L/4) bytes, so a piece of

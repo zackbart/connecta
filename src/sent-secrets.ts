@@ -128,10 +128,13 @@ const FACTS = new Set(["isError", "ok", "retryable", "truncated", "hasMore"]);
 // into its copy, as is whatever its chain answers for them; any other own accessor is never
 // invoked. Accessors its class chain defines are read once too.
 const ERROR_ACCESSORS = new Set(["stack", "message", "cause", "code", "name"]);
-// Leaves of a projection: text, or a number's canonical text. A number that changes is withheld
-// whole.
+// Parts the checker reads: text; a number's canonical text, withheld whole when it changes; a
+// declared base64 field, also decoded whole and withheld as the encoded marker; and the bytes a
+// typed array or ArrayBuffer holds, as byte-valued units, withheld whole when anything matches.
 const TEXT = 0;
 const NUMBER = 1;
+const BINARY = 2;
+const BYTES = 3;
 
 /** Payload scans also match short private values; envelope scans leave Connecta's own
  * identifiers, counts and addresses to them. */
@@ -142,9 +145,37 @@ type Matches = { spans: number[]; deep: boolean };
 
 /** An accessor met while looking up an inherited field: never invoked. */
 const WITHHELD_ACCESSOR = Symbol("accessor");
-/** %TypedArray%.prototype.slice: a copy of a typed array's elements, of its own class. */
-const TYPED_SLICE = (Object.getPrototypeOf(Uint8Array.prototype) as { slice: (this: ArrayBufferView) => unknown })
-  .slice;
+/** The engine's own getters for what a typed array, DataView or ArrayBuffer holds, so no
+ * subclass answers for them, and the built-in element types by the name a typed array reports. */
+const getter = (prototype: object, name: PropertyKey) =>
+  Object.getOwnPropertyDescriptor(prototype, name)!.get! as (this: unknown) => unknown;
+const TYPED = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const TYPED_NAME = getter(TYPED, Symbol.toStringTag);
+const TYPED_BUFFER = getter(TYPED, "buffer");
+const TYPED_OFFSET = getter(TYPED, "byteOffset");
+const TYPED_LENGTH = getter(TYPED, "byteLength");
+const VIEW_BUFFER = getter(DataView.prototype, "buffer");
+const VIEW_OFFSET = getter(DataView.prototype, "byteOffset");
+const VIEW_LENGTH = getter(DataView.prototype, "byteLength");
+const BUFFER_LENGTH = getter(ArrayBuffer.prototype, "byteLength");
+type Elements = new (buffer: ArrayBufferLike) => ArrayLike<number | bigint>;
+// Typed arrays whose elements are not their bytes; a Uint8Array's and a Uint8ClampedArray's are.
+const ELEMENTS = new Map(
+  (
+    "Int8Array Int16Array Uint16Array Int32Array Uint32Array Float16Array Float32Array Float64Array " +
+    "BigInt64Array BigUint64Array"
+  )
+    .split(" ")
+    .map((name) => [name, (globalThis as Record<string, unknown>)[name]] as const)
+    .filter((entry): entry is readonly [string, Elements] => typeof entry[1] === "function"),
+);
+const DECIMAL = Array.from({ length: 256 }, (_, byte) => String(byte));
+/** Wrapper objects JSON reads as their primitive, read from the engine's slot. */
+const BOXED: readonly (readonly [new (value?: unknown) => object, (this: unknown) => unknown])[] = [
+  [String, String.prototype.valueOf],
+  [Number, Number.prototype.valueOf],
+  [Boolean, Boolean.prototype.valueOf],
+];
 
 /** Spend work that fits the call's remaining budget. Work that does not fit is refused
  * without spending, so its field is withheld while smaller fields can still be checked. */
@@ -184,6 +215,48 @@ function inherited(item: object, name: string, accessor: unknown): unknown {
   return undefined;
 }
 
+/** The bytes a typed array, DataView or ArrayBuffer holds, copied into a fresh built-in
+ * Uint8Array through the engine's slots, with the element type of a typed array whose elements
+ * are not those bytes. Undefined for any other value. */
+function binaryOf(item: object): { bytes: Uint8Array; elements: Elements | undefined } | undefined {
+  let held: Uint8Array;
+  let elements: Elements | undefined;
+  if (ArrayBuffer.isView(item)) {
+    const name = TYPED_NAME.call(item);
+    const typed = name !== undefined;
+    held = new Uint8Array(
+      (typed ? TYPED_BUFFER : VIEW_BUFFER).call(item) as ArrayBuffer,
+      (typed ? TYPED_OFFSET : VIEW_OFFSET).call(item) as number,
+      (typed ? TYPED_LENGTH : VIEW_LENGTH).call(item) as number,
+    );
+    elements = ELEMENTS.get(name as string);
+  } else {
+    if (!(item instanceof ArrayBuffer)) return undefined;
+    try {
+      BUFFER_LENGTH.call(item);
+    } catch {
+      return undefined; // Its prototype, not an ArrayBuffer.
+    }
+    held = new Uint8Array(item);
+  }
+  const bytes = new Uint8Array(held.length);
+  bytes.set(held);
+  return { bytes, elements };
+}
+
+/** A String, Number or Boolean wrapper's primitive, as JSON reads it; undefined otherwise. */
+function unboxed(item: object): { value: unknown } | undefined {
+  for (const [type, valueOf] of BOXED) {
+    if (!(item instanceof type)) continue;
+    try {
+      return { value: valueOf.call(item) };
+    } catch {
+      return undefined; // Its prototype, not a wrapper.
+    }
+  }
+  return undefined;
+}
+
 /** Bytes as a string of byte-valued code units, in bounded batches. */
 function latin1(bytes: Uint8Array): string {
   const chunks: string[] = [];
@@ -213,6 +286,13 @@ function decodeBase64(text: string): string | undefined {
   }
 }
 
+/** Base64 text without its trailing padding. */
+function unpadded(text: string): string {
+  let end = text.length;
+  while (end > 0 && text.charCodeAt(end - 1) === 0x3d) end--;
+  return end === text.length ? text : text.slice(0, end);
+}
+
 const BASE64_UNIT = new Uint8Array(65_536);
 for (const unit of "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_")
   BASE64_UNIT[unit.charCodeAt(0)] = 1;
@@ -238,14 +318,14 @@ function encodedRuns(text: string, minimum: number): string[] {
   return runs;
 }
 
-/** Percent escapes decoded to the byte-valued units they name, or undefined when there are
- * none. With `form`, a `+` is a space too, as form encoding writes one. */
+/** Percent escapes decoded to the byte-valued units they name, or undefined when nothing
+ * decodes. With `form`, a `+` is a space too, as form encoding writes one, with or without a
+ * percent escape beside it. */
 function percentDecoded(text: string, form: boolean): string | undefined {
   let found = false;
   const decoded = text.replace(form ? /%([0-9A-Fa-f]{2})|\+/g : /%([0-9A-Fa-f]{2})/g, (_, digits?: string) => {
-    if (digits === undefined) return " ";
     found = true;
-    return String.fromCharCode(parseInt(digits, 16));
+    return digits === undefined ? " " : String.fromCharCode(parseInt(digits, 16));
   });
   return found ? decoded : undefined;
 }
@@ -1032,12 +1112,11 @@ export class SentSecrets {
   private unmatched = Infinity;
   private views: {
     matcher?: Matcher;
-    lower?: Matcher;
     short?: Matcher | null;
     whole?: Matcher | null;
     fragments?: Fragments;
-    lowerFragments?: Fragments;
     credentials?: SentSecrets;
+    folded?: SentSecrets;
   } = {};
 
   private store(form: string, kind: number, frame = 0): void {
@@ -1146,31 +1225,15 @@ export class SentSecrets {
     visitPrivateCallArguments(args, schema, (value) => collect(value, 0));
   }
 
-  /** Structural fields must be refused, never repaired into different URLs. A field holding a
-   * whole form or any K-unit run of one is refused. */
+  /** Structural fields must be refused, never repaired into different URLs. A field the checker
+   * would change under the boundary's rules is refused: one holding a whole form or any K-unit
+   * run of one, in any view of the lattice. With `ignoreCase`, as for a host URL parsing
+   * lowercased, the lowercased field is also checked against lowercased forms. */
   contains(value: string, ignoreCase = false): boolean {
     if (value.length >= Math.min(this.unmatched, this.unmatched < Infinity ? FRAGMENT_LENGTH : Infinity)) return true;
     if (!this.forms.size) return false;
-    const found: Found = { spans: [] };
-    const lowered = () =>
-      [...this.forms].flatMap(([form, kind]) =>
-        wireForms(form.toLowerCase()).map((low) => [low, kind, this.frames.get(form) ?? 0] as const),
-      );
-    const matcher = ignoreCase
-      ? (this.views.lower ??= new Matcher(lowered().map(([form, kind]) => [form, kind] as const)))
-      : this.matcher();
-    const fragments = ignoreCase
-      ? (this.views.lowerFragments ??= new Fragments(
-          lowered()
-            .filter(([, kind]) => kind >= PRIVATE)
-            .map(([form, , frame]) => [form, frame] as const),
-        ))
-      : this.fragments();
-    if (value.length >= matcher.unindexed || (!fragments.complete && value.length >= FRAGMENT_LENGTH)) return true;
-    const text = ignoreCase ? value.toLowerCase() : value;
-    if (!matcher.scan(text, 0, text.length, found, { work: Infinity }) || found.spans.length) return true;
-    fragments.scan(text, 0, text.length, found.spans, undefined);
-    return found.spans.length > 0;
+    if (this.checked([value], [TEXT], this.scan(false))[0] !== value) return true;
+    return ignoreCase && this.folded().contains(value.toLowerCase());
   }
 
   containsUrl(value: string): boolean {
@@ -1284,26 +1347,25 @@ export class SentSecrets {
     };
     if (this.idle()) return finish(binary);
     const encoded = finish(binary);
-    const clean = claims ? this.claimsClean(binary, encoded) : this.encodedClean(binary, encoded, this.scan(true));
+    const clean = claims
+      ? this.claimsClean(binary, encoded)
+      : this.checked([encoded], [BINARY], this.scan(true))[0] === encoded;
     if (!clean) return finish(REDACTED);
     if (claims || encoded.length >= MEMO_UNITS) this.memo.set(encoded, true);
     return encoded;
   }
 
   /** Text pieces a provider reads as one lane, such as rich-text runs with metadata between
-   * them: matched joined, each match replaced in every piece it touches. A `bounded` lane is
+   * them: checked joined, each match replaced in every piece it touches. A `bounded` lane is
    * one the vendor cut short, so it also loses an unfinished tail. */
   parts(parts: string[], bounded = false): string[] {
     if (this.idle()) return parts;
-    const scan = this.scan(true);
-    const text = parts.join("");
-    const matches = this.spansOf(text, scan, true);
-    if (!matches || matches.deep || (bounded && this.uncheckedTail())) return parts.map((part) => part && REDACTED);
-    if (bounded) this.openSpans(text, matches.spans);
-    let safe = replaceParts(parts, matches.spans);
-    if (this.smallForms) safe = safe.map((next, index) => (this.whole(parts[index]!) ? REDACTED : next));
-    const limit = this.limit(scan);
-    return limit < Infinity ? withholdRuns(parts, safe, limit) : safe;
+    return this.checked(
+      parts,
+      parts.map(() => TEXT),
+      this.scan(true),
+      bounded,
+    );
   }
 
   /** Complete and unfinished forms in bounded text, all found against its original bytes.
@@ -1312,13 +1374,7 @@ export class SentSecrets {
    * Each decoded layer sets aside a trailing escape the read cut short, which is withheld. */
   redactOpenTail(text: string): string {
     if (this.idle()) return text;
-    const scan = this.scan(true);
-    // A form too large to register or index could begin anywhere in what was read.
-    if (this.uncheckedTail() || this.limit(scan) <= text.length || this.whole(text)) return REDACTED;
-    const matches = this.spansOf(text, scan, true);
-    if (!matches || matches.deep) return REDACTED;
-    this.openSpans(text, matches.spans);
-    return matches.spans.length ? replace(text, matches.spans) : text;
+    return this.checked([text], [TEXT], this.scan(true), true)[0]!;
   }
 
   /** Credentials alone: later calls keep the private arguments they submit, and cached
@@ -1377,11 +1433,24 @@ export class SentSecrets {
     return this.views.credentials;
   }
 
+  /** Every form lowercased, for fields such as hosts that reach output lowercased. */
+  private folded(): SentSecrets {
+    if (!this.views.folded) {
+      const view = new SentSecrets();
+      for (const [form, kind] of this.forms)
+        for (const low of wireForms(form.toLowerCase())) view.store(low, kind, this.frames.get(form) ?? 0);
+      this.views.folded = view;
+    }
+    return this.views.folded;
+  }
+
   /** The shortest text that might hold something this set cannot check, which is withheld: a
    * K-unit run of a value too large to register (or a whole short one), or of a form past the
-   * fragment index's capacity. Envelope scans rely on the payload scans for unregistered values. */
+   * fragment index's or a matcher's capacity. Envelope scans rely on the payload scans for
+   * unregistered values. */
   private limit(scan: Scan): number {
     let limit = this.fragments().complete ? Infinity : FRAGMENT_LENGTH;
+    limit = Math.min(limit, this.wholeMatcher()?.unindexed ?? Infinity);
     if (scan.payload && this.unmatched < Infinity) limit = Math.min(limit, this.unmatched, FRAGMENT_LENGTH);
     if (scan.payload) limit = Math.min(limit, this.shortMatcher()?.unindexed ?? Infinity);
     return limit;
@@ -1487,21 +1556,30 @@ export class SentSecrets {
     if (open >= 0) spans.push(open, text.length);
   }
 
-  /** One string checked alone: an object key or a decoded view. In payload scans a tiny
-   * private value withholds it when it is the whole string, and a short one is replaced
-   * wherever it occurs. */
-  private isolated(text: string, scan: Scan): string {
-    if (text.length >= this.limit(scan) || (scan.payload && this.smallForms && this.whole(text))) return REDACTED;
-    const matches = this.spansOf(text, scan, scan.payload);
-    if (!matches || matches.deep) return REDACTED;
-    return matches.spans.length ? replace(text, matches.spans) : text;
+  /** The one string checker. Every string that can reach an agent, an executor or storage is
+   * checked here, under the whole lattice: projection leaves and numbers, object keys, declared
+   * binary fields, the bytes of typed arrays and ArrayBuffers, cursor claims and every encoding
+   * Connecta produces, error fields, provider lanes, bounded reads and structural fields.
+   * `parts` is one lane: matched joined, raw and through its JSON layers, each match replaced in
+   * every part it touches, a tiny private value withholding a part it equals, and every part
+   * withheld that the set cannot fully check. Then every text and declared binary part is
+   * decoded in each of its text views (see textViews), its base64 and base64url runs and a
+   * declared field's whole content are decoded and checked as bytes, UTF-8 and nested base64,
+   * and so are byte parts; a part a decoded view matches is withheld whole. Each decode is
+   * charged to the call's budget, and a part it cannot pay for is withheld. A `bounded` lane is
+   * text cut short, which also loses an unfinished tail. Nothing else matches a string that is
+   * returned: the matching steps below are called only from here. */
+  private checked(parts: string[], kinds: readonly number[], scan: Scan, bounded = false): string[] {
+    const safe = this.safeParts(parts, kinds, scan, bounded);
+    this.encodedLeaves(parts, kinds, safe, scan);
+    return safe;
   }
 
   /** Cursor claims: the whole text and its encoding under the boundary's rules, then every
    * string in the JSON under payload rules. Keys and numbers are Connecta's own names and
    * counts: a downstream value enters a cursor only as a string. */
   private claimsClean(binary: string, encoded: string): boolean {
-    if (!this.encodedClean(binary, encoded, this.scan(false))) return false;
+    if (this.checked([encoded], [BINARY], this.scan(false))[0] !== encoded) return false;
     const text = utf8(binary);
     const parsed = parse(text);
     const strings: string[] = [];
@@ -1515,61 +1593,20 @@ export class SentSecrets {
     return strings.every((claim) => !this.project(claim, scan).changed);
   }
 
-  /** Whether bytes about to be encoded, and the encoding itself, hold no match. */
-  private encodedClean(binary: string, encoded: string, scan: Scan): boolean {
-    return this.bytesClean(binary, scan) && this.isolated(encoded, scan) === encoded;
-  }
-
   /** The shortest base64 run inside a view that is decoded: long enough to carry the smallest
    * piece this scan matches (see SHORT_RUN_UNITS). */
   private runUnits(scan: Scan): number {
     return scan.payload && this.shortMatcher() ? SHORT_RUN_UNITS : FRAGMENT_RUN_UNITS;
   }
 
-  /** A declared binary field is decoded and checked as bytes, as UTF-8 and as the base64 text
-   * the agent receives, so an echo at any byte alignment is found. A match withholds the whole
-   * field as the encoded marker, never partially scrubbed bytes, and so does a decode the call's
-   * work budget cannot pay for. A field that is not base64 is checked as text. Content found
-   * clean, here or as it was encoded, is not checked again. */
-  private binary(value: string, scan: Scan): string {
-    if (this.memo.get(value) === true || (!scan.payload && this.memo.has(value))) return value;
-    const bytes = spend(scan, Math.ceil(value.length / 8)) ? decodeBase64(value) : null;
-    if (bytes === undefined) return this.isolated(value, scan);
-    if (bytes !== null && this.bytesClean(bytes, scan) && this.isolated(value, scan) === value) {
-      if (value.length >= MEMO_UNITS) this.memo.set(value, scan.payload);
-      return value;
-    }
-    const withheld = btoa(REDACTED);
-    return this.isolated(withheld, scan) === withheld ? withheld : "";
-  }
-
-  /** Whether bytes, as byte-valued units, hold no match: nor their UTF-8 text when a form is not
-   * ASCII, nor any base64 they carry, MAX_ENCODED_LEVELS deep. A decode the work budget cannot
-   * pay for leaves them unchecked, which is not clean. */
-  private bytesClean(binary: string, scan: Scan, level = 1): boolean {
-    if (this.isolated(binary, scan) !== binary) return false;
-    if (this.unicodeForms && /[\x80-\xff]/.test(binary)) {
-      if (!spend(scan, Math.ceil(binary.length / 8))) return false;
-      const text = utf8(binary);
-      if (this.isolated(text, scan) !== text) return false;
-    }
-    if (level < MAX_ENCODED_LEVELS)
-      for (const run of encodedRuns(binary, this.runUnits(scan))) {
-        if (!spend(scan, Math.ceil(run.length / 8))) return false;
-        const inner = decodeBase64(run);
-        if (inner !== undefined && !this.bytesClean(inner, scan, level + 1)) return false;
-      }
-    return true;
-  }
-
-  /** The text views base64 is found in: the text, one layer of its JSON escapes decoded, and its
-   * percent escapes decoded, a `+` read both as itself and as a form-encoded space. Two decodes
-   * chained, such as percent escapes inside JSON escapes, are not a view. Undefined when the
-   * work budget cannot pay for them. */
+  /** The text views base64 is found in: the text; one layer of its JSON escapes decoded; its
+   * percent escapes decoded; and its form decoding, a `+` read as a space with any percent
+   * escapes decoded, whether or not it holds one. Two decodes chained, such as percent escapes
+   * inside JSON escapes, are not a view. Undefined when the work budget cannot pay for them. */
   private textViews(text: string, scan: Scan): string[] | undefined {
     const escaped = text.includes("\\");
     const percent = text.includes("%");
-    const plus = percent && text.includes("+");
+    const plus = text.includes("+");
     const decodes = Number(escaped) + Number(percent) + Number(plus);
     if (!decodes) return [text];
     if (!spend(scan, decodes * Math.ceil(text.length / 8))) return undefined;
@@ -1583,25 +1620,31 @@ export class SentSecrets {
     return views;
   }
 
-  /** Text leaves carrying base64 or base64url, in any text view, the whole view or a run
-   * inside it, whose decoded bytes or their UTF-8 text hold a match are withheld whole: no
-   * later pass reads through an encoding the output does not declare. Every leaf's decoded
-   * views are matched together, as one lane between unmatched separators. Each decode is paid
-   * for from the call's work budget; a leaf the budget cannot check is withheld. */
-  private encodedLeaves(parts: string[], kinds: number[], safe: string[], scan: Scan): void {
-    // A run decodes to a group of views, once per call however many leaves repeat it; each
-    // leaf's runs are recorded as (leaf, group) pairs. Group -1 is a run the work budget could
-    // not check, which withholds every leaf holding it.
+  /** Text and declared binary parts carrying base64 or base64url, in any text view, the whole
+   * view or a run inside it, and byte parts, whose decoded bytes or their UTF-8 text hold a
+   * match are withheld whole: no later pass reads through an encoding the output does not
+   * declare. A declared field is also decoded whole, as its reader decodes it. Every part's
+   * decoded views are matched together, as one lane between unmatched separators. Each decode
+   * is paid for from the call's work budget; a part the budget cannot check is withheld. */
+  private encodedLeaves(parts: string[], kinds: readonly number[], safe: string[], scan: Scan): void {
+    // A run decodes to a group of views, once per call however many parts repeat it, and so do
+    // byte parts; each part's groups are recorded as (part, group) pairs. Group -1 is content
+    // the work budget could not check, which withholds every part holding it.
     const views: string[] = [];
     const viewGroups: number[] = [];
     const groups = new Map<string, number>();
+    const byteGroups = new Map<string, number>();
     const pairLeaves: number[] = [];
     const pairGroups: number[] = [];
     let size = 0;
     const minimum = this.runUnits(scan);
-    const add = (binary: string, group: number, level: number): boolean => {
-      views.push(binary);
-      viewGroups.push(group);
+    /** Views of bytes: the bytes themselves unless the lane already matched them, their UTF-8
+     * text when a form is not ASCII, and the base64 they carry. */
+    const add = (binary: string, group: number, level: number, self = true): boolean => {
+      if (self) {
+        views.push(binary);
+        viewGroups.push(group);
+      }
       if (this.unicodeForms && /[\x80-\xff]/.test(binary)) {
         if (!spend(scan, Math.ceil(binary.length / 8))) return false;
         views.push(utf8(binary));
@@ -1625,34 +1668,51 @@ export class SentSecrets {
       }
       return group;
     };
+    const bytesGroup = (bytes: string): number => {
+      let group = byteGroups.get(bytes);
+      if (group === undefined) {
+        group = size++;
+        if (!add(bytes, group, 1, false)) group = -1;
+        byteGroups.set(bytes, group);
+      }
+      return group;
+    };
     leaves: for (let index = 0; index < parts.length; index++) {
-      // The leaf as text matching left it: a run it replaced in place, such as a registered base64
+      // The part as text matching left it: a run it replaced in place, such as a registered base64
       // form, leaves no decodable remnant of K units; a match only decoding reveals withholds all.
+      // Binary and bytes any match changed are withheld whole already.
+      const kind = kinds[index]!;
       const text = safe[index]!;
-      if (kinds[index] !== TEXT || text === REDACTED || this.memo.get(text) === true) continue;
-      if (!scan.payload && this.memo.has(text)) continue;
+      if (kind === NUMBER || text === REDACTED || this.memo.get(text) === true) continue;
+      if ((!scan.payload && this.memo.has(text)) || (kind !== TEXT && text !== parts[index])) continue;
+      const pair = (group: number): boolean => {
+        if (group < 0) {
+          safe[index] = REDACTED;
+          return false;
+        }
+        pairLeaves.push(index);
+        pairGroups.push(group);
+        return true;
+      };
+      if (kind === BYTES) {
+        pair(bytesGroup(text));
+        continue;
+      }
       const textViews = this.textViews(text, scan);
       if (!textViews) {
         safe[index] = REDACTED;
         continue;
       }
       for (const view of textViews)
-        for (const run of encodedRuns(view, minimum)) {
-          const group = groupOf(run);
-          if (group < 0) {
-            safe[index] = REDACTED;
-            continue leaves;
-          }
-          pairLeaves.push(index);
-          pairGroups.push(group);
-        }
+        for (const run of encodedRuns(view, minimum)) if (!pair(groupOf(run))) continue leaves;
+      if (kind === BINARY) pair(groupOf(unpadded(text)));
     }
     if (!views.length) return;
     const matched = new Uint8Array(size);
     const withhold = (at: number) => (matched[viewGroups[at]!] = 1);
     try {
       if (scan.payload && this.smallForms) views.forEach((view, at) => this.whole(view) && withhold(at));
-      const lane = views.join("\uffff");
+      const lane = views.join("￿");
       const matches = this.spansOf(lane, scan, scan.payload);
       if (!matches) return views.forEach((_, at) => withhold(at));
       if (matches.deep) views.forEach((view, at) => view.includes("\\") && withhold(at));
@@ -1675,12 +1735,17 @@ export class SentSecrets {
     }
   }
 
-  /** The leaves' joined text, matched once, with each leaf's replacement. A tiny or short
-   * private value equal to a whole leaf withholds it. A number or a serialized container that
-   * a match touches is withheld whole. */
-  private safeParts(parts: string[], kinds: number[], scan: Scan): string[] {
+  /** The parts' joined text, matched once, with each part's replacement. A tiny or short
+   * private value equal to a whole part withholds it. A number or a serialized container that
+   * a match touches is withheld whole. A bounded lane also loses an unfinished tail, and is
+   * withheld whole when the set could not tell where one begins. */
+  private safeParts(parts: string[], kinds: readonly number[], scan: Scan, bounded: boolean): string[] {
     if (!parts.length) return parts;
-    const matches = this.spansOf(parts.join(""), scan, scan.payload);
+    const text = parts.join("");
+    // A form too large to register or index could begin anywhere in what was read.
+    const matches = bounded && this.uncheckedTail() ? undefined : this.spansOf(text, scan, scan.payload);
+    if (bounded && (!matches || matches.deep)) return parts.map((part) => part && REDACTED);
+    if (bounded) this.openSpans(text, matches!.spans);
     let safe = matches ? replaceParts(parts, matches.spans) : this.leafByLeaf(parts, scan);
     if (matches?.deep) safe = safe.map((next, index) => (parts[index]!.includes("\\") ? REDACTED : next));
     if (scan.payload && this.smallForms)
@@ -1758,37 +1823,43 @@ export class SentSecrets {
 
   /** The output boundary. One walk reads every field once, from its descriptor, and projects
    * every string and number leaf in serialization order, nested JSON strings parsed and errors'
-   * own fields included; the joined projection is matched once, so a form split across adjacent
-   * leaves is found, and only the affected piece of each leaf is written back. Keys and declared
-   * binary fields are checked alone, and text leaves carrying base64 are also checked through
-   * it. Fixed framing words and tags, outcome booleans, and on a Connecta error its own code and
-   * class name are kept: nothing downstream chooses them. Every other field is matched,
-   * whatever its name.
+   * own fields included, declared binary fields and the bytes and numbers typed binary holds
+   * among them; the one checker matches the joined projection, so a form split across adjacent
+   * leaves is found, and only the affected piece of each leaf is written back. Keys and scalars
+   * go through the same checker alone. Fixed framing words and tags, outcome booleans, and on a
+   * Connecta error its own code and class name are kept: nothing downstream chooses them. Every
+   * other field is matched, whatever its name.
    *
-   * What returns is what was checked. A caller's container is returned as it stands only as
-   * verified plain data, so a later read returns the same values: its prototype is
-   * Object.prototype, Array.prototype or null, nothing on its chain is a toJSON, it holds no
-   * symbol field and an array no field but its indices (a hole checked through its prototypes),
-   * every field is a data property this walk read, and nothing in it changed. Anything else is a
-   * copy. An error always is, of its own class, with the accessors in ERROR_ACCESSORS read once
-   * into fields and every other accessor its chain defines shadowed; so is an object of any other
-   * class, its chain's accessors shadowed; and an array that is not plain, as a plain array of its
-   * indices. A container's own accessor is never invoked: its copy leaves it out, or holds the
-   * placeholder at an array index. A toJSON is called once, as serialization would, and replaced
-   * by its checked result. Binary in a typed array or ArrayBuffer is checked as bytes and copied.
-   * A change copies every container on its path on first write, so no caller's value is ever
-   * mutated, and a container past the node budget is withheld whole. Copies hold writable,
-   * configurable data properties and keep the identity facts registered in redaction-identity. */
+   * What returns is what was checked, and only JSON data: strings, numbers, booleans, null,
+   * plain objects and arrays, a fresh built-in Uint8Array, and error copies. A caller's container
+   * is returned as it stands only as verified plain data, so a later read returns the same
+   * values: its prototype is Object.prototype, Array.prototype or null, nothing on its chain is a
+   * toJSON, it holds no symbol field and an array no field but its indices (a hole checked
+   * through its prototypes), every field is a data property this walk read, and nothing in it
+   * changed. Anything else is a copy. An error always is, of its own class, with the accessors in
+   * ERROR_ACCESSORS and those its chain defines read once into fields and a toJSON shadowed, never
+   * read; an object of any other class is plain data, its chain's accessors unread; an array that
+   * is not plain is a plain array of its indices; a String, Number or Boolean wrapper is its
+   * primitive. A typed array, DataView or ArrayBuffer becomes a fresh Uint8Array of the bytes it
+   * held, which are checked as bytes, and as numbers with any other elements it held. A function
+   * or symbol is withheld. A container's own accessor is never invoked: its copy leaves it out,
+   * or holds the placeholder at an array index. A toJSON is called once, as serialization would,
+   * and replaced by its checked result. A change copies every container on its path on first
+   * write, so no caller's value is ever mutated, and a container past the node budget is
+   * withheld whole. Copies hold writable, configurable data properties and keep the identity
+   * facts registered in redaction-identity. */
   private project(value: unknown, scan: Scan): { value: unknown; changed: boolean } {
     type Holder = Record<PropertyKey, unknown>;
     /** Where values are written: `target` itself when this walk made it, or for a caller's
-     * container (`shared`) a copy made on its first write and put in place of it in `parent`. */
+     * container (`shared`) a copy made on its first write and put in place of it in `parent`.
+     * `children` are the caller's containers walked in its slots. */
     interface Frame {
       target: object;
       shared: boolean;
       parent: Frame | undefined;
       slot: PropertyKey;
       copy?: object;
+      children?: Map<PropertyKey, Frame>;
     }
     const parts: string[] = [];
     const kinds: number[] = [];
@@ -1801,8 +1872,10 @@ export class SentSecrets {
     const copied: Frame[] = [];
     const nested: Nested[] = [];
     const active = new Set<object>();
-    // Keys and binary fields repeat across rows; each is checked once per call.
-    const checked = [new Map<string, string>(), new Map<string, string>()] as const;
+    // Keys and scalars repeat across rows; each is checked once per call.
+    const seen = { keys: new Map<string, string>(), scalars: new Map<string, string>() };
+    // Typed binary: where its copy was put, and the leaves its numbers and bytes span.
+    const binaries: [frame: Frame, slot: PropertyKey, owner: number, start: number, end: number][] = [];
     // The accessors each prototype's chain defines, found once per call.
     const chains = new Map<object, string[]>();
     let changed = false;
@@ -1814,12 +1887,10 @@ export class SentSecrets {
       touch(owner);
       return REDACTED;
     };
-    const check = (kind: 0 | 1, text: string): string => {
-      let result = checked[kind].get(text);
-      if (result === undefined) {
-        result = kind === 0 ? this.isolated(text, scan) : this.binary(text, scan);
-        checked[kind].set(text, result);
-      }
+    /** A key or scalar's text, through the one checker alone. */
+    const check = (cache: Map<string, string>, text: string, kind: number): string => {
+      let result = cache.get(text);
+      if (result === undefined) cache.set(text, (result = this.checked([text], [kind], scan)[0]!));
       return result;
     };
     const replace = (frame: Frame, slot: PropertyKey, next: unknown, owner: number) => {
@@ -1867,6 +1938,12 @@ export class SentSecrets {
         if ("value" in descriptor) put(out, name, descriptor.value, descriptor.enumerable);
       }
       return redactedCopyOf(item, out);
+    };
+    /** A caller's container walked in a slot, so a copy it gets replaces it there. */
+    const walked = (frame: Frame, item: object, slot: PropertyKey, owned: boolean): Frame => {
+      const own: Frame = { target: item, shared: !owned, parent: frame, slot };
+      if (!owned) (frame.children ??= new Map()).set(slot, own);
+      return own;
     };
     const writable = (frame: Frame): Holder => {
       if (!frame.shared) return frame.target as Holder;
@@ -1925,7 +2002,10 @@ export class SentSecrets {
         return item;
       }
       if (typeof item === "boolean" || item === null)
-        return scan.payload && this.smallForms && this.whole(String(item)) ? withheld(owner) : item;
+        return check(seen.scalars, String(item), NUMBER) === String(item) ? item : withheld(owner);
+      // A function carries no data, and every exit's serializer would call a toJSON it holds; a
+      // symbol carries none either. Both are withheld.
+      if (typeof item === "function" || typeof item === "symbol") return withheld(owner);
       if (typeof item !== "object") return item;
       if (active.has(item) || depth > MAX_WALK_DEPTH) return withheld(owner);
       active.add(item);
@@ -1950,16 +2030,34 @@ export class SentSecrets {
       scan.budget.nodes -= size;
       return true;
     };
-    /** Binary a typed array, DataView or ArrayBuffer holds, checked as a declared binary
-     * field's bytes are: a copy of it, or the placeholder on a match. */
-    const bytesOf = (item: ArrayBufferView | ArrayBuffer, owner: number): unknown => {
-      const view = ArrayBuffer.isView(item)
-        ? new Uint8Array(item.buffer, item.byteOffset, item.byteLength)
-        : new Uint8Array(item);
-      if (!spend(scan, Math.ceil(view.length / 8)) || !this.bytesClean(latin1(view), scan)) return withheld(owner);
-      if (!ArrayBuffer.isView(item)) return item.slice(0);
-      if (item instanceof DataView) return new DataView(view.slice().buffer);
-      return TYPED_SLICE.call(item);
+    /** A declared base64 field: a leaf the checker also decodes whole, unless this set already
+     * found the same content clean. */
+    const declared = (text: string, frame: Frame, slot: PropertyKey, owner: number): string => {
+      if (this.memo.get(text) !== true && (scan.payload || !this.memo.has(text)))
+        leaf(text, BINARY, frame, slot, owner);
+      return text;
+    };
+    /** Typed binary as the fresh Uint8Array of its bytes. Its leaves are the numbers JSON shows
+     * for it and for its copy, each element's and each byte's, and its bytes; a match in any
+     * withholds it whole, as does a size past the node budget. */
+    const typed = (
+      { bytes, elements }: NonNullable<ReturnType<typeof binaryOf>>,
+      frame: Frame,
+      slot: PropertyKey,
+      owner: number,
+    ): unknown => {
+      const numbers = elements ? new elements(bytes.buffer) : undefined;
+      if (!fits(bytes.length + (numbers?.length ?? 0) + 1) || !spend(scan, Math.ceil(bytes.length / 8)))
+        return withheld(owner);
+      // The leaves write nowhere: the copy's slot is settled once they are checked.
+      const sink: Frame = { target: [], shared: false, parent: undefined, slot };
+      const start = parts.length;
+      if (numbers)
+        for (let index = 0; index < numbers.length; index++) leaf(String(numbers[index]), NUMBER, sink, index, owner);
+      for (let index = 0; index < bytes.length; index++) leaf(DECIMAL[bytes[index]!]!, NUMBER, sink, index, owner);
+      leaf(latin1(bytes), BYTES, sink, 0, owner);
+      binaries.push([frame, slot, owner, start, parts.length]);
+      return bytes;
     };
     const container = (
       item: object,
@@ -1972,7 +2070,10 @@ export class SentSecrets {
     ): unknown => {
       const error = item instanceof Error;
       if (!error && !owned) {
-        if (ArrayBuffer.isView(item) || item instanceof ArrayBuffer) return bytesOf(item, owner);
+        const held = binaryOf(item);
+        if (held) return typed(held, frame, slot, owner);
+        const primitive = unboxed(item);
+        if (primitive) return visit(primitive.value, frame, slot, depth + 1, level, owner, false);
         // What serialization would read: a toJSON result, checked in place of the container.
         const toJSON = inherited(item, "toJSON", WITHHELD_ACCESSOR);
         if (toJSON === WITHHELD_ACCESSOR) return withheld(owner);
@@ -1996,7 +2097,7 @@ export class SentSecrets {
     ): unknown => {
       const length = item.length;
       if (!fits(length)) return withheld(owner);
-      const own: Frame = { target: item, shared: !owned, parent: frame, slot };
+      const own = walked(frame, item, slot, owned);
       for (let index = 0; index < length; index++) {
         const descriptor = Object.getOwnPropertyDescriptor(item, index);
         if (!descriptor) {
@@ -2067,16 +2168,17 @@ export class SentSecrets {
         keys.push(name);
         visible.push(descriptor.enumerable === true);
       }
-      const renamed = keys.map((key) => (FRAMING_KEYS.has(key) ? key : check(0, key)));
+      const renamed = keys.map((key) => (FRAMING_KEYS.has(key) ? key : check(seen.keys, key, TEXT)));
       if (renamed.some((name, index) => name !== keys[index])) plain = false;
       // An error's copy is of its class. Every accessor its chain defines, such as DOMException's
       // name and message or an SDK error's status, and whatever the chain answers for the names
       // in ERROR_ACCESSORS, is read once and held as a checked field, so no later read of the
-      // copy invokes a getter; a toJSON is shadowed. Any other copy is plain data.
+      // copy invokes a getter. A toJSON, data or accessor, is never read: the copy shadows it, so
+      // no serializer can run. Any other copy is plain data.
       let extras: [string, unknown][] | undefined;
       if (error && prototype) {
         for (const name of [...ERROR_ACCESSORS, ...accessorsOf(prototype)]) {
-          if (keys.includes(name) || extras?.some(([taken]) => taken === name)) continue;
+          if (name === "toJSON" || keys.includes(name) || extras?.some(([taken]) => taken === name)) continue;
           if (!(name in item)) continue;
           try {
             (extras ??= []).push([name, Reflect.get(item, name)]);
@@ -2084,13 +2186,13 @@ export class SentSecrets {
             (extras ??= []).push([name, undefined]); // A getter that throws leaves its field shadowed.
           }
         }
-        if (!keys.includes("toJSON") && inherited(item, "toJSON", undefined) !== undefined)
+        if (!keys.includes("toJSON") && inherited(item, "toJSON", WITHHELD_ACCESSOR) !== undefined)
           (extras ??= []).push(["toJSON", undefined]);
       }
       // A container walked as it stands: a caller's, copied on first write, or parsed JSON this
       // walk owns, written in place. Any other is copied now, field by field.
       const own: Frame = plain
-        ? { target: item, shared: !owned, parent: frame, slot }
+        ? walked(frame, item, slot, owned)
         : {
             target: Object.create(error || prototype === null ? prototype : Object.prototype) as object,
             shared: false,
@@ -2118,7 +2220,7 @@ export class SentSecrets {
             ((key === "code" && classificationCode(value) !== undefined) || (key === "name" && value === kind)))
         )
           next = value;
-        else if (typeof value === "string" && binaryField(field, key)) next = check(1, value);
+        else if (typeof value === "string" && binaryField(field, key)) next = declared(value, target, name, owner);
         else next = visit(value, target, name, depth + 1, level, owner, owned);
         if (target !== own) continue;
         if (!plain) put(out, name, next, extra ? false : visible[index]);
@@ -2130,18 +2232,44 @@ export class SentSecrets {
     };
     const root: Frame = { target: { value: undefined }, shared: false, parent: undefined, slot: "value" };
     (root.target as Holder)["value"] = visit(value, root, "value", 0, 0, -1, false);
-    const safe = this.safeParts(parts, kinds, scan);
-    this.encodedLeaves(parts, kinds, safe, scan);
-    // Structure first, then the leaves inside it, then nested JSON from the innermost out.
-    for (const [frame, slot, next] of replaced) put(writable(frame), slot, next);
+    const safe = this.checked(parts, kinds, scan);
+    // Structure first, then the leaves inside it and typed binary, then nested JSON from the
+    // innermost out.
+    // A slot replaced by a caller's container walked there, such as a toJSON result, takes the
+    // copy that container already got, never the original.
+    for (const [frame, slot, next] of replaced) {
+      const child = frame.children?.get(slot);
+      put(writable(frame), slot, child && child.target === next && child.copy ? child.copy : next);
+    }
     for (const frame of copied) writable(frame);
+    let marker: string | undefined;
     for (let index = 0; index < parts.length; index++) {
       const next = safe[index]!;
-      if (next === parts[index]) continue;
+      const kind = kinds[index]!;
+      if (next === parts[index]) {
+        if (kind === BINARY && next.length >= MEMO_UNITS) this.memo.set(next, scan.payload);
+        continue;
+      }
       const holder = writable(frames[index]!);
-      // A typed number on an error is dropped rather than turned into text.
-      put(holder, slots[index]!, kinds[index] === NUMBER && holder instanceof Error ? undefined : next);
+      // Declared binary is withheld as the encoded marker, itself checked; a typed number on an
+      // error is dropped rather than turned into text.
+      if (kind === BINARY) {
+        const encoded = btoa(REDACTED);
+        marker ??= this.checked([encoded], [BINARY], scan)[0] === encoded ? encoded : "";
+      }
+      put(
+        holder,
+        slots[index]!,
+        kind === BINARY ? marker : kind === NUMBER && holder instanceof Error ? undefined : next,
+      );
       touch(owners[index]!);
+    }
+    for (const [frame, slot, owner, start, end] of binaries) {
+      let clean = true;
+      for (let index = start; clean && index < end; index++) clean = safe[index] === parts[index];
+      if (clean) continue;
+      put(writable(frame), slot, REDACTED);
+      touch(owner);
     }
     for (let index = nested.length - 1; index >= 0; index--) {
       const entry = nested[index]!;

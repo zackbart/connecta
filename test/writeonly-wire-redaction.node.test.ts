@@ -310,6 +310,77 @@ it("INV-5: an array whose toJSON echoes a credential reaches the QuickJS guest o
   expect(result.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
 });
 
+it.each([
+  [
+    "a function with a toJSON",
+    () => ({ value: Object.assign(() => {}, { toJSON: () => ({ echo: "Q8!wZ2?A7@vR4#" }) }) }),
+  ],
+  [
+    "a typed-array subclass with a toJSON",
+    () => ({
+      value: new (class Bytes extends Uint8Array {
+        toJSON() {
+          return { echo: "Q8!wZ2?A7@vR4#" };
+        }
+      })([1, 2, 3]),
+    }),
+  ],
+  [
+    "an ArrayBuffer subclass with a toJSON",
+    () => ({
+      value: new (class Buffer extends ArrayBuffer {
+        toJSON() {
+          return { echo: "Q8!wZ2?A7@vR4#" };
+        }
+      })(3),
+    }),
+  ],
+])("INV-5: %s never serializes a credential into the QuickJS guest", async (_name, reply) => {
+  const token = "Q8!wZ2?A7@vR4#";
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).add(token);
+      return reply();
+    },
+  };
+  const execute = createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger);
+  // The review's program: seven units are below K, so only what the guest received decides.
+  const review = await execute({ code: 'async () => (await connecta.call("wire.read")).data.value.echo.slice(0, 7)' });
+  expect(JSON.stringify(review.structuredContent)).not.toContain(token.slice(0, 7));
+  const seen = await execute({ code: 'async () => JSON.stringify((await connecta.call("wire.read")).data.value)' });
+  expect(seen.isError, JSON.stringify(seen.structuredContent)).toBeFalsy();
+  expect(JSON.stringify(seen.structuredContent)).not.toContain(token.slice(0, 7));
+});
+
+it("INV-5: a typed array's numbers reach the QuickJS guest only checked as JSON scalars", async () => {
+  const value = "12345678";
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).arguments({ value }, VALUE_SCHEMA);
+      return { value: new Uint32Array([12345678]) };
+    },
+  };
+  const result = await createExecuteTool(
+    makeRegistry([connector]),
+    BASE,
+    executor,
+    silentLogger,
+  )({ code: 'async () => String((await connecta.call("wire.read")).data.value[0]).slice(0, 7)' });
+  expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+  expect(result.structuredContent).not.toMatchObject({ result: value.slice(0, 7) });
+  expect(JSON.stringify(result.structuredContent)).not.toContain(value.slice(0, 7));
+});
+
 it("INV-5: JSON text keeps its exact bytes unless an echo is redacted, then stays valid JSON", () => {
   const secrets = new SentSecrets();
   secrets.header("Bearer 12345678");

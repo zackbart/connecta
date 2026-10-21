@@ -1238,6 +1238,563 @@ describe("review round 4", () => {
   });
 });
 
+describe("review round 5", () => {
+  /** Every UTF-16 unit as a `\u` escape. */
+  const escapeAll = (text: string) =>
+    Array.from(text, (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+  /** Every unit as a lowercase percent escape. */
+  const percentAll = (text: string) =>
+    Array.from(text, (unit) => `%${unit.charCodeAt(0).toString(16).padStart(2, "0")}`).join("");
+  /** A connector whose one read registers `value` and returns what `reply` makes. */
+  const echoing = (value: string, reply: () => unknown, privateValue = true, maxResultBytes?: number): Connector => ({
+    id: "notes",
+    kind: "api",
+    ...(maxResultBytes ? { maxResultBytes } : {}),
+    listTools: async () => [{ name: "read", annotations: { readOnlyHint: true }, inputSchema: { type: "object" } }],
+    callTool: async (_name, _args, ctx) => {
+      if (privateValue) sentSecretsFor(ctx).arguments({ value }, schema);
+      else sentSecretsFor(ctx).add(value);
+      return reply();
+    },
+  });
+  /** What a program's connecta.call("notes.read") receives, before the executor marshals it. */
+  const bridged = async (connector: Connector): Promise<unknown> => {
+    const [provider] = await buildSandboxProviders(makeRegistry([connector]), "https://connecta.test", silentLogger);
+    return await provider!.fns["call"]!({ address: "notes.read" });
+  };
+  /** Text of a value as every exit could serialize it: JSON, a bigint as its digits, and bytes
+   * as the base64 the Worker codec sends. */
+  const wire = (value: unknown): string =>
+    JSON.stringify(value, (_key, item: unknown) =>
+      typeof item === "bigint"
+        ? String(item)
+        : item instanceof Uint8Array
+          ? { bytes: btoa(String.fromCharCode(...item)) }
+          : item,
+    ) ?? "";
+  /** Every place `value` holds something other than JSON data, a fresh Uint8Array or an error
+   * copy whose fields are; read from descriptors, never invoking an accessor. */
+  const nonJson = (value: unknown, path = "$", seen = new Set<object>()): string[] => {
+    if (typeof value === "function" || typeof value === "symbol") return [`${path}: ${typeof value}`];
+    if (value === null || typeof value !== "object" || seen.has(value)) return [];
+    seen.add(value);
+    const prototype = Object.getPrototypeOf(value) as object | null;
+    if (prototype === Uint8Array.prototype)
+      return Object.getOwnPropertyNames(value).every((name) => /^\d+$/.test(name)) &&
+        !Object.getOwnPropertySymbols(value).length
+        ? []
+        : [`${path}: binary with fields`];
+    const problems: string[] = [];
+    if (!(value instanceof Error) && ![Object.prototype, Array.prototype, null].includes(prototype))
+      problems.push(`${path}: prototype`);
+    if (Array.isArray(value) && prototype !== Array.prototype) problems.push(`${path}: array class`);
+    if (Object.getOwnPropertySymbols(value).length) problems.push(`${path}: symbol field`);
+    for (let at: object | null = value; at; at = Object.getPrototypeOf(at) as object | null) {
+      const descriptor = Object.getOwnPropertyDescriptor(at, "toJSON");
+      if (!descriptor) continue;
+      if (!("value" in descriptor) || typeof descriptor.value === "function") problems.push(`${path}: toJSON`);
+      break;
+    }
+    for (const name of Object.getOwnPropertyNames(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, name)!;
+      if ("value" in descriptor) problems.push(...nonJson(descriptor.value, `${path}.${name}`, seen));
+      else problems.push(`${path}.${name}: accessor`);
+    }
+    return problems;
+  };
+
+  it("INV-5: plus-only form encoding is decoded, so a `+` separator hides no base64 through the stash and a fresh read", async () => {
+    const value = "pin42";
+    const secrets = set(value);
+    const form = `echo=x+${btoa(`x${value}`)}`;
+    expect(secrets.redact({ echo: form }).echo).toBe(MARK);
+    for (let prefix = 0; prefix < 3; prefix++)
+      for (const url of [false, true]) {
+        const run = encoded(`${"x".repeat(prefix)}${value}z`, url);
+        for (const input of [
+          `echo=x+${run}`,
+          `a+b+${run}+tail`,
+          `${run}+tail`,
+          new URLSearchParams({ echo: `see ${run}` }).toString(),
+          `q=one+two&echo=x+${run}`,
+        ]) {
+          const out = shown(secrets.redact({ v: input }));
+          expect(out, `${prefix} ${url} ${input}`).not.toBe(shown({ v: input }));
+          expect(holdsValue(out, value), `${prefix} ${url} ${input}`).toBe(false);
+        }
+      }
+    // Prose with a plus decodes nothing new and stays.
+    const prose = { v: "one+two = three, 2+2 = 4" };
+    expect(secrets.redact(prose)).toBe(prose);
+    // The review's path: a value-mode direct call stashes the result, and a fresh read pages it.
+    const registry = makeRegistry([echoing(value, () => ({ echo: form, filler: "!".repeat(4096) }), true, 1024)]);
+    const direct = await createMetaTools(registry, "https://connecta.test").callTool({
+      address: "notes.read",
+      resultMode: "value",
+    });
+    const id = (direct.structuredContent as { data: { resultId?: string } }).data.resultId;
+    expect(id).toBeDefined();
+    const page = await createMetaTools(registry, "https://connecta.test").readResult({
+      id: id!,
+      offset: 0,
+      maxBytes: 1024,
+    });
+    for (const out of [shown(direct), shown(page)]) {
+      expect(out).not.toContain(form);
+      expect(holdsValue(out, value)).toBe(false);
+    }
+  });
+
+  it("INV-5: object keys go through the whole lattice: base64 in a key, raw or under any text view, renames it", () => {
+    const value = "pin42";
+    const secrets = set(value);
+    const run = btoa(`x${value}z`);
+    for (const key of [
+      run,
+      `id:${run}`,
+      encodeURIComponent(run),
+      escapeAll(run),
+      percentAll(run),
+      `a+${btoa(`x${value}`)}`,
+    ]) {
+      const out = secrets.redact({ [key]: "public", kept: "okay" });
+      expect(Object.keys(out), key).toEqual([MARK, "kept"]);
+      expect(holdsValue(shown(out), value), key).toBe(false);
+    }
+    // The review's key, and keys inside a nested JSON string and on an error.
+    expect(secrets.redact({ "eHBpbjQyeg==": "public" })).toEqual({ [MARK]: "public" });
+    expect(holdsValue(shown(secrets.redact({ body: JSON.stringify({ [run]: "public" }) })), value)).toBe(false);
+    const error = secrets.redact(Object.assign(new Error("public"), { [run]: "public" }));
+    expect(Object.getOwnPropertyNames(error)).not.toContain(run);
+    // A credential under the boundary's rules too, its base64 at every alignment.
+    const credential = new SentSecrets();
+    credential.add(TOKEN);
+    for (let prefix = 0; prefix < 3; prefix++) {
+      const echo = encoded(`${"x".repeat(prefix)}${TOKEN}z`);
+      const out = redactAgentOutput(credential, { [echo]: 1, [`k ${echo}`]: 2, [encodeURIComponent(echo)]: 3 });
+      expect(Object.keys(out)).not.toContain(echo);
+      expect(leakedRun(shown(out), TOKEN), String(prefix)).toBeUndefined();
+    }
+    // Ordinary keys are decoded, found clean and kept.
+    const plain = { createdAt: 1, description: "public", nextPageToken: "abc" };
+    expect(secrets.redact(plain)).toBe(plain);
+  });
+
+  it.each([
+    ["Drive content", (content: string) => ({ format: "base64", content })],
+    ["image data", (data: string) => ({ type: "image", data, mimeType: "image/png" })],
+    ["resource blob", (blob: string) => ({ uri: "file:///a", blob })],
+    ["REST body", (base64: string) => ({ contentType: "application/octet-stream", base64 })],
+  ])(
+    "INV-5: a declared binary field that is not base64 as it stands is checked through every text view: %s",
+    (_name, field) => {
+      const value = "pin42";
+      const secrets = set(value);
+      const marked = btoa(MARK);
+      for (let prefix = 0; prefix < 3; prefix++) {
+        const run = btoa(`${"x".repeat(prefix)}${value}z`);
+        for (const content of [
+          encodeURIComponent(run),
+          escapeAll(run),
+          percentAll(run),
+          `x+${btoa(`${"x".repeat(prefix)}${value}`)}`,
+          `see ${run} here`,
+        ]) {
+          const out = secrets.redact(field(content)) as Record<string, unknown>;
+          expect(Object.values(out), `${prefix} ${content}`).toContain(marked);
+          expect(holdsValue(shown(out), value), `${prefix} ${content}`).toBe(false);
+        }
+      }
+      // The review's two fallbacks, and valid public content unchanged.
+      const review = btoa(`x${value}z`);
+      for (const content of [encodeURIComponent(review), escapeAll(review)])
+        expect(Object.values(secrets.redact(field(content)) as object)).toContain(marked);
+      const clean = field(btoa("Ordinary public bytes."));
+      expect(secrets.redact(clean)).toBe(clean);
+    },
+  );
+
+  it("INV-5: functions are withheld, so no serializer they carry runs at an exit, and an error copy holds no callable toJSON", async () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    const fn = Object.assign(() => "public", { toJSON: () => ({ echo: TOKEN }) });
+    expect(secrets.redact({ value: fn })).toEqual({ value: MARK });
+    expect(secrets.redact(fn)).toBe(MARK);
+    expect(secrets.redact([fn, "public"])).toEqual([MARK, "public"]);
+    expect(secrets.redact({ value: { toJSON: () => fn } })).toEqual({ value: MARK });
+    expect(secrets.redact({ value: Symbol(TOKEN) })).toEqual({ value: MARK });
+    // The review's error: a class getter answering toJSON with a function is never read.
+    let calls = 0;
+    class Serializing extends Error {
+      get toJSON() {
+        calls++;
+        return () => ({ echo: TOKEN });
+      }
+    }
+    const copy = secrets.redact(new Serializing("public"));
+    expect(copy).toBeInstanceOf(Serializing);
+    expect(Object.getOwnPropertyDescriptor(copy, "toJSON")).toMatchObject({ value: undefined });
+    expect(JSON.stringify(copy)).not.toContain(TOKEN);
+    expect(calls).toBe(0);
+    // An own function field and a class accessor answering with a function are withheld too.
+    class Retrying extends Error {
+      get retry() {
+        return () => TOKEN;
+      }
+    }
+    const retrying = secrets.redact(Object.assign(new Retrying("public"), { callback: () => TOKEN }));
+    expect([retrying.retry, retrying.callback]).toEqual([MARK, MARK]);
+    expect(nonJson({ copy, retrying })).toEqual([]);
+    // Through the guest bridge, as a program's connecta.call receives it.
+    const value = await bridged(echoing(TOKEN, () => ({ value: fn, fail: new Serializing("public") }), false));
+    expect(nonJson(value)).toEqual([]);
+    expect(JSON.stringify(value)).not.toContain(TOKEN);
+    expect(leakedRun(JSON.stringify(value), TOKEN)).toBeUndefined();
+  });
+
+  it("INV-5: typed binary leaves only as a fresh Uint8Array of its checked bytes, with no subclass or serializer", async () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    class Bytes extends Uint8Array {
+      toJSON() {
+        return { echo: TOKEN };
+      }
+    }
+    class Buffer extends ArrayBuffer {
+      toJSON() {
+        return { echo: TOKEN };
+      }
+    }
+    class Lying extends Uint8Array {
+      override get byteLength() {
+        return 0;
+      }
+    }
+    const inputs: [unknown, number[]][] = [
+      [new Bytes([1, 2, 3]), [1, 2, 3]],
+      [new Buffer(3), [0, 0, 0]],
+      [new DataView(Uint8Array.of(4, 5).buffer), [4, 5]],
+      [new Uint16Array([1, 258]), [1, 0, 2, 1]],
+      [new Float32Array([1]), [0, 0, 128, 63]],
+      [new Lying([6, 7]), [6, 7]],
+      [Uint8Array.of(8).subarray(0, 1), [8]],
+    ];
+    for (const [input, bytes] of inputs) {
+      const out = secrets.redact({ value: input }).value;
+      expect(out).not.toBe(input);
+      expect(Object.getPrototypeOf(out)).toBe(Uint8Array.prototype);
+      expect([...(out as Uint8Array)]).toEqual(bytes);
+      expect(nonJson(out)).toEqual([]);
+      expect(JSON.stringify(out)).not.toContain(TOKEN);
+    }
+    // The bytes are checked as before.
+    expect(secrets.redact({ value: new Bytes(new TextEncoder().encode(`x${TOKEN}z`)) })).toEqual({ value: MARK });
+    // Through the guest bridge, the review's two subclasses arrive as plain bytes.
+    for (const reply of [() => ({ value: new Bytes([1, 2, 3]) }), () => ({ value: new Buffer(3) })]) {
+      const value = (await bridged(echoing(TOKEN, reply, false))) as { data: { value: unknown } };
+      expect(Object.getPrototypeOf(value.data.value)).toBe(Uint8Array.prototype);
+      expect(JSON.stringify(value)).not.toContain(TOKEN);
+    }
+  });
+
+  it("INV-5: the numbers JSON shows for a typed array are checked as JSON scalars, its elements and its bytes", async () => {
+    const value = "12345678";
+    const secrets = set(value);
+    for (const input of [
+      new Uint32Array([12345678]),
+      new Int32Array([12345678]),
+      new Float64Array([12345678]),
+      new BigInt64Array([12345678n]),
+      Uint8Array.of(12, 34, 56, 78),
+    ])
+      expect(secrets.redact({ value: input }), input.constructor.name).toEqual({ value: MARK });
+    // The review's program input reaches the guest bridge withheld.
+    const bridgedValue = await bridged(echoing(value, () => ({ value: new Uint32Array([12345678]) })));
+    expect(bridgedValue).toMatchObject({ data: { value: MARK } });
+    // Clean numbers keep their bytes; a tiny numeric private value withholds an array holding it,
+    // as it withholds an equal JSON number.
+    expect([...(secrets.redact({ value: new Uint32Array([7]) }).value as unknown as Uint8Array)]).toEqual([7, 0, 0, 0]);
+    expect(set("7").redact({ value: Uint8Array.of(1, 7), count: 7 })).toEqual({ value: MARK, count: MARK });
+    expect([...(set("7").redact(Uint8Array.of(1, 2)) as Uint8Array)]).toEqual([1, 2]);
+  });
+
+  it("INV-5: every other non-JSON value becomes the data JSON shows for it, checked, or is withheld", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    class Row {
+      id = "r1";
+      get secret() {
+        return TOKEN;
+      }
+    }
+    const out = secrets.redact({
+      date: new Date(0),
+      invalid: new Date(NaN),
+      map: new Map([["k", TOKEN]]),
+      set: new Set([TOKEN]),
+      weak: new WeakMap(),
+      regexp: /public/g,
+      promise: Promise.resolve(TOKEN),
+      row: new Row(),
+      string: new String(`echo ${TOKEN}`),
+      number: new Number(5),
+      boolean: new Boolean(false),
+      bigint: 5n,
+      symbol: Symbol("public"),
+      absent: undefined,
+      method() {
+        return TOKEN;
+      },
+    });
+    expect(out).toEqual({
+      date: "1970-01-01T00:00:00.000Z",
+      invalid: null,
+      map: {},
+      set: {},
+      weak: {},
+      regexp: {},
+      promise: {},
+      row: { id: "r1" },
+      string: `echo ${MARK}`,
+      number: 5,
+      boolean: false,
+      bigint: 5n,
+      symbol: MARK,
+      absent: undefined,
+      method: MARK,
+    });
+    expect(nonJson(out)).toEqual([]);
+    // A bigint is checked as its digits.
+    expect(set("12345678").redact({ id: 12345678n })).toEqual({ id: MARK });
+  });
+
+  it("INV-5: a toJSON result whose fields are copied is replaced by its copy, never put back as the original", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    class Holder {
+      constructor(readonly v: string) {}
+    }
+    // Found by the property test below; the round-4 head returned the original Holder here.
+    const inputs = [
+      { wrap: { toJSON: () => ({ echo: new Holder(TOKEN) }) } },
+      [{ toJSON: () => ({ map: new Map([["k", 1]]), echo: new Holder(TOKEN) }) }],
+      { wrap: { toJSON: () => ({ echo: { toJSON: () => ({ echo: new Holder(`x ${TOKEN}`) }) } }) } },
+    ];
+    for (const input of inputs) {
+      const out = secrets.redact(input);
+      expect(JSON.stringify(out)).not.toContain(TOKEN);
+      expect(JSON.stringify(out)).toContain(MARK);
+      expect(nonJson(out)).toEqual([]);
+    }
+  });
+
+  it("INV-5: random nested values of every kind redact to JSON data, canonical bytes and error copies only", () => {
+    const token = TOKEN;
+    const value = "pin42";
+    let seed = 0x5eed;
+    const next = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let mixed = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+      return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
+    };
+    const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
+    const strings = [
+      "Ordinary public text.",
+      token,
+      `echo ${token}`,
+      encoded(`x${token}z`),
+      encodeURIComponent(encoded(`x${value}z`)),
+      `echo=x+${btoa(`x${value}`)}`,
+      escapeAll(encoded(`x${token}z`)),
+      value,
+      "",
+    ];
+    // Bytes are checked as decoded binary is: raw, through JSON escapes, as UTF-8 and through the
+    // base64 they carry. Text views are views of strings, so content that needs one to reveal
+    // base64 is left to the strings above.
+    const bytes = () => new TextEncoder().encode(pick([...strings.slice(0, 5), value, ""]));
+    class Bytes extends Uint8Array {
+      toJSON() {
+        return { echo: token };
+      }
+    }
+    class Echo extends Error {
+      get toJSON() {
+        return () => ({ echo: token });
+      }
+      get detail() {
+        return token;
+      }
+    }
+    class Row {
+      id = "r1";
+      get secret() {
+        return token;
+      }
+    }
+    const leaves: (() => unknown)[] = [
+      () => pick(strings),
+      () => Math.floor(next() * 1e9),
+      () => 12345678,
+      () => BigInt(Math.floor(next() * 1e6)),
+      () => next() < 0.5,
+      () => null,
+      () => undefined,
+      () => Symbol(token),
+      () => Object.assign(() => token, { toJSON: () => ({ echo: token }) }),
+      () => new Date(Math.floor(next() * 1e12)),
+      () => /public/g,
+      () => new Map([["k", token]]),
+      () => new Set([token]),
+      () => new String(pick(strings)),
+      () => new Number(4),
+      () => new Bytes(bytes()),
+      () => bytes(),
+      () => new Uint32Array([12345678, 1]),
+      () => new Float64Array([1.5]),
+      () => new DataView(bytes().buffer),
+      () => bytes().buffer,
+      () => ({ format: "base64", content: pick(strings) }),
+      () => ({ type: "image", data: pick([btoa(`x${token}z`), btoa("public"), pick(strings)]), mimeType: "image/png" }),
+    ];
+    const containers: ((depth: number) => unknown)[] = [
+      (depth) => ({ a: make(depth), [pick(strings) || "k"]: make(depth) }),
+      (depth) => Object.assign(Object.create(null) as object, { a: make(depth) }),
+      (depth) => [make(depth), make(depth)],
+      (depth) => Object.assign([], { length: 3, 1: make(depth) }),
+      (depth) => Object.assign(new (class Items extends Array {})(), { 0: make(depth) }),
+      () => new Row(),
+      (depth) => Object.defineProperty({ kept: make(depth) }, "secret", { enumerable: true, get: () => token }),
+      (depth) => ({ toJSON: () => ({ echo: make(depth) }) }),
+      (depth) => Object.freeze({ a: make(depth) }),
+      (depth) => ({ [Symbol("s")]: token, a: make(depth) }),
+      (depth) => Object.assign(new Echo(pick(strings)), { cause: make(depth), callback: () => token }),
+      (depth) => Object.assign(new Error(pick(strings)), { code: pick(strings), data: make(depth) }),
+      (depth) => JSON.stringify({ nested: pick(strings), b: depth }),
+    ];
+    function make(depth: number): unknown {
+      return depth > 3 || next() < 0.45 ? pick(leaves)() : pick(containers)(depth + 1);
+    }
+    for (let round = 0; round < 300; round++) {
+      const input = make(0);
+      const secrets = new SentSecrets();
+      secrets.add(token);
+      secrets.arguments({ value }, schema);
+      for (const out of [secrets.redact(input), redactAgentOutput(secrets, input)]) {
+        expect(nonJson(out), `round ${round}`).toEqual([]);
+        const text = wire(out);
+        expect(text, `round ${round}`).not.toContain(token);
+        expect(leakedRun(text, token), `round ${round}`).toBeUndefined();
+      }
+      expect(holdsValue(wire(secrets.redact(input)), value), `round ${round}`).toBe(false);
+    }
+  });
+
+  it("INV-5: there is one string checker: nothing matches a string outside it, on any entry point", () => {
+    const proto = SentSecrets.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
+    // The partial checkers earlier rounds had are gone.
+    for (const name of ["isolated", "binary", "bytesClean", "encodedClean"]) expect(name in proto, name).toBe(false);
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    secrets.arguments(
+      { value: "pin42", other: "Q8!wZ2?A7@vR4#" },
+      { type: "object", properties: { value: { writeOnly: true }, other: { writeOnly: true } } },
+    );
+    const helpers = secrets as unknown as { matcher(): object; fragments(): object };
+    const matcher = Object.getPrototypeOf(helpers.matcher()) as Record<string, (...args: unknown[]) => unknown>;
+    const fragments = Object.getPrototypeOf(helpers.fragments()) as Record<string, (...args: unknown[]) => unknown>;
+    let [checking, tokens, checks] = [0, 0, 0];
+    const outside: string[] = [];
+    const around = (
+      target: Record<string, (...args: unknown[]) => unknown>,
+      name: string,
+      enter: () => void,
+      leave: () => void,
+    ) => {
+      const original = target[name]!;
+      vi.spyOn(target, name).mockImplementation(function (this: unknown, ...args: unknown[]) {
+        enter();
+        try {
+          return original.apply(this, args);
+        } finally {
+          leave();
+        }
+      });
+    };
+    around(
+      proto,
+      "checked",
+      () => (checking++, checks++),
+      () => checking--,
+    );
+    around(
+      proto,
+      "spansTokens",
+      () => tokens++,
+      () => tokens--,
+    );
+    // The matching steps run only inside the checker; a serialized container's cross-token scan,
+    // which can only withhold it whole, also reads the fragment index.
+    const guard = (
+      target: Record<string, (...args: unknown[]) => unknown>,
+      name: string,
+      allowed = () => checking > 0,
+    ) =>
+      around(
+        target,
+        name,
+        () => void (allowed() || outside.push(name)),
+        () => {},
+      );
+    for (const name of ["safeParts", "encodedLeaves", "spansOf", "whole", "textViews", "openSpans", "leafByLeaf"])
+      guard(proto, name);
+    guard(matcher, "scan");
+    guard(matcher, "openAt");
+    guard(fragments, "scan", () => checking > 0 || tokens > 0);
+    const echo = encoded(`x${TOKEN}z`);
+    const value = {
+      [echo]: `echo ${TOKEN}`,
+      keyed: { "eHBpbjQyeg==": true },
+      nested: JSON.stringify({ v: echo, n: 1 }),
+      declared: { format: "base64", content: encodeURIComponent(btoa("xpin42z")) },
+      image: { type: "image", data: btoa(`x${TOKEN}z`), mimeType: "image/png" },
+      bytes: new Uint32Array([1, 2]),
+      fail: Object.assign(new Error(`failed ${TOKEN}`), { status: 401 }),
+      flags: [true, false, null],
+    };
+    secrets.redact(value);
+    redactAgentOutput(secrets, value);
+    secrets.changes(value);
+    secrets.text(JSON.stringify({ v: `echo=x+${btoa("xpin42")}` }));
+    secrets.parts(["Q8!wZ", "2?A7@vR4#"]);
+    secrets.parts(["public ", "Q8!w"], true);
+    secrets.redactOpenTail(`public ${TOKEN.slice(0, 5)}`);
+    secrets.encode(new TextEncoder().encode(`x${TOKEN}z`));
+    secrets.encode(new TextEncoder().encode(JSON.stringify({ k: "page", g: "s0-pin42-id" })), {
+      url: true,
+      claims: true,
+    });
+    secrets.contains(`https://example.com/cb?s=${echo}`);
+    secrets.contains(`${TOKEN.toLowerCase()}.example.com`, true);
+    secrets.containsUrl(`https://example.com/${echo}`);
+    secrets.redactCredentials(value);
+    expect(outside).toEqual([]);
+    expect(checks).toBeGreaterThan(10);
+  });
+
+  it("INV-5: structural fields are refused through the same lattice: base64 of a sent value in a URL or host", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    const echo = encoded(`x${TOKEN}z`);
+    expect(secrets.contains(`https://example.com/cb?s=${echo}`)).toBe(true);
+    expect(secrets.contains(`https://example.com/cb?s=${encodeURIComponent(echo)}`)).toBe(true);
+    expect(secrets.containsUrl(`https://example.com/cb?s=${echo}`)).toBe(true);
+    expect(secrets.contains(`${TOKEN.slice(0, K).toLowerCase()}.example.com`, true)).toBe(true);
+    expect(secrets.contains("https://example.com/cb?s=public-state")).toBe(false);
+  });
+});
+
 describe("mutation checks", () => {
   it("INV-5: without decoding undeclared base64, an encoded echo survives the boundary", () => {
     vi.spyOn(SentSecrets.prototype as unknown as { encodedLeaves(): void }, "encodedLeaves").mockImplementation(
