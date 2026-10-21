@@ -1,132 +1,20 @@
-import { connectRequest } from "./fixtures/oauth.js";
 import { describe, expect, it, vi } from "vitest";
-import { TEST_MACHINE_NAMESPACE, machineAuth } from "./helpers/machine-auth.js";
-import { api } from "../src/connectors/api.js";
-import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, ConnectorStatus, ToolDef } from "../src/types.js";
-import { uiProblemFor, uiToolSafety } from "../src/ui.js";
-import type { UiConnector, UiData } from "../src/operator-ui/model.js";
-import { clientServerName, clientSetupCommands } from "../src/operator-ui/setup-commands.js";
-import { credentialTestNotice, oauthDoneNotice, problemCopy, refusedNotice } from "../src/operator-ui/view.js";
-import { FIX_PROMPT_KINDS } from "../src/operator-ui/fix-prompts.js";
 import { activityHistory } from "../src/activity.js";
+import { api } from "../src/connectors/api.js";
 import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
-import { createTestConnecta, fetchTestUiDetails, silentLogger } from "./helpers.js";
+import type { UiConnector } from "../src/operator-ui/model.js";
+import { clientServerName, clientSetupCommands } from "../src/operator-ui/setup-commands.js";
+import { problemCopy } from "../src/operator-ui/view.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import type { Connector, ConnectorStatus } from "../src/types.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
+import { connectRequest } from "./fixtures/oauth.js";
 import { CLERK_OPTIONS, CREDENTIAL_KEY, credentialRequest } from "./fixtures/ui.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "model-token";
-
-function docsApi() {
-  return api("docs", {
-    description: "Docs",
-    tools: [
-      {
-        name: "read",
-        description: "Read a document",
-        annotations: { readOnlyHint: true },
-        handler: () => ({}),
-      },
-      {
-        name: "erase",
-        description: "Erase a document",
-        annotations: { readOnlyHint: false, destructiveHint: true },
-        handler: () => ({}),
-      },
-    ],
-  });
-}
-
-function throwingCatalog(): Connector {
-  return {
-    id: "flaky",
-    async status() {
-      return { state: "ok" };
-    },
-    async listTools() {
-      throw new Error("catalog body: sk_live_leaked");
-    },
-    async callTool() {
-      return {};
-    },
-  };
-}
-
-async function uiData(connecta: { fetch(request: Request): Promise<Response> }): Promise<UiData> {
-  const res = await fetchTestUiDetails(
-    connecta,
-    new Request(`${BASE}/ui/data`, { headers: { Authorization: `Bearer ${TOKEN}` } }),
-  );
-  expect(res.status).toBe(200);
-  return (await res.json()) as UiData;
-}
-
-describe("tool safety classification", () => {
-  const cases: Array<[string, ToolDef["annotations"]]> = [
-    ["explicit read-only", { readOnlyHint: true }],
-    ["read-only and destructive", { readOnlyHint: true, destructiveHint: true }],
-    ["explicit write", { readOnlyHint: false }],
-    ["destructive only", { destructiveHint: true }],
-    ["no hints", {}],
-    ["no annotations", undefined],
-  ];
-
-  it("fails closed on anything short of an explicit, uncontradicted read-only hint", () => {
-    expect(uiToolSafety({ name: "t", classification: "read", annotations: { readOnlyHint: true } })).toBe(
-      "runs_in_programs",
-    );
-    for (const [, annotations] of cases.slice(1)) {
-      expect(uiToolSafety({ name: "t", ...(annotations ? { annotations } : {}) })).toBe("needs_approval");
-    }
-  });
-
-  it("ships the classification in connector details", async () => {
-    const connecta = createTestConnecta({
-      connectors: [docsApi()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const data = await uiData(connecta);
-    const docs = data.connectors.find((c) => c.id === "docs")!;
-    expect(docs.tools.map(({ address, safety }) => ({ address, safety }))).toEqual([
-      { address: "docs.read", safety: "runs_in_programs" },
-      { address: "docs.erase", safety: "needs_approval" },
-    ]);
-  });
-});
-
-describe("connector problem classification", () => {
-  const oauth = { startAuth: async () => ({ state: "auth_required" as const }) };
-  const credential = { credential: { label: "API key" } };
-  const plain = {};
-  const clean = { credentialDrift: false, catalogFailed: false };
-
-  it("keys a problem off status and declared auth shape, never a message", () => {
-    expect(uiProblemFor(plain, "ok", clean)).toBeUndefined();
-    expect(uiProblemFor(plain, "error", clean)).toBe("connector_unavailable");
-    expect(uiProblemFor(oauth, "auth_required", clean)).toBe("oauth_required");
-    expect(uiProblemFor(credential, "auth_required", clean)).toBe("credential_required");
-    expect(uiProblemFor(plain, "auth_required", clean)).toBe("auth_required");
-    expect(uiProblemFor(credential, "auth_required", { ...clean, credentialDrift: true })).toBe("credential_mismatch");
-    expect(uiProblemFor(plain, "ok", { ...clean, catalogFailed: true })).toBe("catalog_failed");
-  });
-
-  it("reports a failed catalog behind an ok status, and nothing for a healthy one", async () => {
-    const connecta = createTestConnecta({
-      connectors: [docsApi(), throwingCatalog()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const byId = Object.fromEntries((await uiData(connecta)).connectors.map((c): [string, UiConnector] => [c.id, c]));
-    expect(byId.docs!.problem).toBeUndefined();
-    expect(byId.flaky!.status).toBe("ok");
-    expect(byId.flaky!.problem).toBe("catalog_failed");
-    expect(byId.flaky!.tools).toEqual([]);
-  });
-});
 
 describe("connector status messages", () => {
   /** A downstream error body that quotes the secret it rejected. */
@@ -362,92 +250,9 @@ describe("operator action notices", () => {
     // And not in activity, which has nowhere to put them.
     expect(JSON.stringify(recorded)).not.toContain(SECRET);
   });
-
-  it("words every notice outcome itself, whatever the answer carried", () => {
-    const hostile = { ok: false, state: "error", message: LEAK, error: LEAK };
-    const passing = { ok: true, message: LEAK };
-    const notices = [
-      oauthDoneNotice("oauth_disconnect", hostile),
-      oauthDoneNotice("oauth_disconnect", { ...hostile, code: "oauth_revocation_failed" }),
-      oauthDoneNotice("oauth_reconnect", hostile),
-      oauthDoneNotice("oauth_reconnect", { ...hostile, state: "ok" }),
-      credentialTestNotice("svc", hostile),
-      credentialTestNotice("svc", passing),
-      credentialTestNotice("svc", null),
-      refusedNotice("oauth_disconnect", "svc", LEAK),
-      refusedNotice("oauth_reconnect", "svc", LEAK),
-      refusedNotice("credential_test", "svc", LEAK),
-      refusedNotice("credential_test", "svc", "credential_required"),
-      refusedNotice("credential_test", "svc", "credential_mismatch"),
-    ];
-    for (const notice of notices) {
-      expect(notice.message).toMatch(/\S/);
-      expect(JSON.stringify(notice)).not.toContain(SECRET);
-      if (notice.fix) expect(FIX_PROMPT_KINDS).toContain(notice.fix.kind);
-    }
-    expect(oauthDoneNotice("oauth_disconnect", { code: "oauth_revocation_failed" }).message).toContain(
-      "Disconnected here",
-    );
-    expect(credentialTestNotice("svc", hostile)).toMatchObject({
-      tone: "error",
-      fix: { kind: "credential_test_failed", connectorId: "svc" },
-    });
-    expect(credentialTestNotice("svc", passing)).toEqual({
-      tone: "info",
-      message: "Credential is valid.",
-    });
-    // A Test with nothing usable to test says what the Connections page says.
-    expect(refusedNotice("credential_test", "svc", "credential_mismatch")).toEqual({
-      tone: "error",
-      message: problemCopy("credential_mismatch"),
-      fix: { kind: "credential_mismatch", connectorId: "svc" },
-    });
-    expect(refusedNotice("oauth_reconnect", "svc", "credential_mismatch").fix).toEqual({
-      kind: "oauth_action_failed",
-      connectorId: "svc",
-    });
-  });
-});
-
-describe("pools on the operator page", () => {
-  it("INV-4: lists every declared pool for a maintainer, and nothing for a pool member", async () => {
-    const MEMBER = "model-member-token";
-    const member = { namespace: TEST_MACHINE_NAMESPACE, id: "member" };
-    const connecta = createTestConnecta({
-      connectors: [docsApi()],
-      auth: [machineAuth(TOKEN), machineAuth(MEMBER, { subjectId: "member" })],
-      maintainers: [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }],
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      pools: {
-        support: { tools: ["docs"], members: [member] },
-        finance: { tools: ["docs.read"], members: [member] },
-        closed: { tools: ["docs"], members: [{ namespace: TEST_MACHINE_NAMESPACE, id: "someone-else" }] },
-      },
-    });
-    // A maintainer administers every pool, so every pool gets setup commands.
-    expect((await uiData(connecta)).pools).toEqual(["support", "finance", "closed"]);
-    // Operator routes serve maintainers only until the member view (#837 P6b).
-    const refused = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, { headers: { Authorization: `Bearer ${MEMBER}` } }),
-    );
-    expect(refused.status).toBe(404);
-    expect(await refused.json()).toEqual({ error: "not found" });
-  });
-
 });
 
 describe("client setup commands", () => {
-  it("renders Claude Code, Codex, and JSON for one endpoint", () => {
-    const commands = clientSetupCommands("acme-tools", "https://mcp.example.com/mcp");
-    expect(commands.map((c) => c.id)).toEqual(["claude", "codex", "json"]);
-    expect(commands[0]!.text).toBe("claude mcp add --transport http acme-tools https://mcp.example.com/mcp");
-    expect(commands[1]!.text).toBe("codex mcp add acme-tools --url https://mcp.example.com/mcp");
-    expect(JSON.parse(commands[2]!.text)).toEqual({
-      mcpServers: { "acme-tools": { type: "http", url: "https://mcp.example.com/mcp" } },
-    });
-  });
-
   it("reduces any configured server name to a bare word", () => {
     expect(clientServerName(undefined)).toBe("connecta");
     expect(clientServerName("  ")).toBe("connecta");

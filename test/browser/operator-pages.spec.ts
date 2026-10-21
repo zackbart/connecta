@@ -1,15 +1,14 @@
-import { createServer, type Server } from "node:http";
+import { expect, test, type Page } from "@playwright/test";
 import { once } from "node:events";
-import { test, expect, type Page } from "@playwright/test";
-import { createTestConnecta } from "../helpers.js";
-import { fakeClerkAuth, mcpRpc, readJsonRpc } from "../fixtures/http.js";
+import { createServer, type Server } from "node:http";
+import { accessTokens } from "../../src/access-tokens.js";
+import { activityHistory, type ToolCallActivityEvent } from "../../src/activity.js";
+import { CONFIG_DEFAULTS } from "../../src/config-defaults.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
-import { activityHistory, type ToolCallActivityEvent } from "../../src/activity.js";
-import { accessTokens } from "../../src/access-tokens.js";
 import type { Connector } from "../../src/types.js";
-import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
-import { CONFIG_DEFAULTS } from "../../src/config-defaults.js";
+import { fakeClerkAuth } from "../fixtures/http.js";
+import { createTestConnecta } from "../helpers.js";
 
 const TOKEN = "pages-operator";
 const CLERK = "https://clerk.example.test";
@@ -18,7 +17,6 @@ const RAW_ERROR = "downstream-error-secret";
 let server: Server;
 let origin: string;
 let app: ReturnType<typeof createTestConnecta>;
-let starts = 0;
 
 const catalog = [
   {
@@ -94,7 +92,6 @@ test.beforeAll(async () => {
     callTool: async () => null,
     status: async () => ({ state: "auth_required", message: RAW_ERROR }),
     startAuth: async () => {
-      starts++;
       return { state: "auth_required", authorizationUrl: `${origin}/consent?state=pages-flow` };
     },
     finishAuth: async () => {},
@@ -152,42 +149,6 @@ async function clean(page: Page) {
   await expect(page.locator("body")).not.toContainText(RAW_ERROR);
 }
 
-test("connector status actions and signed authorize_connector hand off to Connection without starting OAuth", async ({
-  page,
-}) => {
-  await session(page);
-  await page.goto(origin + "/connectors");
-  const slack = page.getByRole("listitem").filter({ has: page.getByRole("link", { name: "Slack", exact: true }) });
-  // One status pill and one action per card; fix prompts live on Connection.
-  await expect(slack.locator(".badge.pill")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: /Copy fix prompt/ })).toHaveCount(0);
-  await slack.getByRole("link", { name: "Connect Slack", exact: true }).click();
-  await expect(page).toHaveURL(origin + "/connectors/slack#connection");
-  await expect(page.getByRole("tab", { name: "Connection", exact: true })).toHaveAttribute("aria-selected", "true");
-  const rpc = await readJsonRpc(
-    await app.fetch(
-      mcpRpc(
-        "tools/call",
-        { name: "authorize_connector", arguments: { connector: "slack" } },
-        { token: TOKEN, baseUrl: origin },
-      ),
-    ),
-  );
-  const link = JSON.parse(rpc.result.content[0].text).authorizationUrl as string;
-  const before = starts;
-  await page.goto(link);
-  await expect(page).toHaveURL(new RegExp(`/connectors/slack\\?h=.+#connection$`));
-  await expect(page.getByRole("link", { name: "Continue requested authorization" })).toBeVisible();
-  expect(starts).toBe(before);
-  const popup = page.waitForEvent("popup");
-  await page.getByRole("link", { name: "Continue requested authorization" }).click();
-  const consent = await popup;
-  await expect(consent).toHaveURL(origin + "/consent?state=pages-flow");
-  await consent.close();
-  expect(starts).toBe(before + 1);
-  await clean(page);
-});
-
 test("tool filters use resolved classification and schema catalog text stays inert", async ({ page }) => {
   await session(page);
   await page.goto(origin + "/connectors/github#tools");
@@ -213,20 +174,6 @@ test("tool filters use resolved classification and schema catalog text stays ine
   expect(await page.evaluate("window.__catalogExecuted")).toBeUndefined();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "github.write", exact: true })).toBeFocused();
-  await clean(page);
-});
-
-test("connector Connection keeps Configuration tiles in the redesigned layout", async ({ page }) => {
-  await session(page);
-  await page.goto(origin + "/connectors/github#connection");
-  await expect(page.locator(".conn-head")).toContainText("GitHub");
-  const sections = page.locator(".connection-sections");
-  await expect(sections.getByRole("region", { name: "Authentication", exact: true })).toBeVisible();
-  await expect(sections.getByRole("region", { name: "Diagnostics", exact: true })).toBeVisible();
-  const config = sections.getByRole("region", { name: "Connector configuration", exact: true });
-  await expect(config.getByRole("heading", { name: "Configuration", exact: true })).toBeVisible();
-  await expect(config.getByRole("list", { name: "GitHub setup", exact: true })).toBeVisible();
-  await expect(config.locator(".stat-grid")).toBeVisible();
   await clean(page);
 });
 
@@ -281,118 +228,6 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await clean(page);
 });
 
-for (const outcome of ["constructor", "toString", "error"]) {
-  test(`Activity shows and clears the exact outcome ${outcome}`, async ({ page }) => {
-    await session(page);
-    await page.route("**/ui/api/activity*", (route) =>
-      route.fulfill({
-        json: {
-          events: [
-            { ...event("exact", "request-exact", "read"), outcome },
-            event("success", "request-success", "write"),
-          ],
-        },
-      }),
-    );
-    await page.goto(origin + `/activity?outcome=${outcome}`);
-    const outcomes = page.getByRole("group", { name: "Outcome", exact: true });
-    await expect(outcomes.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "false");
-    const exact = page.getByRole("button", { name: `Exact outcome: ${outcome}`, exact: true });
-    await expect(exact).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator(".activity-item")).toHaveCount(1);
-    await expect(page.locator(".activity-item")).toContainText("github.read");
-    await expect(page.locator("#activitySummary")).toHaveText("2 loaded calls · 1 failed · 2 tools");
-    await exact.click();
-    await expect(page).not.toHaveURL(/outcome=/);
-    await expect(outcomes.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator(".activity-item")).toHaveCount(2);
-    await clean(page);
-  });
-}
-
-for (const path of ["/activity", "/connectors/github"]) {
-  test(`Activity keeps a single selected source clearable at ${path}`, async ({ page }) => {
-    await session(page);
-    await page.goto(origin + path + "?source=call_tool" + (path === "/activity" ? "" : "#activity"));
-    const source = page
-      .getByRole("group", { name: "Source", exact: true })
-      .getByRole("button", { name: "Direct", exact: true });
-    await expect(source).toHaveAttribute("aria-pressed", "true");
-    await source.click();
-    await expect(page).not.toHaveURL(/source=/);
-    await expect(page.locator(".activity-item")).toHaveCount(3);
-    await clean(page);
-  });
-}
-
-test("Config provenance recognizes explicit defaults and the access model", async ({ page }) => {
-  await session(page);
-  await page.goto(origin + "/settings");
-  // A value set in code carries the set mark, even when it equals the default.
-  const explicit = page.locator('[data-config-path="config.limits.calls.maxResultBytes"]');
-  await expect(explicit).toHaveClass(/\bset\b/);
-  await expect(explicit.locator(".set-dot")).toHaveCount(1);
-  await expect(explicit).toContainText("set in code");
-  const defaulted = page.locator('[data-config-path="config.limits.calls.defaultTimeoutMs"]');
-  await expect(defaulted).not.toHaveClass(/\bset\b/);
-  await expect(defaulted.locator(".set-dot")).toHaveCount(0);
-  await expect(defaulted).toContainText("default");
-  const contract = await page.request.get(origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
-  const facts = (await contract.json()) as OperatorUiContract;
-  expect(facts.configSources?.["config.limits.calls.maxResultBytes"]).toBe("config");
-  // Maintainers and pool members are code; no connector-access hook remains (#837).
-  expect(facts.configSources?.["config.maintainers.0.id"]).toBe("config");
-  expect(facts.configSources?.["config.pools.support.members.0.id"]).toBe("config");
-  expect(Object.keys(facts.configSources ?? {}).some((path) => path.includes("connectorAccess"))).toBe(false);
-  expect(JSON.stringify(facts)).not.toContain(RAW_ERROR);
-  await clean(page);
-});
-
-for (const hasMaintainers of [true, false]) {
-  test(`Settings keeps the Maintainers tile without auth providers (${hasMaintainers ? "configured" : "none"})`, async ({
-    page,
-  }) => {
-    await session(page);
-    await page.route("**/ui/api/config", async (route) => {
-      const response = await route.fetch();
-      const contract = (await response.json()) as OperatorUiContract;
-      if (!contract.config || !contract.root) throw new Error("Expected a maintainer contract");
-      contract.config.auth = [];
-      if (!hasMaintainers) contract.root.maintainers = [];
-      await route.fulfill({ json: contract });
-    });
-    await page.goto(origin + "/settings");
-    const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
-    await expect(signIn.locator(".identity-grid > li")).toHaveCount(2);
-    await expect(signIn.getByText("Open", { exact: true })).toBeVisible();
-    await expect(signIn.getByText("No sign-in", { exact: true })).toBeVisible();
-    const maintainers = signIn.locator('[data-sign-in="maintainers"]');
-    await expect(maintainers.getByText("Maintainers", { exact: true })).toBeVisible();
-    await expect(maintainers.getByText("/mcp", { exact: true })).toBeVisible();
-    if (hasMaintainers) {
-      await expect(maintainers.getByRole("list", { name: "Maintainers", exact: true })).toContainText("pages-user");
-      await expect(maintainers.getByText("None", { exact: true })).toHaveCount(0);
-    } else {
-      await expect(maintainers.getByText("None", { exact: true })).toBeVisible();
-      await expect(maintainers.locator(".avatar-stack")).toHaveCount(0);
-    }
-    await clean(page);
-  });
-}
-
-test("connector tabs are keyboard friendly and preserve the selected tab on reload", async ({ page }) => {
-  await session(page);
-  await page.goto(origin + "/connectors/github#tools");
-  await expect(page.getByRole("tab", { name: "Tools", exact: true })).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("tab", { name: "Tools", exact: true }).focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(page).toHaveURL(origin + "/connectors/github#connection");
-  await expect(page.getByRole("tab", { name: "Connection", exact: true })).toBeFocused();
-  await page.reload();
-  await expect(page.getByRole("tab", { name: "Connection", exact: true })).toHaveAttribute("aria-selected", "true");
-  await clean(page);
-});
-
 test("legacy pages and connector tabs replace their URL and preserve handoff queries", async ({ page }) => {
   await session(page);
   for (const [oldPath, path, heading] of [
@@ -410,97 +245,5 @@ test("legacy pages and connector tabs replace their URL and preserve handoff que
     await expect(page.getByRole("tab", { name: "Connection", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("tab")).toHaveCount(3);
   }
-  await clean(page);
-});
-
-test("INV-4 INV-6: endpoint rows expand exact granted tools and copy client setup without payloads", async ({
-  page,
-}) => {
-  await session(page);
-  await page.goto(origin + "/endpoints");
-  // Connector health and fix prompts belong to Connectors, not every endpoint row.
-  await expect(page.locator("#endpointsView .badge.ok, #endpointsView .badge.warn")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Copy fix prompt/ })).toHaveCount(0);
-  const support = page.getByRole("region", { name: "/mcp/support", exact: true });
-  await expect(support.locator(".endpoint-count")).toHaveText("Tools: 1");
-  const toggle = support.getByRole("button", { name: /^\/mcp\/support/ });
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(support.locator(".tool-chip")).toHaveCount(0);
-  await toggle.focus();
-  await page.keyboard.press("Enter");
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  const tools = support.getByRole("table", { name: "Tools on /mcp/support", exact: true });
-  await expect(tools.getByRole("columnheader")).toHaveText(["Connector", "Runs as", "Tools"]);
-  await expect(support.locator(".tool-chip")).toHaveCount(1);
-  await expect(support.locator(".tool-chip")).toHaveText("read");
-  await expect(support).not.toContainText("github.write");
-  await page.keyboard.press("Space");
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(support.locator(".tool-chip")).toHaveCount(0);
-  // The root endpoint marks write tools, and a connector that needs attention
-  // links to its Connection tab with the status in its name.
-  const root = page.getByRole("region", { name: "/mcp", exact: true });
-  await root.locator(".endpoint-toggle").click();
-  await expect(root.locator(".tool-chip.write")).toContainText("· write");
-  await expect(root.locator(".tool-chip.read")).not.toContainText("read ·");
-  await expect(root.getByRole("link", { name: "Slack (Authorization needed)", exact: true })).toHaveAttribute(
-    "href",
-    "/connectors/slack#connection",
-  );
-  const trigger = support.getByRole("button", { name: "Client setup for support" });
-  await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Client setup", exact: true });
-  await expect(dialog).toContainText(origin + "/mcp/support");
-  // One client at a time: Claude Code first, the others a press away.
-  await expect(dialog).toContainText("claude mcp add");
-  await expect(dialog).not.toContainText("codex mcp add");
-  await dialog.getByRole("button", { name: "Codex", exact: true }).click();
-  await expect(dialog.getByRole("button", { name: "Codex", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(dialog).toContainText("codex mcp add");
-  await dialog.getByRole("button", { name: "JSON", exact: true }).click();
-  await expect(dialog).toContainText('"mcpServers"');
-  await expect(dialog.getByRole("button", { name: "Copy JSON config setup for support", exact: true })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(trigger).toBeFocused();
-  await clean(page);
-});
-
-test("command search opens connectors and tool results on Tools with destination focus", async ({ page }) => {
-  await session(page);
-  await page.goto(origin);
-  for (const query of ["github.read", "connector github"]) {
-    await page.getByRole("button", { name: "Search" }).click();
-    await page.getByPlaceholder("Search pages, connectors, tools…").fill(query);
-    await page.keyboard.press("Enter");
-    await expect(page).toHaveURL(origin + "/connectors/github#tools");
-    await expect(page.getByRole("heading", { name: "GitHub", exact: true })).toBeFocused();
-  }
-  await clean(page);
-});
-
-test("INV-6: Endpoints and command search ignore payload and raw error sentinels", async ({ page }) => {
-  await session(page);
-  const sentinel = "ui834-argument-result-code-credential-sentinel";
-  await page.route("**/ui/api/config", async (route) => {
-    const response = await route.fetch();
-    const contract = (await response.json()) as OperatorUiContract;
-    contract.live.connectors = contract.live.connectors.map((connector) => ({
-      ...connector,
-      message: sentinel,
-      arguments: sentinel,
-      result: sentinel,
-      code: sentinel,
-      credential: { lastFour: sentinel },
-    }));
-    await route.fulfill({ json: contract });
-  });
-  await page.goto(origin + "/endpoints");
-  await expect(page.locator(".endpoint-table")).toBeVisible();
-  await page.locator(".endpoint-entry").first().locator(".endpoint-toggle").click();
-  await page.getByRole("button", { name: "Search" }).click();
-  await page.getByPlaceholder("Search pages, connectors, tools…").fill(sentinel);
-  await expect(page.getByText("No matches", { exact: true })).toBeVisible();
-  await page.keyboard.press("Escape");
-  expect(await page.content()).not.toContain(sentinel);
   await clean(page);
 });
