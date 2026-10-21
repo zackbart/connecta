@@ -96,6 +96,33 @@ function authAdmissionWorker(backend?: string) {
   };
 }
 
+// The Worker handler exported as is, so workerd itself calls it, plus named
+// middleware and control entrypoints sharing its isolate. Without
+// enable_request_signal the same handler reports retirement disabled.
+function authAdmissionEntryWorker(origin: string, requestSignal: boolean) {
+  const name = requestSignal ? "auth-admission-entry" : "auth-admission-entry-no-signal";
+  return {
+    name,
+    compatibilityDate: "2025-01-01",
+    compatibilityFlags: [
+      "nodejs_compat",
+      "service_binding_extra_handlers",
+      ...(requestSignal ? ["enable_request_signal"] : []),
+    ],
+    bindings: { ORIGIN: origin },
+    serviceBindings: { SELF: name },
+    modules: true,
+    script: buildSync({
+      entryPoints: [fileURLToPath(new URL("./test/fixtures/auth-admission/entry.ts", import.meta.url))],
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      conditions: ["workerd", "worker", "browser"],
+      write: false,
+    }).outputFiles[0]!.text,
+  };
+}
+
 export default defineConfig({
   test: {
     reporters: ["default", new CoverageReporter()],
@@ -170,11 +197,17 @@ export default defineConfig({
                 CLERK_ORGANIZATION: "clerk-organization",
                 AUTH_ADMISSION: "auth-admission",
                 AUTH_ADMISSION_SDK: "auth-admission-sdk",
+                AUTH_ADMISSION_ENTRY: "auth-admission-entry",
+                AUTH_ADMISSION_MIDDLEWARE: { name: "auth-admission-entry", entrypoint: "middleware" },
+                AUTH_ADMISSION_CONTROL: { name: "auth-admission-entry", entrypoint: "control" },
+                AUTH_ADMISSION_NO_SIGNAL: "auth-admission-entry-no-signal",
               },
               workers: [
                 await clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
+                authAdmissionEntryWorker(inject("authAdmissionServer"), true),
+                authAdmissionEntryWorker(inject("authAdmissionServer"), false),
               ],
             },
           })),

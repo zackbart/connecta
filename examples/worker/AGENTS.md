@@ -9,7 +9,10 @@ adding people, connecting shared credentials, issuing/rotating/revoking agent
 tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
 
 - Edit `src/connecta.config.ts` for connectors, authentication, storage, public
-  URL, and optional modules. `src/index.ts` only starts it. Set plain vars
+  URL, and optional modules. `src/index.ts` only starts it: keep its
+  `workerHandler` the module's default export, unwrapped (spread it to add a
+  `scheduled` or `queue` handler), so `/health` reports
+  `admission.authentication.retirement` enabled. Set plain vars
   `CONNECTA_ACTIVITY="on"` for preserved activity.
 - Keep `cloudflareAccessAuth()` for human identity and `accessTokens(storage)`
   always installed over the same `CONNECTA_DB` for machines. Cloudflare Access

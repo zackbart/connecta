@@ -13,6 +13,8 @@ import {
   type ResolvedPool,
 } from "./membership.js";
 import { createFetchHandler } from "./server.js";
+import { fetchRetirement } from "./auth-admission.js";
+import { registerWorkerEntry } from "./worker-handler.js";
 import { droppedBrandingUrls, droppedThemeTokens, droppedUiAuthUrls } from "./branding.js";
 import { readConfig, type ConnectaConfig, type ResolvedConfig } from "./config.js";
 import { describeConfig, type ConnectaConfigDescription } from "./describe-config.js";
@@ -41,7 +43,10 @@ export type {
   DescribedLimit,
 } from "./describe-config.js";
 export interface Connecta {
-  /** Web-standard fetch handler. Usable as `export default { fetch: connecta.fetch }`. */
+  /**
+   * Web-standard fetch handler. On a Worker, export `workerHandler` instead:
+   * a request entering here counts authentication until it really settles.
+   */
   fetch: (request: Request, env?: unknown, ctx?: unknown) => Promise<Response>;
   registry: Registry;
   /**
@@ -327,14 +332,12 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     requestAdmission,
   });
   let closePromise: Promise<void> | undefined;
-  return {
-    fetch: (request, _env, ctx) =>
-      handler(
-        request,
-        ctx && typeof (ctx as { waitUntil?: unknown }).waitUntil === "function"
-          ? (ctx as import("./routes/shared.js").RuntimeExecutionContext)
-          : undefined,
-      ),
+  const runtimeContext = (ctx: unknown) =>
+    ctx && typeof (ctx as { waitUntil?: unknown }).waitUntil === "function"
+      ? (ctx as import("./routes/shared.js").RuntimeExecutionContext)
+      : undefined;
+  const connecta: Connecta = {
+    fetch: (request, _env, ctx) => handler(request, runtimeContext(ctx), fetchRetirement()),
     registry,
     describeConfig: () => description,
     close: async () => {
@@ -347,7 +350,11 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       await closePromise;
     },
   };
+  // Only workerHandler reaches this entry, carrying its own retirement verdict.
+  registerWorkerEntry(connecta, (request, ctx, retirement) => handler(request, runtimeContext(ctx), retirement));
+  return connecta;
 }
+export { workerHandler, type WorkerHandler } from "./worker-handler.js";
 export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
 export { keys, optionsOf, array, opaque, instance, strings, variants } from "./config-schema.js";

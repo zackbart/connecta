@@ -14,7 +14,7 @@ import type {
 } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
 import { assertsAgents, isAgentName } from "../agent-identity.js";
-import { authenticate, type AuthenticationInvocation } from "../auth-admission.js";
+import { authenticate, type AuthenticationInvocation, type AuthenticationRetirement } from "../auth-admission.js";
 import type { Logger } from "../types.js";
 import type { ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
@@ -56,6 +56,8 @@ export interface RouteContext {
   runtimeContext: RuntimeExecutionContext | undefined;
   /** The invocation this request's authentications settle into (src/auth-admission.ts). */
   invocation: AuthenticationInvocation | undefined;
+  /** Whether this request's entry can retire its charges, reported by /health. */
+  retirement: AuthenticationRetirement;
 }
 
 export function privateJson(body: unknown, init: ResponseInit = {}): Response {

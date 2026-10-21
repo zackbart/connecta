@@ -10,6 +10,7 @@ import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
+const workerd = typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
 const refused = (): AuthResult => ({ ok: false, response: new Response(null, { status: 401 }) });
 const request = (signal?: AbortSignal) => new Request(`${BASE}/mcp`, signal ? { signal } : {});
 
@@ -359,6 +360,7 @@ it("INV-7: a custom adapter ignoring cancellation moves to the allowance at ten 
         abandoned: 1,
         abandonedLimit: 16,
         abandonedSaturated: false,
+        retirement: { enabled: false, reason: workerd ? "not_worker_handler" : "not_workers" },
       });
     } finally {
       await app.close();

@@ -17,13 +17,15 @@ const SETTLEMENT_GRACE_MS = 1_000;
 const DEFAULT_DEADLINE_MS = 10_000;
 // Native Access lookups and agent-token storage reads.
 const NATIVE_DEADLINE_MS = 5_000;
-// Cloudflare cancels a stateless Worker invocation, with every I/O operation
-// it owns, at most 30 seconds after its response is sent or its client
+// Cloudflare cancels a Worker fetch invocation, with every I/O operation it
+// owns, at most 30 seconds after its response is sent or its client
 // disconnects (https://developers.cloudflare.com/workers/runtime-apis/context/).
 // Its settlement callbacks then never run, so its charges retire once that
-// instant has passed. The margin covers the runtime finishing a response after
-// Connecta observes it, and Worker clocks that advance only on I/O. Node makes
-// no such promise: there a charge counts until its work really settles.
+// instant has passed. Connecta knows those instants only for an invocation
+// whose outermost handler it is (workerHandler). The margin covers the runtime
+// finishing a response after Connecta observes it, and Worker clocks that
+// advance only on I/O. Every other entry, and Node, makes no such promise:
+// there a charge counts until its work really settles.
 const WAIT_UNTIL_LIMIT_MS = 30_000;
 const TERMINATION_MARGIN_MS = 5_000;
 let active = 0;
@@ -98,6 +100,83 @@ function retireEnded(logger: Pick<Logger, "info" | "warn" | "error"> | undefined
   }
 }
 
+/**
+ * Whether an entry may retire its invocation's charges, and if not why: one
+ * fixed reason, never a request fact.
+ * - `not_workers`: the runtime promises no invocation end.
+ * - `not_worker_handler`: the request entered through `connecta.fetch`.
+ * - `not_outermost_handler`: other JavaScript called `workerHandler`'s fetch,
+ *   or called it without the event's ExecutionContext.
+ * - `request_signal_disabled`: without `enable_request_signal`, a client
+ *   disconnect before the response is unobservable.
+ */
+export type AuthenticationRetirement =
+  | { enabled: true }
+  | {
+      enabled: false;
+      reason: "not_workers" | "not_worker_handler" | "not_outermost_handler" | "request_signal_disabled";
+    };
+
+const isWorkerd = () => typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
+
+/** `connecta.fetch` never owns its invocation's outer boundary. */
+export function fetchRetirement(): AuthenticationRetirement {
+  return { enabled: false, reason: isWorkerd() ? "not_worker_handler" : "not_workers" };
+}
+
+type V8ErrorConstructor = {
+  captureStackTrace(target: object, below: (...args: never[]) => unknown): void;
+  prepareStackTrace: unknown;
+  stackTraceLimit: number;
+};
+
+/**
+ * Whether the runtime itself called `handler`, which must be the caller of
+ * this check: no JavaScript frame sits below it. Middleware, a scheduled,
+ * queue, or alarm handler, a Durable Object, or an RPC method calling it
+ * leaves its own frame. Any doubt answers false. A bare function reference
+ * handed to a timer or promise reaction leaves none either; the outermost
+ * handler contract (documentation/auth.md) rules that out.
+ */
+function calledByRuntime(handler: (...args: never[]) => unknown): boolean {
+  const V8Error = Error as unknown as V8ErrorConstructor;
+  const { prepareStackTrace, stackTraceLimit } = V8Error;
+  try {
+    V8Error.stackTraceLimit = 1;
+    V8Error.prepareStackTrace = (_error: unknown, frames: unknown[]) => frames.length;
+    const holder: { stack?: unknown } = {};
+    V8Error.captureStackTrace(holder, handler);
+    return holder.stack === 0;
+  } catch {
+    return false;
+  } finally {
+    try {
+      V8Error.prepareStackTrace = prepareStackTrace;
+      V8Error.stackTraceLimit = stackTraceLimit;
+    } catch {
+      // A frozen Error refused the first assignment too.
+    }
+  }
+}
+
+/**
+ * Called first, synchronously, by `workerHandler`'s fetch. Retirement needs
+ * workerd itself to invoke that exact function for a fetch event, so its
+ * context is the event's own ExecutionContext and its Response is the one the
+ * platform sends, and `enable_request_signal`, so a client disconnect before
+ * that response is observed.
+ */
+export function workerRetirement(handler: (...args: never[]) => unknown, context: unknown): AuthenticationRetirement {
+  if (!isWorkerd()) return { enabled: false, reason: "not_workers" };
+  if (!calledByRuntime(handler) || typeof (context as { waitUntil?: unknown } | undefined)?.waitUntil !== "function") {
+    return { enabled: false, reason: "not_outermost_handler" };
+  }
+  const flags = (globalThis as { Cloudflare?: { compatibilityFlags?: Record<string, boolean> } }).Cloudflare
+    ?.compatibilityFlags;
+  if (flags?.enable_request_signal !== true) return { enabled: false, reason: "request_signal_disabled" };
+  return { enabled: true };
+}
+
 /** Where a request's authentications settle: its `waitUntil` and, on a Worker, the invocation's end. */
 export interface AuthenticationInvocation {
   waitUntil(pending: Promise<unknown>): void;
@@ -105,25 +184,21 @@ export interface AuthenticationInvocation {
 }
 
 /**
- * Open the invocation that owns a request's authentications. Only a stateless
- * Worker fetch invocation has a platform end: workerd, with the event's own
- * ExecutionContext (a Durable Object's state has no `passThroughOnException`).
- * That end is first observed when the client disconnects, the handler fails,
- * or Connecta's response finishes or is cancelled; until then the invocation
- * may run indefinitely and nothing it owns retires. Every other host keeps
- * counting until real settlement.
+ * Open the invocation that owns a request's authentications. Only an entry
+ * with retirement enabled has a platform end. It is first observed when the
+ * client disconnects, the handler fails, or the response the platform sends
+ * finishes or is cancelled; until then the invocation may run indefinitely
+ * and nothing it owns retires. Every other entry keeps counting until real
+ * settlement.
  */
 export function openInvocation(
   request: Request,
   context: { waitUntil(pending: Promise<unknown>): void } | undefined,
+  retirement: AuthenticationRetirement,
 ): { invocation: AuthenticationInvocation | undefined; observe(served: Promise<Response>): Promise<Response> } {
   if (!context) return { invocation: undefined, observe: (served) => served };
   const waitUntil = context.waitUntil.bind(context);
-  const worker =
-    typeof navigator !== "undefined" &&
-    navigator.userAgent === "Cloudflare-Workers" &&
-    typeof (context as { passThroughOnException?: unknown }).passThroughOnException === "function";
-  if (!worker) return { invocation: { waitUntil }, observe: (served) => served };
+  if (!retirement.enabled) return { invocation: { waitUntil }, observe: (served) => served };
   const bound: InvocationBound = { aliveUntil: undefined, pending: 0 };
   const end = () => {
     request.signal.removeEventListener("abort", end);

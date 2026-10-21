@@ -63,8 +63,10 @@ export default Alchemy.Stack(
 
     const worker = yield* Cloudflare.Worker("Connecta", {
       name: "connecta",
+      // Its default export is workerHandler itself, unwrapped: the outermost
+      // fetch handler. Keep enable_request_signal: a client disconnect aborts
+      // its request, and authentication retirement needs both.
       main: "./src/index.ts",
-      // Keep enable_request_signal: a client disconnect aborts its request.
       compatibility: {
         date: "2025-01-01",
         flags: ["nodejs_compat", "enable_request_signal", "unhandled_rejection_after_microtask_checkpoint"],

@@ -99,8 +99,9 @@ allowlist. Machines are declared agents: they use `/agent/<pool>` with the
 agent's `cta_` bearer as their only credential, once the
 [agent bypass application](#agent-endpoints-behind-cloudflare-access) exists;
 Access service identity alone is refused. Keep
-`enable_request_signal`, construct Connecta once per isolate, and pass `ctx`
-through to `fetch`. The example owns those details and
+`enable_request_signal`, and export `workerHandler(start)` unwrapped as the
+Worker's default: it constructs Connecta once per isolate and passes the
+event's `ctx` through. The example owns those details and
 [the machine-token procedure](../examples/worker/README.md#machine-tokens).
 
 Keep `unhandled_rejection_after_microtask_checkpoint` in both `alchemy.run.ts`
@@ -222,8 +223,11 @@ receives the same 503, the log records `authentication_abandoned_saturated`,
 and `/health` reports `admission.authentication.abandonedSaturated: true`.
 On Node, stalled work counts until it settles. On Workers, Connecta also retires
 an invocation's stalled work 35 seconds after its response or disconnect, once
-the platform has cancelled it; this needs the Worker example's pass-through
-`fetch` and `enable_request_signal` flag.
+the platform has cancelled it. That needs the Worker example's entry:
+`workerHandler` exported unwrapped as the outermost fetch handler, with the
+`enable_request_signal` flag. Wrapped by middleware or called from another
+handler, it counts stalled work until it settles, like Node.
+`/health` reports which as `admission.authentication.retirement`.
 These bounds limit outstanding work, not requests per second or a quota shared by several
 isolates or deployments. Budget ingress across the identity-provider account;
 see [authentication capacity](./auth.md#authentication-capacity-and-ingress-limiting)

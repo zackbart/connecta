@@ -23,7 +23,7 @@ migrations, and secrets.
 
 | File                                                   | What it is                                                                                                                                                        |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`                                         | the Worker entrypoint — starts the configuration, under 30 lines                                                                                                  |
+| `src/index.ts`                                         | the Worker entrypoint — exports `workerHandler` as the outermost fetch handler, under 30 lines                                                                    |
 | `src/connecta.config.ts`                               | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)`                                                                                    |
 | `alchemy.run.ts`                                       | the deployment: Worker, vars, secrets, D1, Worker Loader, and both Access applications                                                                            |
 | `wrangler.jsonc`                                       | local `wrangler dev` only, with a simulated Access identity; never used to deploy                                                                                 |
@@ -37,6 +37,15 @@ and returns the admission permit promptly. The total admitted-request bound in
 on a later request if workerd ends one without delivering a signal or stream
 cancellation. Set it above the longest authorization, tool call, and response
 delivery your deployment expects to serve.
+
+Keep `src/index.ts` exporting `workerHandler(...)` itself as the default, never
+wrapped by middleware or called from another handler; add a cron or queue
+handler beside it with `export default { ...handler, scheduled }`. Only then
+does connecta know when each invocation really ends, and so recover
+authentication work the platform cancelled. `GET /health` reports
+`admission.authentication.retirement` as `{ "enabled": true }` there, and
+otherwise names why not
+([authentication capacity](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#authentication-capacity-and-ingress-limiting)).
 
 Keep `unhandled_rejection_after_microtask_checkpoint` in both `alchemy.run.ts`
 and `wrangler.jsonc`: it defers unhandled-rejection reporting until the microtask
@@ -711,8 +720,8 @@ activity: env.CONNECTA_ACTIVITY === "on"
 
 Each write prunes a bounded batch of rows older than `retentionDays` (90 by
 default), so no Cron Trigger is needed; change the number there. Events carry no arguments, results, generated code,
-or raw error messages. The Worker entrypoint already forwards `ctx` to
-`connecta.fetch`, which lets async activity writes settle on `waitUntil`.
+or raw error messages. The Worker entrypoint's `workerHandler` already forwards the
+event's `ctx`, which lets async activity writes settle on `waitUntil`.
 
 `friction` is stored rather than derived because one of its classes belongs to
 a call that _succeeded_: a result too large to return inline is friction for

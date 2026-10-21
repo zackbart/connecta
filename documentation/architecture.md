@@ -143,14 +143,19 @@ An admitted non-preflight `/mcp` request then takes five steps in
    moves to a separate allowance of 16 abandoned operations, or stays active
    while that allowance is full. A full allowance refuses all new work, logged
    as `authentication_abandoned_saturated`; only a charge's end decrements it
-   and promotes an overdue active charge. On Node that end is real settlement.
-   On Workers it is also retirement: `src/server.ts` opens each invocation with
-   `openInvocation`, which stamps a plain `aliveUntil` 35 seconds after
-   Connecta's response finishes or is cancelled, the handler fails, or the
-   client disconnects (Cloudflare's 30-second `waitUntil` limit plus margin).
-   Admission and health then lazily retire unsettled charges past it, logging
-   `authentication_invocation_ended`; a late settlement finds the charge
-   closed. Before that stamp no charge retires. Health exposes both counters. Access
+   and promotes an overdue active charge. Everywhere that end is real settlement, except
+   behind a Worker's outermost `workerHandler` (`src/worker-handler.ts`). Its
+   `fetch` first asks `workerRetirement` whether workerd itself called it (no
+   JavaScript caller frame) with `enable_request_signal` set; only then does
+   `openInvocation` (from `src/server.ts`) stamp a plain `aliveUntil` 35
+   seconds after Connecta's response finishes or is cancelled, the handler
+   fails, or the client disconnects (Cloudflare's 30-second `waitUntil` limit
+   plus margin). `connecta.fetch`, a wrapped or called handler, and other event
+   handlers never retire, since their caller may consume the response and run
+   on. Admission and health then lazily retire unsettled charges past the
+   stamp, logging `authentication_invocation_ended`; a late settlement finds
+   the charge closed. Before that stamp no charge retires, and health reports
+   the entry's fixed `retirement` verdict. Health exposes both counters. Access
    and agent verification race five-second deadlines while registering their
    uncancellable native work with the invocation's charge. The request's
    `ctx.waitUntil` keeps that same settlement continuation runnable on Worker
