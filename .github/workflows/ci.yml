@@ -108,7 +108,7 @@ jobs:
 
   browser:
     needs: static
-    if: needs.static.outputs.browser == 'true'
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.browser == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -156,7 +156,7 @@ jobs:
 
   audit:
     needs: static
-    if: needs.static.outputs.audit == 'true'
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.static.outputs.audit == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
