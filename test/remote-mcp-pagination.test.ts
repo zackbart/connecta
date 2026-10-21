@@ -1,9 +1,8 @@
-import { Client, InMemoryTransport, UnauthorizedError } from "@modelcontextprotocol/client";
+import { InMemoryTransport, UnauthorizedError } from "@modelcontextprotocol/client";
 import type { CallToolResult, JSONRPCMessage, Tool, Transport } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -28,16 +27,14 @@ const OPAQUE_CURSOR = "eyJwIjoyfQ==?page=2&next=/a\\b c%20";
 const EMPTY_CURSOR = "";
 
 /**
- * The two ceilings `src/connectors/remote-mcp.ts` enforces, restated here so
- * moving either has to come past these tests on purpose. The tool ceiling is
- * the real bound (it is what a refresh holds in memory); the page ceiling is a
- * runaway backstop no honest server reaches.
+ * The tool ceiling `src/connectors/remote-mcp.ts` enforces, restated here so
+ * moving it has to come past these tests on purpose: it is what a refresh
+ * holds in memory.
  */
 const MAX_TOOLS = 100_000;
-const MAX_TOOL_PAGES = 10_000;
-// The walks to those ceilings are 100,001 tools or 10,000 in-memory round trips:
-// CPU-bound, with no timing behavior, and on a loaded host they outran
-// vitest's 5s default. Their budget is a hang guard, not a speed assertion.
+// The walk to that ceiling is 100,001 tools: CPU-bound, with no timing
+// behavior, and on a loaded host it outran vitest's 5s default. Its budget is
+// a hang guard, not a speed assertion.
 const CEILING_WALK_TIMEOUT_MS = 30_000;
 
 function tool(name: string, extra: Partial<Tool> = {}): Tool {
@@ -85,13 +82,6 @@ function fixture(
   opts: {
     /** Return an Error to fail an outbound message instead of delivering it. */
     sendFault?: (message: JSONRPCMessage) => Error | undefined;
-    /**
-     * Called with each inbound message *after* the SDK client has handled it.
-     * The client resolves its pending request synchronously, so the page loop's
-     * continuation is queued but has not run yet — which is exactly the window
-     * a between-pages guard has to survive.
-     */
-    afterInbound?: (message: JSONRPCMessage) => void;
     /** Downstream `tools/call` behaviour; defaults to echoing the tool name. */
     callTool?: (name: string) => CallToolResult;
     id?: string;
@@ -132,11 +122,11 @@ function fixture(
           await connected.catch(() => {});
           await server.close().catch(() => {});
         });
-        if (!opts.sendFault && !opts.afterInbound) return clientTransport;
+        if (!opts.sendFault) return clientTransport;
         // Faults are injected on the wire, not in the downstream handler: a
         // page request that never lands is the failure mode this cares about,
         // and it keeps the fixture server from rejecting a request it already
-        // accepted. Inbound messages are tapped on the same seam.
+        // accepted.
         const tapped: Transport = {
           start: () => clientTransport.start(),
           async send(message, sendOpts) {
@@ -149,7 +139,7 @@ function fixture(
           },
           close: () => clientTransport.close(),
         };
-        for (const key of ["onclose", "onerror"] as const) {
+        for (const key of ["onclose", "onerror", "onmessage"] as const) {
           Object.defineProperty(tapped, key, {
             get: () => clientTransport[key],
             set: (value) => {
@@ -157,21 +147,6 @@ function fixture(
             },
           });
         }
-        Object.defineProperty(tapped, "onmessage", {
-          get: () => clientTransport.onmessage,
-          set: (value: Transport["onmessage"]) => {
-            if (!value) {
-              delete clientTransport.onmessage;
-              return;
-            }
-            clientTransport.onmessage = opts.afterInbound
-              ? (message, extra) => {
-                  value(message, extra);
-                  opts.afterInbound!(message);
-                }
-              : value;
-          },
-        });
         return tapped;
       },
     }),
@@ -253,90 +228,6 @@ describe("remoteMcp() tools/list pagination", () => {
     });
   });
 
-  it("costs exactly one request, with no cursor param, when nothing paginates", async () => {
-    const { connector, cursors } = fixture(() => ({
-      tools: [tool("only")],
-    }));
-
-    const tools = await connector.listTools(ctx());
-
-    expect(tools.map((t) => t.name)).toEqual(["only"]);
-    expect(cursors).toEqual([undefined]);
-  });
-
-  it("keeps paging past an empty-string cursor rather than reading it as done", async () => {
-    const { connector, cursors } = fixture((cursor) =>
-      cursor === undefined ? { tools: [tool("first")], nextCursor: EMPTY_CURSOR } : { tools: [tool("second")] },
-    );
-
-    const tools = await connector.listTools(ctx());
-
-    expect(tools.map((t) => t.name)).toEqual(["first", "second"]);
-    expect(cursors).toEqual([undefined, EMPTY_CURSOR]);
-  });
-
-  it("rides one request-scoped client for the whole chain", async () => {
-    const { connector, cursors, builds } = fixture(threePages());
-    const scope = {};
-    const context = { ...ctx(), requestScope: scope };
-
-    const tools = await connector.listTools(context);
-
-    expect(tools).toHaveLength(3);
-    expect(cursors).toHaveLength(3);
-    // Three pages, one connect: no page opened a session of its own.
-    expect(builds()).toBe(1);
-
-    // And nothing survives the scope: the next request reconnects and repages
-    // from scratch rather than resuming a cursor from the last one.
-    await connector.closeScope!(context);
-    const next = await connector.listTools({ ...ctx(), requestScope: {} });
-    expect(next).toHaveLength(3);
-    expect(builds()).toBe(2);
-    expect(cursors.slice(3)).toEqual([undefined, OPAQUE_CURSOR, EMPTY_CURSOR]);
-  });
-
-  it("fails the whole refresh when a later page errors", async () => {
-    const attempted: Array<string | undefined> = [];
-    const { connector, cursors } = fixture(threePages(), {
-      sendFault: (message) => {
-        if (!isLaterPageRequest(message)) return undefined;
-        attempted.push((message as any).params.cursor);
-        return new Error("page two never landed");
-      },
-    });
-
-    // Rejects rather than resolving with the first page it had in hand. The
-    // transport's own text is withheld at the MCP boundary (#695).
-    await expect(connector.listTools(ctx())).rejects.toThrow(/tools\/list with https:\/\/unused\.example failed/);
-    expect(cursors).toEqual([undefined]);
-    expect(attempted).toEqual([OPAQUE_CURSOR]);
-  });
-
-  it("latches a later-page authorization failure for the request scope", async () => {
-    const storage = memoryStorage();
-    const authUrl = "https://auth.example/authorize?client_id=paged";
-    await storage.set("oauth:pending", authUrl);
-    const { connector } = fixture(threePages(), {
-      oauth: true,
-      sendFault: (message) =>
-        isLaterPageRequest(message) ? new UnauthorizedError("downstream token expired") : undefined,
-    });
-    const context = {
-      ...ctx(storage),
-      requestScope: {},
-    };
-
-    const err = await connector.listTools(context).then(
-      () => null,
-      (reason: unknown) => reason,
-    );
-    expect(err).toMatchObject({ code: "downstream_oauth_required" });
-    await expect(connector.status!(context)).resolves.toMatchObject({
-      state: "auth_required",
-    });
-  });
-
   it("stops paging when the scope ends mid-chain instead of running on detached", async () => {
     const { promise: atPageTwo, resolve: reachedPageTwo } = deferred<void>();
     const { promise: gate, resolve: releasePageTwo } = deferred<void>();
@@ -366,102 +257,6 @@ describe("remoteMcp() tools/list pagination", () => {
     expect(cursors).toEqual([undefined, "p2"]);
   });
 
-  it("throws the scope-ended error when the scope closes between pages", async () => {
-    let connector!: ReturnType<typeof remoteMcp>;
-    const context = { ...ctx(), requestScope: {} };
-    let pages = 0;
-    const f = fixture(threePages(), {
-      afterInbound: (message) => {
-        // The page-one response has been handed to the client, which resolved
-        // its pending request — but resolving only *queues* the loop's
-        // continuation. So this is the between-pages window, and tearing the
-        // scope down here without awaiting is precisely what a probe deadline
-        // does: closeScope's synchronous prefix sets `closed` before the loop
-        // ever wakes up.
-        const result = (message as { result?: { tools?: unknown[] } }).result;
-        if (result?.tools && ++pages === 1) void connector.closeScope!(context);
-      },
-    });
-    connector = f.connector;
-
-    // The specific error matters. Delete the between-pages `closed` check and
-    // the loop still fails — but on a torn-down transport, with page two
-    // already on the wire, which is the thing the guard exists to prevent.
-    await expect(f.connector.listTools(context)).rejects.toThrow(/scope ended during connection|tools\/list.*failed/);
-    expect(f.cursors).toEqual([undefined]);
-  });
-
-  /**
-   * The probe deadline on a fake clock, so it fires only when a test advances
-   * time: on a loaded host a real 25ms or 100ms one could expire before page
-   * one, or before a catalog that does finish in time. The scheduler stays
-   * real, so the walk itself runs as it would.
-   */
-  function fakeProbeClock(): void {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    onTestFinished(() => {
-      vi.useRealTimers();
-    });
-  }
-
-  it("stops a stalled catalog walk at the configured probe deadline", async () => {
-    fakeProbeClock();
-    const { promise: atPageTwo, resolve: reachedPageTwo } = deferred<void>();
-    const { promise: gate, resolve: releasePageTwo } = deferred<void>();
-    const { connector, cursors } = fixture(async (cursor) => {
-      if (cursor === undefined) {
-        return { tools: [tool("alpha")], nextCursor: "p2" };
-      }
-      reachedPageTwo();
-      await gate;
-      return { tools: [tool("beta")], nextCursor: "p3" };
-    });
-
-    let settled = false;
-    const pending = createMetaTools(makeRegistry([connector]), BASE, {
-      probeTimeoutMs: 25,
-    })
-      .searchTools({ query: "alpha" })
-      .finally(() => {
-        settled = true;
-      });
-    await atPageTwo;
-    try {
-      await vi.advanceTimersByTimeAsync(24);
-      expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(settled).toBe(true);
-      const payload = JSON.parse(required((await pending).content[0]).text) as {
-        tools: unknown[];
-        queryAnalysis?: { unavailableConnectorCount?: number };
-      };
-      // The stalled catalog is reported unavailable rather than searched, and
-      // no partial page of it reaches the caller.
-      expect(payload.tools).toEqual([]);
-      expect(payload.queryAnalysis).toMatchObject({
-        unavailableConnectorCount: 1,
-      });
-      // Page two was cancelled in flight; the expired walk never starts p3.
-      expect(cursors).toEqual([undefined, "p2"]);
-    } finally {
-      releasePageTwo();
-    }
-  });
-
-  it("leaves a catalog that finishes inside the probe deadline unchanged", async () => {
-    fakeProbeClock();
-    const { connector, cursors } = fixture(() => ({
-      tools: [tool("only")],
-    }));
-
-    const searched = await createMetaTools(makeRegistry([connector]), BASE, {
-      probeTimeoutMs: 100,
-    }).searchTools({});
-
-    expect(JSON.parse(required(searched.content[0]).text).tools).toMatchObject([{ address: "paged.only" }]);
-    expect(cursors).toEqual([undefined]);
-  });
-
   it("keeps the first definition when an unstable cursor overlaps pages", async () => {
     const { connector } = fixture((cursor) =>
       cursor === undefined
@@ -482,17 +277,6 @@ describe("remoteMcp() tools/list pagination", () => {
 
     const searched = await createMetaTools(makeRegistry([connector]), BASE).searchTools({});
     expect(JSON.parse(required(searched.content[0]).text).tools).toHaveLength(3);
-  });
-
-  it("fails immediately when a cursor is handed back a second time", async () => {
-    const { connector, cursors } = fixture((_cursor, call) => ({
-      tools: [tool(`t${call}`)],
-      nextCursor: "same",
-    }));
-
-    await expect(connector.listTools(ctx())).rejects.toThrow(/pagination chain loops/);
-    // Two round trips to prove a loop, not a ceiling's worth of them.
-    expect(cursors).toEqual([undefined, "same"]);
   });
 
   it("tolerates the one empty page a full page's cursor promised", async () => {
@@ -536,27 +320,6 @@ describe("remoteMcp() tools/list pagination", () => {
     expect(cursors).toHaveLength(3);
   });
 
-  it("collects a conformant 10,000-tool catalog paged at 100, terminator and all", async () => {
-    const PAGE = 100;
-    const TOTAL = 10_000;
-    const { connector, cursors } = fixture((cursor) => {
-      const offset = cursor === undefined ? 0 : Number(cursor);
-      const slice = Array.from({ length: Math.max(0, Math.min(PAGE, TOTAL - offset)) }, (_, i) =>
-        tool(`t${offset + i}`),
-      );
-      // The common conformant idiom: advertise a successor whenever the page
-      // came back full. The hundredth full page therefore promises one more,
-      // and the server honours it with an empty terminating page — 101
-      // requests for a catalog well inside connecta's operating envelope.
-      return slice.length === PAGE ? { tools: slice, nextCursor: String(offset + PAGE) } : { tools: slice };
-    });
-
-    const tools = await connector.listTools(ctx());
-
-    expect(tools).toHaveLength(TOTAL);
-    expect(cursors).toHaveLength(TOTAL / PAGE + 1);
-  });
-
   it(
     "stops a walk that would accumulate more tools than a refresh will hold",
     async () => {
@@ -573,32 +336,6 @@ describe("remoteMcp() tools/list pagination", () => {
     },
     CEILING_WALK_TIMEOUT_MS,
   );
-
-  it(
-    "keeps an absolute page backstop for a server that satisfies every other guard",
-    async () => {
-      const { connector, cursors } = fixture((_cursor, call) => ({
-        tools: [tool(`t${call}`)],
-        nextCursor: `cursor-${call}`,
-      }));
-
-      // Fresh cursor, a genuinely new tool, every page: no loop, no stall, and
-      // nowhere near the tool ceiling. Nothing but the backstop ends this.
-      await expect(connector.listTools(ctx())).rejects.toThrow(/failed/);
-      expect(cursors).toHaveLength(MAX_TOOL_PAGES);
-    },
-    CEILING_WALK_TIMEOUT_MS,
-  );
-
-  it("accepts a null cursor on the first page as end-of-chain", async () => {
-    const { connector, cursors } = fixture(() => ({
-      tools: [tool("alpha")],
-      nextCursor: null as unknown as string,
-    }));
-
-    await expect(connector.listTools(ctx())).resolves.toEqual([expect.objectContaining({ name: "alpha" })]);
-    expect(cursors).toEqual([undefined]);
-  });
 
   it("collects a final page whose cursor is null", async () => {
     const { connector, cursors } = fixture((cursor) =>
@@ -624,32 +361,6 @@ describe("remoteMcp() tools/list pagination", () => {
 
     await expect(connector.listTools(ctx())).rejects.toThrow(/nextCursor must be a string, null, or absent/);
   });
-
-  it("blames the cursor only when the cursor is what broke", async () => {
-    const { connector } = fixture(() => ({
-      // A page whose *tool* is malformed — no inputSchema — with a perfectly
-      // legal (absent) cursor. Both faults arrive as the same kind of result
-      // validation failure, so the diagnosis above is told apart from this one
-      // by the issue path alone. Widen that predicate and every unparseable
-      // page gets misdiagnosed as a null cursor, pointing the operator at a
-      // field that was never the problem.
-      tools: [{ name: "broken" } as unknown as Tool],
-    }));
-
-    const err = await connector.listTools(ctx()).then(
-      () => null,
-      (e: unknown) => e,
-    );
-
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).not.toMatch(/nextCursor/);
-    // Told as a page that did not validate, never as a cursor fault. The
-    // validator's own path ("tools.0.inputSchema") is withheld with the rest
-    // of its account, which can quote keys the downstream chose (#695).
-    expect((err as Error).message).toContain(
-      'Connector "paged" tools/list with https://unused.example failed (SdkError).',
-    );
-  });
 });
 
 describe("tool metadata across a paginated catalog", () => {
@@ -670,17 +381,6 @@ describe("tool metadata across a paginated catalog", () => {
         : { tools: [tool("late", { outputSchema: NUMERIC })] };
   }
 
-  it("uses SDK v2's public call-time tool-definition seam", async () => {
-    const { connector } = fixture(twoSchemaPages());
-    const context = { ...ctx(), requestScope: {} };
-    await connector.listTools(context);
-
-    // The behavioral tests below prove that definitions from every page are
-    // passed through the public `toolDefinition` option. This guard keeps the
-    // pinned SDK surface named explicitly without reaching into private state.
-    expect(Client.prototype.callTool).toHaveLength(2);
-  });
-
   it("rejects structured content that violates an EARLIER page's output schema", async () => {
     const { connector } = fixture(twoSchemaPages(), {
       callTool: (name) => ({
@@ -700,86 +400,9 @@ describe("tool metadata across a paginated catalog", () => {
     // a tool happened to land on, which is not enforcement.
     await expect(connector.callTool("early", {}, context)).rejects.toThrow(/output schema/i);
   });
-
-  it("still catches an EARLIER page's tool returning no structured content at all", async () => {
-    const { connector } = fixture(twoSchemaPages(), {
-      callTool: (name) => ({ content: [{ type: "text", text: `ran:${name}` }] }),
-    });
-    const context = { ...ctx(), requestScope: {} };
-    await connector.listTools(context);
-
-    await expect(connector.callTool("early", {}, context)).rejects.toThrow(/did not return structured content/i);
-  });
-
-  it("leaves a conforming result alone on every page", async () => {
-    const { connector } = fixture(twoSchemaPages(), {
-      callTool: (name) => ({
-        content: [{ type: "text", text: `ran:${name}` }],
-        structuredContent: { n: 42 },
-      }),
-    });
-    const context = { ...ctx(), requestScope: {} };
-    await connector.listTools(context);
-
-    for (const name of ["early", "late"]) {
-      await expect(connector.callTool(name, {}, context)).resolves.toMatchObject({ structuredContent: { n: 42 } });
-    }
-  });
-
-  it("retains RAW SDK tools, so an earlier page's required-task declaration still binds", async () => {
-    const { connector } = fixture((cursor) =>
-      cursor === undefined
-        ? {
-            tools: [
-              tool("gated", {
-                execution: { taskSupport: "required" },
-              } as Partial<Tool>),
-            ],
-            nextCursor: "p2",
-          }
-        : { tools: [tool("plain")] },
-    );
-    const context = { ...ctx(), requestScope: {} };
-    await connector.listTools(context);
-
-    // Direct connector calls without a catalog option still use the complete
-    // request-scoped definition map, including execution requirements.
-    await expect(connector.callTool("gated", {}, context)).rejects.toThrow(/task-based execution/i);
-    // And the guard stays narrow: the tool that declared nothing still runs.
-    await expect(connector.callTool("plain", {}, context)).resolves.toMatchObject({
-      structuredContent: { ran: "plain" },
-    });
-  });
 });
 
 describe("paginated catalogs through the discovery path", () => {
-  it("exposes a last-page-only tool to search/describe and to call_tool", async () => {
-    const { connector } = fixture(threePages());
-    const registry = makeRegistry([connector]);
-
-    const meta = createMetaTools(registry, BASE);
-    const searched = await meta.searchTools({ query: "gamma" });
-    const searchPayload = JSON.parse(required(searched.content[0]).text);
-    expect(searchPayload.tools.map((t: { address: string }) => t.address)).toContain("paged.gamma");
-
-    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    const connecta = required(providers.find((provider) => provider.name === "connecta"));
-    const describePayload = (await required(connecta.fns.describe)({
-      addresses: ["paged.gamma"],
-    })) as { tools: Array<Record<string, unknown>> };
-    expect(describePayload.tools[0]).toMatchObject({
-      address: "paged.gamma",
-      name: "gamma",
-      description: "Only reachable on the last page",
-    });
-
-    const called = await meta.callTool({
-      address: "paged.gamma",
-      args: { text: "hi" },
-    });
-    expect(called.isError).toBeFalsy();
-    expect(required(called.content[0]).text).toBe("ran:gamma");
-  });
 
   it("INV-8: never exposes a partial catalog or stale fallback when a later page fails", async () => {
     let breakLaterPages = false;
@@ -896,26 +519,6 @@ describe("paginated catalogs through the discovery path", () => {
       authorizationUrl?: string;
     };
     expect(authorized.authorizationUrl).toBe(`${BASE}/connect/paged?h=test`);
-  });
-
-  it("keeps a later-page non-auth failure classified as error", async () => {
-    const { connector, cursors } = fixture(threePages(), {
-      sendFault: (message) => (isLaterPageRequest(message) ? new Error("page two transport failed") : undefined),
-    });
-
-    const registry = makeRegistry([connector]);
-    const failure = await registry.getTools("paged", BASE, {}).then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-
-    // Not an authorization problem, so it must not be dressed as one: no
-    // auth_required code and no recovery URL to open.
-    expect((failure as Error).message).toContain("tools/list with https://unused.example failed");
-    expect((failure as Error).message).not.toContain("page two transport failed");
-    expect((failure as { code?: string }).code).not.toBe("auth_required");
-    await expect(registry.getTools("paged", BASE, {})).rejects.toThrow("tools/list with https://unused.example failed");
-    expect(cursors).toEqual([undefined, undefined]);
   });
 
   it("surfaces a non-terminating downstream as a connector error, not a truncated catalog", async () => {

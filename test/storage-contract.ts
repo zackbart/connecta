@@ -6,7 +6,7 @@ import type { KVStorage } from "../src/index.js";
  * leading U+FEFF (a decoder must not take it for a byte order mark), and one
  * large enough to span many SQLite pages.
  */
-export const NUL_VALUES: readonly string[] = [
+const NUL_VALUES: readonly string[] = [
   "\0",
   "\0\0\0",
   "\0start",
@@ -23,7 +23,7 @@ export const NUL_VALUES: readonly string[] = [
 /**
  * Shared compare-and-set cases for every `KVStorage`. Not a suite: each
  * adapter's own suite calls this inside its `describe`, so the same contract
- * runs against memory, namespaced, SQLite, and D1 storage.
+ * runs against memory, SQLite, and D1 storage.
  *
  * Memory expiry uses a fake Date. SQL fixtures move stored expiry directly:
  * their database clock is independent of the caller's clock.

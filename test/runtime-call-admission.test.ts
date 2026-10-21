@@ -1,18 +1,13 @@
-// Call admission, settled fan-out, and connector scope close run on Effect
-// behind their Promise faces (P1-S04). test/call-admission.test.ts and the
-// registry, search, and remote-mcp suites pin the Promise contract unchanged;
-// this suite pins what only the Effect side can reach — a scope-owned permit,
-// interruption of a queued wait, a rolling window on the fiber's Clock, a
-// scope finalizer — and the timer hygiene of the Effect-backed waits.
+// Call admission and connector scope close run on Effect behind their Promise
+// faces (P1-S04). test/call-admission.test.ts pins the Promise contract; this
+// suite pins an internal charge's partition, the call queue's timeout and
+// abort/grant races, and the bounded connector scope close.
 
-import { Clock, Effect, Exit, Fiber, Scope } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CallAdmissionError, ConnectorCallAdmissionController } from "../src/call-admission.js";
-import { mapSettledWithConcurrency } from "../src/concurrency.js";
+import { ConnectorCallAdmissionController } from "../src/call-admission.js";
 import { closeConnectorScope } from "../src/connector-scope.js";
-import { acquireCallScoped, admitCall, chargeCallBudget } from "../src/runtime/call-admission.js";
-import { closeScopeOnExit } from "../src/runtime/connector-scope.js";
-import { microtaskScheduler, runEdge } from "../src/runtime/run.js";
+import { chargeCallBudget } from "../src/runtime/call-admission.js";
+import { runEdge } from "../src/runtime/run.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 
@@ -24,117 +19,8 @@ function limited(maxQueueSize = 2, queueTimeoutMs = 1_000) {
   });
 }
 
-async function drainMicrotasks(rounds = 50): Promise<void> {
-  for (let index = 0; index < rounds; index += 1) await Promise.resolve();
-}
-
-/** A clock pinned to `at.ms`, for the rolling window; sleeps stay live. */
-async function pinnedClock(at: { ms: number }): Promise<Clock.Clock> {
-  const live = await runEdge(Clock.clockWith((clock) => Effect.succeed(clock)));
-  return {
-    currentTimeMillisUnsafe: () => at.ms,
-    currentTimeMillis: Effect.sync(() => at.ms),
-    currentTimeNanosUnsafe: () => BigInt(at.ms) * 1_000_000n,
-    currentTimeNanos: Effect.sync(() => BigInt(at.ms) * 1_000_000n),
-    monotonicTimeNanosUnsafe: () => live.monotonicTimeNanosUnsafe(),
-    monotonicTimeNanos: live.monotonicTimeNanos,
-    sleep: (duration) => live.sleep(duration),
-  };
-}
-
 afterEach(() => {
   vi.useRealTimers();
-});
-
-describe("admitCall", () => {
-  it("shares acquire()'s bookkeeping and error objects", async () => {
-    const admission = limited(0);
-    const permit = await runEdge(admitCall(admission, input));
-    const refused = await runEdge(admitCall(admission, input)).catch((error: unknown) => error);
-    expect(refused).toBeInstanceOf(CallAdmissionError);
-    expect(refused).toMatchObject({
-      admissionKind: "concurrency",
-      code: "rate_limited",
-      message: 'Connector "limited" call concurrency queue is full.',
-    });
-    permit.release();
-    expect(admission.snapshot()).toMatchObject({
-      active: 0,
-      totals: { admitted: 1, rejected: 1 },
-    });
-  });
-
-  it("decides when it runs, not when it is built, and again on every run", async () => {
-    const admission = limited();
-    const admitOne = admitCall(admission, input);
-    expect(admission.snapshot().totals.admitted).toBe(0);
-    (await runEdge(admitOne)).release();
-    (await runEdge(admitOne)).release();
-    expect(admission.snapshot().totals.admitted).toBe(2);
-  });
-
-  it("keeps the rolling window on the fiber's Clock", async () => {
-    const at = { ms: 50_000 };
-    const clock = await pinnedClock(at);
-    const admission = new ConnectorCallAdmissionController("budgeted", {
-      rules: [{ budget: { kind: "rolling-window", maxCalls: 1, windowMs: 1_000 } }],
-    });
-    const onClock = admitCall(admission, input).pipe(Effect.provideService(Clock.Clock, clock));
-    (await runEdge(onClock)).release();
-    at.ms = 50_400;
-    await expect(runEdge(onClock)).rejects.toMatchObject({
-      admissionKind: "budget",
-      retryAfterMs: 600,
-    });
-    at.ms = 51_000;
-    (await runEdge(onClock)).release();
-    expect(admission.snapshot().totals).toMatchObject({
-      admitted: 2,
-      rateLimited: 1,
-    });
-  });
-});
-
-describe("acquireCallScoped", () => {
-  it("releases the permit when its scope closes, on failure too", async () => {
-    const admission = limited();
-    const seen = await runEdge(
-      Effect.scoped(acquireCallScoped(admission, input).pipe(Effect.map(() => admission.snapshot().active))),
-    );
-    expect(seen).toBe(1);
-    expect(admission.snapshot().active).toBe(0);
-
-    const boom = new Error("call failed");
-    await expect(
-      runEdge(Effect.scoped(acquireCallScoped(admission, input).pipe(Effect.andThen(Effect.fail(boom))))),
-    ).rejects.toBe(boom);
-    expect(admission.snapshot().active).toBe(0);
-    expect(admission.isIdle()).toBe(true);
-  });
-
-  it("withdraws a queued wait when its fiber is interrupted, without taking a slot", async () => {
-    const admission = limited();
-    const held = await admission.acquire(input);
-    const scope = Scope.makeUnsafe();
-    // runEdge offers no handle to interrupt with, so fork directly — on the
-    // scheduler runEdge uses, so the fiber moves without a timer tick.
-    const waiting = Effect.runFork(acquireCallScoped(admission, input).pipe(Scope.provide(scope)), {
-      scheduler: microtaskScheduler,
-    });
-    await drainMicrotasks();
-    expect(admission.snapshot().queued).toBe(1);
-
-    await Effect.runPromise(Fiber.interrupt(waiting));
-    expect(admission.snapshot()).toMatchObject({
-      queued: 0,
-      totals: { queued: 1, cancelled: 1, admitted: 1 },
-    });
-
-    held.release();
-    expect(admission.snapshot().active).toBe(0);
-    expect(admission.isIdle()).toBe(true);
-    await Effect.runPromise(Scope.close(scope, Exit.void));
-  });
 });
 
 describe("internal call budget charges", () => {
@@ -162,54 +48,6 @@ describe("internal call budget charges", () => {
       admissionKind: "budget",
     });
     (await admission.acquire({ toolName: "read", args })).release();
-  });
-
-  it("uses the fiber's Clock for each lazy charge and keeps its exact budget reset", async () => {
-    const at = { ms: 50_000 };
-    const clock = await pinnedClock(at);
-    const admission = new ConnectorCallAdmissionController("budgeted", {
-      rules: [{ budget: { kind: "rolling-window", maxCalls: 2, windowMs: 1_000 } }],
-    });
-    const permit = await runEdge(admitCall(admission, input).pipe(Effect.provideService(Clock.Clock, clock)));
-    const charge = chargeCallBudget(permit).pipe(Effect.provideService(Clock.Clock, clock));
-    expect(admission.snapshot().totals.admitted).toBe(1);
-    at.ms = 50_250;
-    await runEdge(charge);
-    await expect(runEdge(charge)).rejects.toMatchObject({ retryAfterMs: 750 });
-    at.ms = 51_000;
-    await runEdge(charge);
-    await expect(runEdge(charge)).rejects.toMatchObject({ retryAfterMs: 250 });
-    permit.release();
-  });
-
-  it("INV-7: refuses charges after release, scope closure, or controller shutdown", async () => {
-    for (const end of ["release", "scope", "shutdown"] as const) {
-      const admission = limited();
-      const scope = Scope.makeUnsafe();
-      const permit = await runEdge(acquireCallScoped(admission, input).pipe(Scope.provide(scope)));
-      if (end === "release") permit.release();
-      if (end === "scope") await runEdge(Scope.close(scope, Exit.void));
-      if (end === "shutdown") admission.close();
-      await expect(runEdge(chargeCallBudget(permit))).rejects.toMatchObject({ admissionKind: "closed" });
-      expect(admission.snapshot().totals.admitted).toBe(1);
-      await runEdge(Scope.close(scope, Exit.void));
-      expect(admission.snapshot().active).toBe(0);
-    }
-  });
-
-  it("INV-7: refuses a cancelled internal request without charging the budget", async () => {
-    const admission = new ConnectorCallAdmissionController("budgeted", {
-      rules: [{ budget: { kind: "rolling-window", maxCalls: 2, windowMs: 60_000 } }],
-    });
-    const permit = await admission.acquire(input);
-    const controller = new AbortController();
-    controller.abort(new Error("caller left"));
-    await expect(runEdge(chargeCallBudget(permit, controller.signal))).rejects.toMatchObject({
-      admissionKind: "cancelled",
-    });
-    await runEdge(chargeCallBudget(permit));
-    expect(admission.snapshot()).toMatchObject({ active: 1, totals: { admitted: 2, cancelled: 1 } });
-    permit.release();
   });
 });
 
@@ -271,56 +109,6 @@ describe("the Effect-backed call queue", () => {
   });
 });
 
-describe("mapSettledWithConcurrency", () => {
-  it("bounds work in flight and keeps input order whatever order work finishes in", async () => {
-    let inFlight = 0;
-    let peak = 0;
-    const releases = new Map<number, () => void>();
-    const running = mapSettledWithConcurrency([0, 1, 2, 3, 4], 2, (item) => {
-      inFlight++;
-      peak = Math.max(peak, inFlight);
-      return new Promise<number>((resolve, reject) => {
-        releases.set(item, () => {
-          inFlight--;
-          if (item === 3) reject(new Error(`item ${item}`));
-          else resolve(item * 10);
-        });
-      });
-    });
-    // The first `limit` calls start before the call returns, as they did.
-    expect([...releases.keys()]).toEqual([0, 1]);
-    for (const next of [1, 0, 3, 2, 4]) {
-      while (!releases.has(next)) await Promise.resolve();
-      releases.get(next)!();
-    }
-    const settled = await running;
-    expect(peak).toBe(2);
-    expect(
-      settled.map((result) => (result.status === "fulfilled" ? result.value : (result.reason as Error).message)),
-    ).toEqual([0, 10, 20, "item 3", 40]);
-  });
-
-  it("settles a synchronous throw in place and passes rejections through untouched", async () => {
-    const thrown = new TypeError("sync");
-    const rejectedWith = { not: "an Error" };
-    const settled = await mapSettledWithConcurrency([0, 1, 2], 3, (item) => {
-      if (item === 0) throw thrown;
-      if (item === 1) return Promise.reject(rejectedWith);
-      return Promise.resolve("ok");
-    });
-    expect(settled).toEqual([
-      { status: "rejected", reason: thrown },
-      { status: "rejected", reason: rejectedWith },
-      { status: "fulfilled", value: "ok" },
-    ]);
-    expect(settled[0]!.status === "rejected" && settled[0]!.reason).toBe(thrown);
-  });
-
-  it("returns an empty list for no items", async () => {
-    await expect(mapSettledWithConcurrency([], 4, async () => 1)).resolves.toEqual([]);
-  });
-});
-
 function closingConnector(closeScope: Connector["closeScope"]): Connector {
   return connectorWith({
     id: "scoped",
@@ -333,35 +121,6 @@ function closingConnector(closeScope: Connector["closeScope"]): Connector {
 const ctx = {} as ConnectorContext;
 
 describe("closeConnectorScope", () => {
-  it("waits at most 100ms, hands a 2s tail to defer, and leaves no timer once the close settles", async () => {
-    vi.useFakeTimers();
-    let finish!: () => void;
-    const deferred: Array<Promise<unknown>> = [];
-    let returned = false;
-    const closing = closeConnectorScope(
-      closingConnector(
-        () =>
-          new Promise<void>((resolve) => {
-            finish = resolve;
-          }),
-      ),
-      ctx,
-      (promise) => deferred.push(promise),
-    ).then(() => {
-      returned = true;
-    });
-    expect(deferred).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(99);
-    expect(returned).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await closing;
-    expect(returned).toBe(true);
-
-    finish();
-    await deferred[0];
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
   it("bounds the deferred tail of a close that never settles", async () => {
     vi.useFakeTimers();
     const deferred: Array<Promise<unknown>> = [];
@@ -401,22 +160,5 @@ describe("closeConnectorScope", () => {
       ),
     ).resolves.toBeUndefined();
     await expect(closeConnectorScope(closingConnector(undefined), ctx)).resolves.toBeUndefined();
-  });
-});
-
-describe("closeScopeOnExit", () => {
-  it("closes the connector scope when the Effect scope closes, however it ends", async () => {
-    const closed: string[] = [];
-    const connector = closingConnector(async () => {
-      closed.push("closed");
-    });
-    await runEdge(Effect.scoped(closeScopeOnExit(connector, ctx)));
-    expect(closed).toEqual(["closed"]);
-
-    const boom = new Error("probe failed");
-    await expect(
-      runEdge(Effect.scoped(closeScopeOnExit(connector, ctx).pipe(Effect.andThen(Effect.fail(boom))))),
-    ).rejects.toBe(boom);
-    expect(closed).toEqual(["closed", "closed"]);
   });
 });

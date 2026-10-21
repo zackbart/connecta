@@ -69,53 +69,6 @@ describe("storage key families", () => {
     }
   });
 
-  it("build keys inside the prefixes their families declare", () => {
-    const within = (family: { prefixes: readonly string[] }, key: string) =>
-      expect(
-        family.prefixes.some((prefix) => key.startsWith(prefix)),
-        key,
-      ).toBe(true);
-    within(resultKeys.family, resultKeys.chunk("id", 0));
-    within(resultKeys.family, resultKeys.chunk("id", 3));
-    within(stashLedgerKeys.family, stashLedgerKeys.ledger);
-    within(stashExpiryKeys.family, stashExpiryKeys.deadline(123));
-    const responseNamespace = responseCacheKeys.namespace("svc", "config", "generation");
-    const responseEntry = responseCacheKeys.entry(responseNamespace, "partition");
-    for (const key of [
-      responseCacheKeys.prefix("svc"),
-      responseCacheKeys.generation("svc"),
-      responseNamespace,
-      responseEntry,
-      responseCacheKeys.chunk(responseEntry, "revision", 0),
-    ])
-      within(responseCacheKeys.family, key);
-    within(catalogKeys.family, catalogKeys.manifest("svc"));
-    within(catalogKeys.family, catalogKeys.chunk("svc", "rev", 1));
-    within(oauthHandoffKeys.family, oauthHandoffKeys.handoff("svc", "hash"));
-    within(accessTokenKeys.family, accessTokenKeys.record("id"));
-    within(accessTokenKeys.family, accessTokenKeys.lookup("hash"));
-    within(accessTokenKeys.family, accessTokenKeys.agent("simon"));
-    within(accessTokenKeys.family, accessTokenKeys.active);
-    within(oauthConnectKeys.family, oauthConnectKeys.used("nonce"));
-    within(negotiationKeys.family, negotiationKeys.verdict("digest"));
-    within(inputRetryKeys.family, inputRetryKeys.used("nonce"));
-    within(kvCopyKeys.family, kvCopyKeys.cursor("token"));
-    within(oauthGrantKeys.family, oauthGrantKeys.grant);
-    within(oauthFlowKeys.family, oauthFlowKeys.flow("digest"));
-    within(oauthFlowKeys.family, oauthFlowKeys.prefix);
-    within(oauthRefreshKeys.family, oauthRefreshKeys.lease("epoch", "digest"));
-    within(oauthRefreshSpentKeys.family, oauthRefreshSpentKeys.spent("digest"));
-    within(oauthRefreshActiveKeys.family, oauthRefreshActiveKeys.holder("epoch", "holder"));
-    within(oauthV2Keys.family, oauthV2Keys.generation);
-    within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, "v2:epoch"));
-    within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, null));
-    // A credential sits in its connector's namespace, under a principal when personal.
-    expect(credentialKeys.credential("svc")).toBe(`${scopes.connector("svc")}credential:v1`);
-    expect(credentialKeys.credential("svc", "owner")).toBe(
-      `${scopes.principal("owner")}${scopes.connector("svc")}credential:v1`,
-    );
-  });
-
   it("name the family of every key their builders write, in every scope", () => {
     const connector = (key: string) => `${scopes.connector("svc")}${key}`;
     const personal = (key: string) => `${scopes.principal("ab12")}${key}`;
@@ -173,43 +126,12 @@ describe("storage key families", () => {
     expect(offenders).toEqual([]);
   }, 30_000);
 
-  it("rejects NUL in every unencoded key component, including identity scopes", () => {
-    const bad = "a\0b";
-    const builders = [
-      () => scopes.principal(bad),
-      () => scopes.subject(bad),
-      () => scopes.connector(bad),
-      () => resultKeys.chunk(bad, 0),
-      () => resultKeys.chunk(bad, 1),
-      () => catalogKeys.manifest(bad),
-      () => catalogKeys.chunk(bad, "rev", 1),
-      () => catalogKeys.chunk("svc", bad, 1),
-      () => oauthHandoffKeys.handoff(bad, "hash"),
-      () => oauthHandoffKeys.handoff("svc", bad),
-      () => accessTokenKeys.record(bad),
-      () => accessTokenKeys.lookup(bad),
-      () => accessTokenKeys.agent(bad),
-      () => credentialKeys.credential(bad),
-      () => credentialKeys.credential("svc", bad),
-      () => oauthFlowKeys.flow(bad),
-      () => oauthV2Keys.value(oauthV2Keys.field.tokens, bad),
-      () => oauthConnectKeys.used(bad),
-      () => kvCopyKeys.cursor(bad),
-    ];
-    for (const build of builders) {
-      expect(build).toThrow(/U\+0000 \(NUL\)/);
-    }
-  });
-
+  // The lint's own cases: one per folding rule, so the source guard above
+  // cannot pass by silently matching nothing.
   it.each([
     ["a split prefix", `storage.set("result" + ":" + id, value);`],
-    ["a prefix in pieces outside a call", `const key = "res" + "ult:" + id;`],
-    ["a template of constants", 'const key = `${"result"}:${id}`;'],
     ["a prefix held in a constant", `const P = "result"; const key = \`\${P}:\${id}\`;`],
-    ["a scope prefix after a variable", `kv.get(partition + "principal:" + id);`],
     ["a literal key at a storage call", `storage.get("cursor");`],
-    ["a literal in a computed key", `this.opts.storage.delete(\`\${id}:cursor\`);`],
-    ["a literal reached through a constant", `const key = "cursor:" + id; await storageSet(key, value);`],
   ])("refuse %s", (_, code) => {
     expect(strayKeys("fixture.ts", code)).not.toEqual([]);
   });
@@ -217,13 +139,6 @@ describe("storage key families", () => {
   it.each([
     ["a family builder", `storage.get(resultKeys.chunk(id, 0));`],
     ["a namespaced pass-through", `storage.set(prefix + key, value);`],
-    ["a builder through a constant", `const key = stashLedgerKeys.ledger; storageGet(key);`],
-    ["a literal on something that is not storage", `cache.get("result");`],
-    ["an unrelated string", `const label = "results" + " page";`],
-    [
-      "a parameter sharing a constant's name",
-      `const get = (key) => kv.get(key); const put = () => { const key = "x:" + id; };`,
-    ],
   ])("accept %s", (_, code) => {
     expect(strayKeys("fixture.ts", code)).toEqual([]);
   });

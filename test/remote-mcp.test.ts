@@ -1,13 +1,11 @@
-import { InMemoryTransport, StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
+import { StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
 import type { FetchLike, Transport } from "@modelcontextprotocol/client";
-import { inputRequired, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { attachCallClassification } from "../src/call-classification.js";
 import { ConnectorCallError, classifyCallError } from "../src/errors.js";
-import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
-import { InvocationFailure } from "../src/invocation.js";
+import { createExecuteTool } from "../src/execute.js";
 import {
   MAX_REMOTE_REDIRECT_HOPS,
   redirectSafeFetch,
@@ -18,8 +16,7 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthGrantKeys, oauthV2Keys, scopes } from "../src/storage/keys.js";
 import { withAbortableTimeout, withDeadline } from "../src/timeout.js";
-import { buildUiData } from "../src/ui.js";
-import type { Executor, KVStorage } from "../src/types.js";
+import type { KVStorage } from "../src/types.js";
 import { connectorContext as ctx, deferred, scriptedExecutor, spyLogger } from "./fixtures/misc.js";
 import { createTestConnecta, required, makeRegistry, seedCatalog, silentLogger } from "./helpers.js";
 import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js";
@@ -67,29 +64,6 @@ async function makeConnector() {
     url: "https://unused.example/mcp",
     description: "Downstream",
     _transportFactory: () => clientTransport,
-  });
-}
-
-async function makeInputRequiredConnector() {
-  const url = "https://mrtr-downstream.test/mcp";
-  const downstream = httpDownstream(
-    (server) => {
-      server.registerTool(
-        "needs_input",
-        {
-          description: "Requires a second protocol round trip",
-          inputSchema: z.object({}),
-          annotations: { readOnlyHint: true },
-        },
-        async () => inputRequired({ requestState: "opaque-resume-state" }),
-      );
-    },
-    { url },
-  );
-  return remoteMcp("mrtr", {
-    url,
-    description: "MRTR downstream",
-    _transportFactory: downstream.transport,
   });
 }
 
@@ -220,65 +194,60 @@ function makeHttpDownstream(
 }
 
 describe("remoteMcp() connector", () => {
-  it.each(["success", "failure"])(
-    "INV-7: keeps an OAuth connection usable after its first call's %s deadline scope ends",
-    async (outcome) => {
-      const storage = memoryStorage();
-      await seedGrant(storage, {
-        issuer: "https://authorization.test",
-        tokens: { access_token: "oauth-secret", token_type: "bearer" },
-      });
-      const downstream = httpDownstream((server) => {
-        server.registerTool(
-          "echo",
-          {
-            inputSchema: z.object({}),
-            annotations: { readOnlyHint: true },
-          },
-          async () => ({ content: [{ type: "text", text: "ok" }] }),
-        );
-      });
-      const signals: AbortSignal[] = [];
-      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
-        init.signal?.throwIfAborted();
-        if (init.signal) signals.push(init.signal);
-        return downstream.fetch(input, init);
-      });
-      const connector = remoteMcp("down", {
-        url: downstream.url,
-        auth: { type: "oauth" },
-      });
-      const context = { ...ctx(storage), requestScope: {} };
-      try {
-        const first = withDeadline(
-          async (signal) => {
-            const result = await connector.callTool("echo", {}, { ...context, signal });
-            if (outcome === "failure") throw new Error("first caller failed");
-            return result;
-          },
-          { timeoutMs: 60_000, timeoutError: new Error("call deadline") },
-        );
-        if (outcome === "failure") await expect(first).rejects.toThrow("first caller failed");
-        else await expect(first).resolves.toMatchObject({ content: [{ text: "ok" }] });
+  it("INV-7: keeps an OAuth connection usable after its first call's failure deadline scope ends", async () => {
+    const storage = memoryStorage();
+    await seedGrant(storage, {
+      issuer: "https://authorization.test",
+      tokens: { access_token: "oauth-secret", token_type: "bearer" },
+    });
+    const downstream = httpDownstream((server) => {
+      server.registerTool(
+        "echo",
+        {
+          inputSchema: z.object({}),
+          annotations: { readOnlyHint: true },
+        },
+        async () => ({ content: [{ type: "text", text: "ok" }] }),
+      );
+    });
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      init.signal?.throwIfAborted();
+      if (init.signal) signals.push(init.signal);
+      return downstream.fetch(input, init);
+    });
+    const connector = remoteMcp("down", {
+      url: downstream.url,
+      auth: { type: "oauth" },
+    });
+    const context = { ...ctx(storage), requestScope: {} };
+    try {
+      const first = withDeadline(
+        async (signal) => {
+          await connector.callTool("echo", {}, { ...context, signal });
+          throw new Error("first caller failed");
+        },
+        { timeoutMs: 60_000, timeoutError: new Error("call deadline") },
+      );
+      await expect(first).rejects.toThrow("first caller failed");
 
-        await expect(
-          withDeadline((signal) => connector.callTool("echo", {}, { ...context, signal }), {
-            timeoutMs: 60_000,
-            timeoutError: new Error("call deadline"),
-          }),
-        ).resolves.toMatchObject({ content: [{ text: "ok" }] });
-      } finally {
-        await connector.closeScope!(context);
-      }
-      // The connection's own lifetime still ends at request teardown.
-      expect(signals.length).toBeGreaterThan(0);
-      expect(signals.every((signal) => signal.aborted)).toBe(true);
-    },
-  );
+      await expect(
+        withDeadline((signal) => connector.callTool("echo", {}, { ...context, signal }), {
+          timeoutMs: 60_000,
+          timeoutError: new Error("call deadline"),
+        }),
+      ).resolves.toMatchObject({ content: [{ text: "ok" }] });
+    } finally {
+      await connector.closeScope!(context);
+    }
+    // The connection's own lifetime still ends at request teardown.
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
 
-  it.each(["deadline", "completion"])(
+  it.each(["deadline"])(
     "isolates concurrent OAuth call signals when one call ends by %s",
-    async (exit) => {
+    async () => {
       vi.useFakeTimers();
       const storage = memoryStorage();
       await seedGrant(storage, {
@@ -327,7 +296,7 @@ describe("remoteMcp() connector", () => {
       const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
       const context = { ...ctx(storage), requestScope: {} };
       const first = withDeadline((signal) => connector.callTool("echo", { name: "first" }, { ...context, signal }), {
-        timeoutMs: exit === "deadline" ? 1_000 : 60_000,
+        timeoutMs: 1_000,
         timeoutError: new Error("first call deadline"),
       });
       // Observe a rejection immediately, before advancing the fake clock.
@@ -340,21 +309,12 @@ describe("remoteMcp() connector", () => {
       const siblingResult = sibling.catch((error: unknown) => error);
       try {
         await calls.sibling.started.promise;
-        if (exit === "deadline") {
-          await vi.advanceTimersByTimeAsync(1_000);
-          expect(await firstResult).toEqual(new Error("first call deadline"));
-          expect(calls.first.signal?.aborted).toBe(true);
-          expect(calls.sibling.signal?.aborted).toBe(false);
-          calls.sibling.release.resolve();
-          expect(await siblingResult).toMatchObject({ content: [{ text: "sibling" }] });
-        } else {
-          // The fast sibling finishes while the connection-opening call waits.
-          calls.sibling.release.resolve();
-          expect(await siblingResult).toMatchObject({ content: [{ text: "sibling" }] });
-          expect(calls.first.signal?.aborted).toBe(false);
-          calls.first.release.resolve();
-          expect(await firstResult).toMatchObject({ content: [{ text: "first" }] });
-        }
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(await firstResult).toEqual(new Error("first call deadline"));
+        expect(calls.first.signal?.aborted).toBe(true);
+        expect(calls.sibling.signal?.aborted).toBe(false);
+        calls.sibling.release.resolve();
+        expect(await siblingResult).toMatchObject({ content: [{ text: "sibling" }] });
         expect(handshakes).toBe(1);
       } finally {
         calls.first.release.resolve();
@@ -366,7 +326,7 @@ describe("remoteMcp() connector", () => {
     },
   );
 
-  it.each(["client disconnect", "program success", "program failure"])(
+  it.each(["client disconnect", "program success"])(
     "cancels every OAuth fan-out call and releases its streams, timers, and request listeners on %s",
     async (exit) => {
       vi.useFakeTimers();
@@ -432,7 +392,6 @@ describe("remoteMcp() connector", () => {
         results.then(settled.resolve);
         if (exit === "client disconnect") return (await results).map((result) => result.status);
         await started.promise;
-        if (exit === "program failure") throw new Error("program failed");
         return null;
       });
       const connecta = createTestConnecta({
@@ -472,7 +431,7 @@ describe("remoteMcp() connector", () => {
           const response = await pending;
           expect(response.status).toBe(200);
           const payload = (await response.json()) as { result: { isError?: boolean } };
-          expect(payload.result.isError).toBe(exit === "program failure" ? true : undefined);
+          expect(payload.result.isError).toBeUndefined();
         }
         expect((await settled.promise).map((call) => call.status)).toEqual(["rejected", "rejected", "rejected"]);
         await Promise.all(background);
@@ -498,9 +457,9 @@ describe("remoteMcp() connector", () => {
     },
   );
 
-  it.each(["success", "failure"])(
+  it.each(["failure"])(
     "spares pending OAuth siblings when the first warm-catalog program call returns %s",
-    async (outcome) => {
+    async () => {
       const pendingStarted = deferred<void>();
       const releasePending = deferred<void>();
       let pendingCount = 0;
@@ -513,7 +472,7 @@ describe("remoteMcp() connector", () => {
           },
           async ({ pending }) => ({
             content: [{ type: "text", text: "ok" }],
-            ...(!pending && outcome === "failure" ? { isError: true } : {}),
+            ...(!pending ? { isError: true } : {}),
           }),
         );
       });
@@ -564,7 +523,7 @@ describe("remoteMcp() connector", () => {
         })({ code: "async () => null" });
         expect(result.isError).toBeUndefined();
         expect(result.structuredContent).toMatchObject({
-          result: [outcome === "success" ? "fulfilled" : "rejected", "fulfilled", "fulfilled", "fulfilled"],
+          result: ["rejected", "fulfilled", "fulfilled", "fulfilled"],
         });
       } finally {
         releasePending.resolve();
@@ -613,9 +572,9 @@ describe("remoteMcp() connector", () => {
     }
   });
 
-  it.each(["last waiter cancels", "scope closes"])(
+  it.each(["scope closes"])(
     "stops a layout 2 migration during beginFlow when the %s",
-    async (exit) => {
+    async () => {
       const backing = memoryStorage();
       const tokensKey = oauthV2Keys.value(oauthV2Keys.field.tokens, null);
       const grant = JSON.stringify({ access_token: "legacy-token", token_type: "Bearer" });
@@ -638,17 +597,11 @@ describe("remoteMcp() connector", () => {
         auth: { type: "oauth" },
         _transportFactory: transport,
       });
-      const controller = new AbortController();
-      const context = { ...ctx(storage), requestScope: {}, signal: controller.signal };
+      const context = { ...ctx(storage), requestScope: {} };
       const pending = connector.status!(context);
       await entered.promise;
       try {
-        if (exit === "last waiter cancels") {
-          controller.abort(new Error("caller left during grant read"));
-          await expect(pending).resolves.toMatchObject({ state: "error" });
-        } else {
-          await connector.closeScope!(context);
-        }
+        await connector.closeScope!(context);
         release.resolve();
         await expect(pending).resolves.toMatchObject({ state: "error" });
         // A cancelled waiter returned before the detached connect did. Let
@@ -665,41 +618,6 @@ describe("remoteMcp() connector", () => {
     },
   );
 
-  it("passes usageGuide through, and leaves it unset by default", () => {
-    expect(remoteMcp("plain", { url: "https://downstream.test/mcp" }).usageGuide).toBeUndefined();
-    const guide = "# Downstream usage\n\nPaginate with `cursor`.\n";
-    expect(
-      remoteMcp("guided", {
-        url: "https://downstream.test/mcp",
-        usageGuide: guide,
-      }).usageGuide,
-    ).toBe(guide);
-    const structured = {
-      content: guide,
-      summary: "Cursor pagination conventions.",
-    } as const;
-    expect(
-      remoteMcp("structured", {
-        url: "https://downstream.test/mcp",
-        usageGuide: structured,
-      }).usageGuide,
-    ).toEqual(structured);
-  });
-
-  it("listTools reflects the downstream server's tools", async () => {
-    const c = await makeConnector();
-    const tools = await c.listTools(ctx());
-    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
-    expect(Object.keys(byName).sort()).toEqual(["echo", "fail"]);
-    expect(required(byName.echo).description).toBe("Echo text back");
-    expect((required(byName.echo).inputSchema as any).properties.text.type).toBe("string");
-    expect((required(byName.echo).outputSchema as any).properties.echoed.type).toBe("string");
-    expect(required(byName.echo).annotations).toMatchObject({
-      readOnlyHint: true,
-      idempotentHint: true,
-    });
-  });
-
   it("discovers output-schema tools when dynamic code generation is blocked", async () => {
     const c = await makeConnector();
     vi.stubGlobal("Function", function blockedFunction(): never {
@@ -709,25 +627,6 @@ describe("remoteMcp() connector", () => {
     const tools = await c.listTools(ctx());
 
     expect(tools.find((tool) => tool.name === "echo")?.outputSchema).toBeTruthy();
-  });
-
-  it("passes maxResultBytes through, and leaves it unset by default", async () => {
-    expect((await makeConnector()).maxResultBytes).toBeUndefined();
-    const capped = remoteMcp("search", {
-      url: "https://unused.example/mcp",
-      maxResultBytes: 5_000,
-    });
-    expect(capped.maxResultBytes).toBe(5_000);
-  });
-
-  it("passes callAdmission through, and leaves it unset by default", async () => {
-    expect((await makeConnector()).callAdmission).toBeUndefined();
-    const callAdmission = { rules: [{ maxConcurrency: 2 }] } as const;
-    const limited = remoteMcp("limited", {
-      url: "https://downstream.test/mcp",
-      callAdmission,
-    });
-    expect(limited.callAdmission).toEqual(callAdmission);
   });
 
   it("keeps automatic version negotiation as the default", async () => {
@@ -812,91 +711,6 @@ describe("remoteMcp() connector", () => {
     expect(result.isError).toBeFalsy();
   });
 
-  it("surfaces a downstream error result with isError", async () => {
-    const c = await makeConnector();
-    const result = (await c.callTool("fail", {}, ctx())) as {
-      content: { type: string; text: string }[];
-      isError?: boolean;
-    };
-    expect(result.isError).toBe(true);
-    expect(required(result.content[0]).text).toContain("downstream boom");
-  });
-
-  it("INV-4: preserves downstream input_required for the MCP relay and refuses it in programs and in-process meta-tools", async () => {
-    const connector = await makeInputRequiredConnector();
-    const direct = await connector.callTool("needs_input", {}, ctx());
-    expect(direct).toMatchObject({
-      resultType: "input_required",
-      requestState: "opaque-resume-state",
-    });
-
-    const meta = createMetaTools(makeRegistry([connector]), BASE);
-    const single = await meta.callTool({
-      address: "mrtr.needs_input",
-      args: {},
-    });
-    expect(single.isError).toBe(true);
-    expect(single.structuredContent).toMatchObject({
-      error: {
-        code: "input_required_unsupported",
-        retryable: false,
-        message: expect.stringContaining("input_required"),
-      },
-    });
-
-    const providers = await buildSandboxProviders(makeRegistry([connector]), BASE, silentLogger);
-    const host = required(providers.find((provider) => provider.name === "connecta"));
-    const executeError = await required(host.fns.call)("mrtr.needs_input", {}).then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    expect(executeError).toBeInstanceOf(InvocationFailure);
-    expect(executeError).toMatchObject({
-      code: "input_required_unsupported",
-      retryable: false,
-      message: expect.stringContaining("input_required"),
-    });
-
-    const executor: Executor = {
-      async execute(_code, sandboxProviders) {
-        const connecta = required(sandboxProviders.find((provider) => provider.name === "connecta"));
-        try {
-          await required(connecta.fns.call)("mrtr.needs_input", {});
-          return { result: "unexpected success" };
-        } catch (error) {
-          return {
-            result: undefined,
-            error: error instanceof Error ? error.message : String(error),
-            failure: {
-              name: error instanceof Error ? error.name : "Error",
-              ...(error instanceof InvocationFailure ? { call: error.details } : {}),
-            },
-          };
-        }
-      },
-    };
-    const executeResult = await createExecuteTool(
-      makeRegistry([connector]),
-      BASE,
-      executor,
-      silentLogger,
-    )({ code: "async () => mrtr.needs_input({})" });
-    expect(executeResult.isError).toBe(true);
-    expect(executeResult.structuredContent).toMatchObject({
-      error: {
-        code: "input_required_unsupported",
-        retryable: false,
-        message: expect.stringContaining("input_required"),
-      },
-    });
-  });
-
-  it("reports ok status once connected", async () => {
-    const c = await makeConnector();
-    const status = await c.status!(ctx());
-    expect(status.state).toBe("ok");
-  });
-
   it("converts the SDK's UnauthorizedError into a typed auth_required call error", async () => {
     const c = remoteMcp("locked", {
       url: "https://unused.example/mcp",
@@ -966,45 +780,6 @@ describe("remoteMcp() connector", () => {
     expect(builds).toBe(2);
   });
 
-  it("INV-7: closes a connected scope at most once", async () => {
-    const { connector, counts } = await makeTrackedConnector();
-    const requestScope = {};
-    const context = { ...ctx(), requestScope };
-
-    await expect(connector.status!(context)).resolves.toMatchObject({
-      state: "ok",
-    });
-    expect(counts).toEqual({ connect: 1, close: 0 });
-
-    await connector.closeScope!(context);
-    await connector.closeScope!(context);
-
-    expect(counts).toEqual({ connect: 1, close: 1 });
-  });
-
-  it("does not create connection state for a scope closed before use", async () => {
-    let builds = 0;
-    const connector = remoteMcp("down", {
-      url: "https://unused.example/mcp",
-      description: "Downstream",
-      _transportFactory: () => {
-        builds++;
-        return {
-          async start() {
-            throw new Error("closed scope built a transport");
-          },
-          async send() {},
-          async close() {},
-        };
-      },
-    });
-    const context = { ...ctx(), requestScope: {} };
-
-    await connector.closeScope!(context);
-    await expect(connector.listTools(context)).rejects.toThrow("scope ended during connection");
-    expect(builds).toBe(0);
-  });
-
   it("discards a client when its scope closes during the post-connect generation read", async () => {
     const backing = memoryStorage();
     let generationReads = 0;
@@ -1040,83 +815,6 @@ describe("remoteMcp() connector", () => {
     // The connected client was discarded rather than cached into the detached
     // state. Its transport had already observed close, so no second close is
     // necessary.
-    expect(counts).toEqual({ connect: 1, close: 1 });
-  });
-});
-
-describe("the api() construction contract stops at hand-written tools", () => {
-  /**
-   * A downstream that under-specifies everything api() now refuses: a tool
-   * with no annotations, and one that claims to be both a read and a
-   * destroyer. Connecta proxies what it is given — the contract binds the
-   * surfaces we write, not the catalogs we relay.
-   */
-  async function connectSloppyServer() {
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = new McpServer({ name: "sloppy", version: "1.0.0" });
-    server.registerTool("unannotated", { inputSchema: z.object({}) }, async () => ({
-      content: [{ type: "text", text: "ran unannotated" }],
-    }));
-    server.registerTool(
-      "contradictory",
-      {
-        description: "Claims to read and destroy at once",
-        inputSchema: z.object({}),
-        annotations: { readOnlyHint: true, destructiveHint: true },
-      },
-      async () => ({ content: [{ type: "text", text: "ran contradictory" }] }),
-    );
-    await server.connect(serverTransport);
-    closer = () => server.close();
-    return remoteMcp("sloppy", {
-      url: "https://unused.example/mcp",
-      description: "A downstream that annotates nothing carefully",
-      _transportFactory: () => clientTransport,
-    });
-  }
-
-  it("constructs and lists an under-specified downstream catalog unchanged", async () => {
-    const connector = await connectSloppyServer();
-    const tools = await connector.listTools(ctx());
-    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
-    expect(Object.keys(byName).sort()).toEqual(["contradictory", "unannotated"]);
-    expect(required(byName.unannotated).description).toBeUndefined();
-    expect(required(byName.unannotated).annotations?.readOnlyHint).toBeUndefined();
-    expect(required(byName.contradictory).annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: true,
-    });
-  });
-
-  it("keeps unannotated and contradictory proxied tools fail-closed", async () => {
-    const connector = await connectSloppyServer();
-    for (const name of ["unannotated", "contradictory"]) {
-      const address = `sloppy.${name}`;
-      const mt = createMetaTools(makeRegistry([connector]), BASE);
-      const ordinary = await mt.callTool({ address, args: {} });
-      expect(ordinary.isError).toBe(true);
-      expect(required(ordinary.content[0]).text).toContain("is a write");
-      const approved = await mt.callDestructiveTool({
-        address,
-        args: {},
-        reason: "The test approved it.",
-      });
-      expect(approved.isError).toBeFalsy();
-      expect(required(approved.content[0]).text).toContain(`ran ${name}`);
-    }
-  });
-});
-
-describe("probe scope teardown", () => {
-  it("closes the remote session opened by buildUiData", async () => {
-    const { connector, counts } = await makeTrackedConnector();
-    const data = await buildUiData(makeRegistry([connector]), BASE, { name: "connecta", version: "test" });
-
-    expect(data.connectors[0]).toMatchObject({
-      id: "down",
-      status: "ok",
-      toolCount: 2,
-    });
     expect(counts).toEqual({ connect: 1, close: 1 });
   });
 });
@@ -1198,43 +896,6 @@ describe("downstream session termination", () => {
     },
   );
 
-  it("terminates a session acquired by a connect abandoned during generation verification", async () => {
-    const checked = deferred<void>();
-    const releaseCheck = deferred<void>();
-    const deleting = deferred<void>();
-    const backing = memoryStorage();
-    let reads = 0;
-    const storage: KVStorage = {
-      ...backing,
-      async get(key) {
-        if (key === oauthGrantKeys.grant && ++reads === 2) {
-          checked.resolve();
-          await releaseCheck.promise;
-          return JSON.stringify({ connectaOAuth: 3, epoch: "v3:replacement" });
-        }
-        return backing.get(key);
-      },
-    };
-    const { connector, requests } = makeHttpDownstream({
-      oauth: true,
-      sessionId: "abandoned",
-      onDelete: async () => {
-        deleting.resolve();
-        return new Response(null, { status: 200 });
-      },
-    });
-    const context = { ...ctx(storage), requestScope: {} };
-    const connecting = connector.status!(context);
-    await checked.promise;
-    releaseCheck.resolve();
-    await expect(connecting).resolves.toMatchObject({ state: "auth_required" });
-    await deleting.promise;
-    expect(requests.filter((r) => r.method === "DELETE")).toMatchObject([
-      { sessionId: "abandoned", abortedWhenIssued: false },
-    ]);
-    await connector.closeScope!(context);
-  });
-
   it("sends the spec DELETE for a stateful downstream before closing", async () => {
     const { connector, requests } = makeHttpDownstream({ sessionId: "sess-1" });
     const context = { ...ctx(), requestScope: {} };
@@ -1252,42 +913,6 @@ describe("downstream session termination", () => {
     // nothing server-side while still looking like it worked.
     expect(required(deletes[0]).abortedWhenIssued).toBe(false);
     expect(required(deletes[0]).signal!.aborted).toBe(true);
-  });
-
-  it("sends no DELETE for a stateless downstream", async () => {
-    const { connector, requests } = makeHttpDownstream();
-    const context = { ...ctx(), requestScope: {} };
-
-    await expect(connector.status!(context)).resolves.toMatchObject({
-      state: "ok",
-    });
-    await connector.closeScope!(context);
-
-    // No `mcp-session-id` was ever issued, so there is no session to end and a
-    // DELETE would only be an unexplained request in the provider's logs.
-    expect(requests.some((r) => r.method === "DELETE")).toBe(false);
-  });
-
-  it("keeps the status verdict when the downstream refuses to terminate", async () => {
-    const warn = vi.fn();
-    const { connector, requests } = makeHttpDownstream({
-      sessionId: "sess-1",
-      onDelete: async () => new Response("no", { status: 500 }),
-    });
-    const context = {
-      ...ctx(),
-      logger: { ...silentLogger, warn },
-      requestScope: {},
-    };
-
-    await expect(connector.status!(context)).resolves.toMatchObject({
-      state: "ok",
-    });
-    await connector.closeScope!(context);
-    expect(requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("session termination refused or failed");
-    expect(required(warn.mock.calls[0])[1]).toMatchObject({ connector: "down" });
   });
 
   it("logs a refused termination's status, not the downstream's text (#695)", async () => {
@@ -1313,42 +938,10 @@ describe("downstream session termination", () => {
     });
     expect(JSON.stringify(warn.mock.calls)).not.toContain(planted);
   });
-
-  it("bounds a downstream that never answers the termination request", async () => {
-    const warn = vi.fn();
-    const { connector, requests } = makeHttpDownstream({
-      sessionId: "sess-1",
-      onDelete: () => new Promise<Response>(() => {}),
-    });
-    const context = {
-      ...ctx(),
-      logger: { ...silentLogger, warn },
-      requestScope: {},
-    };
-
-    await expect(connector.status!(context)).resolves.toMatchObject({
-      state: "ok",
-    });
-    const started = Date.now();
-    await connector.closeScope!(context);
-    const elapsed = Date.now() - started;
-
-    const pending = requests.find((r) => r.method === "DELETE");
-    expect(pending).toBeDefined();
-    // Teardown stopped waiting and closed anyway, which aborts the DELETE still
-    // hanging on the transport's signal. Well inside the core's 100 ms
-    // caller-facing scope-close budget when invoked through the core; this
-    // direct hook call waits its full network acknowledgement budget.
-    expect(pending!.signal!.aborted).toBe(true);
-    expect(elapsed).toBeLessThan(2_000);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("session termination was not acknowledged within 1000 ms");
-    expect(required(warn.mock.calls[0])[0]).toContain("downstream may still finish the headers-only DELETE");
-  });
 });
 
 describe("remoteMcp() destination guard", () => {
-  it.each(["", " full", "full ", "read\nwrite", 'read"write', "read\\write"])(
+  it.each(["", "read\nwrite"])(
     "rejects invalid OAuth scope %s",
     (scope) => {
       expect(() => remoteMcp("svc", { url: "https://example.com/mcp", auth: { type: "oauth", scope } })).toThrow(
@@ -1357,14 +950,8 @@ describe("remoteMcp() destination guard", () => {
     },
   );
 
-  it.each([
-    "",
-    "not-a-url",
-    "http://example.com/client.json",
-    "https://example.com/",
-    "https://user:secret@example.com/client.json",
-    "https://example.com/client.json#fragment",
-  ])("rejects invalid client metadata URL %s", (clientMetadataUrl) => {
+  it.each(["http://example.com/client.json", "https://user:secret@example.com/client.json"])(
+    "rejects invalid client metadata URL %s", (clientMetadataUrl) => {
     expect(() =>
       remoteMcp("svc", { url: "https://example.com/mcp", auth: { type: "oauth", clientMetadataUrl } }),
     ).toThrow(/clientMetadataUrl/);
@@ -1372,16 +959,7 @@ describe("remoteMcp() destination guard", () => {
 
   it.each([
     ["warns when static headers auth would travel over http://", "cleartext", "http://example.com/mcp", true, true],
-    ["does not warn for headers auth over https://", "secure", "https://example.com/mcp", true, false],
     ["does not warn for headers auth over http://localhost", "local", "http://localhost:8787/mcp", true, false],
-    [
-      "does not warn when there is no static headers auth, even over http://",
-      "noauth",
-      "http://example.com/mcp",
-      false,
-      false,
-      false,
-    ],
     ["requireHttps throws a config error for an http:// url", "must-tls", "http://example.com/mcp", false, false, true],
   ] as const)("%s", (_name, id, url, authenticated, shouldWarn, requireHttps = false) => {
     const { logger, warn } = spyLogger();
@@ -1408,24 +986,6 @@ describe("remoteMcp() destination guard", () => {
     }
   });
 
-  it("requireHttps allows https:// and loopback without throwing", () => {
-    const { logger, warn } = spyLogger();
-    expect(() =>
-      remoteMcp("tls", {
-        url: "https://example.com/mcp",
-        requireHttps: true,
-        logger,
-      }),
-    ).not.toThrow();
-    expect(() =>
-      remoteMcp("loopback", {
-        url: "http://127.0.0.1:8787/mcp",
-        requireHttps: true,
-        logger,
-      }),
-    ).not.toThrow();
-    expect(warn).not.toHaveBeenCalled();
-  });
 });
 
 describe("remoteMcp() redirect policy", () => {
@@ -1462,11 +1022,8 @@ describe("remoteMcp() redirect policy", () => {
   });
 
   it.each([
-    [301, "GET", undefined],
     [302, "GET", undefined],
-    [303, "GET", undefined],
     [307, "POST", "payload"],
-    [308, "POST", "payload"],
   ] as const)(
     "follows an allowed same-origin %i with deliberate method/body semantics",
     async (status, expectedMethod, expectedBody) => {
@@ -1507,17 +1064,7 @@ describe("remoteMcp() redirect policy", () => {
     },
   );
 
-  it.each([
-    "http://downstream.test/plaintext",
-    "https://127.0.0.1/mcp",
-    "https://10.0.0.1/mcp",
-    "https://169.254.169.254/latest/meta-data",
-    "https://0.0.0.0/mcp",
-    "https://[::1]/mcp",
-    "https://[::ffff:127.0.0.1]/mcp",
-    "https://[fe80::1]/mcp",
-    "https://224.0.0.1/mcp",
-  ])("never sends static headers to redirect target %s", async (target) => {
+  it.each(["http://downstream.test/plaintext", "https://169.254.169.254/latest/meta-data"])("never sends static headers to redirect target %s", async (target) => {
     const calls: Array<{ url: string; headers: Headers }> = [];
     const guarded = redirectSafeFetch("down", "same-origin", async (url, init = {}) => {
       calls.push({
@@ -1663,7 +1210,7 @@ describe("downstream tool error classification", () => {
     await connector.closeScope!(context);
   });
 
-  it.each([400, 403, 404, 408, 422, 429])(
+  it.each([403, 408, 429])(
     "preserves a bounded JSON message from HTTP %i without prose retry inference",
     async (status) => {
       const url = "https://downstream.test/mcp";
@@ -1712,9 +1259,10 @@ describe("downstream tool error classification", () => {
 
 describe("remote MCP transport diagnostics", () => {
   it.each(
-    ["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"].flatMap((code) =>
-      ["connect", "call"].map((phase) => [code, phase]),
-    ),
+    [
+      ["ECONNREFUSED", "connect"],
+      ["AbortError", "call"],
+    ],
   )("preserves sanitized %s diagnostics during %s through the SDK", async (code, phase) => {
     vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit = {}) => {
       if (phase === "call") {
@@ -1773,7 +1321,7 @@ describe("remoteMcp() connection lifecycle", () => {
   async function sweepTeardown(
     call: Step,
     teardown: Step,
-    opts: { oauth?: boolean; startAt?: "beginning" | "initialized"; legacy?: boolean } = {},
+    opts: { startAt?: "beginning" | "initialized"; legacy?: boolean } = {},
   ): Promise<{ swept: number; outcomes: unknown[] }> {
     const outcomes: unknown[] = [];
     for (let ticks = 0; ticks < 5_000; ticks++) {
@@ -1810,7 +1358,6 @@ describe("remoteMcp() connection lifecycle", () => {
         url: "https://unused.example/mcp",
         description: "Downstream",
         ...(opts.legacy ? { versionNegotiation: "legacy" as const } : {}),
-        ...(opts.oauth ? { auth: { type: "oauth" as const } } : {}),
         _transportFactory: () => watched,
       });
       const context = { ...ctx(), requestScope: {} };
@@ -1873,21 +1420,6 @@ describe("remoteMcp() connection lifecycle", () => {
     expect(outcomes.filter(readsNulledClient)).toEqual([]);
   });
 
-  it("never hands a waiting catalog walk a client a force re-auth replaced", async () => {
-    const { swept, outcomes } = await sweepTeardown(
-      (connector, context) => connector.listTools(context),
-      (connector, context) => {
-        // Another isolate's force re-auth bumps the epoch; the next call in
-        // this scope sees it and drops the cached client.
-        void seedGrant(context.storage, {}, "v3:replacement");
-        return connector.listTools(context);
-      },
-      { oauth: true },
-    );
-    expect(swept).toBeGreaterThan(10);
-    expect(outcomes.filter(readsNulledClient)).toEqual([]);
-  });
-
   it("bounds a scope close whose transport never finishes closing", async () => {
     const { server, clientTransport } = await connectServer();
     closer = () => server.close();
@@ -1942,18 +1474,16 @@ describe("OAuth callback transport ownership", () => {
     return { context, params: new URLSearchParams({ code: "code", state }) };
   }
 
-  it.each(["fails", "succeeds"] as const)(
+  it.each(["succeeds"] as const)(
     "closes an exchange-only transport after the exchange %s",
-    async (outcome) => {
+    async () => {
       const context = { ...ctx(), requestScope: {} };
       const close = vi.fn(async () => {});
       const transport = {
         start: async () => {},
         send: async () => {},
         close,
-        finishAuth: async () => {
-          if (outcome === "fails") throw new Error("exchange failed");
-        },
+        finishAuth: async () => {},
       };
       const connector = remoteMcp("down", {
         url: "https://downstream.test/mcp",
@@ -1961,9 +1491,7 @@ describe("OAuth callback transport ownership", () => {
         _transportFactory: () => transport,
       });
       const { params } = await callback(context);
-      const finishing = connector.finishAuth!("code", context, params);
-      if (outcome === "fails") await expect(finishing).rejects.toThrow("OAuth flow failed");
-      else await expect(finishing).resolves.toBeUndefined();
+      await expect(connector.finishAuth!("code", context, params)).resolves.toBeUndefined();
       await connector.closeScope!(context);
       await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
     },

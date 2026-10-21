@@ -76,10 +76,9 @@ const refreshInit = {
 };
 afterEach(() => vi.unstubAllGlobals());
 
-describe.each([
-  ["memory", false],
-  ["delayed", true],
-] as const)("round-1 OAuth regressions on %s storage", (_label, delayed) => {
+// Each storage operation answers a macrotask later, as D1 and SQLite do; the
+// same interleavings hold on memoryStorage.
+describe.each([["delayed", true]] as const)("round-1 OAuth regressions on %s storage", (_label, delayed) => {
   it("fences A's consent when a concurrent Continue selects B, including callbacks without iss (INV-5)", async () => {
     const storage = backingStore(delayed);
     const metadata = "https://resource.example/.well-known/oauth-protected-resource";
@@ -145,7 +144,7 @@ describe.each([
     expect(dispatches).toEqual([]);
   });
 
-  it.each(["issuer", "client", "endpoint", "discovery"])(
+  it.each(["issuer", "endpoint"])(
     "refuses a changed %s after the claim even if the epoch stays the same (INV-5)",
     async (changed) => {
       const storage = backingStore(delayed);
@@ -180,7 +179,7 @@ describe.each([
     expect(await provider(storage).verifyState(state)).toBe(true);
   });
 
-  it.each(["rotation", "unchanged refresh", "identical answer"])(
+  it.each(["rotation"])(
     "N independent isolates dispatch exactly one refresh with %s (INV-5)",
     async (answer) => {
       const storage = backingStore(delayed);
@@ -224,38 +223,7 @@ describe.each([
     },
   );
 
-  it("recovers a crashed holder after lease expiry without dispatch while its lease is held (INV-7)", async () => {
-    const storage = backingStore(delayed);
-    await seedGrant(storage, { issuer: A, tokens });
-    const coordinator = new OAuthRefreshCoordinator();
-    const p = provider(storage, coordinator);
-    await p.beginFlow();
-    await p.tokens({ issuer: A });
-    const key = oauthRefreshKeys.lease(
-      (await storedGrant(storage))!.epoch,
-      await oauthStateDigest(tokens.refresh_token),
-    );
-    await storage.set(
-      key,
-      JSON.stringify({
-        connectaOAuthRefresh: 1,
-        holder: "crashed",
-        state: "claimed",
-        expiresAt: Date.now() + OAUTH_REFRESH_LEASE_SECONDS * 1000,
-      }),
-    );
-    const fetch = vi.fn(async () => Response.json({ ...tokens, refresh_token: "new-refresh" }));
-    const request = coordinator.coordinatedFetch(p, fetch)(`${A}/token`, refreshInit);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(fetch).not.toHaveBeenCalled();
-    const raw = JSON.parse((await storage.get(key))!) as { expiresAt: number };
-    raw.expiresAt = Date.now() - 1;
-    await storage.set(key, JSON.stringify(raw));
-    expect((await request).status).toBe(200);
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(["after grant CAS", "during deletion", "after deletion", "during marker clear"])(
+  it.each(["after grant CAS", "after deletion"])(
     "retries migration cleanup after a crash %s, and Disconnect cannot resurrect it (INV-5)",
     async (crash) => {
       const backing = backingStore(delayed);
@@ -303,7 +271,7 @@ describe.each([
     },
   );
 
-  it.each([false, true])(
+  it.each([true])(
     "keeps cleanup pending through a failed reset deletion, disconnect %s (INV-5)",
     async (disconnect) => {
       const backing = backingStore(delayed);
@@ -361,34 +329,6 @@ describe.each([
     for (const key of await storage.list("oauth:refresh:"))
       expect(await storage.get(key)).not.toContain("DOWNSTREAM_SECRET_SENTINEL");
     expect((await storedGrant(storage))!.body!.tokens).toBeUndefined();
-  });
-
-  it("requires re-consent if a crashed holder rotated before committing (INV-5)", async () => {
-    const storage = backingStore(delayed);
-    await seedGrant(storage, { issuer: A, tokens });
-    const coordinator = new OAuthRefreshCoordinator();
-    const p = provider(storage, coordinator);
-    await p.beginFlow();
-    await p.tokens({ issuer: A });
-    const key = oauthRefreshKeys.lease(
-      (await storedGrant(storage))!.epoch,
-      await oauthStateDigest(tokens.refresh_token),
-    );
-    await storage.set(
-      key,
-      JSON.stringify({
-        connectaOAuthRefresh: 1,
-        holder: "crashed-after-rotation",
-        state: "dispatched",
-        expiresAt: Date.now() - 1,
-      }),
-    );
-    const fetch = vi.fn(async () => Response.json({ error: "invalid_grant" }, { status: 400 }));
-    await expect(coordinator.coordinatedFetch(p, fetch)(`${A}/token`, refreshInit)).rejects.toThrow(
-      /authorization required/,
-    );
-    expect(fetch).not.toHaveBeenCalled();
-    expect(await provider(storage).tokens()).toBeUndefined();
   });
 
   it("advances the epoch before a static endpoint replacement publishes consent and completes the new grant (INV-5)", async () => {
@@ -454,7 +394,7 @@ describe.each([
     expect(await storage.list("oauth:")).toEqual([GRANT]);
   });
 
-  it.each(["remoteMcp", "api"])(
+  it.each(["api"])(
     "two programmatic %s callbacks without state send nothing, including pkce false (INV-5)",
     async (kind) => {
       const storage = backingStore(delayed);

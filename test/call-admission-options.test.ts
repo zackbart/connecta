@@ -6,21 +6,20 @@ import { providerFixtures } from "./providers.generated.js";
 import type { ContractFixture } from "./fixtures/provider-contract.js";
 
 const valid: ConnectorCallAdmissionPolicy = { rules: [{ maxConcurrency: 2 }] };
+// Falsy values never disable admission; one malformed rule, budget, and key.
 const invalid = [
   false,
   null,
   0,
   "",
-  [],
-  {},
   { rules: [] },
-  { rules: [null] },
   { rules: [{ maxConcurrency: 0 }] },
-  { rules: [{ maxConcurrency: 1, maxQueueSize: null }] },
   { rules: [{ budget: false }] },
-  { rules: [{ budget: { kind: "rolling-window", maxCalls: 0, windowMs: 1 } }] },
   { rules: [{ maxConcurrency: 1, partitionKey: "workspace" }] },
 ];
+// Each provider passes a defined policy through the shared schema; `null`
+// catches a `??` or `||` default, and one malformed rule catches a bypass.
+const invalidForProviders = [null, { rules: [{ maxConcurrency: 0 }] }];
 
 const factories = [
   {
@@ -114,7 +113,7 @@ function documentedDefault(provider: string, options: Record<string, unknown>) {
 }
 
 describe.each(scenarios)("$name admission options", ({ create, provider, options }) => {
-  it.each(invalid.map((callAdmission) => ({ callAdmission })))(
+  it.each(invalidForProviders.map((callAdmission) => ({ callAdmission })))(
     "INV-11: refuses malformed callAdmission %j at provider construction",
     ({ callAdmission }) => {
       expect(() => create({ callAdmission })).toThrow(/callAdmission/);

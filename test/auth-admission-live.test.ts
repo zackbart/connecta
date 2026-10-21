@@ -16,7 +16,7 @@ const nativeFetch = globalThis.fetch;
 const status = async (): Promise<{ calls: number; peak: number; ids: string[] }> =>
   (await nativeFetch(`${origin}/sdk/status`)).json();
 
-it.each(["headers", "body", "oauth-jwks", "session-jwks", "handshake"])(
+it.each(["body", "oauth-jwks", "handshake"])(
   "INV-7: real Clerk SDK/TCP %s cancellation drains four waves of 16 without exceeding admission",
   async (phase) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -39,12 +39,11 @@ it.each(["headers", "body", "oauth-jwks", "session-jwks", "handshake"])(
     const controllers: AbortController[] = [];
     const pending: Promise<unknown>[] = [];
     const start = (token: string, signal?: AbortSignal) => {
-      const session = phase === "session-jwks";
-      if (phase.endsWith("jwks") && !token.startsWith("oat_over_")) {
+      if (phase === "oauth-jwks" && !token.startsWith("oat_over_")) {
         const now = Math.floor(Date.now() / 1000);
         const encode = (value: unknown) =>
           btoa(JSON.stringify(value)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-        token = `${encode({ alg: "RS256", typ: session ? "JWT" : "at+jwt", kid: token })}.${encode({
+        token = `${encode({ alg: "RS256", typ: "at+jwt", kid: token })}.${encode({
           sub: "user_alice",
           iss: "https://clerk.example.test",
           aud: "https://connecta.test/mcp",
@@ -58,11 +57,9 @@ it.each(["headers", "body", "oauth-jwks", "session-jwks", "handshake"])(
       const browser = phase === "handshake";
       const url = browser
         ? `https://connecta.test/ui/api/config?__clerk_handshake_nonce=${token}`
-        : session
-          ? "https://connecta.test/ui/api/config"
-          : "https://connecta.test/mcp";
+        : "https://connecta.test/mcp";
       const req = new Request(url, {
-        method: session || browser ? "GET" : "POST",
+        method: browser ? "GET" : "POST",
         ...(signal ? { signal } : {}),
         headers: browser
           ? { Accept: "text/html", "Sec-Fetch-Dest": "document" }

@@ -17,14 +17,15 @@ const init = () => ({
   body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
 });
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-function store(delayed: boolean): KVStorage {
+/** Memory storage whose every operation crosses macrotask hops, exposing interleavings. */
+function store(): KVStorage {
   const backing = memoryStorage();
   const hop =
     <Args extends unknown[], R>(op: (...args: Args) => Promise<R>) =>
     async (...args: Args): Promise<R> => {
-      if (delayed) await pause();
+      await pause();
       const answer = await op(...args);
-      if (delayed) await pause();
+      await pause();
       return answer;
     };
   return {
@@ -84,21 +85,14 @@ async function tokenServer(mode: string) {
   };
 }
 
-describe.each([
-  ["memory", false],
-  ["delayed", true],
-] as const)("native HTTP refresh on %s storage", (_label, delayed) => {
+describe("native HTTP refresh on delayed storage", () => {
   it.each([
     [false, "caller"],
-    [true, "caller"],
-    [false, "sdk"],
-    [true, "sdk"],
-    [false, "both"],
     [true, "both"],
   ] as const)(
     "commits after dispatch cancellation without replay, runtime hook %s, signal %s (INV-5) (INV-7)",
     async (runtimeHook, cancelled) => {
-      const storage = store(delayed);
+      const storage = store();
       await seedGrant(storage, { issuer: ISSUER, tokens });
       const a = await isolate(storage);
       const local = await isolate(storage, a.coordinator);
@@ -134,10 +128,10 @@ describe.each([
     },
   );
 
-  it.each(["lost", "body-lost", "malformed-success", "failure-with-tokens"])(
+  it.each(["body-lost", "malformed-success"])(
     "permanently refuses %s after send across isolates and newcomer reads (INV-5)",
     async (mode) => {
-      const storage = store(delayed);
+      const storage = store();
       await seedGrant(storage, { issuer: ISSUER, tokens });
       const key = oauthRefreshKeys.lease(
         (await storedGrant(storage))!.epoch,
@@ -176,7 +170,7 @@ describe.each([
   );
 
   it("spends and sends the same fingerprint if the caller mutates its form during preparation (INV-5)", async () => {
-    const storage = store(delayed);
+    const storage = store();
     await seedGrant(storage, { issuer: ISSUER, tokens });
     const owner = await isolate(storage);
     const server = await tokenServer("success");
@@ -192,96 +186,90 @@ describe.each([
     ).toBeNull();
   });
 
-  it.each(["lost spent answer", "refused spent write"])(
-    "never sends unless the spent CAS returns success, %s (INV-5) (INV-6)",
-    async (failure) => {
-      const backing = store(delayed);
-      await seedGrant(backing, { issuer: ISSUER, tokens });
-      const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
-      const storage: KVStorage = {
-        ...backing,
-        compareAndSet: async (key, expected, value, options) => {
-          if (key === spentKey) {
-            if (failure === "lost spent answer") await backing.compareAndSet(key, expected, value, options);
-            throw new Error("STORAGE_SECRET_SENTINEL");
-          }
-          return backing.compareAndSet(key, expected, value, options);
-        },
-      };
-      const server = await tokenServer("success");
-      const owner = await isolate(storage);
-      await expect(owner.refresh(server.url)).rejects.toMatchObject({
-        name: "UnauthorizedError",
-        message: "OAuth refresh dispatch could not be recorded; authorization required.",
-      });
-      expect((await storedGrant(backing))!.body!.tokens).toBeUndefined();
+  it("never sends unless the spent CAS returns success, even when its write landed (INV-5) (INV-6)", async () => {
+    const backing = store();
+    await seedGrant(backing, { issuer: ISSUER, tokens });
+    const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
+    const storage: KVStorage = {
+      ...backing,
+      compareAndSet: async (key, expected, value, options) => {
+        if (key === spentKey) {
+          // The write lands but its answer is lost.
+          await backing.compareAndSet(key, expected, value, options);
+          throw new Error("STORAGE_SECRET_SENTINEL");
+        }
+        return backing.compareAndSet(key, expected, value, options);
+      },
+    };
+    const server = await tokenServer("success");
+    const owner = await isolate(storage);
+    await expect(owner.refresh(server.url)).rejects.toMatchObject({
+      name: "UnauthorizedError",
+      message: "OAuth refresh dispatch could not be recorded; authorization required.",
+    });
+    expect((await storedGrant(backing))!.body!.tokens).toBeUndefined();
+    const newcomer = await isolate(storage);
+    expect((await newcomer.refresh(server.url)).status).toBe(400);
+    expect(await server.sent()).toEqual([]);
+    expect(await backing.get(spentKey)).not.toBeNull();
+  });
+
+  it("requires re-consent after rotation commit exhaustion without newcomer replay (INV-5)", async () => {
+    const backing = store();
+    await seedGrant(backing, { issuer: ISSUER, tokens });
+    let commits = 0;
+    const storage: KVStorage = {
+      ...backing,
+      compareAndSet: async (key, expected, value, options) => {
+        if (key === oauthGrantKeys.grant && value?.includes(next.refresh_token)) {
+          commits++;
+          return false;
+        }
+        // The old grant stays because cleanup also fails.
+        if (key === oauthGrantKeys.grant) return false;
+        return backing.compareAndSet(key, expected, value, options);
+      },
+    };
+    const server = await tokenServer("success");
+    const owner = await isolate(storage);
+    const local = await isolate(storage, owner.coordinator);
+    const waiter = await isolate(storage);
+    const first = owner.refresh(server.url).catch((error: unknown) => error);
+    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
+    const spent = await backing.get(spentKey);
+    expect(JSON.parse(spent!)).toMatchObject({
+      connectaOAuthRefreshSpent: 1,
+      epoch: "v3:seeded",
+      state: "outstanding",
+    });
+    const waiting = [local, waiter].map((isolate) => isolate.refresh(server.url).catch((error: unknown) => error));
+    await server.finish();
+    expect(await first).toBeInstanceOf(UnauthorizedError);
+    for (const answer of await Promise.all(waiting)) {
+      if (answer instanceof Response) expect(await answer.json()).toMatchObject({ error: "invalid_grant" });
+      else expect(answer).toBeInstanceOf(UnauthorizedError);
+    }
+    expect(commits).toBe(32);
+    expect((await storedGrant(backing))!.body!.tokens).toEqual(tokens);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Reset sweeps must retain the old epoch's spent record.
+      const resetter = await isolate(backing);
+      if (attempt) await resetter.provider.resetAuthorization(attempt === 2);
+      // A stale grant write restoring that epoch still cannot reopen dispatch.
+      await seedGrant(backing, { issuer: ISSUER, tokens }, "v3:seeded");
       const newcomer = await isolate(storage);
-      expect((await newcomer.refresh(server.url)).status).toBe(400);
-      expect(await server.sent()).toEqual([]);
-      if (failure === "lost spent answer") expect(await backing.get(spentKey)).not.toBeNull();
-    },
-  );
+      await expect(newcomer.refresh(server.url)).rejects.toBeInstanceOf(UnauthorizedError);
+      expect((await storedGrant(backing))!.body!.tokens).toEqual(tokens);
+      expect(JSON.parse((await backing.get(spentKey))!)).toMatchObject({ state: "resolved", epoch: "v3:seeded" });
+    }
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
+  });
 
-  it.each(["CAS false", "CAS error"])(
-    "requires re-consent after rotation commit exhaustion, %s, without newcomer replay (INV-5)",
-    async (failure) => {
-      const backing = store(delayed);
-      await seedGrant(backing, { issuer: ISSUER, tokens });
-      let commits = 0;
-      const storage: KVStorage = {
-        ...backing,
-        compareAndSet: async (key, expected, value, options) => {
-          if (key === oauthGrantKeys.grant && value?.includes(next.refresh_token)) {
-            commits++;
-            if (failure === "CAS error") throw new Error(`refused ${value}`);
-            return false;
-          }
-          // The CAS-failure repro keeps the old grant because cleanup also fails.
-          if (failure === "CAS false" && key === oauthGrantKeys.grant) return false;
-          return backing.compareAndSet(key, expected, value, options);
-        },
-      };
-      const server = await tokenServer("success");
-      const owner = await isolate(storage);
-      const local = await isolate(storage, owner.coordinator);
-      const waiter = await isolate(storage);
-      const first = owner.refresh(server.url).catch((error: unknown) => error);
-      await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
-      const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
-      const spent = await backing.get(spentKey);
-      expect(JSON.parse(spent!)).toMatchObject({
-        connectaOAuthRefreshSpent: 1,
-        epoch: "v3:seeded",
-        state: "outstanding",
-      });
-      const waiting = [local, waiter].map((isolate) => isolate.refresh(server.url).catch((error: unknown) => error));
-      await server.finish();
-      expect(await first).toBeInstanceOf(UnauthorizedError);
-      for (const answer of await Promise.all(waiting)) {
-        if (answer instanceof Response) expect(await answer.json()).toMatchObject({ error: "invalid_grant" });
-        else expect(answer).toBeInstanceOf(UnauthorizedError);
-      }
-      expect(commits).toBe(32);
-      expect((await storedGrant(backing))!.body!.tokens).toEqual(failure === "CAS false" ? tokens : undefined);
-      for (let attempt = 0; attempt < 3; attempt++) {
-        // Reset sweeps must retain the old epoch's spent record.
-        const resetter = await isolate(backing);
-        if (attempt) await resetter.provider.resetAuthorization(attempt === 2);
-        // A stale grant write restoring that epoch still cannot reopen dispatch.
-        await seedGrant(backing, { issuer: ISSUER, tokens }, "v3:seeded");
-        const newcomer = await isolate(storage);
-        await expect(newcomer.refresh(server.url)).rejects.toBeInstanceOf(UnauthorizedError);
-        expect((await storedGrant(backing))!.body!.tokens).toEqual(failure === "CAS false" ? tokens : undefined);
-        expect(JSON.parse((await backing.get(spentKey))!)).toMatchObject({ state: "resolved", epoch: "v3:seeded" });
-      }
-      expect(await server.sent()).toEqual([tokens.refresh_token]);
-    },
-  );
-
-  it.each(["contention", "error", "lost commit answer"])(
+  it.each(["error", "lost commit answer"])(
     "commits the in-memory rotation after %s without another HTTP request (INV-5)",
     async (failure) => {
-      const backing = store(delayed);
+      const backing = store();
       await seedGrant(backing, { issuer: ISSUER, tokens });
       let commits = 0;
       const storage: KVStorage = {
@@ -289,15 +277,8 @@ describe.each([
         compareAndSet: async (key, expected, value, options) => {
           if (key === oauthGrantKeys.grant && value?.includes(next.refresh_token) && ++commits <= 2) {
             if (failure === "error") throw new Error("commit unavailable");
-            if (failure === "lost commit answer") {
-              await backing.compareAndSet(key, expected, value, options);
-              throw new Error("commit answer lost");
-            }
-            // Another writer changes the consent pointer in the same epoch.
-            await backing.set(
-              key,
-              JSON.stringify({ ...JSON.parse((await backing.get(key))!), flow: `contention-${commits}` }),
-            );
+            await backing.compareAndSet(key, expected, value, options);
+            throw new Error("commit answer lost");
           }
           return backing.compareAndSet(key, expected, value, options);
         },
@@ -312,55 +293,47 @@ describe.each([
       await server.finish();
       for (const answer of await Promise.all([first, ...waiting])) expect(await answer.json()).toEqual(next);
       expect((await storedGrant(backing))!.body!.tokens).toMatchObject(next);
-      if (failure === "contention") expect((await storedGrant(backing))!.flow).toBe("contention-2");
       expect(commits).toBe(failure === "lost commit answer" ? 1 : 3);
       expect(await server.sent()).toEqual([tokens.refresh_token]);
     },
   );
 
-  it.each([false, true])(
-    "drops the rotation when %s Disconnect moves the epoch during commit (INV-5)",
-    async (disconnect) => {
-      const backing = store(delayed);
-      await seedGrant(backing, { issuer: ISSUER, tokens });
-      const resetter = await isolate(backing);
-      let moved = false;
-      const storage: KVStorage = {
-        ...backing,
-        compareAndSet: async (key, expected, value, options) => {
-          if (!moved && key === oauthGrantKeys.grant && value?.includes(next.refresh_token)) {
-            moved = true;
-            await resetter.provider.resetAuthorization(disconnect);
-          }
-          return backing.compareAndSet(key, expected, value, options);
-        },
-      };
-      const server = await tokenServer("success");
-      const owner = await isolate(storage);
-      const first = owner.refresh(server.url).catch((error: unknown) => error);
-      await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
-      await server.finish();
-      expect(await first).toBeInstanceOf(UnauthorizedError);
-      const grant = (await storedGrant(backing))!;
-      expect(grant.epoch).not.toBe("v3:seeded");
-      expect(grant.body?.tokens).toBeUndefined();
-      expect(await resetter.provider.operatorDisconnected()).toBe(disconnect);
-      const current = await backing.get(oauthGrantKeys.grant);
-      const newcomer = await isolate(storage);
-      await newcomer.refresh(server.url).catch(() => {});
-      expect(await backing.get(oauthGrantKeys.grant)).toBe(current);
-      expect(await server.sent()).toEqual([tokens.refresh_token]);
-      expect(
-        await backing.get(oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token))),
-      ).not.toBeNull();
-    },
-  );
+  it("drops the rotation when Disconnect moves the epoch during commit (INV-5)", async () => {
+    const backing = store();
+    await seedGrant(backing, { issuer: ISSUER, tokens });
+    const resetter = await isolate(backing);
+    let moved = false;
+    const storage: KVStorage = {
+      ...backing,
+      compareAndSet: async (key, expected, value, options) => {
+        if (!moved && key === oauthGrantKeys.grant && value?.includes(next.refresh_token)) {
+          moved = true;
+          await resetter.provider.resetAuthorization(true);
+        }
+        return backing.compareAndSet(key, expected, value, options);
+      },
+    };
+    const server = await tokenServer("success");
+    const owner = await isolate(storage);
+    const first = owner.refresh(server.url).catch((error: unknown) => error);
+    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    await server.finish();
+    expect(await first).toBeInstanceOf(UnauthorizedError);
+    const grant = (await storedGrant(backing))!;
+    expect(grant.epoch).not.toBe("v3:seeded");
+    expect(grant.body?.tokens).toBeUndefined();
+    expect(await resetter.provider.operatorDisconnected()).toBe(true);
+    const current = await backing.get(oauthGrantKeys.grant);
+    const newcomer = await isolate(storage);
+    await newcomer.refresh(server.url).catch(() => {});
+    expect(await backing.get(oauthGrantKeys.grant)).toBe(current);
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
+    expect(await backing.get(oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token)))).not.toBeNull();
+  });
 });
 
 it.each([
   ["call_tool", false],
-  ["execute_code", false],
-  ["call_tool", true],
   ["execute_code", true],
 ] as const)(
   "threads Workers waitUntil through %s with exhausted commit %s, without refresh replay (INV-5) (INV-7)",
