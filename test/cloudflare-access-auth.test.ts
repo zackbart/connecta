@@ -145,7 +145,7 @@ describe("cloudflareAccessAuth", () => {
     }
   });
 
-  it("INV-4: bounds an unavailable Access lookup and never admits its late result", async () => {
+  it("INV-4 INV-7: returns at the native Access deadline and never admits its late result", async () => {
     vi.useFakeTimers();
     try {
       let resolve!: (identity: Record<string, unknown>) => void;
@@ -166,8 +166,6 @@ describe("cloudflareAccessAuth", () => {
         expect(result.response.headers.get("Cache-Control")).toBe("no-store");
       }
       resolve({ user_uuid: "late-human" });
-      await Promise.resolve();
-      expect(result.ok).toBe(false);
     } finally {
       vi.useRealTimers();
     }
