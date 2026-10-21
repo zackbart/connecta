@@ -2285,8 +2285,9 @@ compiling and configuring the real thing.
   (`code: "timeout"`, an HTTP 408), and a timeout errno. Without a genuine
   key, such a write is unknown and non-retryable: a timeout keeps its code
   and `details.code`; the caller's abort becomes `timeout` or
-  `connector_call_failed` with its reason as `cause` and its class and code
-  in `details`. No invocation exists to report it as
+  `connector_call_failed` with its reason as `cause` (a redacted copy of the
+  same class where output redaction applies, as on `remoteMcp()`) and its
+  class and code in `details`. No invocation exists to report it as
   `write_outcome_unknown`. The caller's own abort reason still passes by
   identity for a read and for a served call, whose timeout passes through
   unchanged for the invocation to report.

@@ -658,7 +658,7 @@ describe("remote MCP writes after an ambiguous failure", () => {
     expect(flow.applied).toEqual(["create_item 1", "create_item 2", "list_items", "create_item 3"]);
   });
 
-  it("INV-9: a direct write the caller aborted after the server acted is unknown; its reason stays the cause", async () => {
+  it("INV-9: a direct write the caller aborted after the server acted is unknown; its reason, redacted, stays the cause", async () => {
     const flow = setup();
     const controller = new AbortController();
     const ctx = flow.context({ signal: controller.signal });
@@ -674,7 +674,10 @@ describe("remote MCP writes after an ambiguous failure", () => {
     const reason = new Error("caller left");
     controller.abort(reason);
     const error = await pending;
-    expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
-    expect(error.cause).toBe(reason);
+    expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown", details: { name: "Error" } });
+    // The boundary's output redaction (#911) returns a copy of every error it
+    // checked, the cause included: the same class and text, not the object.
+    expect(error.cause).toBeInstanceOf(Error);
+    expect((error.cause as Error).message).toBe(reason.message);
   });
 });
