@@ -4,6 +4,7 @@
 // into the agent envelope or operator records.
 import { contextKey, deriveContext } from "./derived-context.js";
 import { carryResendAdvice, ConnectorCallError } from "./errors.js";
+import { followRedactedCopies } from "./redaction-identity.js";
 import type { Connector, ConnectorContext } from "./types.js";
 
 export interface ProviderRequest {
@@ -23,8 +24,9 @@ interface ProviderCall {
 }
 const CALL = Symbol("provider call");
 type CallContext = ConnectorContext & { [CALL]?: ProviderCall };
-const refusals = new WeakMap<object, ProviderRequest>();
-const knownFailures = new WeakSet<object>();
+// A redacted copy of a failure is the same failure: its verdict follows it.
+const refusals = followRedactedCopies(new WeakMap<object, ProviderRequest>());
+const knownFailures = followRedactedCopies(new WeakSet<object>());
 const trackedConnectors = new WeakSet<object>();
 
 // Call identities, each bound to the connector object it was built as and

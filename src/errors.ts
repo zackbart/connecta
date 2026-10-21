@@ -4,6 +4,7 @@
 import type { ExecutorAdmissionErrorCode } from "./executor-admission.js";
 import type { JsonSchema } from "./types.js";
 import { redactCallArguments } from "./argument-redaction.js";
+import { followRedactedCopies } from "./redaction-identity.js";
 
 /**
  * Machine-readable classification of a failed connector tool call.
@@ -659,7 +660,7 @@ export function framingError(code: ClassificationCode, message: string): CallErr
 
 // Advice to send a call again, kept beside its failure and never inside the
 // failure's message. See resendAdvice.
-const resendAdvices = new WeakMap<object, string>();
+const resendAdvices = followRedactedCopies(new WeakMap<object, string>());
 
 /**
  * Attach advice to send the call again (a rate limit's " Back off before
@@ -683,7 +684,7 @@ export function resendAdviceOf(from: unknown): string | undefined {
 
 // Advice that reusing an idempotency key cannot repeat the write, kept apart
 // from the failure's message and its other resend advice. See keyResendAdvice.
-const keyAdvices = new WeakMap<object, KeyResendAdvice>();
+const keyAdvices = followRedactedCopies(new WeakMap<object, KeyResendAdvice>());
 export interface KeyResendAdvice {
   /** The key the advice names, as it was sent. */
   key: string;
