@@ -39,7 +39,7 @@ import {
   type GuardedTransport,
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
-import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
+import { ConnectorCallError, keyResendAdvice, unavailableCallError } from "../../../errors.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
 import type { ValueSafety } from "./value-safety.js";
@@ -325,6 +325,12 @@ export async function callRest(
   await vendor.admit?.(call, ctx);
   const framing = vendor.encode ? vendor.encode(call) : defaultFraming(vendor, call);
   const header = vendor.idempotencyHeader?.toLowerCase();
+  const idempotencyKey =
+    header === undefined
+      ? undefined
+      : Object.entries(visibleHeaders).find(
+          ([name, value]) => name.toLowerCase() === header && unsendableKey(value) === undefined,
+        )?.[1];
   const request: GuardedRequest = {
     method: call.method,
     classification:
@@ -334,11 +340,7 @@ export async function callRest(
         ? "read"
         : "write",
     // Only a key the vendor receives proves the write repeatable.
-    repeatable:
-      header !== undefined &&
-      Object.entries(visibleHeaders).some(
-        ([name, value]) => name.toLowerCase() === header && unsendableKey(value) === undefined,
-      ),
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     path: call.path,
     ...(framing.query ? { query: framing.query } : {}),
     ...(framing.headers ? { headers: framing.headers } : {}),
@@ -737,11 +739,15 @@ export function restTools(vendor: RestVendor): ApiTool[] {
         } catch (error) {
           // A generated key exists nowhere else, so a failure must carry it:
           // only that key lets the caller check or retry this exact write.
+          // The key stays in the message as a diagnostic; the advice to
+          // reuse it is a segment the invocation composes only where the key
+          // protects the whole logical call (keyResendAdvice).
           if (!key || given || !(error instanceof ConnectorCallError)) throw error;
-          throw providerFailureMessage(
-            error,
-            `${error.message} ${header}: ${key}. Reusing it with the exact original arguments retries this write ` +
-              "without repeating it only while the vendor retains the key; after that, look the object up before retrying.",
+          throw keyResendAdvice(
+            providerFailureMessage(error, `${error.message} ${header}: ${key}.`),
+            key,
+            " Reusing it with the exact original arguments retries this write without repeating it only while " +
+              "the vendor retains the key; after that, look the object up before retrying.",
           );
         }
       },

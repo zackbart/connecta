@@ -452,7 +452,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   ): Promise<Response> => {
     // A call that already ended reads no token and sends nothing more.
     assertProviderCallOpen(ctx, id, false);
-    const dispatch = boundProviderRequest(init) ?? providerRequest(ctx, false, id);
+    const dispatch = boundProviderRequest(init) ?? providerRequest(ctx, false, id, { method: init.method ?? "GET" });
     dispatch.dispatched = false;
     const url = new URL(input);
     if (!settings.apiOrigins.has(url.origin)) {

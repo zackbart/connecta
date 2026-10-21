@@ -15,11 +15,13 @@ import {
   ConnectorCallError,
   echoedCallArgs,
   framingError,
+  keyResendAdviceOf,
   resendAdviceOf,
   withResendAdvice,
   type AuthRecoveryMode,
   type CallErrorDetails,
   type ClassificationCode,
+  type KeyResendAdvice,
 } from "./errors.js";
 import { downstreamValue } from "./mcp-result.js";
 import {
@@ -37,6 +39,7 @@ import { recoveryFor } from "./call-recovery.js";
 import {
   forgetProviderFailure,
   isKnownProviderFailure,
+  keyProtectsLogicalCall,
   knownForLogicalCall,
   knownProviderFailure,
   openLogicalCall,
@@ -351,8 +354,11 @@ export class InvocationService {
       let preInvocationAuthFailure = false;
       let answered = false;
       // A dispatched failure's advice to send it again, composed by enrich
-      // only once the outcome allows it (resendAdvice).
+      // only once the outcome allows it (resendAdvice), and its advice to
+      // reuse an idempotency key, only where that key protects the whole
+      // logical call (keyResendAdvice, keyProtectsLogicalCall).
       let failureAdvice: string | undefined;
+      let failureKeyAdvice: KeyResendAdvice | undefined;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
       context.sentSecrets?.include(sentSecrets);
       // A write gate's refusal that is no attempt; see WriteGateDecision.
@@ -404,7 +410,9 @@ export class InvocationService {
       const enrich = (error: CallErrorDetails, target: typeof activityTarget): CallErrorDetails => {
         if (!target) return error;
         const recovery = recoveryFor(dispatchContext);
-        const recoveryRetry = recovery?.["idempotencyKey"]
+        // A recorded key is a diagnostic; advice to reuse it needs proof that
+        // it protects the whole logical call, not one request inside it.
+        const recoveryRetry = keyProtectsLogicalCall(dispatchContext, recovery?.["idempotencyKey"])
           ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
           : "";
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
@@ -443,8 +451,13 @@ export class InvocationService {
         // The failure's advice to send it again was kept apart until now, and
         // joins its message only where the outcome allows it: never on a write
         // whose outcome is unknown, whatever redaction did to the message.
-        else if (failureAdvice !== undefined)
-          error = { ...error, message: withResendAdvice(error.message, failureAdvice) };
+        // Key-reuse advice also needs its key to protect the logical call.
+        else {
+          if (failureKeyAdvice && keyProtectsLogicalCall(dispatchContext, failureKeyAdvice.key))
+            error = { ...error, message: withResendAdvice(error.message, failureKeyAdvice.advice) };
+          if (failureAdvice !== undefined)
+            error = { ...error, message: withResendAdvice(error.message, failureAdvice) };
+        }
         // Any other dispatched write whose outcome is unknown (a lost response
         // body, a 5xx, an unreadable reply) keeps the facts its connector
         // recorded before dispatch, here and through program write accounting.
@@ -861,6 +874,7 @@ export class InvocationService {
             answered = answeredFailure(attemptError, write, dispatchContext);
             if (isCallerCancellation(attemptError, context.requestSignal)) return callerCancelledDetails();
             failureAdvice = resendAdviceOf(attemptError);
+            failureKeyAdvice = keyResendAdviceOf(attemptError);
             const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
             // An inner call's verdict that does not hold for this one is withdrawn.
             if (write && !answered) forgetProviderFailure(details);
@@ -904,6 +918,7 @@ export class InvocationService {
       if (Exit.isFailure(dispatched)) {
         const failure = Cause.squash(dispatched.cause);
         failureAdvice = resendAdviceOf(failure);
+        failureKeyAdvice = keyResendAdviceOf(failure);
         const details = context.requestSignal?.aborted
           ? callerCancelledDetails()
           : carryFailureFacts(failure, classifyWithoutAdvice(sentSecrets.redact(failure)));

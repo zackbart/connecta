@@ -2051,6 +2051,22 @@ compiling and configuring the real thing.
   `classifyWithoutAdvice`). So no redaction of a private argument, no
   wrapper's rewording, and no preflight failure after an earlier dispatch
   can leave it on an unknown write, while a read and a known refusal keep it.
+  Key-reuse advice ("reuse this key", "cannot repeat the write") needs more:
+  proof that its key protects the whole logical call
+  (`keyProtectsLogicalCall`). Every resource request dispatched under the
+  logical call, from any ledger, is recorded on it once per dispatch with
+  its method and the genuine key it carried (`ProviderRequest.key`, set by
+  `callRest` only for a key fetch sends as given). The advice stands only when
+  exactly one boundary was entered, the invocation's object owns it as for
+  `knownForLogicalCall`, that boundary tracks every request, and exactly one
+  dispatched request was a write, carrying the named key; a request counts as
+  a read only by its recorded GET or HEAD (`readMethod`). A composite, a
+  wrapper, a second write, an earlier unrelated key, or a call interrupted
+  after two dispatches gets no such advice; the key stays a diagnostic, in
+  the message and `uncertainCall.recovery`. The REST write tool's
+  generated-key advice is a segment of its own (`keyResendAdvice`), which the
+  invocation composes only under that proof and `classifyCallError` composes
+  for a direct caller of the one boundary that sent the key.
   An authorization or credential handoff on an
   unknown write says to re-read the target before any fresh call instead of
   "retry the original call" (`src/authorization-handoff.ts`). Owning transport attempts is planned for decision 0009's B.2

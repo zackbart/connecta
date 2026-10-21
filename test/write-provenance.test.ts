@@ -12,6 +12,8 @@
 // the identities that decide a logical call are captured when they run.
 // Round 15: they are invoked with Reflect.apply and bound to the objects that
 // own them, so a function's own `call` or a copy of a boundary borrows nothing.
+// Round 16: key-reuse advice holds only when its key protects the whole
+// logical call: one boundary, one write sent, carrying that key.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
 import { api } from "../src/connectors/api.js";
@@ -25,6 +27,8 @@ import { createExecuteTool } from "../src/execute.js";
 import { github } from "../src/providers/github/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
+import { stripeRest } from "../src/providers/stripe/rest.js";
+import { restTools } from "../src/providers/_shared/rest/tools.js";
 import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
@@ -1066,5 +1070,320 @@ describe("a write's MCP isError is a 2xx reply, never a known failure (round 13)
     expect(served.answered).toBe(true);
     expect(served.error).toMatchObject({ code: "connector_call_failed", message: "No such list.", retryable: false });
     expect(served.error.writeOutcome).toBeUndefined();
+  });
+});
+
+describe("key-reuse advice needs its key to protect the whole logical call (round 16)", () => {
+  const KEY_ADVICE = /cannot repeat the write|Reusing it|recovery\.idempotencyKey/;
+  const create = (name: string, idempotencyKey?: string) => ({
+    method: "POST",
+    path: "/v1/customers",
+    body: { name },
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+  });
+
+  interface Sent {
+    method: string;
+    url: string;
+    key: string | null;
+    name: string | null;
+  }
+
+  /**
+   * Stripe behind a vault. Every request is recorded with its key; `answer`
+   * decides each reply. A create applies once per key, as Stripe's do.
+   */
+  async function billing(answer: (request: Sent, applied: number) => Response | Promise<Response>) {
+    const state = { sent: [] as Sent[], applied: new Map<string, number>(), ticketsApplied: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const name = request.method === "POST" ? new URLSearchParams(await request.text()).get("name") : null;
+      const sent = { method: request.method, url: request.url, key: request.headers.get("idempotency-key"), name };
+      state.sent.push(sent);
+      if (request.url === "https://tickets.example/create") {
+        state.ticketsApplied++;
+        throw new TypeError("fetch failed", { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) });
+      }
+      const applied = name ?? request.url;
+      if (request.method === "POST" && (sent.key === null || !state.sent.slice(0, -1).some((s) => s.key === sent.key)))
+        state.applied.set(applied, (state.applied.get(applied) ?? 0) + 1);
+      return answer(sent, state.applied.get(applied) ?? 0);
+    });
+    const connector = stripe("billing", { purpose: "Review", auth: { type: "apiKey" }, mode: "sandbox" });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.set("billing", "sk_test_fixture", "fixture");
+    return { state, connector, storage, vault };
+  }
+
+  const created = (sent: Sent) => Response.json({ id: `cus_${sent.name}`, name: sent.name });
+  const lost = () => Response.json({ error: { type: "api_error", message: "Later result lost" } }, { status: 500 });
+  const refused = () =>
+    Response.json({ error: { type: "invalid_request_error", message: "No such thing" } }, { status: 400 });
+
+  /** A custom connector whose one write runs `run` over the Stripe connection. */
+  function wrapper(inner: Connector, run: (args: Record<string, unknown>, ctx: ConnectorContext) => Promise<unknown>) {
+    return {
+      id: "billing",
+      kind: "api",
+      ...(inner.credential ? { credential: inner.credential } : {}),
+      description: "Composite operation",
+      async listTools() {
+        return [{ name: "create_pair", description: "Create", annotations: { readOnlyHint: false }, inputSchema: {} }];
+      },
+      callTool: (_name, args, ctx) => run(args as Record<string, unknown>, ctx),
+    } satisfies Connector;
+  }
+
+  function invoke(
+    registry: ReturnType<typeof makeRegistry>,
+    address: string,
+    args: unknown,
+    timeoutMs?: number,
+  ): ReturnType<InvocationService["invoke"]> {
+    return new InvocationService(registry, new CatalogService(registry, BASE)).invoke(address, args, {
+      source: "call_destructive_tool",
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    });
+  }
+
+  /** A program that catches the call's failure, then reuses the key it was handed. */
+  async function reusingProgram(registry: ReturnType<typeof makeRegistry>, address: string) {
+    const seen: unknown[] = [];
+    const executor: Executor = {
+      async execute(_code, providers) {
+        const call = providers.find((provider) => provider.name === "connecta")!.fns["call"]!;
+        try {
+          await call(address, {});
+        } catch (error) {
+          seen.push(error);
+          const key = (error as { data?: { uncertainCall?: { recovery?: { idempotencyKey?: string } } } }).data
+            ?.uncertainCall?.recovery?.idempotencyKey;
+          try {
+            await call(address, { idempotencyKey: key });
+          } catch (again) {
+            seen.push(again);
+          }
+        }
+        return { result: "caught" };
+      },
+    };
+    const program = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: "async () => null",
+    });
+    return { program, seen };
+  }
+
+  function expectNoKeyAdvice(error: { message: string; retry?: string }) {
+    expect(error.message).not.toMatch(KEY_ADVICE);
+    expect(error.retry ?? "").not.toMatch(KEY_ADVICE);
+  }
+
+  it("INV-9: an api() composite's keyed Stripe create grants no advice to the unkeyed ticket POST that lost its reply", async () => {
+    const { state, connector, storage, vault } = await billing(created);
+    const composite = api("billing", {
+      credential: connector.credential!,
+      tools: [
+        {
+          name: "create_pair",
+          description: "Create a customer and a ticket",
+          annotations: { readOnlyHint: false },
+          inputSchema: { type: "object", properties: { idempotencyKey: { type: "string" } } },
+          async handler(args, ctx) {
+            await connector.callTool("stripe_api_write", create("first", String(args["idempotencyKey"])), ctx);
+            return (await ctx.fetch("https://tickets.example/create", { method: "POST", body: "create" })).json();
+          },
+        },
+      ],
+    });
+    const registry = makeRegistry([composite], { storage, credentialVault: vault });
+    const first = await invoke(registry, "billing.create_pair", { idempotencyKey: "stable-first" });
+    if (first.ok) throw new Error("expected the composite to fail");
+    expect(first.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expectNoKeyAdvice(first.error);
+    // The key stays as a diagnostic.
+    expect(first.error.uncertainCall?.recovery).toEqual({ idempotencyKey: "stable-first" });
+    expect(classifyWriteOutcome(first)).toBe("unknown");
+    // Why: the same arguments again create one customer and a second ticket.
+    await invoke(registry, "billing.create_pair", { idempotencyKey: "stable-first" });
+    expect(state.applied.get("first")).toBe(1);
+    expect(state.ticketsApplied).toBe(2);
+  });
+
+  it("INV-9: two keyed Stripe creates in an api() composite grant the second's key no advice, served and in a program", async () => {
+    const { state, connector, storage, vault } = await billing((sent) =>
+      sent.name === "first" ? created(sent) : lost(),
+    );
+    const composite = api("billing", {
+      credential: connector.credential!,
+      tools: [
+        {
+          name: "create_pair",
+          description: "Create two customers",
+          annotations: { readOnlyHint: false },
+          inputSchema: { type: "object", properties: { idempotencyKey: { type: "string" } } },
+          async handler(args, ctx) {
+            await connector.callTool("stripe_api_write", create("first"), ctx);
+            return await connector.callTool(
+              "stripe_api_write",
+              create("second", args["idempotencyKey"] as string | undefined),
+              ctx,
+            );
+          },
+        },
+      ],
+    });
+    const registry = makeRegistry([composite], { storage, credentialVault: vault });
+    const first = await invoke(registry, "billing.create_pair", { idempotencyKey: "stable-second" });
+    if (first.ok) throw new Error("expected the composite to fail");
+    expect(first.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expectNoKeyAdvice(first.error);
+    expect(first.error.uncertainCall?.recovery).toEqual({ idempotencyKey: "stable-second" });
+    await invoke(registry, "billing.create_pair", { idempotencyKey: "stable-second" });
+    // The first create's generated key was never the one reused.
+    expect(state.applied.get("first")).toBe(2);
+
+    const { program, seen } = await reusingProgram(registry, "billing.create_pair");
+    expect(seen).toHaveLength(2);
+    for (const error of seen) expect(JSON.stringify(error)).not.toMatch(KEY_ADVICE);
+    expect(program.isError).toBe(true);
+    expect(JSON.stringify(program.structuredContent)).not.toMatch(KEY_ADVICE);
+    expect(program.structuredContent).toMatchObject({
+      error: { code: "write_outcome_unknown", writes: { succeeded: 0, failed: 0, unknown: 2 } },
+    });
+    expect(state.applied.get("first")).toBe(4);
+  });
+
+  it("INV-9: a custom wrapper around one keyed Stripe call has one boundary and one request, but no standing, so no advice", async () => {
+    const { state, connector, storage, vault } = await billing(lost);
+    const registry = makeRegistry(
+      [wrapper(connector, (_args, ctx) => connector.callTool("stripe_api_write", create("only"), ctx))],
+      { storage, credentialVault: vault },
+    );
+    const served = await invoke(registry, "billing.create_pair", {});
+    expect(state.sent).toHaveLength(1);
+    if (served.ok) throw new Error("expected the write to fail");
+    expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expectNoKeyAdvice(served.error);
+    // The generated key is still reported, as a diagnostic.
+    const key = state.sent[0]!.key!;
+    expect(served.error.message).toContain(`Idempotency-Key: ${key}.`);
+    expect(served.error.uncertainCall?.recovery).toEqual({ idempotencyKey: key });
+  });
+
+  it("INV-9: an unrelated earlier key in the same logical call never speaks for a later unkeyed write", async () => {
+    const { state, connector, storage, vault } = await billing((sent) =>
+      sent.method === "POST" ? created(sent) : lost(),
+    );
+    const registry = makeRegistry(
+      [
+        wrapper(connector, async (_args, ctx) => {
+          await connector.callTool("stripe_api_write", create("first", "earlier-key"), ctx);
+          return await connector.callTool("stripe_api_write", { method: "DELETE", path: "/v1/customers/cus_2" }, ctx);
+        }),
+      ],
+      { storage, credentialVault: vault },
+    );
+    const served = await invoke(registry, "billing.create_pair", {});
+    expect(state.sent.map((sent) => [sent.method, sent.key])).toEqual([
+      ["POST", "earlier-key"],
+      ["DELETE", null],
+    ]);
+    if (served.ok) throw new Error("expected the write to fail");
+    expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expectNoKeyAdvice(served.error);
+    expect(served.error.uncertainCall?.recovery).toEqual({ idempotencyKey: "earlier-key" });
+  });
+
+  it("INV-9: a call interrupted after two dispatches grants no advice to the key it was sending", async () => {
+    const { state, connector, storage, vault } = await billing((sent) =>
+      sent.name === "first" ? created(sent) : new Promise<Response>(() => {}),
+    );
+    const registry = makeRegistry(
+      [
+        wrapper(connector, async (_args, ctx) => {
+          await connector.callTool("stripe_api_write", create("first"), ctx);
+          return await connector.callTool("stripe_api_write", create("second", "pending-key"), ctx);
+        }),
+      ],
+      { storage, credentialVault: vault },
+    );
+    const served = await invoke(registry, "billing.create_pair", {}, 300);
+    expect(state.sent.map((sent) => sent.name)).toEqual(["first", "second"]);
+    if (served.ok) throw new Error("expected the deadline");
+    expect(served.error).toMatchObject({ code: "write_outcome_unknown", retryable: false });
+    expectNoKeyAdvice(served.error);
+    expect(served.error.uncertainCall?.recovery).toEqual({ idempotencyKey: "pending-key" });
+  });
+
+  /** A tracked api() over Stripe's own write tool, which `before` precedes in the same call. */
+  async function lookupThenCreate(before: (ctx: ConnectorContext & { fetch: typeof fetch }) => Promise<unknown>) {
+    const setup = await billing((sent) => (sent.method === "GET" ? Response.json({ data: [] }) : lost()));
+    const write = restTools(stripeRest("sandbox", undefined).vendor).find((tool) => tool.name === "stripe_api_write");
+    const tracked = tracksEveryRequest(
+      api("billing", {
+        credential: setup.connector.credential!,
+        tools: [
+          {
+            name: "create_pair",
+            description: "Look up, then create",
+            annotations: { readOnlyHint: false },
+            inputSchema: { type: "object" },
+            async handler(_args, ctx) {
+              await before(ctx);
+              return await write!.handler(create("only"), ctx);
+            },
+          },
+        ],
+      }),
+    );
+    const registry = makeRegistry([tracked], { storage: setup.storage, credentialVault: setup.vault });
+    return { ...setup, served: await invoke(registry, "billing.create_pair", {}) };
+  }
+
+  it("INV-9: a keyed write after a proven GET in the same call keeps its advice", async () => {
+    const { state, served } = await lookupThenCreate((ctx) =>
+      ctx.fetch("https://api.stripe.com/v1/customers/search?query=name", { method: "get" }),
+    );
+    expect(state.sent.map((sent) => sent.method)).toEqual(["GET", "POST"]);
+    if (served.ok) throw new Error("expected the write to fail");
+    expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(served.error.uncertainCall?.recovery).toEqual({ idempotencyKey: state.sent[1]!.key });
+    expect(served.error.retry).toContain("cannot repeat the write");
+  });
+
+  it("INV-9: a keyed write after another request that may have written loses its advice", async () => {
+    const { state, served } = await lookupThenCreate((ctx) =>
+      ctx.fetch("https://api.stripe.com/v1/customers/search", { method: "PURGE" }),
+    );
+    expect(state.sent.map((sent) => sent.method)).toEqual(["PURGE", "POST"]);
+    if (served.ok) throw new Error("expected the write to fail");
+    expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expectNoKeyAdvice(served.error);
+  });
+
+  it("INV-9: control: Stripe's own single keyed POST keeps its advice, direct and served", async () => {
+    let answer: () => Response = lost;
+    const { state, connector, storage, vault } = await billing(() => answer());
+    const registry = makeRegistry([connector], { storage, credentialVault: vault });
+    // Served, outcome unknown: the retry names the recovery key.
+    const unknown = await invoke(registry, "billing.stripe_api_write", create("a"));
+    if (unknown.ok) throw new Error("expected the write to fail");
+    expect(unknown.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(unknown.error.uncertainCall?.recovery).toEqual({ idempotencyKey: state.sent[0]!.key });
+    expect(unknown.error.retry).toContain("cannot repeat the write");
+    // Served, a known refusal: the generated key's advice joins the message.
+    answer = refused;
+    const known = await invoke(registry, "billing.stripe_api_write", create("b"));
+    if (known.ok) throw new Error("expected the refusal");
+    expect(known.answered).toBe(true);
+    expect(known.error.message).toContain(`Idempotency-Key: ${state.sent[1]!.key}. Reusing it with the exact`);
+    // Direct: the boundary's own failure carries the advice.
+    answer = lost;
+    const direct = classifyCallError(
+      await failure(connector.callTool("stripe_api_write", create("c"), registry.contextFor("billing", BASE))),
+    );
+    expect(direct).toMatchObject({ retryable: true });
+    expect(direct.message).toContain(`Idempotency-Key: ${state.sent[2]!.key}. Reusing it with the exact`);
   });
 });

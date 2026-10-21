@@ -641,7 +641,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Stripe api_error golden_500: Golden 500 failure. Request req_golden. Idempotency-Key: 00000000-0000-4000-8000-000000000001. Reusing it with the exact original arguments retries this write without repeating it only while the vendor retains the key; after that, look the object up before retrying. Whether the write took effect at Stripe is unknown; check the target before repeating it.",
+            "message": "Stripe api_error golden_500: Golden 500 failure. Request req_golden. Idempotency-Key: 00000000-0000-4000-8000-000000000001. Whether the write took effect at Stripe is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "uncertainCall": {
@@ -746,7 +746,7 @@
           "dispatched": true,
           "error": {
             "code": "connector_call_failed",
-            "message": "Could not reach the Stripe API. Idempotency-Key: 00000000-0000-4000-8000-000000000001. Reusing it with the exact original arguments retries this write without repeating it only while the vendor retains the key; after that, look the object up before retrying. Whether the write took effect at Stripe is unknown; check the target before repeating it.",
+            "message": "Could not reach the Stripe API. Idempotency-Key: 00000000-0000-4000-8000-000000000001. Whether the write took effect at Stripe is unknown; check the target before repeating it.",
             "retryable": false,
             "writeOutcome": "unknown",
             "uncertainCall": {

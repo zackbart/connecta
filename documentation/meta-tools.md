@@ -960,11 +960,15 @@ empty once leading and trailing whitespace is removed is refused with
 which is no key. Recovery accepts keys up to 255
 characters, matching the REST write schema. Other recovery values remain capped
 at 128 characters, with at most four facts per call and camelCase names of at
-most 32 characters. Values outside these bounds are dropped whole. A deliberate
+most 32 characters. Values outside these bounds are dropped whole. A recovery
+key is a diagnostic. Only when the call sent exactly one write, carrying that
+key, through the one connector it entered does `retry` add that a deliberate
 retry that reuses the key with the exact original arguments cannot repeat the
 write while the vendor retains the key
 (Stripe may prune v1 keys after 24 hours). After that, look the object up before
-retrying. When a connector recorded such facts, any other dispatched write whose
+retrying. A connector that composes several requests, or wraps another
+connector, never gets that advice, even when one of its requests carried a key:
+reusing it would protect that request alone. When a connector recorded such facts, any other dispatched write whose
 outcome is unknown (a lost response body, a 5xx) also carries `uncertainCall`
 with them under its own code, and program write accounting keeps it. `args` may be partial reconciliation context
 with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget

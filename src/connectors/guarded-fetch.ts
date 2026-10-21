@@ -20,6 +20,7 @@ import {
   bindProviderRequest,
   dispatchProviderRequest,
   providerRequest,
+  readMethod,
   vendorRefusal,
 } from "../provider-call.js";
 import { providerCallFailure } from "../write-outcome.js";
@@ -83,12 +84,13 @@ export interface GuardedRequest {
   /** Provider-declared request that cannot perform the logical resource write. */
   auxiliary?: boolean;
   /**
-   * Replay proof for direct transport users, set only when the request
-   * carries a genuine idempotency key its vendor honors. An operation hint
-   * (a PUT, a content address) is never this proof. Never overrides a served
-   * write.
+   * Replay proof for direct transport users: the genuine, legal idempotency
+   * key its vendor honors that this request carries (among `visibleHeaders`),
+   * set only then. An operation hint (a PUT, a content address) is never
+   * this proof. Never overrides a served write, and recorded on the logical
+   * call so key-reuse advice can name it (`keyProtectsLogicalCall`).
    */
-  repeatable?: boolean;
+  idempotencyKey?: string;
 }
 
 /**
@@ -500,7 +502,10 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     const auxiliary = options.auxiliary === true || request.auxiliary === true;
     // A call that already ended sends nothing more, not even a credential read.
     assertProviderCallOpen(ctx, provider, auxiliary);
-    const dispatch = providerRequest(ctx, auxiliary, provider, request.repeatable);
+    const dispatch = providerRequest(ctx, auxiliary, provider, {
+      method: request.method,
+      ...(request.idempotencyKey === undefined ? {} : { key: request.idempotencyKey }),
+    });
     let dispatched = false;
     let response: Response | undefined;
     try {
@@ -512,8 +517,8 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       throw providerCallFailure(ctx, { title: provider }, vendorRefusal(error, dispatch), {
         dispatched: dispatched && !auxiliary,
         ...(response ? { status: response.status } : {}),
-        fallback: request.classification ?? (request.method === "GET" || request.method === "HEAD" ? "read" : "write"),
-        ...(request.repeatable === undefined ? {} : { repeatable: request.repeatable }),
+        fallback: request.classification ?? (readMethod(request.method) ? "read" : "write"),
+        repeatable: request.idempotencyKey !== undefined,
       });
     }
 

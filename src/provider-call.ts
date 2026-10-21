@@ -11,8 +11,10 @@ export interface ProviderRequest {
   status?: number;
   auxiliary: boolean;
   provider: string;
-  /** A genuine idempotency key the vendor honors was sent with it; nothing else. */
-  repeatable: boolean;
+  /** The HTTP method it was sent with, when its channel knows it. */
+  method?: string;
+  /** The genuine, legal idempotency key the vendor honors that it carried; nothing else. */
+  key?: string;
 }
 interface ProviderCall {
   requests: ProviderRequest[];
@@ -47,6 +49,8 @@ interface LogicalCall {
   target: object;
   entered: CallTool;
   boundaries: object[];
+  /** Every resource request dispatched under it, once per dispatch, from any ledger. */
+  sent: ProviderRequest[];
 }
 const logicalCalls = new WeakMap<object, LogicalCall>();
 
@@ -87,15 +91,16 @@ export function assertProviderCallOpen(ctx: ConnectorContext, provider: string, 
 export function dispatchProviderRequest(ctx: ConnectorContext, request: ProviderRequest): void {
   assertProviderCallOpen(ctx, request.provider, request.auxiliary);
   request.dispatched = true;
+  if (!request.auxiliary) logicalCalls.get(contextKey(ctx))?.sent.push(request);
 }
 
 export function providerRequest(
   ctx: ConnectorContext,
   auxiliary: boolean,
   provider: string,
-  repeatable = false,
+  sent: { method?: string; key?: string } = {},
 ): ProviderRequest {
-  const request: ProviderRequest = { dispatched: false, auxiliary, provider, repeatable };
+  const request: ProviderRequest = { dispatched: false, auxiliary, provider, ...sent };
   (ctx as CallContext)[CALL]?.requests.push(request);
   return request;
 }
@@ -153,7 +158,7 @@ export function aliasCallIdentity(alias: object, base: object): void {
  * naming the exact object and `callTool` function it is about to invoke.
  */
 export function openLogicalCall(ctx: ConnectorContext, target: object, entered: CallTool): void {
-  logicalCalls.set(contextKey(ctx), { target, entered, boundaries: [] });
+  logicalCalls.set(contextKey(ctx), { target, entered, boundaries: [], sent: [] });
 }
 
 /**
@@ -167,23 +172,54 @@ export function enterProviderBoundary(ctx: ConnectorContext, boundary: object): 
 /**
  * Whether a failure's known mark holds for its whole logical call (INV-9).
  * A boundary marks a write known only when every request it dispatched is
- * proven unapplied, so the mark stands when that boundary owned the call:
- * the invocation invoked a boundary object with the function recorded for
- * it at construction, and that boundary was the one entered; or a declared
- * delegator object, likewise, entered at most one boundary. Only identities
- * captured at construction, dispatch and entry decide it, so a wrapper that
- * reassigns `callTool` mid-call, or a copy that shares a boundary's
- * function, cannot borrow its standing. A wrapper that composed several
- * calls, or could send around them, never inherits an inner verdict.
+ * proven unapplied, so the mark stands when that boundary owned the call
+ * ({@link ownsLogicalCall}) and at most one boundary was entered. A wrapper
+ * that composed several calls, or could send around them, never inherits an
+ * inner verdict.
  */
 export function knownForLogicalCall(ctx: object, error: unknown): boolean {
   const call = logicalCalls.get(contextKey(ctx));
-  if (!call || !isKnownProviderFailure(error) || call.boundaries.length > 1) return false;
+  return call !== undefined && isKnownProviderFailure(error) && call.boundaries.length <= 1 && ownsLogicalCall(call);
+}
+
+/**
+ * Whether reusing `key` with the exact original arguments cannot repeat any
+ * write of `ctx`'s logical call, the one basis for key-reuse advice (INV-9).
+ * It holds only when the call entered exactly one boundary, which owned it
+ * and tracks every request, and sent exactly one write, carrying `key`. A
+ * request counts as a read only by its recorded GET or HEAD
+ * ({@link readMethod}). An inner request's key never speaks for a composite,
+ * a wrapper, a second write, or an earlier unrelated request.
+ */
+export function keyProtectsLogicalCall(ctx: object | undefined, key: string | undefined): boolean {
+  const call = ctx ? logicalCalls.get(contextKey(ctx)) : undefined;
+  const [boundary, ...others] = call?.boundaries ?? [];
+  if (!call || key === undefined || boundary === undefined || others.length > 0 || !tracksRequests(boundary))
+    return false;
+  const writes = call.sent.filter((request) => !readMethod(request.method));
+  return ownsLogicalCall(call) && writes.length === 1 && writes[0]?.key === key;
+}
+
+/**
+ * The call's invoked object owns it: a boundary object invoked with the
+ * function recorded for it at construction, and that boundary was the one
+ * entered; or a declared delegator object, likewise. Only identities captured
+ * at construction, dispatch and entry decide it, so a wrapper that reassigns
+ * `callTool` mid-call, or a copy that shares a boundary's function, cannot
+ * borrow its standing.
+ */
+function ownsLogicalCall(call: LogicalCall): boolean {
   const boundary = boundaries.get(call.target);
   return (
     (boundary?.own === call.entered && boundary.boundary === call.boundaries[0]) ||
     delegators.get(call.target) === call.entered
   );
+}
+
+/** The shared read classification of an HTTP method: GET or HEAD, nothing unrecorded. */
+export function readMethod(method: string | undefined): boolean {
+  const normalized = method?.toUpperCase();
+  return normalized === "GET" || normalized === "HEAD";
 }
 
 // OAuth does credential checks before the actual send. Associate a guarded
@@ -204,7 +240,8 @@ export function providerFetch(
   send: typeof fetch,
 ): typeof fetch {
   return async (input, init) => {
-    const request = providerRequest(ctx, auxiliary, provider);
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+    const request = providerRequest(ctx, auxiliary, provider, { method });
     dispatchProviderRequest(ctx, request);
     const response = await send(input, init);
     request.status = response.status;

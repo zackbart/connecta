@@ -638,7 +638,10 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
     args?: unknown;
     argsOmitted?: true;
     argsRedacted?: true;
-    /** Facts the connector recorded before dispatch, such as a generated `idempotencyKey`. */
+    /**
+     * Facts the connector recorded before dispatch, such as a generated
+     * `idempotencyKey`: diagnostics. `retry` says when reusing the key is safe.
+     */
     recovery?: Readonly<Record<string, string>>;
   };
   /** Explicit retry guidance; recovery never retries or mutates by itself. */
@@ -678,15 +681,44 @@ export function resendAdviceOf(from: unknown): string | undefined {
   return from !== null && typeof from === "object" ? resendAdvices.get(from) : undefined;
 }
 
+// Advice that reusing an idempotency key cannot repeat the write, kept apart
+// from the failure's message and its other resend advice. See keyResendAdvice.
+const keyAdvices = new WeakMap<object, KeyResendAdvice>();
+export interface KeyResendAdvice {
+  /** The key the advice names, as it was sent. */
+  key: string;
+  advice: string;
+}
+
 /**
- * Keep `from`'s resend advice on `to`, a copy or rewording of it (redaction,
- * a provider's recovery words). A write already marked unknown never takes it.
+ * Attach advice that reusing `key` with the same arguments cannot repeat the
+ * write, a segment of its own like {@link resendAdvice}. It holds only where
+ * that key protects the whole logical call (`keyProtectsLogicalCall`): one
+ * boundary entered, one write sent, carrying `key`. Only the invocation can
+ * see that, so only it composes the advice; a direct caller reads the key
+ * from the message, where it stays as a diagnostic.
+ */
+export function keyResendAdvice<T extends object>(error: T, key: string, advice: string): T {
+  keyAdvices.set(error, { key, advice });
+  return error;
+}
+
+/** The key-reuse advice attached to `from`, if any. */
+export function keyResendAdviceOf(from: unknown): KeyResendAdvice | undefined {
+  return from !== null && typeof from === "object" ? keyAdvices.get(from) : undefined;
+}
+
+/**
+ * Keep `from`'s resend advice, key-reuse advice included, on `to`, a copy or
+ * rewording of it (redaction, a provider's recovery words). A write already
+ * marked unknown never takes it.
  */
 export function carryResendAdvice(from: unknown, to: unknown): void {
+  if (!(to instanceof Error) || (to as { writeOutcome?: unknown }).writeOutcome === "unknown") return;
   const advice = resendAdviceOf(from);
-  if (advice === undefined || !(to instanceof Error) || resendAdvices.has(to)) return;
-  if ((to as { writeOutcome?: unknown }).writeOutcome === "unknown") return;
-  resendAdvices.set(to, advice);
+  const keyed = keyResendAdviceOf(from);
+  if (advice !== undefined && !resendAdvices.has(to)) resendAdvices.set(to, advice);
+  if (keyed !== undefined && !keyAdvices.has(to)) keyAdvices.set(to, keyed);
 }
 
 /** `message` with resend `advice` composed in. Only output calls this. */
@@ -698,14 +730,20 @@ export function withResendAdvice(message: string, advice: string | undefined): s
 /**
  * Typed connector verdicts and runtime facts only. Prose never changes a
  * verdict. The message carries the error's resend advice unless its write's
- * outcome is unknown.
+ * outcome is unknown. This is a direct caller's view, outside any logical
+ * call: key-reuse advice is here only because the one boundary that sent the
+ * keyed request attached it to its own failure, and any boundary above it
+ * finalizes the write as unknown. An invocation composes advice itself.
  */
 export function classifyCallError(
   err: unknown,
   fallbackCode: ClassificationCode = "connector_call_failed",
 ): CallErrorDetails {
   const details = classifyWithoutAdvice(err, fallbackCode);
-  if (details.writeOutcome !== "unknown") details.message = withResendAdvice(details.message, resendAdviceOf(err));
+  if (details.writeOutcome !== "unknown") {
+    details.message = withResendAdvice(details.message, keyResendAdviceOf(err)?.advice);
+    details.message = withResendAdvice(details.message, resendAdviceOf(err));
+  }
   return details;
 }
 

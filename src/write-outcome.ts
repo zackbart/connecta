@@ -108,7 +108,8 @@ function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
  * An error code is never that evidence. A write that may have left and then
  * timed out, was aborted, or failed any other way is an unknown outcome,
  * never retryable, unless a direct caller sent an idempotency key the vendor
- * honors (`repeatable`; no operation hint counts). A served call's
+ * honors (`repeatable`, or the request's recorded `key`; no operation hint
+ * counts). A served call's
  * invocation reports its own timeouts and aborts.
  */
 export function providerCallFailure(
@@ -147,7 +148,7 @@ export function providerCallFailure(
       servedRefusal(error, refusal?.status)
     )
       return knownProviderFailure(error);
-    if (served === undefined && dispatched.length === 1 && dispatched[0]?.repeatable) return error;
+    if (served === undefined && dispatched.length === 1 && dispatched[0]?.key !== undefined) return error;
     return uncertainProviderFailure({ title: dispatched[0]?.provider ?? vendor.title }, error, ctx);
   }
   // Provenance (a): the ledger shows the request never left connecta, unless
