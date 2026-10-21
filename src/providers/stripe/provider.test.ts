@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, ConnectorContext, ToolDef } from "../../types.js";
 import { guideOf, servedTools, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
-import { classifyCallError, ConnectorCallError, keyResendAdviceOf } from "../../errors.js";
+import { classifyCallError, ConnectorCallError, keyResendAdviceOf, type CallErrorDetails } from "../../errors.js";
+import { CredentialVault } from "../../credentials.js";
+import { memoryStorage } from "../../storage/memory.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -754,6 +756,55 @@ describe("stripe() over an API key", () => {
     expect(error).toMatchObject({ code: "conflict", retryable: true, retryAfterMs: 1_000 });
     expect(sent).toHaveLength(1);
   });
+
+  it.each([
+    ["a v1 answer carrying Stripe's Request-Id", "/v1/refunds", { "request-id": "req_1" }, true],
+    ["an answer without Request-Id", "/v1/refunds", {}, false],
+    ["a v2 answer, outside the guidance's scope", "/v2/billing/meter_events", { "request-id": "req_1" }, false],
+  ] as const)(
+    "INV-9: a served write answered 401 is a known refusal only for %s (reviewed authBeforeExecution)",
+    async (_name, path, headers, refused) => {
+      respond = () =>
+        Response.json(
+          { error: { type: "invalid_request_error", message: "Invalid API Key provided." } },
+          {
+            status: 401,
+            headers,
+          },
+        );
+      const connector = stripe("billing", SANDBOX);
+      const storage = memoryStorage();
+      const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+      await vault.setAll("billing", { value: "rk_test_51abc" }, "fixture");
+      const meta = createMetaTools(
+        makeRegistry([connector], { storage, credentialVault: vault }),
+        "https://connecta.test",
+      );
+      const result = await meta.callDestructiveTool({
+        address: "billing.stripe_api_write",
+        args: {
+          method: "POST",
+          path,
+          body: path.startsWith("/v2/")
+            ? { event_name: "api_call", payload: { stripe_customer_id: "cus_1", value: "1" } }
+            : { charge: "ch_1" },
+        },
+      });
+      const error = (result.structuredContent as { error: CallErrorDetails }).error;
+      expect(error).toMatchObject({
+        code: "auth_required",
+        retryable: false,
+        nextAction: { tool: "authorize_connector" },
+      });
+      if (refused) expect(error).not.toHaveProperty("writeOutcome");
+      else
+        expect(error).toMatchObject({
+          writeOutcome: "unknown",
+          message: expect.stringContaining("The write was sent before Stripe rejected its credential"),
+        });
+      expect(sent).toHaveLength(1);
+    },
+  );
 
   it("extracts v1, search, and v2 cursors and projects select paths through lists", async () => {
     const connector = stripe("billing", SANDBOX);

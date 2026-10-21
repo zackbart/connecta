@@ -1699,9 +1699,13 @@ text the harness passes. `test/goldens/harness.ts` owns everything else:
   hex, base64, unpadded base64url, and `\uXXXX` escapes with upper- and
   lowercase hex, plus the base64 of each `basic` pair. Every sent secret
   contains `/`, `+`, and `=`, so its percent and base64url forms differ from
-  its raw and base64 forms. The `401 echo` case echoes the raw secrets only.
-  Some providers cap a vendor message before redaction sees it (Google at
-  500 characters), and a cut through a secret would leak its start.
+  its raw and base64 forms. The `401 echo` case echoes the raw secrets only
+  unless the spec sets `errorEcho: "all"`: a provider that caps a vendor
+  message before redaction sees it would leak the start of a longer form its
+  cut goes through. The Google Workspace specs set it, since Google redacts a
+  message whole before cutting it to 500 characters. Their `401 echo` carries
+  `errorEchoForms`: every form above, the `Bearer` and `token` framings, and
+  an HTTP Basic pair holding the token as header, base64 and base64url.
 
 Object keys keep the order the provider produced. A migration changes the
 provider, never the spec or harness.
@@ -2123,8 +2127,10 @@ compiling and configuring the real thing.
   every transport applies to a write: `unknownOutcome` turns a retryable
   failure that may follow the downstream acting (a 5xx, a gateway's 502 to
   504, a lost connection or reply) into a non-retryable `connector_call_failed`,
-  and `unsentAfterUnauthorized` reports a write answered 401, which is never
-  resent whatever credential renewal meets. Both mark the error
+  and `unsentAfterUnauthorized` reports a write answered 401 after credential
+  renewal ran, which is never resent: until renewal succeeds it keeps an
+  authorization code (renewal's own verdict, else the 401's), and a renewed
+  credential leaves a non-retryable `connector_call_failed`. Both mark the error
   `writeOutcome: "unknown"`, which `classifyWriteOutcome` honors before any
   refusal provenance, so an authorization verdict reached after the write left still
   counts as unknown in program write accounting (`src/program-writes.ts`),
@@ -2168,7 +2174,20 @@ compiling and configuring the real thing.
   `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
   (b) for the ledger and for a transport outside one: a refusing status the
   provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so
-  only a genuine idempotency key keeps such a direct write's retry. A 408 is a
+  only a genuine idempotency key keeps such a direct write's retry. Nor is a
+  401, since a server may act on a request before it rejects the credential,
+  unless the transport declares reviewed `authBeforeExecution` evidence
+  (`GuardedFetchOptions`: the vendor's cited guarantee and a narrow predicate
+  over the raw status and headers and the request's method and path, checked
+  at construction) and the predicate matched, which the ledger records on the
+  request. Only Stripe declares it (`src/providers/stripe/rest.ts`, reviewed
+  as a `manual` check in its `drift.json`): an API v1 answer carrying Stripe's
+  `Request-Id`. `test/provider-failure-sweep.test.ts` holds that list to the
+  sources. A write answered 401 without it keeps its authorization
+  code, never retryable, with no wait, `writeOutcome: "unknown"`, and a
+  sentence saying the write was sent before the vendor rejected its
+  credential (`answeredUnauthorized`); invocation keeps the
+  `authorize_connector` handoff and picks its reconcile-first words. A 408 is a
   timeout, and a 2xx followed by a mapper, parser, or output-validation
   failure may have applied. `classifyWriteOutcome` counts a
   dispatched write `failed` only with that provenance (`answered`, or the
@@ -2257,7 +2276,8 @@ compiling and configuring the real thing.
   code or wording, so a generic `connector_call_failed` refusal still counts
   as failed in program write accounting. Every other possibly executing
   failure is non-retryable with `writeOutcome: "unknown"`; authorization codes
-  keep their handoff. The existing special handling of write 401s remains.
+  keep their handoff. A write answered 401 is one of these unless its
+  transport declares `authBeforeExecution` evidence that matched.
   A later refusal cannot make an earlier successful request safe to repeat.
   Provider recovery wrappers change wording through helpers that preserve
   verdicts and provenance; Google also retains its response phases and reasons.

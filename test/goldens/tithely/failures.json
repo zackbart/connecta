@@ -381,11 +381,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Tithe.ly: Golden 401 failure Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection.",
+            "message": "Tithe.ly: Golden 401 failure Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection. The write was sent before Tithe.ly rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "giving",
             "operation": "giving.tithely_api_mutate",
             "recovery": "unavailable",
@@ -635,11 +635,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Tithe.ly: Golden 401 failure: rejected [redacted] [redacted] Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection.",
+            "message": "Tithe.ly: Golden 401 failure: rejected [redacted] [redacted] Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the other environment — test keys work only on tithelydev.com, live keys only on tithe.ly. An operator must fix the keys on this connection. The write was sent before Tithe.ly rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "giving",
             "operation": "giving.tithely_api_mutate",
             "recovery": "unavailable",

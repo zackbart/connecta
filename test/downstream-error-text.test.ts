@@ -852,10 +852,16 @@ describe("the SDK seams OAuth flows are bounded at", () => {
         const errors = await Promise.all(
           [0, 1].map(() => connector.callTool("write", {}, context).catch((error: unknown) => error)),
         );
+        // The 401's renewal failed at registration, so its write keeps the
+        // authorization verdict with an unknown outcome.
         expect(errors.map((error) => classifyCallError(error).code).sort()).toEqual([
-          "connector_call_failed",
+          "downstream_oauth_required",
           "provider_permission_denied",
         ]);
+        expect(errors.find((error) => classifyCallError(error).code === "downstream_oauth_required")).toMatchObject({
+          retryable: false,
+          writeOutcome: "unknown",
+        });
         expect(registrations).toBe(1);
         expectWithheld(...errors.map(rendered));
       } finally {

@@ -28,9 +28,10 @@ import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
 
-// Three of the types below carry no `export`: they are reached through the
-// exported `GuardedRequest` and `GuardedTransport` rather than named directly,
-// and the unused-export gate is right to say so while this module is internal.
+// Five of the types below carry no `export`: they are reached through the
+// exported `GuardedRequest`, `GuardedFetchOptions` and `GuardedTransport`
+// rather than named directly, and the unused-export gate is right to say so
+// while this module is internal.
 // They get their own `export` on the day the helper joins the published
 // surface, and not before.
 
@@ -192,6 +193,31 @@ export interface GuardedFetchOptions {
    * authentication, so a refused request never resolves a credential.
    */
   admit?: (url: URL, request: GuardedRequest) => void;
+  /**
+   * Reviewed vendor evidence that the vendor authenticates a request before
+   * it acts on it. Without it, a write answered 401 has an unknown outcome:
+   * a server may act on a request before it rejects the credential. With it,
+   * a 401 that `matches` is that write's refusal. Declare it only where the
+   * vendor's documentation says so, cite that documentation in `evidence` and
+   * in the provider's evidence review, and keep `matches` narrow. Of the
+   * maintained providers only Stripe declares it. Checked at construction.
+   */
+  authBeforeExecution?: AuthBeforeExecution;
+}
+
+/**
+ * A trusted per-vendor review: types cannot verify what a vendor does, so the
+ * reviewer checks the cited documentation and the predicate against it.
+ */
+interface AuthBeforeExecution {
+  /** The vendor's documented guarantee: its URL and what it says. Never empty. */
+  evidence: string;
+  /**
+   * Whether this raw 401 is one the evidence covers, from its status and
+   * headers and the request's method and provider-relative path only: never a
+   * mapped code or prose.
+   */
+  matches: (answer: { status: 401; headers: Headers; method: string; path: string }) => boolean;
 }
 
 /** Sends one already-guarded request on behalf of one call's context. */
@@ -202,8 +228,9 @@ type GuardedFetcher = (url: string, init: RequestInit, ctx: ConnectorContext) =>
  * own `api()` OAuth grant: no header of the helper's making, and every request
  * sent through `ctx.oauth.fetch`, which adds the calling owner's bearer token,
  * refuses any origin outside the grant's `apiOrigins`, and spends one
- * coordinated refresh and one replay on a 401 before answering
- * `auth_required`. Spread it into the options:
+ * coordinated refresh on a 401: a read is replayed once before answering
+ * `auth_required`, and a write is never sent again (INV-9). Spread it into
+ * the options:
  * `guardedFetch({ provider, baseUrl, maxResponseBytes, ...oauthBearer(provider) })`.
  *
  * Confinement still happens here first, so a request reaches the grant only
@@ -492,11 +519,30 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`${provider} maxResponseBytes must be a whole number of bytes >= 1; received ${String(limit)}.`);
   }
+  const authFirst = options.authBeforeExecution;
+  if (
+    authFirst &&
+    (typeof authFirst.evidence !== "string" || !authFirst.evidence.trim() || typeof authFirst.matches !== "function")
+  ) {
+    throw new Error(`${provider} authBeforeExecution needs nonempty evidence and a narrow matches predicate.`);
+  }
   const base = confinementBase(provider, options.baseUrl);
   // "" for a root base, so joining never doubles the separator.
   const basePath = base.pathname.replace(/\/+$/, "");
   const constantHeaders = { ...options.headers };
   const send = options.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
+
+  // The reviewed predicate is trusted code; one that throws proves nothing.
+  const authenticatedFirst = (response: Response, request: GuardedRequest): boolean => {
+    try {
+      return (
+        authFirst?.matches({ status: 401, headers: response.headers, method: request.method, path: request.path }) ===
+        true
+      );
+    } catch {
+      return false;
+    }
+  };
 
   return async function guarded(request, ctx, map) {
     const auxiliary = options.auxiliary === true || request.auxiliary === true;
@@ -519,6 +565,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         ...(response ? { status: response.status } : {}),
         fallback: request.classification ?? (readMethod(request.method) ? "read" : "write"),
         repeatable: request.idempotencyKey !== undefined,
+        authBeforeExecution: dispatch.authBeforeExecution === true,
       });
     }
 
@@ -584,6 +631,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         if (cause instanceof ConnectorCallError) throw cause;
         throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);
       }
+      if (response.status === 401 && authenticatedFirst(response, request)) dispatch.authBeforeExecution = true;
       if (REDIRECT_STATUSES.has(response.status)) {
         await response.body?.cancel().catch(() => {});
         throw new ConnectorCallError(

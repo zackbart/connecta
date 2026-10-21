@@ -76,6 +76,18 @@
     {
       "type": "openapi-index",
       "source": "openapi.source.json"
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.stripe.com/error-low-level#content-errors",
+      "rationale": "A Stripe write answered 401 is a known refusal only on this guarantee (authBeforeExecution in rest.ts). Confirm the page still says an invalid API key is an error that occurs before execution begins and that 401 means no valid API key, for API v1, and that API responses carry Request-Id. If any of that changes, remove the declaration so a write answered 401 reports an unknown outcome.",
+      "evidence": {
+        "reviewedAt": "2026-10-21",
+        "guarantee": "Errors that occur before execution begins, such as invalid parameters, an invalid API key, or rate limiting, don't cache a result.",
+        "status401": "401 Unauthorized: No valid API key provided.",
+        "scope": "The idempotency and response replay guidance applies to API v1.",
+        "requestId": "https://docs.stripe.com/api/request_ids: Each API request has an associated request identifier. You can find this value in the response headers, under Request-Id."
+      }
     }
   ]
 }

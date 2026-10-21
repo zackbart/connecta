@@ -535,7 +535,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           if (error instanceof UnauthorizedError) rejectedScopes.add(scopeOf(ctx));
           renewal = error instanceof UnauthorizedError ? authRequiredError() : error;
         }
-        throw unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal);
+        throw unsentAfterUnauthorized(`Connector "${id}"'s API`, renewal, "downstream_oauth_required");
       }
       const accessToken = await renewedToken(provider, ctx, tokens.access_token);
       const second = await send(accessToken);

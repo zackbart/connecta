@@ -35,7 +35,8 @@ export type WriteState = "ok" | "failed" | "unknown";
  * the ledger shows a request connecta refused before it left, or (b) the
  * downstream served a refusing status, a 4xx other than 408, that its provider
  * does not read as `unavailable` or a timeout (`servedRefusal`; a 5xx never
- * proves a write unapplied). The evidence must
+ * proves a write unapplied, and a 401 does only with the vendor's reviewed
+ * `authBeforeExecution` evidence). The evidence must
  * hold for the whole logical call (`knownForLogicalCall`, which `answered`
  * reports for a served call): every request the call sent is proven not
  * applied, and the failing request carries the refusal. A downstream tool's
@@ -104,7 +105,10 @@ function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
  * interpretation of its HTTP method. A write is a known failure only on
  * refusal provenance recorded where the evidence was observed: (a) the
  * ledger shows the request never left connecta, or (b) the downstream served
- * an HTTP refusal, a 4xx other than 408 (`refusedStatus`, `vendorRefusal`).
+ * an HTTP refusal, a 4xx other than 408 (`refusedStatus`, `vendorRefusal`),
+ * where a 401 also needs the vendor's reviewed `authBeforeExecution`
+ * evidence. A write answered 401 without it keeps its authorization code,
+ * never retryable and with an unknown outcome ({@link answeredUnauthorized}).
  * An error code is never that evidence. A write that may have left and then
  * timed out, was aborted, or failed any other way is an unknown outcome,
  * never retryable, unless a direct caller sent an idempotency key the vendor
@@ -124,6 +128,8 @@ export function providerCallFailure(
     finalize?: boolean;
     /** The handler ran and may have sent requests the ledger never saw. */
     untracked?: boolean;
+    /** `status` is a 401 the vendor's reviewed `authBeforeExecution` evidence covers. */
+    authBeforeExecution?: boolean;
   },
 ): unknown {
   const served = callClassification(ctx);
@@ -140,16 +146,20 @@ export function providerCallFailure(
     const dispatched = requests.filter((request) => request.dispatched && !request.auxiliary);
     if (dispatched.length === 0) return knownProviderFailure(error);
     const refusal = refusalRequest(error);
-    // An explicit unknown marker (notably the existing 401 handoff) wins.
-    if (
+    // An explicit unknown marker (a renewal after a 401, say) wins.
+    const own =
       !(error instanceof ConnectorCallError && error.writeOutcome === "unknown") &&
       dispatched.length === 1 &&
-      dispatched[0] === refusal &&
-      servedRefusal(error, refusal?.status)
-    )
+      refusal !== undefined &&
+      dispatched[0] === refusal;
+    if (own && servedRefusal(error, refusal.status, refusal.authBeforeExecution === true))
       return knownProviderFailure(error);
     if (served === undefined && dispatched.length === 1 && dispatched[0]?.key !== undefined) return error;
-    return uncertainProviderFailure({ title: dispatched[0]?.provider ?? vendor.title }, error, ctx);
+    const title = dispatched[0]?.provider ?? vendor.title;
+    return (
+      (own && refusal.status === 401 ? answeredUnauthorized(title, error) : undefined) ??
+      uncertainProviderFailure({ title }, error, ctx)
+    );
   }
   // Provenance (a): the ledger shows the request never left connecta, unless
   // the connector itself could not tell (an explicit unknown marker).
@@ -179,7 +189,9 @@ export function providerCallFailure(
   // Provenance (b). An error code alone (a mapper's `rate_limited` after a
   // 2xx, a JSON-RPC `-32602`, an output validator's `invalid_args`) is never
   // this evidence.
-  if (servedRefusal(error, facts.status)) return knownProviderFailure(error);
+  if (servedRefusal(error, facts.status, facts.authBeforeExecution === true)) return knownProviderFailure(error);
+  const unauthorized = facts.status === 401 ? answeredUnauthorized(vendor.title, error) : undefined;
+  if (unauthorized) return unauthorized;
   const serverError = facts.status !== undefined && facts.status >= 500;
   if (facts.repeatable === true && error.retryable) {
     return carryFailureFacts(
@@ -207,12 +219,42 @@ export function providerCallFailure(
  * one: the downstream served a refusing HTTP status (`refusedStatus`, a 4xx
  * other than 408), and its provider read that status as a refusal. A
  * provider that reads it as `unavailable` or a timeout (Stripe's 424) says
- * the outcome is not proven.
+ * the outcome is not proven. A 401 proves nothing by itself: a server may act
+ * on a request before it rejects the credential, so it is a refusal only where
+ * the vendor's reviewed `authBeforeExecution` evidence says it authenticates
+ * first. Of the maintained providers, only Stripe's API-key connector
+ * declares that evidence.
  */
-function servedRefusal(error: unknown, status: number | undefined): boolean {
+function servedRefusal(error: unknown, status: number | undefined, authBeforeExecution: boolean): boolean {
   if (!refusedStatus(status)) return false;
+  if (status === 401 && !authBeforeExecution) return false;
   const code = classifyCallError(error).code;
   return code !== "unavailable" && code !== "timeout";
+}
+
+/**
+ * A write the downstream answered with HTTP 401, with no reviewed evidence
+ * that the vendor authenticates before it acts (`servedRefusal`). The vendor's
+ * verdict keeps its code, so an authorization failure keeps its
+ * `authorize_connector` handoff, whose words then reconcile before any fresh
+ * call; the write's outcome is unknown (`writeOutcome`), and neither retry
+ * advice nor a wait survives (INV-9). Undefined for a verdict that is no
+ * vendor answer of its own (an `unavailable` or a timeout, an untyped error),
+ * which the ambiguous-failure path words instead.
+ */
+function answeredUnauthorized(subject: string, error: unknown): ConnectorCallError | undefined {
+  if (!(error instanceof ConnectorCallError) || error.writeOutcome === "unknown" || error.code === "unavailable")
+    return undefined;
+  if (isTimeout(error)) return undefined;
+  return carryFailureFacts(
+    error,
+    new ConnectorCallError(
+      error.code,
+      `${error.message} The write was sent before ${subject} rejected its credential, so whether it took effect ` +
+        "is unknown: check the target before repeating it.",
+      { retryable: false, writeOutcome: "unknown" },
+    ),
+  );
 }
 
 function isTimeoutCode(code: string | undefined): boolean {
@@ -339,19 +381,25 @@ function callerAborted(vendor: { title: string }, error: unknown, reason: unknow
 }
 
 /**
- * A write the downstream answered with HTTP 401. A server may act on a
- * request before it rejects the token, so the write is never sent again
- * (INV-9), and nothing credential renewal meets afterwards (a refresh or
+ * A write the downstream answered with HTTP 401, then credential renewal ran.
+ * A server may act on a request before it rejects the token, so the write is
+ * never sent again (INV-9), and nothing renewal meets afterwards (a refresh or
  * login that fails, a disconnect, an unreachable token endpoint) may be
  * reported as safe to retry. `renewal` is renewal's failure, or undefined
  * when the credential was renewed and a deliberate repeat will use it.
  *
- * An authorization verdict keeps its code, never retryable, so its recovery
- * handoff survives: the invocation layer marks it `reconciliationRequired`.
- * Either way the write's outcome is unknown (`writeOutcome`), so a program
- * that catches the failure still reports it.
+ * Until renewal succeeds the 401's authorization verdict stands: renewal's
+ * own verdict when it reached one, else `code`, the 401's. Either keeps its
+ * recovery handoff, which the invocation layer marks `reconciliationRequired`.
+ * Only a renewed credential drops the handoff, since nothing is left to
+ * recover. Either way the write's outcome is unknown (`writeOutcome`), so a
+ * program that catches the failure still reports it.
  */
-export function unsentAfterUnauthorized(subject: string, renewal?: unknown): ConnectorCallError {
+export function unsentAfterUnauthorized(
+  subject: string,
+  renewal?: unknown,
+  code: "auth_required" | "downstream_oauth_required" = "auth_required",
+): ConnectorCallError {
   if (
     renewal instanceof ConnectorCallError &&
     (renewal.code === "auth_required" || renewal.code === "downstream_oauth_required")
@@ -368,7 +416,7 @@ export function unsentAfterUnauthorized(subject: string, renewal?: unknown): Con
       ? "The credential is renewed for the next call, but the write"
       : `Renewing the credential failed (${classifyCallError(renewal).code}), and the write`;
   const unsent = new ConnectorCallError(
-    "connector_call_failed",
+    renewal === undefined ? "connector_call_failed" : code,
     `${subject} answered this write with HTTP 401. ${renewed} was not sent again, so whether it took effect is ` +
       "unknown: check the target before repeating it.",
     { retryable: false, writeOutcome: "unknown" },

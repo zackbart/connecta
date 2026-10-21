@@ -258,6 +258,8 @@ export default defineGoldenSpec({
     },
   ],
   unsent: ["privateKey"],
+  // Google redacts a vendor message whole before cutting it to 500 characters.
+  errorEcho: "all",
   echo: {
     tool: "get_message",
     args: { messageId: "m2" },

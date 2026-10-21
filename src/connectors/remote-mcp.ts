@@ -3338,7 +3338,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // redirect or a further send stopped here; and not after a gateway's
         // 502 to 504, a timeout, or a connection lost once it was sent.
         const verdict = dispatch.unauthorized
-          ? unsentAfterUnauthorized(`Connector "${id}"'s MCP server`, dispatch.resendRefused ? undefined : failure)
+          ? unsentAfterUnauthorized(
+              `Connector "${id}"'s MCP server`,
+              dispatch.resendRefused ? undefined : failure,
+              isOauth ? "downstream_oauth_required" : "auth_required",
+            )
           : dispatch.redirected || dispatch.resendRefused
             ? new ConnectorCallError(
                 "connector_call_failed",

@@ -1,14 +1,16 @@
 import { callbackAuth, bindCallback, consentKey, storedGrant } from "./fixtures/oauth.js";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
+import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import type { ApiOAuthConfig, ApiOptions } from "../src/connectors/api.js";
 import { CredentialVault } from "../src/credentials.js";
 import { recordRecovery } from "../src/call-recovery.js";
-import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { classifyCallError, ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { identityStorageKey } from "../src/identity.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { oauthFlowKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
@@ -995,23 +997,21 @@ describe("api() oauth replay is for reads only", () => {
       const { error } = JSON.parse((await mt.callDestructiveTool({ address: "ccb.post_note" })).content[0]!.text) as {
         error: { code: string; retryable: boolean; message: string };
       };
-      if (recovery !== "operator disconnect") {
-        // An authorization verdict keeps its handoff, and a dispatched write's is never retryable.
-        expect(error).toMatchObject({
-          code: "downstream_oauth_required",
-          retryable: false,
-          reconciliationRequired: true,
-          writeOutcome: "unknown",
-          nextAction: { tool: "authorize_connector" },
-        });
-      } else {
-        expect(error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
-        // The reset fenced the grant mid-refresh: no verdict, and nothing to retry.
+      // Until renewal succeeds the 401's authorization verdict keeps its
+      // handoff, and a dispatched write's is never retryable.
+      expect(error).toMatchObject({
+        code: "downstream_oauth_required",
+        retryable: false,
+        reconciliationRequired: true,
+        writeOutcome: "unknown",
+        nextAction: { tool: "authorize_connector" },
+      });
+      if (recovery === "operator disconnect")
+        // The reset fenced the grant mid-refresh: the 401 stands, and nothing to retry.
         expect(error.message).toBe(
           `Connector "ccb"'s API answered this write with HTTP 401. Renewing the credential failed (unavailable), ` +
             "and the write was not sent again, so whether it took effect is unknown: check the target before repeating it.",
         );
-      }
       expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
     },
   );
@@ -1062,6 +1062,149 @@ describe("api() oauth replay is for reads only", () => {
         reconciliationRequired: true,
         connector: "ccb",
         nextAction: { tool: "authorize_connector", arguments: { connector: "ccb" } },
+      });
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+    },
+  );
+
+  it.each(["dead grant", "renewed grant"] as const)(
+    "INV-9: ctx.oauth.fetch and a guarded credential transport reach one verdict for a write's 401 (%s)",
+    async (recovery) => {
+      const handoffs = {
+        canManageAuth: () => true,
+        credentialHandoffUrl: `${BASE}/connections`,
+        oauthConnectUrl: async () => `${BASE}/oauth/start`,
+      };
+      // Static OAuth: one send, one refresh, never a replay.
+      const provider = fakeProvider();
+      install(provider);
+      if (recovery === "dead grant") provider.control.refresh = "dead";
+      const oauth = ccb({ tools });
+      const oauthRegistry = makeRegistry([oauth]);
+      await authorize(oauth, () => oauthRegistry.contextFor("ccb", BASE), provider);
+      provider.expireAccess();
+      const viaGrant = JSON.parse(
+        (await createMetaTools(oauthRegistry, BASE, handoffs).callDestructiveTool({ address: "ccb.post_note" }))
+          .content[0]!.text,
+      ).error as CallErrorDetails;
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+      expect(refreshes(provider)).toBe(1);
+
+      // A credential connector on the guarded transport, answered 401 the same way.
+      const sent: string[] = [];
+      const send = guardedFetch({
+        provider: "Notes",
+        baseUrl: API,
+        maxResponseBytes: 1024,
+        authenticate: () => ({ Authorization: "Bearer fixture-secret" }),
+        fetch: async (url, init) => {
+          sent.push(`${init.method} ${url}`);
+          return new Response(null, { status: 401 });
+        },
+      });
+      const guarded = api("notes", {
+        credential: { label: "Notes token" },
+        tools: [
+          {
+            name: "post_note",
+            description: "Write a note",
+            annotations: { readOnlyHint: false },
+            handler: (_args, ctx) =>
+              send({ method: "POST", path: "/notes", body: {} }, ctx, (response) => {
+                if (response.status === 401) throw new ConnectorCallError("auth_required", "Notes rejected the token.");
+                return response.json();
+              }),
+          },
+        ],
+      });
+      const storage = memoryStorage();
+      const vault = new CredentialVault(storage, SEAL_KEY);
+      await vault.setAll("notes", { value: "fixture-secret" }, "fixture");
+      const viaTransport = JSON.parse(
+        (
+          await createMetaTools(
+            makeRegistry([guarded], { storage, credentialVault: vault }),
+            BASE,
+            handoffs,
+          ).callDestructiveTool({
+            address: "notes.post_note",
+          })
+        ).content[0]!.text,
+      ).error as CallErrorDetails;
+      expect(sent).toEqual([`POST ${API}/notes`]);
+
+      // Both dispatched writes are unknown and never retryable. Until renewal
+      // succeeds each keeps its authorization code and outcome-aware handoff;
+      // a renewed grant needs no recovery, and its write still is not resent.
+      const verdict = (error: CallErrorDetails) => ({
+        family: error.code === "downstream_oauth_required" ? "auth_required" : error.code,
+        retryable: error.retryable,
+        writeOutcome: error.writeOutcome,
+        reconciliationRequired: error.reconciliationRequired,
+        handoff: error.nextAction && "tool" in error.nextAction ? error.nextAction.tool : undefined,
+        retry: error.retry,
+        reconciles: error.instructions?.includes("re-read the target of the write that failed") === true,
+        retriesOriginal: error.instructions?.includes("retry the original call") === true,
+        outcome: classifyWriteOutcome({ ok: false, dispatched: true, answered: false, error }),
+      });
+      expect(verdict(viaTransport)).toEqual({
+        family: "auth_required",
+        retryable: false,
+        writeOutcome: "unknown",
+        reconciliationRequired: true,
+        handoff: "authorize_connector",
+        retry:
+          "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
+        reconciles: true,
+        retriesOriginal: false,
+        outcome: "unknown",
+      });
+      expect(verdict(viaGrant)).toEqual(
+        recovery === "dead grant"
+          ? verdict(viaTransport)
+          : {
+              family: "connector_call_failed",
+              retryable: false,
+              writeOutcome: "unknown",
+              reconciliationRequired: undefined,
+              handoff: undefined,
+              retry: undefined,
+              reconciles: false,
+              retriesOriginal: false,
+              outcome: "unknown",
+            },
+      );
+    },
+  );
+
+  it.each(["before the refresh leaves", "while the refresh is in flight"] as const)(
+    "INV-9: a direct write whose caller leaves %s after a 401 keeps its auth code, unknown and unsent",
+    async (when) => {
+      const provider = fakeProvider();
+      const connector = ccb({ tools });
+      const registry = makeRegistry([connector]);
+      install(provider);
+      await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+      provider.expireAccess();
+      const controller = new AbortController();
+      const leave = () => controller.abort(new DOMException("The caller left.", "AbortError"));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+          if (when === "while the refresh is in flight" && String(input) === TOKEN) leave();
+          const response = await provider.fetchStub(input, init);
+          if (when === "before the refresh leaves" && String(input).startsWith(`${API}/`)) leave();
+          return response;
+        }),
+      );
+      const { classified } = await failure(
+        connector.callTool("post_note", {}, registry.contextFor("ccb", BASE, undefined, { signal: controller.signal })),
+      );
+      // Renewal never succeeded, so an authorization verdict stands.
+      expect(classified).toMatchObject({
+        code: "downstream_oauth_required",
+        retryable: false,
+        writeOutcome: "unknown",
       });
       expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
     },

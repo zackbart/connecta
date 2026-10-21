@@ -172,6 +172,14 @@ export interface GoldenSpec {
    * case passes a message that echoes every sent secret.
    */
   failureReply?: (status: number, message: string) => StubResponse;
+  /**
+   * Which forms of each sent secret the `401 echo` message carries. `raw`,
+   * the default, suits a provider that may cut a vendor message before
+   * redaction sees it, where a cut through any longer form leaks its first
+   * part. `all` is for a provider that redacts the whole message before
+   * cutting it: every form in `errorEchoForms`.
+   */
+  errorEcho?: "raw" | "all";
 }
 
 export function defineGoldenSpec(spec: GoldenSpec): GoldenSpec {
@@ -710,9 +718,10 @@ interface Capture {
   /** What a vendor echoing every sent secret, in every encoding, says. */
   echo: string;
   /**
-   * What a vendor error echoing every sent secret says: raw only, because
-   * some providers cap a vendor message before redaction sees it (Google at
-   * 500 characters), and a cut through a secret leaks its first part.
+   * What a vendor error echoing every sent secret says: raw only unless the
+   * spec asks for every form (`GoldenSpec.errorEcho`), because a provider that
+   * caps a vendor message before redaction sees it leaks the first part of
+   * a secret its cut goes through.
    */
   errorEcho: string;
   /** Appended to every scenario slug and removed from the goldens: unique to this capture in the process. */
@@ -752,6 +761,21 @@ export function secretEncodings(value: string): string[] {
       escaped.toUpperCase().replace(/\\U/g, "\\u"),
     ]),
   ];
+}
+
+/** The forms of an HTTP Basic `user:password` pair an echoed header shows: the header, base64 and base64url. */
+function basicForms(encoded: string): string[] {
+  return [`Basic ${encoded}`, encoded, encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")];
+}
+
+/**
+ * Every form a vendor error might echo a sent secret in, each of which
+ * sent-secret redaction covers: every `secretEncodings` form, the `Bearer`
+ * and `token` framings of an echoed Authorization header, and an HTTP Basic
+ * pair carrying it as the password, in each of `basicForms`.
+ */
+export function errorEchoForms(value: string): string[] {
+  return [...secretEncodings(value), `Bearer ${value}`, `token ${value}`, ...basicForms(base64(`alice:${value}`))];
 }
 
 /**
@@ -1146,7 +1170,10 @@ function captureFor(spec: GoldenSpec, clock: { real: RealWork; restart(): void }
     },
     secrets,
     echo: [...sent.flatMap(([, value]) => secretEncodings(value)), ...pairs].join(" "),
-    errorEcho: sent.map(([, value]) => value).join(" "),
+    errorEcho:
+      spec.errorEcho === "all"
+        ? [...sent.flatMap(([, value]) => errorEchoForms(value)), ...pairs.flatMap(basicForms)].join(" ")
+        : sent.map(([, value]) => value).join(" "),
     // Process-wide caches (Google's delegated tokens) never carry over from an earlier capture.
     nonce: `--capture-${++captures}--`,
     ...(options.seam ? { seam: options.seam } : {}),

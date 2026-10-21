@@ -693,7 +693,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Slides: Golden 401 failure: rejected [redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
+            "message": "Google Slides: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.",
             "retryable": false,
             "connector": "decks",
             "operation": "decks.get_presentation",
@@ -1588,7 +1588,7 @@
           "dispatched": true,
           "error": {
             "code": "auth_required",
-            "message": "Google Slides: Golden 401 failure: rejected [redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Read the deck with get_presentation and look for the new slide before adding another.",
+            "message": "Google Slides: Golden 401 failure: rejected [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted] Basic YWxpY2U6[redacted] YWxpY2U6[redacted] YWxpY2U6[redacted] Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked. Read the deck with get_presentation and look for the new slide before adding another.",
             "retryable": false,
             "writeOutcome": "unknown",
             "connector": "decks",

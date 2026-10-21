@@ -18,7 +18,7 @@ import * as outcomes from "../src/write-outcome.js";
 import { api } from "../src/connectors/api.js";
 import { providerRequests, tracksEveryRequest, tracksRequests } from "../src/provider-call.js";
 import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../src/errors.js";
+import { ConnectorCallError, type CallErrorDetails } from "../src/errors.js";
 import { deriveContext } from "../src/derived-context.js";
 import { InvocationService } from "../src/invocation.js";
 import { CatalogService } from "../src/catalog-service.js";
@@ -149,71 +149,7 @@ describe("API provider failure sweep", () => {
                   { status: 503 },
                 );
               };
-              if (provider.name === "github") {
-                const fake = apiFixture();
-                fake.respond((request) => {
-                  if (request.url.pathname === "/app/installations" || request.url.pathname.endsWith("/access_tokens"))
-                    return undefined;
-                  if (request.url.pathname === "/installation/repositories" && tool.name !== "list_scopes")
-                    return undefined;
-                  return fail(new Request(request.url, { method: request.method }));
-                });
-              } else {
-                vi.stubGlobal(
-                  "fetch",
-                  vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-                    const request = new Request(input, init);
-                    const url = new URL(request.url);
-                    if (url.hostname === "oauth2.googleapis.com")
-                      return Response.json({
-                        access_token: "fixture-delegated-token",
-                        expires_in: 3600,
-                        token_type: "Bearer",
-                      });
-                    if (url.pathname.endsWith("/auth/universal-auth/login"))
-                      return Response.json({
-                        accessToken: "fixture-infisical-token",
-                        expiresIn: 3600,
-                        tokenType: "Bearer",
-                      });
-                    if (url.pathname === "/oauth/token")
-                      return Response.json({
-                        access_token: "fixture-oauth-token",
-                        refresh_token: "fixture-refresh-token",
-                        token_type: "bearer",
-                        expires_in: 7200,
-                        scope: "read:individuals",
-                      });
-                    return fail(request);
-                  }),
-                );
-              }
-              const connector = provider.create();
-              const storage = memoryStorage();
-              const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
-              const values = credential(provider.name);
-              await vault.setAll(connector.id, values, "fixture");
-              // Keep parallel request preparation deterministic. Encryption
-              // has its own tests; this sweep must not leave sibling vault
-              // decryptions running after Promise.all rejects its first call.
-              vi.spyOn(vault, "get").mockImplementation(async (_id, field = "value") => values[field] ?? null);
-              vi.spyOn(vault, "getAll").mockResolvedValue(values);
-              const registry = makeRegistry([connector], {
-                storage,
-                credentialVault: vault,
-                classification: { [connector.id]: { [tool.name]: classification } },
-              });
-              if (provider.name === "ccb") {
-                const ctx = registry.contextFor(connector.id, BASE);
-                const started = await connector.startAuth!(ctx);
-                const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
-                expect(await connector.verifyState!(state, ctx)).toBe(true);
-                await connector.finishAuth!("fixture-code", ctx, new URLSearchParams({ code: "fixture-code", state }));
-              }
-              expect(args, `Missing dispatch example for ${address}`).toBeDefined();
-              const meta = createMetaTools(registry, BASE);
-              const invoke = classification === "write" ? meta.callDestructiveTool : meta.callTool;
-              const result = await invoke({ address, args: args! });
+              const result = await sweepCall(provider, tool.name, address, args, classification, fail);
               if (LOCAL.has(address) && !suffix) {
                 expect(requests).toEqual([]);
                 expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
@@ -255,11 +191,199 @@ describe("API provider failure sweep", () => {
               }
             },
           );
+          // A write answered 401 is an unknown outcome unless its provider
+          // declares reviewed authBeforeExecution evidence; a read keeps its
+          // refusal. Either way authorization is still needed, so the handoff
+          // stays, and a renewal that succeeded never resends a write.
+          it(`INV-9: ${address}${suffix} served ${classification} → 401`, async () => {
+            const requests: string[] = [];
+            const fail = (request: Request): Response => {
+              requests.push(`${request.method} ${request.url}`);
+              // Stripe's API stamps every answer with a Request-Id, which its
+              // reviewed evidence requires.
+              return Response.json(
+                { error: { code: 401, message: "Unauthorized" }, errors: [{ message: "Unauthorized" }] },
+                { status: 401, headers: { "request-id": "req_sweep" } },
+              );
+            };
+            const result = await sweepCall(provider, tool.name, address, args, classification, fail, HANDOFFS);
+            if (LOCAL.has(address) && !suffix) {
+              expect(requests).toEqual([]);
+              return;
+            }
+            const error = (result.structuredContent as { error: CallErrorDetails }).error;
+            const context = JSON.stringify(error);
+            expect(result.structuredContent, context).toMatchObject({ ok: false, error: { retryable: false } });
+            if (classification === "write") {
+              // Sent once each: no renewal resends a write (INV-9).
+              expect(new Set(requests).size, requests.join("\n")).toBe(requests.length);
+              expect(requests.length, context).toBe(
+                address === "planning-center.get_plan"
+                  ? 3
+                  : ["forms.list_responses", "forms.get_response"].includes(address)
+                    ? 2
+                    : 1,
+              );
+            }
+            if (classification === "write" && AUTH_BEFORE_EXECUTION.has(provider.name)) {
+              // Reviewed evidence: the vendor refused before acting, so the
+              // handoff may say to retry the original call.
+              expect(error, context).toMatchObject({
+                code: expect.stringMatching(/^(auth_required|downstream_oauth_required)$/),
+                nextAction: { tool: "authorize_connector", arguments: { connector: provider.name } },
+              });
+              expect(error).not.toHaveProperty("writeOutcome");
+              expect(error.instructions, context).toContain("retry the original call");
+            } else if (classification === "write" && RENEWS.has(provider.name)) {
+              // Renewal succeeded, so nothing is left to authorize: no handoff, still unknown.
+              expect(error).toMatchObject({ code: "connector_call_failed", writeOutcome: "unknown" });
+              expect(error.message).toContain(
+                "The credential is renewed for the next call, but the write was not sent again",
+              );
+              expect(error).not.toHaveProperty("nextAction");
+            } else if (classification === "write") {
+              expect(error, context).toMatchObject({
+                code: expect.stringMatching(/^(auth_required|downstream_oauth_required)$/),
+                writeOutcome: "unknown",
+                reconciliationRequired: true,
+                nextAction: { tool: "authorize_connector", arguments: { connector: provider.name } },
+              });
+              expect(error).not.toHaveProperty("retryAfterMs");
+              expect(error.retry).not.toMatch(/^Retry /);
+              // The outcome-aware handoff: authorize, then reconcile, never retry the original call.
+              expect(error.instructions, context).toContain(
+                "re-read the target of the write that failed to check whether it took effect before any fresh call",
+              );
+              expect(error.instructions).not.toContain("retry the original call");
+            } else {
+              expect(error, context).toMatchObject({
+                code: expect.stringMatching(/^(auth_required|downstream_oauth_required)$/),
+                nextAction: { tool: "authorize_connector", arguments: { connector: provider.name } },
+                retry: `Retry ${address} after the operator completes recovery.`,
+              });
+              expect(error).not.toHaveProperty("writeOutcome");
+              expect(error).not.toHaveProperty("reconciliationRequired");
+              expect(error.instructions ?? "", context).not.toContain("re-read the target");
+            }
+            // Program accounting reads the explicit outcome before any code.
+            if (classification === "write" && !AUTH_BEFORE_EXECUTION.has(provider.name))
+              expect(outcomes.classifyWriteOutcome({ ok: false, dispatched: true, answered: false, error })).toBe(
+                "unknown",
+              );
+          });
         }
       }
     });
   }
+
+  it("INV-9: the authBeforeExecution table matches every maintained provider's declaration", () => {
+    const declaring = Object.entries(providerSources)
+      .filter(([, source]) => /\bauthBeforeExecution\s*:/.test(source))
+      .map(([path]) => /\/providers\/([^/]+)\//.exec(path)![1]!);
+    expect([...new Set(declaring)].sort()).toEqual([...AUTH_BEFORE_EXECUTION].sort());
+  });
 });
+
+/** Every maintained provider's source, to find reviewed `authBeforeExecution` declarations. */
+const providerSources = Object.fromEntries(
+  Object.entries(
+    import.meta.glob<string>("../src/providers/*/**/*.ts", { query: "?raw", import: "default", eager: true }),
+  ).filter(([path]) => !path.endsWith(".test.ts")),
+);
+
+/**
+ * Providers whose transport declares reviewed `authBeforeExecution` evidence
+ * (cited beside the declaration and as a manual check in `drift.json`), so a
+ * write answered 401 is a known refusal. Only Stripe documents that it
+ * authenticates a request before acting on it.
+ */
+const AUTH_BEFORE_EXECUTION: ReadonlySet<string> = new Set(["stripe"]);
+
+/** Providers that renew the credential after a 401 within the call, and whose renewal the sweep lets succeed. */
+const RENEWS: ReadonlySet<string> = new Set(["ccb", "infisical"]);
+
+/** Recovery the handoff can describe, so its outcome-aware words show. */
+const HANDOFFS = {
+  canManageAuth: () => true,
+  credentialHandoffUrl: `${BASE}/connections`,
+  oauthConnectUrl: async () => `${BASE}/oauth/start`,
+};
+
+/** One sweep call: every downstream resource request reaches `fail`; token and login endpoints answer. */
+async function sweepCall(
+  provider: (typeof providers)[number],
+  tool: string,
+  address: string,
+  args: Record<string, unknown> | undefined,
+  classification: "read" | "write",
+  fail: (request: Request) => Response,
+  handoffs: Parameters<typeof createMetaTools>[2] = {},
+) {
+  if (provider.name === "github") {
+    const fake = apiFixture();
+    fake.respond((request) => {
+      if (request.url.pathname === "/app/installations" || request.url.pathname.endsWith("/access_tokens"))
+        return undefined;
+      if (request.url.pathname === "/installation/repositories" && tool !== "list_scopes") return undefined;
+      return fail(new Request(request.url, { method: request.method }));
+    });
+  } else {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        if (url.hostname === "oauth2.googleapis.com")
+          return Response.json({
+            access_token: "fixture-delegated-token",
+            expires_in: 3600,
+            token_type: "Bearer",
+          });
+        if (url.pathname.endsWith("/auth/universal-auth/login"))
+          return Response.json({
+            accessToken: "fixture-machine-token",
+            expiresIn: 3600,
+            tokenType: "Bearer",
+          });
+        if (url.pathname === "/oauth/token")
+          return Response.json({
+            access_token: "fixture-oauth-token",
+            refresh_token: "fixture-refresh-token",
+            token_type: "bearer",
+            expires_in: 7200,
+            scope: "read:individuals",
+          });
+        return fail(request);
+      }),
+    );
+  }
+  const connector = provider.create();
+  const storage = memoryStorage();
+  const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+  const values = credential(provider.name);
+  await vault.setAll(connector.id, values, "fixture");
+  // Keep parallel request preparation deterministic. Encryption
+  // has its own tests; this sweep must not leave sibling vault
+  // decryptions running after Promise.all rejects its first call.
+  vi.spyOn(vault, "get").mockImplementation(async (_id, field = "value") => values[field] ?? null);
+  vi.spyOn(vault, "getAll").mockResolvedValue(values);
+  const registry = makeRegistry([connector], {
+    storage,
+    credentialVault: vault,
+    classification: { [connector.id]: { [tool]: classification } },
+  });
+  if (provider.name === "ccb") {
+    const ctx = registry.contextFor(connector.id, BASE);
+    const started = await connector.startAuth!(ctx);
+    const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
+    expect(await connector.verifyState!(state, ctx)).toBe(true);
+    await connector.finishAuth!("fixture-code", ctx, new URLSearchParams({ code: "fixture-code", state }));
+  }
+  expect(args, `Missing dispatch example for ${address}`).toBeDefined();
+  const meta = createMetaTools(registry, BASE, handoffs);
+  const invoke = classification === "write" ? meta.callDestructiveTool : meta.callTool;
+  return invoke({ address, args: args! });
+}
 
 /** One call through the invocation layer; `read` may hold the nth credential read back. */
 async function invoke(

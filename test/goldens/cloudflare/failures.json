@@ -359,11 +359,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Cloudflare rejected the configured credential (HTTP 401). 10401: Golden 401 failure. Ray 8abc-golden. An operator must check or replace it in this connection; call verify_credential to confirm.",
+            "message": "Cloudflare rejected the configured credential (HTTP 401). 10401: Golden 401 failure. Ray 8abc-golden. An operator must check or replace it in this connection; call verify_credential to confirm. The write was sent before Cloudflare rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "cf",
             "operation": "cf.cloudflare_api_write",
             "recovery": "unavailable",
@@ -585,11 +585,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Cloudflare rejected the configured credential (HTTP 401). 10401: Golden 401 failure: rejected [redacted]. Ray 8abc-golden. An operator must check or replace it in this connection; call verify_credential to confirm.",
+            "message": "Cloudflare rejected the configured credential (HTTP 401). 10401: Golden 401 failure: rejected [redacted]. Ray 8abc-golden. An operator must check or replace it in this connection; call verify_credential to confirm. The write was sent before Cloudflare rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "cf",
             "operation": "cf.cloudflare_api_write",
             "recovery": "unavailable",

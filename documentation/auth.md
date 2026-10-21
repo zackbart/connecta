@@ -1360,10 +1360,11 @@ again (INV-9). The SDK still refreshes the grant, and connecta stops its
 resend before it leaves, so any fresh call after the target is reconciled uses
 the fresh token. The call
 fails with a non-retryable `connector_call_failed` whose outcome is unknown.
-If the refresh fails instead, an authorization verdict stays
-`downstream_oauth_required` (never retryable, `reconciliationRequired` and
-`writeOutcome: "unknown"` for a dispatched write) and anything else, a waiter
-deadline included, is the same unknown outcome. A read is refreshed and sent
+If the refresh fails instead, whatever it met (a dead grant, a waiter
+deadline, the caller leaving), the 401's verdict stays:
+`downstream_oauth_required`, never retryable, with `reconciliationRequired`
+and `writeOutcome: "unknown"`, and an `authorize_connector` handoff that says
+to re-read the target before any fresh call. A read is refreshed and sent
 once more. The invocation's
 classification decides; a direct call outside one uses the dispatched
 definition, a reviewed write verdict, or the tool's hints, and fails closed as
@@ -1380,7 +1381,9 @@ after a 401; a read-classified POST may replay once. Without a served verdict,
 these transports use GET as read and other methods as write. Google drops the
 rejected token for the next deliberate call and retains `auth_required` with
 `writeOutcome: "unknown"` and the operator handoff. Infisical renews the login
-for a later call and preserves any authorization verdict from that renewal.
+for a later call: the write then fails as a non-retryable
+`connector_call_failed` with an unknown outcome, and a login that fails keeps
+`auth_required` with the operator handoff and the unknown outcome.
 
 One preparation deadline covers initial epoch and grant reads, claim acquisition,
 dispatch preparation, and local joiners waiting for a grant commit. Cancellation
@@ -2385,12 +2388,12 @@ owner's access token as `Authorization: Bearer` with these rules:
   the call fails with a non-retryable `connector_call_failed` whose outcome is
   unknown, and the renewed grant serves any fresh call the agent makes after
   reconciling the target.
-- Whatever that recovery meets, a write's failure is never retryable. An
-  authorization verdict, such as a [dead refresh](#refresh-failures) or a
-  refresh lost after it was sent, stays `downstream_oauth_required`, which the
-  invocation marks `reconciliationRequired`. Anything else (a disconnect or
-  reset racing the refresh, a storage or contention failure) is the same
-  unknown-outcome `connector_call_failed`.
+- Whatever that recovery meets, a write's failure is never retryable and its
+  outcome is unknown. Until a refresh succeeds the 401's verdict stands:
+  `downstream_oauth_required`, which the invocation marks
+  `reconciliationRequired`, with the `authorize_connector` handoff, whether
+  the refresh was [dead](#refresh-failures), lost after it was sent, raced
+  by a disconnect or reset, or failed in storage or contention.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
   `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
   return retryable `unavailable` for a read. Latch second 401s for the request scope,

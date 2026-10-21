@@ -381,11 +381,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
+            "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI. The write was sent before Mixpanel rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "analytics",
             "operation": "analytics.import_events",
             "recovery": "unavailable",
@@ -663,11 +663,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI.",
+            "message": "Mixpanel rejected the service account. An operator must set username:secret in this connection's operator UI. The write was sent before Mixpanel rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "analytics",
             "operation": "analytics.import_events",
             "recovery": "unavailable",

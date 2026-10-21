@@ -16,6 +16,12 @@ export interface ProviderRequest {
   method?: string;
   /** The genuine, legal idempotency key the vendor honors that it carried; nothing else. */
   key?: string;
+  /**
+   * Its answer was a 401 that the transport's reviewed `authBeforeExecution`
+   * evidence covers: the vendor rejected the credential before it acted on
+   * the request. Only that makes a 401 a refusal (`servedRefusal`).
+   */
+  authBeforeExecution?: true;
 }
 interface ProviderCall {
   requests: ProviderRequest[];
@@ -254,7 +260,8 @@ export function providerFetch(
 /**
  * Whether a served HTTP status says the request was refused, not applied: a
  * 4xx other than 408. A 408 is a timeout, whose request may have been acted
- * on; a 2xx or 5xx never proves a write unapplied.
+ * on; a 2xx or 5xx never proves a write unapplied. A 401 passes here, and
+ * `servedRefusal` still asks for the vendor's reviewed evidence.
  */
 export function refusedStatus(status: number | undefined): boolean {
   return status !== undefined && status >= 400 && status < 500 && status !== 408;

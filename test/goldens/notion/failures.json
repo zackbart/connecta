@@ -403,11 +403,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Notion golden_401: Notion answered HTTP 401; its message is withheld because this operation handles credentials. The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI.",
+            "message": "Notion golden_401: Notion answered HTTP 401; its message is withheld because this operation handles credentials. The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI. The write was sent before Notion rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "workspace",
             "operation": "workspace.integration_create_page",
             "recovery": "unavailable",
@@ -748,11 +748,11 @@
         "result": {
           "ok": false,
           "dispatched": true,
-          "answered": true,
           "error": {
             "code": "auth_required",
-            "message": "Notion golden_401: Notion answered HTTP 401; its message is withheld because this operation handles credentials. The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI.",
+            "message": "Notion golden_401: Notion answered HTTP 401; its message is withheld because this operation handles credentials. The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI. The write was sent before Notion rejected its credential, so whether it took effect is unknown: check the target before repeating it.",
             "retryable": false,
+            "writeOutcome": "unknown",
             "connector": "workspace",
             "operation": "workspace.integration_create_page",
             "recovery": "unavailable",

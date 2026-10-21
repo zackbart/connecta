@@ -951,23 +951,29 @@ describe("maintained Infisical contract", () => {
 
   it("INV-9: a write answered 401 is never resent, and a failing recovery login leaves its outcome unknown", async () => {
     const write = () => connector.callTool("create_secret", { ...args, secretValue: "submitted-value" }, context());
-    const unknown = (renewal: string) => ({
-      code: "connector_call_failed",
+    const unknown = (renewal: string, code = "connector_call_failed") => ({
+      code,
       retryable: false,
+      writeOutcome: "unknown",
       message: `Infisical answered this write with HTTP 401. ${renewal} was not sent again, so whether it took effect is unknown: check the target before repeating it.`,
     });
     // Login renews the token, and the write still is not sent again.
     let fetch = mockFetch(login(), json({ message: "expired" }, 401), login());
     await expect(write()).rejects.toMatchObject(unknown("The credential is renewed for the next call, but the write"));
     expect(fetch.mock.calls.filter(([input]) => !String(input).endsWith("/login"))).toHaveLength(1);
-    // The recovery login answers 503: no retryable `unavailable` for a write that was sent.
+    // The recovery login answers 503: no retryable `unavailable` for a write
+    // that was sent, and the 401's verdict keeps its operator recovery.
     fetch = mockFetch(login(), json({ message: "expired" }, 401), json({ message: "down" }, 503));
-    await expect(write()).rejects.toMatchObject(unknown("Renewing the credential failed (unavailable), and the write"));
+    await expect(write()).rejects.toMatchObject(
+      unknown("Renewing the credential failed (unavailable), and the write", "auth_required"),
+    );
     expect(fetch).toHaveBeenCalledTimes(3);
     // Nor a network failure on the way to the login endpoint.
     fetch = mockFetch(login(), json({ message: "expired" }, 401));
     fetch.mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }));
-    await expect(write()).rejects.toMatchObject(unknown("Renewing the credential failed (unavailable), and the write"));
+    await expect(write()).rejects.toMatchObject(
+      unknown("Renewing the credential failed (unavailable), and the write", "auth_required"),
+    );
     // The identity is refused at login: that verdict and its operator recovery stand, never retryable.
     fetch = mockFetch(login(), json({ message: "expired" }, 401), json({ message: "revoked" }, 401));
     await expect(write()).rejects.toMatchObject({

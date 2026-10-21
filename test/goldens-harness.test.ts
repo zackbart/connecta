@@ -12,6 +12,7 @@ import {
   goldenFiles,
   GOLDEN_NOW,
   type Replies,
+  errorEchoForms,
   LEAK_RUN_UNITS,
   leakedSecret,
   secretEncodings,
@@ -719,6 +720,42 @@ describe(suiteName, { timeout: 120_000 }, () => {
       "[redacted]",
     ]) {
       expect(leakedSecret({ message: `rejected ${safe} today` }, secrets), safe).toBeUndefined();
+    }
+  });
+
+  it("INV-5: Google's 401 echo rows carry every form redaction covers, Basic, Bearer and token framings included, each redacted", () => {
+    const secret = "golden-probe-token/123+456=é";
+    const pair = `alice:${secret}`;
+    expect(errorEchoForms(secret)).toEqual([
+      ...secretEncodings(secret),
+      `Bearer ${secret}`,
+      `token ${secret}`,
+      `Basic ${base64(pair)}`,
+      base64(pair),
+      base64Url(pair),
+    ]);
+    // The leak guard reads every form, so a form redaction missed fails the capture.
+    for (const form of errorEchoForms(secret))
+      expect(leakedSecret({ message: `rejected ${form} today` }, { probe: secret }), form).toBe("probe");
+    const google = ["docs", "drive", "forms", "gmail", "sheets", "slides"];
+    expect(specs.filter((spec) => spec.errorEcho === "all").map((spec) => spec.provider)).toEqual(google);
+    for (const provider of google) {
+      const spec = specs.find((candidate) => candidate.provider === provider)!;
+      const sent = Object.entries(spec.secrets ?? {}).filter(([name]) => !spec.unsent?.includes(name));
+      const forms = sent.flatMap(([, value]) => errorEchoForms(value));
+      const failures = JSON.parse(stored[`./goldens/${provider}/failures.json`]!) as Record<
+        "read" | "write",
+        { cases: Record<string, { result: { error: { message: string } } }> }
+      >;
+      for (const kind of ["read", "write"] as const) {
+        const { message } = failures[kind].cases["401 echo"]!.result.error;
+        // One marker per form: each was echoed, and each was redacted where it stood.
+        const echoed = /rejected (.*?) Google rejected/.exec(message)?.[1] ?? "";
+        expect(
+          echoed.split(" ").filter((word) => word.includes("[redacted]")),
+          `${provider} ${kind}`,
+        ).toHaveLength(forms.length);
+      }
     }
   });
 
