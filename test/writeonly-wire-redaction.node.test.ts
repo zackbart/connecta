@@ -5,7 +5,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { SentSecrets } from "../src/sent-secrets.js";
+import { SentSecrets, sentSecretsFor } from "../src/sent-secrets.js";
 import { downstreamSkillUri } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -283,6 +283,31 @@ it("INV-5: public-schema remote tools redact bare numeric bearer credentials in 
   });
   expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
   expect(result.structuredContent).toMatchObject({ result: { data: REDACTED, format: "text" } });
+});
+
+it("INV-5: an array whose toJSON echoes a credential reaches the QuickJS guest only checked", async () => {
+  const token = "Q8!wZ2?A7@vR4#";
+  const connector: Connector = {
+    id: "wire",
+    kind: "api",
+    async listTools() {
+      return [{ name: "read", annotations: { readOnlyHint: true } }];
+    },
+    async callTool(_name, _args, ctx) {
+      sentSecretsFor(ctx).add(token);
+      // Its entries are public; what serialization sends is the toJSON result.
+      return Object.assign(["public"], { toJSON: () => ({ echo: token }) });
+    },
+  };
+  const result = await createExecuteTool(
+    makeRegistry([connector]),
+    BASE,
+    executor,
+    silentLogger,
+  )({ code: 'async () => (await connecta.call("wire.read")).data.echo.slice(0, 7)' });
+  // Seven units are below K, so only what the guest received decides what returns.
+  expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+  expect(result.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
 });
 
 it("INV-5: JSON text keeps its exact bytes unless an echo is redacted, then stays valid JSON", () => {

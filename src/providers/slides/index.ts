@@ -404,10 +404,11 @@ function cursorText(cursor: Cursor): string {
 }
 
 /**
- * A cursor of connecta's claims: the presentation and page the caller named
- * or Slides reported, a state that holds Slides' revision only when it
- * carries no sent value ({@link stateOf}), and offsets. An agent decodes it
- * and no later pass reads through its encoding.
+ * A cursor of connecta's claims: the presentation and page the caller named,
+ * or a page Slides reported, redacted ({@link redactSentSecrets}); a state
+ * that holds Slides' revision only when it carries no sent value
+ * ({@link stateOf}); and offsets. An agent decodes it and no later pass reads
+ * through its encoding.
  */
 function encodeCursor(ctx: ConnectorContext, cursor: Cursor): string {
   return encodeForAgent(ctx, cursorText(cursor), { url: true, claims: true });
@@ -714,6 +715,8 @@ async function projectSlide(
 ): Promise<JsonRecord> {
   const slide = asRecord(value);
   const slideId = text(slide["objectId"]) ?? "";
+  // Slides' ids enter a cursor only redacted, as every downstream value a cursor holds does.
+  const cursorPage = redactSentSecrets(ctx, slideId);
   const properties = asRecord(slide["slideProperties"]);
   const leaves = readingOrder(ctx, slide["pageElements"]);
   let state: Promise<string> | undefined;
@@ -756,7 +759,7 @@ async function projectSlide(
         row["textCursor"] = encodeCursor(ctx, {
           k: "page",
           p: deck.presentationId,
-          g: slideId,
+          g: cursorPage,
           s: await slideState(),
           i: position,
           o: kept.length,
@@ -784,7 +787,7 @@ async function projectSlide(
       notesCursor = encodeCursor(ctx, {
         k: "page",
         p: deck.presentationId,
-        g: notesPageId ?? "",
+        g: redactSentSecrets(ctx, notesPageId ?? ""),
         s: await stateOf(ctx, deck.revisionId, () => leafFingerprint(notesLeaves), true),
         i: notesAt,
         o: kept.length,

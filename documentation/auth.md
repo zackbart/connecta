@@ -1345,11 +1345,20 @@ placeholder text is still redacted. Object keys and declared binary fields are
 checked on their own: a key holding a match is renamed, and image, audio,
 resource-blob, or `format: "base64"` content, or a REST body's `base64` beside
 its `contentType`, is decoded and checked as bytes, as UTF-8 and as its base64
-text, then withheld whole as the base64 of `[redacted]` on a match. Any other
-text field that is base64 or base64url (the whole field, at least six
-characters, or a run of at least sixteen inside it, up to three encodings deep)
-is decoded and checked the same way, and withheld whole as `[redacted]` when
-only its decoding holds a match.
+text, then withheld whole as the base64 of `[redacted]` on a match. Base64 or
+base64url in any other text field is decoded and checked the same way, in each
+of the field's text views: the text itself, the text with one layer of JSON
+escapes decoded (`\uXXXX` and the standard escapes), and the text with its
+percent escapes decoded, a `+` read both as itself and as a form-encoded space.
+A view that is wholly base64 is decoded from six characters. A run inside a
+view is decoded from six characters when a private value of four to seven
+characters is registered, and from eleven otherwise: each length is the
+shortest run that can carry the smallest value the pass matches, four bytes or
+eight, at any alignment, padded or not. Decoded bytes are checked as bytes, as
+UTF-8, and through base64 they carry, up to three encodings deep, and the field
+is withheld whole as `[redacted]` when only its decoding holds a match. Every
+decode is paid for from the call's work budget; a field the budget cannot
+check is withheld.
 
 Only fixed words are copied unchanged whatever was sent: Connecta, MCP, and
 JSON-RPC envelope member names, tag values such as a content `type` or result
@@ -1365,18 +1374,40 @@ identifiers, counts, and JSON-RPC ids are never rewritten.
 Every base64 or base64url encoding Connecta itself returns, such as a Drive or
 Gmail download, a REST body's `base64`, or a page cursor, is produced by one
 helper that checks the content first and encodes `[redacted]` instead when it
-holds a match. A cursor holds Connecta's own counts and fingerprints beside
-vendor values redacted when they were placed: a vendor page token is redacted,
-so a token that echoes a sent value fails on the next page instead of carrying
-it; a vendor revision or id the cursor only compares is replaced by its digest
-when it holds a sent value.
+holds a match. A cursor holds Connecta's own names, counts and fingerprints
+beside vendor values redacted when they were placed: a vendor page token or
+page id is redacted, so one that echoes a sent value fails on the next page
+instead of carrying it; a vendor revision or id the cursor only compares is
+replaced by its digest when it holds a sent value. Before a cursor is encoded,
+every string in it is checked under payload rules, and its whole text and
+encoding under the agent boundary's, which leave Connecta's own keys and counts
+to short private values. A cursor that holds a match encodes `[redacted]`,
+which the next page refuses.
 
-What redaction returns is what it checked. A caller's container is returned as
-it stands only while every field is a data property the pass read and nothing
-in it changed. A container with an accessor (never invoked, and left out of its
-copy), with a `toJSON` (called once, as serialization would, and replaced by
-its checked result), or with a renamed key is copied, and a change copies the
-containers on its path; the caller's value is never mutated.
+What redaction returns is what it checked. A caller's object or array is
+returned as it stands only as verified plain data: its prototype is
+`Object.prototype`, `Array.prototype`, or `null`; no `toJSON` is on its chain;
+it has no symbol-keyed field; every field is a data property the pass read, an
+array's holes read through its prototypes; and nothing in it changed. Anything
+else is returned as a copy of writable, configurable data properties, so a
+frozen or read-only input never makes redaction throw, and the caller's value is
+never mutated:
+
+- An error is always copied, as its own class. Its stack, and every accessor its
+  class defines, such as DOMException's `name` and `message` or an SDK error's
+  `status`, is read once into a checked field. Its `toJSON` is never called.
+- An object of any other class becomes plain data, and an array that is not
+  plain becomes a plain array of its indices.
+- A `toJSON` is called once, as serialization would, and its checked result
+  replaces the object or array.
+- Binary in a typed array, `DataView`, or `ArrayBuffer` is checked as bytes and
+  copied, or replaced by `[redacted]` on a match.
+- An object's own accessor is never invoked and is left out of the copy; an
+  array index read through an accessor holds `[redacted]`.
+
+A change copies only the containers on its path. An array's fields other than
+its indices are not read: JSON, which the MCP wire, the result stash, and every
+executor marshal values with, never serializes them.
 
 Empty private strings are exempt because they contain nothing to leak. A
 private value of one to three characters is matched only as a whole field
@@ -1428,9 +1459,10 @@ without spending what a smaller one needs; runs crossing two kept leaves are
 then matched 512 units deep on each side of their seam. The same call visits at
 most 512 containers deep and 1 Mi entries in total. A container's entries are
 counted before it is walked.
-One that does not fit the remaining entries is matched as one serialized leaf
-instead: kept unchanged when nothing registered appears, otherwise withheld. A
-cycle or a container past the depth limit is withheld. No limit throws or
+One that does not fit the remaining entries is withheld whole: it is never
+serialized and checked as text, so nothing past the budget reaches a result, a
+page, or the result stash. A cycle or a container past the depth limit is
+withheld. No limit throws or
 exposes a matcher diagnostic, and typed success outcomes remain.
 
 Only credentials of at least eight characters enter the redaction and structural
@@ -2182,10 +2214,44 @@ The output boundary's guarantee is K = 8 units, and these are its exact limits:
   seven also as substrings; eight and more also by every eight-unit run.
 - A Proxy, which only in-process code can construct, can answer a later read
   differently from the one redaction made; the guarantee covers what redaction
-  read. Accessors, `toJSON`, and every changed container are copied.
+  read. Only verified plain data is returned as it stands; everything else is a
+  copy of checked data properties.
+- An array's fields other than its indices are never read, because JSON never
+  serializes them.
+
+The encoding lattice is exactly this, and anything outside it is out of scope:
+
+- Text views of a string leaf: the raw text; one layer of JSON escapes decoded
+  (`\uXXXX` and `\" \\ \/ \b \f \n \r \t`); and percent escapes decoded,
+  a `+` read both as itself and as a space. Text matching itself also reads
+  through up to eight JSON escape layers and matches registered percent forms.
+- In every text view, base64 and base64url runs are decoded. A run is a maximal
+  span of `A-Z a-z 0-9 + / - _`, decoded from its first unit; up to two `=`
+  after it are padding and are never counted. A whole view is decoded from six
+  units; a run inside one from `SHORT_RUN_UNITS` = 6 under payload rules with a
+  four-to-seven-unit private value registered, otherwise `FRAGMENT_RUN_UNITS` = 11.
+- Derivation: a run of L units decodes to floor(3L/4) bytes, so p bytes that start
+  a bytes into the encoding (alignment a = 0, 1 or 2) need L >= ceil(4(a + p)/3),
+  least at a = 0. The smallest piece a payload pass matches is a short value,
+  four units and so at least four bytes: ceil(16/3) = 6. Otherwise it is K = 8
+  units, at least eight bytes: ceil(32/3) = 11. Padding follows the run, so a
+  padded and an unpadded encoding decode alike. The tests cover four-, seven-
+  and eight-unit values at every alignment, padded and unpadded, in both
+  alphabets.
+- Decoded bytes are matched as bytes, as UTF-8 when a form is not ASCII, and
+  through their own JSON escapes within the eight-layer limit. Every decode is
+  charged to the call's work budget, and content the budget cannot check is
+  withheld.
+- Out of scope: two or more text-layer decodes chained (percent escapes inside
+  JSON escapes, or two JSON layers before base64); base64 of base64 (decoded
+  content is searched for base64 up to three levels deep, but the guarantee does
+  not depend on it); a base64 encoding glued to preceding alphabet units with no
+  separator, such as a path segment after `/`, which decodes misaligned; HTML
+  entities; compression; custom alphabets; encryption; and bytes written as a
+  JSON array of numbers.
 
 `test/sent-secret-output-boundary.test.ts` holds the evidence, including its
-`review round 3` block for these limits.
+`review round 3` and `review round 4` blocks for these limits.
 
 ### Source and tests
 

@@ -839,13 +839,23 @@ included). The joined projection is matched once, raw and through each JSON
 decoding layer, so a form split across adjacent leaves is found; each match is
 replaced only in the leaves it touches, so public runs, links, annotations and
 container shapes stay. The walk reads every field once, from its descriptor, and
-returns what it checked: a caller's container stands only while every field is
-a data property it read and nothing in it changed. A container with an accessor
-(never invoked, left out of its copy), a `toJSON` (called once and replaced by
-its checked result) or a renamed key is copied, and a change copies the
-containers on its path on first write, so a caller's value is never mutated.
+returns what it checked. A caller's container stands only as verified plain
+data: prototype `Object.prototype`, `Array.prototype` or `null`, no `toJSON` on
+its chain, no symbol-keyed field, every field a data property it read (an
+array's holes read through its prototypes), and nothing in it changed. Anything
+else is a copy of writable, configurable data properties, so a frozen input
+never throws: an error always, as its own class, with its stack and every
+accessor its class defines read once into checked fields and its `toJSON`
+shadowed; an object of another class as plain data; an array that is not plain
+as a plain array of its indices; a `toJSON` result, called once and checked;
+typed arrays and `ArrayBuffer`s checked as bytes and copied. An own accessor is
+never invoked: an object's copy leaves it out, an array index holds the
+placeholder. A change copies the containers on its path on first write, so a
+caller's value is never mutated. An array's non-index fields are never read:
+JSON, which every exit and executor marshals with, never serializes them.
 Facts kept beside a value by identity (failure facts, classifications, statuses,
-Google's reasons) register with `redaction-identity.ts` and follow its copies.
+Google's reasons and outcomes) register with `redaction-identity.ts` and follow
+its copies, arrays' included.
 Object keys and declared binary fields are checked on their own. Only fixed
 words are kept whatever was sent: envelope keys, MCP and JSON-RPC member names
 and tag values, booleans under outcome names, and on an error Connecta's code
@@ -913,8 +923,8 @@ costs more, since it is decoded and checked as bytes as well as its base64 text.
 Unchecked content is withheld rather than weakening the guarantee: past the
 index's capacity, or under a private value too large to register, every leaf of
 K units or more and every run of adjacent shorter leaves reaching K; a cycle, an
-accessor, a container past depth 512 or one past the node budget that cannot be
-serialized. Leaves too large to match joined within the call's work budget are
+accessor, a container past depth 512, and a container past the node budget,
+withheld whole and never serialized. Leaves too large to match joined within the call's work budget are
 matched alone, in order, withholding one that does not fit, and every seam
 between kept leaves is matched 512 units deep on each side. Text that still
 holds escapes after eight decoding layers withholds the leaves holding them.
@@ -925,12 +935,23 @@ is decoded and checked as bytes, as UTF-8 when a registered form is not ASCII,
 as its base64 text, and through any base64 the bytes carry, so an echo at any
 byte alignment is found. Decoded views take payload text's short-value rules. A
 match withholds the whole field as the base64 of `[redacted]`, never partially
-scrubbed bytes. Any other text leaf that is base64 or base64url (the whole leaf
-of at least six units, or a run of at least sixteen inside it, three encodings
-deep) is decoded too; its decoded views are matched together as one lane, and a
-match only decoding reveals withholds the leaf as `[redacted]`. Content found
-clean at least 4,096 units long is remembered for the request until its set
-changes, so later passes do not decode it again.
+scrubbed bytes. Base64 or base64url in any other text leaf is decoded too, in
+each of its text views: raw, one layer of JSON escapes decoded, and percent
+escapes decoded (a `+` both as itself and as a form-encoded space). A view that
+is wholly base64 is decoded from six units; a run inside one from six units
+when payload rules apply and a four-to-seven-unit private value is registered,
+otherwise from eleven. A run of L units decodes to floor(3L/4) bytes, so a piece of
+p bytes at alignment a needs L >= ceil(4(a + p)/3), least at a = 0: the smallest
+piece matched is a short value's four bytes (6) or a K-unit run's eight (11).
+Decoded content is searched for further base64 three encodings deep. The
+decoded views are matched together as one lane, each run decoded once per call
+however many leaves repeat it, and a match only decoding reveals withholds the
+leaf as `[redacted]`. Every decode is charged to the call's work budget, and a
+leaf it cannot check is withheld. Two text decodes chained, base64 glued to
+preceding alphabet units with no separator, HTML entities, compression and
+custom alphabets are outside the guarantee (`auth.md`, INV-5 output redaction
+limits). Content found clean at least 4,096 units long is remembered for the
+request until its set changes, so later passes do not decode it again.
 
 Every base64 or base64url encoding Connecta returns goes through
 `encodeForAgent`: Drive and Gmail downloads, REST bodies, and every page
@@ -940,9 +961,13 @@ provider has no deployment key, and a sealed vendor token would still be the
 vendor's text. A vendor page token is redacted where it is placed, so one that
 echoes a sent value fails on the next page instead of carrying it; a revision or
 id the cursor only compares becomes its digest when it holds a sent value
-(Slides states, Forms revisions and anchors). Cursor claims are checked under
-the boundary's rules and remembered, so Connecta's own counts never meet short
-private values.
+(Slides states, Forms revisions and anchors), and a vendor page id a cursor
+names (Slides slides and notes pages) is redacted. Before encoding, every
+string in a cursor's claims is checked under payload rules, since each
+downstream value a cursor holds is a string, and its whole text and encoding
+under the boundary's, so Connecta's own keys and counts never meet short
+private values. A cursor checked so is remembered as clean; one that holds a
+match encodes `[redacted]`.
 
 Text Connecta or a provider cuts short, trims, normalizes or extracts from is
 redacted whole against the request's set, private arguments included, first

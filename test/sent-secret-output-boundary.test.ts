@@ -8,10 +8,22 @@ import {
   redactAgentOutput,
   redactBoundedRead,
   requestSentSecrets,
+  sentSecretsFor,
   sentSecretsForRequest,
   SentSecrets,
 } from "../src/sent-secrets.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { buildSandboxProviders } from "../src/execute.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import {
+  attachFailureFacts,
+  carryFailureFacts,
+  classifiedFailure,
+  failureRecord,
+  failureStatus,
+  labelErrorClass,
+  statusFailure,
+} from "../src/operator-record.js";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
 import { notion } from "../src/providers/notion/index.js";
@@ -19,10 +31,11 @@ import { slides } from "../src/providers/slides/index.js";
 import { planningCenter } from "../src/providers/planning-center/index.js";
 import { tithely } from "../src/providers/tithely/index.js";
 import { vercel } from "../src/providers/vercel/index.js";
-import type { ConnectorContext } from "../src/types.js";
+import type { Connector, ConnectorContext } from "../src/types.js";
 import { caller, stubGoogle, workspaceOptions } from "./helpers/google-echo.js";
-import { decodedViews, echoForms, leakedRun, SECRET } from "./helpers/secret-echoes.js";
+import { decodedViews, echoForms, holdsValue, leakedRun, SECRET } from "./helpers/secret-echoes.js";
 import { connectorContext } from "./fixtures/misc.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 
 const MARK = "[redacted]";
 const K = 8;
@@ -820,8 +833,365 @@ describe("review round 3", () => {
     expect(safe).not.toBe(abort);
     expect(safe).toBeInstanceOf(DOMException);
     expect([safe.name, safe.message]).toEqual(["AbortError", `Aborted after ${MARK}`]);
+    // An error is never returned as it stands, even with nothing to change: its copy holds
+    // what its accessors answered as fields.
     const plain = new DOMException("The operation was aborted.", "AbortError");
-    expect(set(TOKEN).redact(plain)).toBe(plain);
+    const copy = set(TOKEN).redact(plain);
+    expect(copy).not.toBe(plain);
+    expect([copy.name, copy.message, copy.code]).toEqual(["AbortError", "The operation was aborted.", plain.code]);
+  });
+});
+
+describe("review round 4", () => {
+  /** Every UTF-16 unit as a `\u` escape. */
+  const escapeAll = (text: string) =>
+    Array.from(text, (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+  /** Every unit as a lowercase percent escape. */
+  const percentAll = (text: string) =>
+    Array.from(text, (unit) => `%${unit.charCodeAt(0).toString(16).padStart(2, "0")}`).join("");
+  /** Base64 or base64url of `body`, padded or not. */
+  const base64Of = (body: string, url: boolean, padded: boolean) => {
+    const bare = encoded(body, url).replace(/=+$/, "");
+    return padded ? bare + "=".repeat((4 - (bare.length % 4)) % 4) : bare;
+  };
+  /** An array of `length` holes. */
+  const holes = (length: number): unknown[] => Object.assign([], { length }) as unknown[];
+  /** The claims a base64url cursor holds. */
+  const claimsOf = (cursor: string): Record<string, unknown> =>
+    JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")), (unit) => unit.charCodeAt(0)),
+      ),
+    ) as Record<string, unknown>;
+
+  it.each([
+    ["four", "Pq4!"],
+    ["seven", "Q8!wZ2?"],
+    ["eight", "Q8!wZ2?A"],
+  ])(
+    "INV-5: a %s-unit private value base64-encoded in text is decoded at every alignment, padded or not, in both alphabets",
+    (_name, value) => {
+      const secrets = set(value);
+      for (let prefix = 0; prefix < 3; prefix++)
+        for (let suffix = 0; suffix < 3; suffix++)
+          for (const url of [false, true])
+            for (const padded of [false, true]) {
+              const run = base64Of(`${"x".repeat(prefix)}${value}${"z".repeat(suffix)}`, url, padded);
+              for (const input of [`echo: ${run} end`, run, `{"note":"${run}"}`]) {
+                const out = shown(secrets.redact({ v: input }));
+                expect(holdsValue(out, value), `${prefix} ${suffix} ${url} ${padded} ${input}`).toBe(false);
+              }
+            }
+      // Public base64 of the same lengths is decoded, found clean, and kept.
+      const clean = { a: `echo: ${btoa("public!")} end`, b: `echo: ${btoa("x public text z")} end` };
+      expect(secrets.redact(clean)).toBe(clean);
+    },
+  );
+
+  it("INV-5: an eight-unit credential base64-encoded in text is decoded under payload and envelope rules", () => {
+    const credential = "Q8!wZ2?A";
+    const secrets = new SentSecrets();
+    secrets.add(credential);
+    // The review's echo: fifteen units unpadded, below round 3's sixteen.
+    expect(secrets.redact({ v: "echo: eHhROCF3WjI/QXo=" }).v).toBe(MARK);
+    expect(redactAgentOutput(secrets, { v: "echo: eHhROCF3WjI/QXo=" }).v).toBe(MARK);
+    for (let prefix = 0; prefix < 3; prefix++)
+      for (let suffix = 0; suffix < 3; suffix++)
+        for (const url of [false, true])
+          for (const padded of [false, true]) {
+            const run = base64Of(`${"x".repeat(prefix)}${credential}${"z".repeat(suffix)}`, url, padded);
+            for (const out of [
+              secrets.redact({ v: `echo: ${run}` }),
+              redactAgentOutput(secrets, { v: `echo: ${run}` }),
+            ])
+              expect(holdsValue(shown(out), credential), `${prefix} ${suffix} ${url} ${padded}`).toBe(false);
+          }
+    // A short private value inside a short embedded run, as the review found it.
+    expect(set("pin42").redact({ v: "echo: eHBpbjQyeg==" }).v).toBe(MARK);
+  });
+
+  it.each(["pin42", "Q8!wZ2?A", "Q8!wZ2?A7@vR4#"])(
+    "INV-5: base64 of %s is decoded in every text view: JSON-escaped, percent-encoded, form-encoded",
+    (value) => {
+      const secrets = set(value);
+      for (let prefix = 0; prefix < 3; prefix++) {
+        const body = `${"x".repeat(prefix)}${value}z`;
+        const [standard, url] = [encoded(body), encoded(body, true)];
+        const inputs: Record<string, string> = {
+          escaped: escapeAll(standard),
+          escapedInline: `echo: ${escapeAll(standard)}`,
+          escapedUrl: escapeAll(url),
+          percent: encodeURIComponent(standard),
+          percentAll: percentAll(standard),
+          percentInline: `echo%3A%20${encodeURIComponent(standard)}`,
+          form: new URLSearchParams({ echo: `see ${standard}` }).toString(),
+          uri: `echo%20${encodeURI(standard)}`,
+        };
+        for (const [name, input] of Object.entries(inputs)) {
+          const out = shown(secrets.redact({ v: input }));
+          expect(out, `${prefix} ${name}`).not.toBe(shown({ v: input }));
+          expect(holdsValue(out, value), `${prefix} ${name}`).toBe(false);
+        }
+      }
+    },
+  );
+
+  it("INV-5: the review's composed encodings are withheld: an escaped btoa and encodeURIComponent of btoa", () => {
+    const value = "Q8!wZ2?A7@vR4#";
+    const secrets = set(value);
+    for (const input of [escapeAll(btoa(`x${value}z`)), encodeURIComponent(btoa(`xx${value}z`))]) {
+      const out = secrets.redact({ v: input }).v;
+      expect(out).not.toBe(input);
+      expect(leakedRun(out, value)).toBeUndefined();
+    }
+  });
+
+  it("INV-5: Slides cursors carry a slide's and its notes page's ids only redacted", async () => {
+    const long = "Ordinary public content ".repeat(30);
+    const shape = (objectId: string) => ({
+      objectId,
+      shape: { text: { textElements: [{ textRun: { content: long } }] } },
+    });
+    stubGoogle(() => ({
+      presentationId: "deck",
+      title: "Public deck",
+      revisionId: "rev1",
+      slides: [
+        {
+          objectId: "s0-pin42-id",
+          slideProperties: {
+            notesPage: {
+              objectId: "n0-pin42-id",
+              notesProperties: { speakerNotesObjectId: "notes" },
+              pageElements: [shape("notes")],
+            },
+          },
+          pageElements: [shape("shape1")],
+        },
+      ],
+    }));
+    const result = (await slides("decks", await workspaceOptions()).callTool(
+      "get_presentation",
+      { presentationId: "deck", maxCharsPerSlide: 20 },
+      context("pin42"),
+    )) as { slides: { elements: { textCursor: string }[]; notesCursor: string }[] };
+    const [slide] = result.slides;
+    expect(claimsOf(slide!.elements[0]!.textCursor)).toMatchObject({ k: "page", p: "deck", g: `s0-${MARK}-id` });
+    expect(claimsOf(slide!.notesCursor)).toMatchObject({ k: "page", p: "deck", g: `n0-${MARK}-id` });
+    expect(holdsValue(shown(result), "pin42")).toBe(false);
+  });
+
+  it("INV-5: cursor claims are checked under payload rules, strings by value, Connecta's keys and counts left alone", () => {
+    const ctx = context("4201");
+    const claims = (value: object) => encodeForAgent(ctx, JSON.stringify(value), { url: true, claims: true });
+    // A short private value equal to one of Connecta's counts leaves the cursor intact.
+    const counts = { k: "page", i: 4201, o: 4201 };
+    expect(claims(counts)).toBe(encoded(JSON.stringify(counts), true));
+    // A downstream string holding it withholds the cursor, though no provider redacted it.
+    expect(claims({ k: "page", g: "s0-4201-id", i: 0 })).toBe(encoded(MARK, true));
+    // Checked so, a cursor is remembered as clean: a later payload pass keeps it as it stands.
+    const issued = claims(counts);
+    expect(requestSentSecrets(ctx).redact({ page: { nextCursor: issued } }).page.nextCursor).toBe(issued);
+  });
+
+  it("INV-5: an array's toJSON, own or inherited, and an inherited hole getter never reach the wire unchecked", async () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    const own = Object.assign(["public"], { toJSON: () => ({ echo: TOKEN }) });
+    const inheritedJson = Object.setPrototypeOf(
+      ["public"],
+      Object.assign(Object.create(Array.prototype) as object, { toJSON: () => ({ echo: TOKEN }) }),
+    ) as unknown[];
+    let reads = 0;
+    const getterProto = Object.create(Array.prototype) as object;
+    Object.defineProperty(getterProto, "0", { get: () => (reads++, TOKEN) });
+    const holed = Object.setPrototypeOf(holes(1), getterProto) as unknown[];
+    const dataProto = Object.create(Array.prototype) as object;
+    Object.defineProperty(dataProto, "0", { value: `echo ${TOKEN}` });
+    const filled = Object.setPrototypeOf(holes(1), dataProto) as unknown[];
+    const outs = [own, inheritedJson, holed, filled].map((value) => [value, secrets.redact(value)] as const);
+    for (const [value, out] of outs) {
+      expect(out).not.toBe(value);
+      expect(JSON.stringify(out)).not.toContain(TOKEN);
+    }
+    expect(reads).toBe(0);
+    expect(outs.map(([, out]) => out)).toEqual([{ echo: MARK }, { echo: MARK }, [MARK], [`echo ${MARK}`]]);
+    // Through the guest bridge, as a program's connecta.call receives it.
+    const registry = makeRegistry([
+      {
+        id: "notes",
+        kind: "api",
+        listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+        callTool: async (_name, _args, ctx) => {
+          sentSecretsFor(ctx).add(TOKEN);
+          return Object.assign(["public"], { toJSON: () => ({ echo: TOKEN }) });
+        },
+      } as Connector,
+    ]);
+    const [provider] = await buildSandboxProviders(registry, "https://connecta.test", silentLogger);
+    const value = await provider!.fns["call"]!({ address: "notes.read" });
+    expect(JSON.stringify(value)).not.toContain(TOKEN);
+    expect(leakedRun(JSON.stringify(value), TOKEN)).toBeUndefined();
+  });
+
+  it("INV-5: only verified plain data stands; other classes, symbols, inherited fields and binary are checked copies", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    const sym = Symbol("value");
+    class Row {
+      constructor(readonly id: string) {}
+      get secret() {
+        return TOKEN;
+      }
+    }
+    const input = {
+      symbol: { public: "okay", [sym]: TOKEN },
+      row: new Row("r1"),
+      inherited: Object.assign(Object.create({ v: TOKEN }) as object, { public: "okay" }),
+      map: new Map([["v", TOKEN]]),
+      bytes: new TextEncoder().encode(`x${TOKEN}z`),
+      clean: new TextEncoder().encode("Ordinary public bytes."),
+    };
+    const out = secrets.redact(input);
+    expect(Object.getOwnPropertySymbols(out.symbol)).toEqual([]);
+    expect(Object.getPrototypeOf(out.row)).toBe(Object.prototype);
+    expect(out.row).toEqual({ id: "r1" });
+    expect((out.inherited as { v?: string }).v).toBeUndefined();
+    expect(Object.entries(out.map)).toEqual([]);
+    expect(out.bytes).toBe(MARK);
+    expect(out.clean).not.toBe(input.clean);
+    expect(out.clean).toEqual(input.clean);
+    expect(JSON.stringify(out)).not.toContain(TOKEN);
+    // Plain data with a null prototype, nested arrays and objects stays the caller's own.
+    const kept = { rows: [{ id: "a", tags: ["x"] }], none: Object.assign(Object.create(null) as object, { id: "b" }) };
+    expect(secrets.redact(kept)).toBe(kept);
+    // An array's other fields are never serialized; JSON, which every exit marshals with, drops them.
+    const extra = Object.assign(["public"], { extra: TOKEN });
+    expect(JSON.stringify(secrets.redact({ extra }))).not.toContain(TOKEN);
+  });
+
+  it("INV-5: an error is always a checked copy holding what its stack and class accessors answered once", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    let stackReads = 0;
+    const stacked = new Error("public");
+    Object.defineProperty(stacked, "stack", {
+      configurable: true,
+      get: () => (++stackReads === 1 ? "public stack" : TOKEN),
+    });
+    const first = secrets.redact(stacked);
+    expect(first).not.toBe(stacked);
+    expect([first.stack, first.stack, stackReads]).toEqual(["public stack", "public stack", 1]);
+    let detailReads = 0;
+    class Detailed extends Error {
+      get detail() {
+        return ++detailReads === 1 ? "public detail" : TOKEN;
+      }
+    }
+    const detailed = secrets.redact(new Detailed("public"));
+    expect(detailed).toBeInstanceOf(Detailed);
+    expect([detailed.detail, detailed.detail, detailReads]).toEqual(["public detail", "public detail", 1]);
+    // A getter over the error's own data, such as an SDK's HTTP status, keeps its answer.
+    class HttpError extends Error {
+      constructor(
+        message: string,
+        readonly data: { status: number },
+      ) {
+        super(message);
+      }
+      get status() {
+        return this.data.status;
+      }
+    }
+    expect(secrets.redact(new HttpError("Too many requests.", { status: 429 })).status).toBe(429);
+    // An error is never replaced by its toJSON, and its copy does not call one.
+    class Serialized extends Error {
+      toJSON() {
+        return { echo: TOKEN };
+      }
+    }
+    expect(JSON.stringify(secrets.redact(new Serialized("public")))).not.toContain(TOKEN);
+  });
+
+  it("INV-5: a container past the node budget is withheld whole, never serialized unchecked, read or stashed", async () => {
+    const secrets = set(TOKEN);
+    const echo = encoded(`x${TOKEN}z`);
+    let reads = 0;
+    const huge = holes(1_048_577);
+    huge[0] = { v: echo };
+    Object.defineProperty(huge, 1, { enumerable: true, get: () => (reads++, TOKEN) });
+    expect(secrets.redact(huge)).toBe(MARK);
+    expect(secrets.redact({ rows: huge, kept: "public" })).toEqual({ rows: MARK, kept: "public" });
+    expect(secrets.changes(huge)).toBe(true);
+    expect(reads).toBe(0);
+    const serialized = holes(1_048_577);
+    serialized[0] = { v: echo };
+    expect(secrets.text(JSON.stringify({ rows: serialized }))).toBe(JSON.stringify({ rows: MARK }));
+    // A direct value-mode read cannot stash what was never checked.
+    const registry = makeRegistry([
+      {
+        id: "notes",
+        kind: "api",
+        listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+        callTool: async (_name, _args, ctx) => {
+          sentSecretsFor(ctx).arguments({ value: TOKEN }, schema);
+          return serialized;
+        },
+      } as Connector,
+    ]);
+    const stash = vi.spyOn(registry, "stashResult");
+    const meta = createMetaTools(registry, "https://connecta.test");
+    const result = await meta.callTool({ address: "notes.read", resultMode: "value" });
+    expect(shown(result)).not.toContain(echo);
+    expect(shown(result)).toContain(MARK);
+    for (const [, chunks] of stash.mock.calls) expect(chunks.join("")).not.toContain(echo);
+  });
+
+  it("INV-5: frozen and read-only fields are copied as writable data, so redacting them never throws", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    expect(secrets.redact(Object.freeze({ v: TOKEN, kept: "public" }))).toEqual({ v: MARK, kept: "public" });
+    expect(secrets.redact(Object.freeze([TOKEN, "public"]))).toEqual([MARK, "public"]);
+    const deep = Object.freeze({ outer: Object.freeze({ inner: Object.freeze([`echo ${TOKEN}`]) }) });
+    expect(secrets.redact(deep)).toEqual({ outer: { inner: [`echo ${MARK}`] } });
+    const hidden = Object.defineProperty({}, "v", { value: TOKEN }) as { v: string };
+    const safe = secrets.redact(hidden);
+    expect(Object.getOwnPropertyDescriptor(safe, "v")).toEqual({
+      value: MARK,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(hidden.v).toBe(TOKEN);
+  });
+
+  it("INV-5: array and error copies keep the identity facts registered beside them", () => {
+    const secrets = new SentSecrets();
+    secrets.add(TOKEN);
+    class RoundFourHttpError extends Error {}
+    labelErrorClass(RoundFourHttpError, "RoundFourHttpError");
+    const original = attachFailureFacts(new RoundFourHttpError(TOKEN), {
+      httpStatus: 503,
+      step: "tools/call",
+      origin: "https://api.example.com",
+    });
+    const typed = carryFailureFacts(original, new ConnectorCallError("connector_call_failed", TOKEN));
+    const copy = secrets.redact(typed);
+    expect(copy).not.toBe(typed);
+    expect(copy.message).toBe(MARK);
+    expect(typed.message).toBe(TOKEN);
+    expect(failureRecord({}, copy)).toEqual(failureRecord({}, typed));
+    expect(failureRecord({}, copy)).toMatchObject({ errorClass: "RoundFourHttpError", httpStatus: 503 });
+    expect(failureRecord({}, secrets.redact(copy))).toEqual(failureRecord({}, typed));
+    const classification = classifiedFailure({ code: "connector_call_failed", message: TOKEN, retryable: true });
+    expect(failureRecord({}, secrets.redact(classification))).toEqual(failureRecord({}, classification));
+    const rows = attachFailureFacts([TOKEN], { httpStatus: 503, origin: "https://api.example.com" });
+    const safeRows = secrets.redact(rows);
+    expect(safeRows).toEqual([MARK]);
+    expect(failureRecord({}, safeRows)).toEqual(failureRecord({}, rows));
+    expect(failureRecord({}, safeRows)).toMatchObject({ httpStatus: 503, origin: "https://api.example.com" });
+    const status = failureStatus("notes", typed);
+    expect(statusFailure(secrets.redact(status))).toBe(statusFailure(status));
   });
 });
 
@@ -875,5 +1245,19 @@ describe("mutation checks", () => {
       { ...context(value), credential: keyed(TOKEN).credential! },
     );
     expect(shown(result)).toContain('"plain_text":"Q"');
+  });
+
+  it("INV-5: without the derived embedded-run length, a short value's base64 inside text survives", () => {
+    vi.spyOn(SentSecrets.prototype as unknown as { runUnits(): number }, "runUnits").mockReturnValue(16);
+    expect(holdsValue(set("pin42").redact({ v: "echo: eHBpbjQyeg==" }).v, "pin42")).toBe(true);
+  });
+
+  it("INV-5: without text views, base64 under JSON escapes survives the boundary", () => {
+    vi.spyOn(SentSecrets.prototype as unknown as { textViews(text: string): string[] }, "textViews").mockImplementation(
+      (text) => [text],
+    );
+    const value = "Q8!wZ2?A7@vR4#";
+    const escaped = Array.from(btoa(`x${value}z`), (unit) => `\\u00${unit.charCodeAt(0).toString(16)}`).join("");
+    expect(leakedRun(set(value).redact({ v: escaped }).v, value)).toBeDefined();
   });
 });

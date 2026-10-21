@@ -210,7 +210,12 @@ prefixes. Shared-prefix tails can therefore be conservatively withheld.
 Protect every representation, including raw branches. If extraction's source
 changed under redaction, return the marker rather than extracting from it.
 Bind paging cursors to the redacted representation when offsets count its
-units, even when the vendor also supplies a revision.
+units, even when the vendor also supplies a revision. A cursor an agent decodes
+holds downstream values only redacted: pass each vendor token or id through
+`redactSentSecrets(ctx, …)` before placing it, a value it only compares through
+a digest, and encode the claims with `encodeForAgent(ctx, json, { url: true,
+claims: true })`. Every string in the claims is checked under payload rules, so
+one placed raw withholds the cursor; keep Connecta's own counts as numbers.
 
 The output boundary matches whole forms and every eight-unit run across adjacent
 leaves, so it cannot see a value split into pieces shorter than eight with other

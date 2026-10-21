@@ -338,7 +338,7 @@ interface SendFacts {
   serverError?: boolean;
 }
 
-const googleOutcomes = new WeakMap<object, GoogleOutcome>();
+const googleOutcomes = followRedactedCopies(new WeakMap<object, GoogleOutcome>());
 
 function outcome<T>(error: T, facts: GoogleOutcome): T {
   if (error !== null && typeof error === "object") googleOutcomes.set(error, Object.freeze({ ...facts }));

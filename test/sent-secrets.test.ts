@@ -82,12 +82,16 @@ describe("call-scoped sent credentials", () => {
     expect(error.message).toContain(SECRET);
   });
 
-  it("INV-5: ordinary diagnostics and results keep their text and identity", () => {
+  it("INV-5: ordinary diagnostics and results keep their text, and plain results their identity", () => {
     const secrets = new SentSecrets();
     secrets.add(SECRET);
     const error = new ConnectorCallError("invalid_args", "The token field requires an ordinary repository name.");
     const result = { content: [{ type: "text", text: "Bearer authentication refused for this repository." }] };
-    expect(secrets.redact(error)).toBe(error);
+    // An error is always a checked copy of its own class, never the original.
+    const safe = secrets.redact(error);
+    expect(safe).not.toBe(error);
+    expect(safe).toBeInstanceOf(ConnectorCallError);
+    expect([safe.code, safe.message, safe.retryable]).toEqual([error.code, error.message, error.retryable]);
     expect(secrets.redact(result)).toBe(result);
   });
 

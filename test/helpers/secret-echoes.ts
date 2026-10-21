@@ -113,9 +113,9 @@ export function expectNoFragment(
 }
 
 /** Every view of `text` an agent could decode, three layers deep: JSON escapes, percent
- * escapes in either hex case, and base64 or base64url runs of 11 characters or more (8 bytes)
- * at every alignment, read as bytes and as UTF-8. */
-export function decodedViews(text: string): string[] {
+ * escapes in either hex case, and base64 or base64url runs of `minRun` characters or more (by
+ * default 11, eight bytes) at every alignment, read as bytes and as UTF-8. */
+export function decodedViews(text: string, minRun = 11): string[] {
   const views = new Set([text]);
   let layer = [text];
   for (let depth = 0; depth < 3 && layer.length; depth++) {
@@ -127,7 +127,7 @@ export function decodedViews(text: string): string[] {
         ),
         view.replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16))),
       ];
-      for (const run of view.match(/[A-Za-z0-9+/_-]{11,}/g) ?? []) {
+      for (const run of view.match(new RegExp(`[A-Za-z0-9+/_-]{${minRun},}`, "g")) ?? []) {
         for (let offset = 0; offset < 4; offset++) {
           const aligned = run.slice(offset).replace(/-/g, "+").replace(/_/g, "/");
           try {
@@ -158,4 +158,10 @@ export function leakedRun(text: string, secret: string, units = 8): string | und
     if (views.some((view) => view.includes(run))) return run;
   }
   return undefined;
+}
+
+/** Whether some decoded view of `text`, base64 runs from six characters (four bytes) included,
+ * holds `value` whole: the check for a private value shorter than K. */
+export function holdsValue(text: string, value: string): boolean {
+  return decodedViews(text, 6).some((view) => view.includes(value));
 }

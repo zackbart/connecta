@@ -1,6 +1,7 @@
 // Facts Connecta keeps beside a value by identity, never as its properties: failure facts,
-// classifications, statuses, a vendor's reasons. Redaction returns a plain-data copy of what it
-// checked, never the original, so each store registered here follows the copy. Web APIs only.
+// classifications, statuses, a vendor's reasons. Redaction returns a copy of what it checked for
+// every error, every array or object that is not verified plain data, and every container a
+// change reaches, so each store registered here follows the copy. Web APIs only.
 type Store = WeakMap<object, unknown> | WeakSet<object>;
 
 const stores: Store[] = [];
