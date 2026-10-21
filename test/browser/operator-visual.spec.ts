@@ -256,14 +256,21 @@ function variantPath(variant: VisualVariant): string {
   if (variant.includes("overview")) return "/";
   return "/endpoints";
 }
-// Each once failed a first dark-scheme attempt on Linux CI with a stable
-// capture, then passed its retry; no time, animation, font or late-read cause
-// was found. The visual-unstable project keeps their dark retries; light stays
-// deterministic. Remove a variant once fixed.
-const UNSTABLE_VARIANTS = new Set<VisualVariant>(["overview-trace", "narrow-matrix"]);
+// Each failed a first CI attempt and then passed unchanged. overview-trace and
+// dark narrow-matrix each failed a dark first attempt on Linux CI with a stable
+// capture and passed their retry; no time, animation, font or late-read cause
+// was found. Light narrow-matrix failed by 167 pixels around the connector
+// icons (CI run 39521113766, attempt 1) and passed when that job was rerun on
+// the same commit (attempt 2). The visual-unstable project retries only the
+// listed schemes; every other capture stays deterministic. Remove a variant
+// once fixed.
+const UNSTABLE_VARIANTS = new Map<VisualVariant, ReadonlySet<string>>([
+  ["overview-trace", new Set(["dark"])],
+  ["narrow-matrix", new Set(["light", "dark"])],
+]);
 for (const variant of VISUAL_VARIANTS)
   for (const scheme of ["light", "dark"]) {
-    const tag = scheme === "dark" && UNSTABLE_VARIANTS.has(variant) ? ["@unstable"] : [];
+    const tag = UNSTABLE_VARIANTS.get(variant)?.has(scheme) ? ["@unstable"] : [];
     test(`detail: ${variant}, ${scheme}`, { tag }, async ({ page }) => {
       const fixture = operatorVisualVariant(fixtures.get("populated")!, variant);
       const path = variantPath(variant);
