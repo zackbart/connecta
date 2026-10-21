@@ -967,9 +967,13 @@ key, through the one connector it entered does `retry` add that a deliberate
 retry that reuses the key with the exact original arguments cannot repeat the
 write while the vendor retains the key
 (Stripe may prune v1 keys after 24 hours). After that, look the object up before
-retrying. A connector that composes several requests, or wraps another
-connector, never gets that advice, even when one of its requests carried a key:
-reusing it would protect that request alone. When a connector recorded such facts, any other dispatched write whose
+retrying. The advice needs one boundary that owns the call and exactly one
+dispatched write carrying the key; GET and HEAD reads beside it do not count.
+A second write, a write the key did not travel on, or a connector that wraps
+another or enters more than one boundary never gets it, since reusing the key
+would protect that request alone. A key generated but never sent (a write
+refused before dispatch, such as one with no configured credential) stays in
+the message as a diagnostic, with no reuse advice, direct or served. When a connector recorded such facts, any other dispatched write whose
 outcome is unknown (a lost response body, a 5xx) also carries `uncertainCall`
 with them under its own code, and program write accounting keeps it. `args` may be partial reconciliation context
 with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget

@@ -39,6 +39,7 @@ import {
   type GuardedTransport,
 } from "../../../connectors/guarded-fetch.js";
 import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
+import { providerRequests } from "../../../provider-call.js";
 import { ConnectorCallError, keyResendAdvice, unavailableCallError } from "../../../errors.js";
 import { encodeForAgent, redactBeforeCut } from "../../../sent-secrets.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
@@ -751,10 +752,13 @@ export function restTools(vendor: RestVendor): ApiTool[] {
           // only that key lets the caller check or retry this exact write.
           // The key stays in the message as a diagnostic; the advice to
           // reuse it is a segment the invocation composes only where the key
-          // protects the whole logical call (keyResendAdvice).
+          // protects the whole logical call (keyResendAdvice), and exists
+          // only once the ledger shows a dispatched request carrying it.
           if (!key || given || !(error instanceof ConnectorCallError)) throw error;
+          const failure = providerFailureMessage(error, `${error.message} ${header}: ${key}.`);
+          if (!providerRequests(ctx)?.some((request) => request.dispatched && request.key === key)) throw failure;
           throw keyResendAdvice(
-            providerFailureMessage(error, `${error.message} ${header}: ${key}.`),
+            failure,
             key,
             " Reusing it with the exact original arguments retries this write without repeating it only while " +
               "the vendor retains the key; after that, look the object up before retrying.",

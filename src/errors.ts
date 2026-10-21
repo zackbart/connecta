@@ -695,9 +695,11 @@ export interface KeyResendAdvice {
  * Attach advice that reusing `key` with the same arguments cannot repeat the
  * write, a segment of its own like {@link resendAdvice}. It holds only where
  * that key protects the whole logical call (`keyProtectsLogicalCall`): one
- * boundary entered, one write sent, carrying `key`. Only the invocation can
- * see that, so only it composes the advice; a direct caller reads the key
- * from the message, where it stays as a diagnostic.
+ * boundary entered, one write sent, carrying `key`. Attach it only once the
+ * call's ledger shows a dispatched request carrying `key`: a key generated
+ * but never sent protects nothing. Only the invocation can see the whole
+ * call, so only it composes the advice; a direct caller reads the key from
+ * the message, where it stays as a diagnostic.
  */
 export function keyResendAdvice<T extends object>(error: T, key: string, advice: string): T {
   keyAdvices.set(error, { key, advice });

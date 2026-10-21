@@ -1386,4 +1386,26 @@ describe("key-reuse advice needs its key to protect the whole logical call (roun
     expect(direct).toMatchObject({ retryable: true });
     expect(direct.message).toContain(`Idempotency-Key: ${state.sent[2]!.key}. Reusing it with the exact`);
   });
+
+  it("INV-9: a generated key that was never sent keeps its diagnostic, with no reuse advice, direct or served", async () => {
+    const { state, connector } = await billing(() => lost());
+    // No credential is configured, so the write fails before any request leaves.
+    const storage = memoryStorage();
+    const registry = makeRegistry([connector], {
+      storage,
+      credentialVault: new CredentialVault(storage, btoa("k".repeat(32))),
+    });
+    const error = await failure(
+      connector.callTool("stripe_api_write", create("a"), registry.contextFor("billing", BASE)),
+    );
+    const direct = classifyCallError(error);
+    expect(direct.code).toBe("auth_required");
+    expect(direct.message).toMatch(/Idempotency-Key: [0-9a-f-]{36}\.$/);
+    expectNoKeyAdvice(direct);
+    const served = await invoke(registry, "billing.stripe_api_write", create("b"));
+    if (served.ok) throw new Error("expected the write to fail");
+    expect(served.error.code).toBe("auth_required");
+    expectNoKeyAdvice(served.error);
+    expect(state.sent).toEqual([]);
+  });
 });
