@@ -698,8 +698,16 @@ capped at 128 KiB. `input_required_invalid`, `input_required_limit`,
 and `input_required_unsupported` are non-retryable typed failures;
 `input_required_round_limit` is an untyped failure with `retryable: false`.
 
-Programs and in-process meta-tools return `input_required_unsupported`, with a
-`nextAction` naming the equivalent direct call and bounded original arguments.
+For a read, programs and in-process meta-tools return
+`input_required_unsupported`, with a `nextAction` naming the equivalent direct
+call and bounded original arguments. A downstream asks for input from inside
+its handler, so a write that suspends may already have applied. A write's
+`input_required_unsupported` is `retryable: false` with
+`writeOutcome: "unknown"`, carries no `nextAction`, and its `retry` says to
+re-read the target before any fresh call; a program counts it in
+`writes.unknown`. A direct write whose input cannot be relayed (no sealing
+vault, the round limit, or private state over its cap) also carries
+`writeOutcome: "unknown"` and is never told to start a new request.
 Programs never receive downstream state or prompts, and never restart to
 fulfill downstream input.
 
@@ -993,8 +1001,11 @@ so a refusal on the last attempt says nothing about the earlier ones.
 Connecta therefore never reports a transport-failed write as known failed. A
 write stays a known failure, with its own advice, only on refusal provenance
 recorded where the evidence was observed: connecta refused it before it left,
-or the downstream served an HTTP refusal, a 4xx other than 408 (a 408 is a
-timeout). An error code is never that evidence by itself. A `rate_limited`,
+or the downstream served an HTTP refusal, a 4xx other than 408 that its
+provider reads as a refusal. A 408 is a timeout, and a refusing status the
+provider reads as `unavailable` or a timeout (Stripe's 424) does not prove the
+write unapplied, so a keyless Stripe write answered 424 is unknown. An error
+code is never that evidence by itself. A `rate_limited`,
 `invalid_args`, or any other code thrown after a 2xx (by a response mapper,
 a parser, or an output-schema check) or after a 408, and any JSON-RPC error a
 `remoteMcp()` server returns once the `tools/call` was sent (`-32602`
@@ -1003,7 +1014,11 @@ its code and message for diagnostics but is `retryable: false` with
 `writeOutcome: "unknown"`, on a direct and a served call alike, and counts in
 a program's `writes.unknown`. A `remoteMcp()` write refused at the HTTP layer
 with a 4xx other than 408, or before its `tools/call` was sent, stays a known
-failure. A failure during a composite
+failure. A custom connector can show no such provenance: a served write whose
+`callTool` throws after it was entered is `retryable: false` with
+`writeOutcome: "unknown"` whatever its code, and gets no retry advice
+(neither "grant the permission, then retry" nor "correct the arguments and
+retry"). A failure during a composite
 call's later request leaves earlier requests' outcomes unknown, and once the
 call's outcome is decided, a request that had not left is never sent. A
 write the downstream answered with HTTP 401 is not resent: the credential is

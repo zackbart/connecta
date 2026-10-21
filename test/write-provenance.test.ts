@@ -5,7 +5,9 @@
 // output validator's invalid_args, a JSON-RPC -32602) is never that evidence,
 // on direct and served calls and in program accounting alike. Nor is an
 // operation hint: only an idempotency key the vendor honors makes a direct
-// write repeatable.
+// write repeatable. Round 12: a custom connector, an input_required
+// suspension, and a provider that reads a refusing status as `unavailable`
+// prove nothing either.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
 import { api } from "../src/connectors/api.js";
@@ -317,5 +319,211 @@ describe("an operation hint grants no retry credit (round 11)", () => {
     }
     const received = (await (await real(`${origin}/exchanges`)).json()) as Array<{ method: string }>;
     expect(received.map((exchange) => exchange.method)).toEqual(["POST", "POST"]);
+  });
+});
+
+/** A program that calls `address` once, catches its failure, and returns. */
+function catchingProgram(registry: ReturnType<typeof makeRegistry>, address: string) {
+  const executor: Executor = {
+    async execute(_code, providers) {
+      try {
+        await providers.find((provider) => provider.name === "connecta")!.fns["call"]!(address, {});
+      } catch {
+        /* caught by the guest */
+      }
+      return { result: "caught and continued" };
+    },
+  };
+  return createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+    code: "async () => null",
+  });
+}
+
+describe("a served write's unknown outcome is final before any advice (round 12)", () => {
+  /**
+   * A custom connector (neither api() nor remoteMcp()) that applies each
+   * call, counted in `applied`, and then throws `failure`.
+   */
+  function custom(failure: () => ConnectorCallError) {
+    const state = { applied: 0 };
+    const connector = {
+      id: "tickets",
+      kind: "api" as const,
+      description: "Tickets",
+      async listTools() {
+        return [
+          { name: "create_item", description: "Create", annotations: { readOnlyHint: false }, inputSchema: {} },
+          { name: "list_items", description: "List", annotations: { readOnlyHint: true }, inputSchema: {} },
+        ];
+      },
+      async callTool() {
+        state.applied++;
+        throw failure();
+      },
+    };
+    const registry = makeRegistry([connector]);
+    return { state, registry, invoke: new InvocationService(registry, new CatalogService(registry, BASE)) };
+  }
+
+  it.each([
+    ["rate_limited", () => new ConnectorCallError("rate_limited", "A check after applying the write failed")],
+    [
+      "provider_permission_denied",
+      () => new ConnectorCallError("provider_permission_denied", "A check after applying the write failed"),
+    ],
+    [
+      "invalid_args with findings",
+      () =>
+        new ConnectorCallError("invalid_args", "A check after applying the write failed", {
+          validation: { issues: [{ path: "/name", code: "type", expected: "string" }] },
+        }),
+    ],
+  ] as const)(
+    "INV-9: a custom connector's %s after entry is unknown, never retryable, with no retry advice",
+    async (_label, failure) => {
+      const { state, registry, invoke } = custom(failure);
+      const served = await invoke.invoke("tickets.create_item", {}, { source: "call_destructive_tool" });
+      expect(state.applied).toBe(1);
+      if (served.ok) throw new Error("expected the served write to fail");
+      expect(served.error).toMatchObject({ code: failure().code, retryable: false, writeOutcome: "unknown" });
+      expect(served.error.retry).toBeUndefined();
+      expect(served.error.nextAction).toBeUndefined();
+      expect(classifyWriteOutcome(served)).toBe("unknown");
+
+      const program = await catchingProgram(registry, "tickets.create_item");
+      expect(state.applied).toBe(2);
+      expect(program.structuredContent).toMatchObject({
+        error: { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } },
+      });
+    },
+  );
+
+  it("INV-9: control: a custom connector's read keeps its retryable code and its grant-then-retry advice", async () => {
+    let code: "rate_limited" | "provider_permission_denied" = "rate_limited";
+    const { invoke } = custom(() => new ConnectorCallError(code, "Read refused"));
+    const limited = await invoke.invoke("tickets.list_items", {}, { source: "call_tool" });
+    if (limited.ok) throw new Error("expected the read to fail");
+    expect(limited.error).toMatchObject({ code: "rate_limited", retryable: true });
+    expect(limited.error.writeOutcome).toBeUndefined();
+    code = "provider_permission_denied";
+    const denied = await invoke.invoke("tickets.list_items", {}, { source: "call_tool" });
+    if (denied.ok) throw new Error("expected the read to fail");
+    expect(denied.error.retry).toMatch(/grant the required permission or scope, then retry/);
+  });
+
+  it("INV-9: control: a write's pre-dispatch refusal and a served 403 refusal stay known, with their advice", async () => {
+    let sent = 0;
+    const send = guardedFetch({
+      provider: "Tickets",
+      baseUrl: "https://tickets.test",
+      authenticate: () => ({}),
+      maxResponseBytes: 1024,
+      fetch: async () => {
+        sent++;
+        return Response.json({}, { status: 403 });
+      },
+    });
+    const connector = tracksEveryRequest(
+      api("tickets", {
+        tools: [
+          {
+            name: "create_item",
+            description: "Create",
+            annotations: { readOnlyHint: false },
+            inputSchema: { type: "object", properties: { name: { type: "string" } }, additionalProperties: false },
+            handler: (_args, ctx) =>
+              send({ method: "POST", path: "/items" }, ctx, () => {
+                throw new ConnectorCallError("provider_permission_denied", "Tickets refused the scope");
+              }),
+          },
+        ],
+      }),
+    );
+    const registry = makeRegistry([connector]);
+    const invoke = new InvocationService(registry, new CatalogService(registry, BASE));
+
+    const invalid = await invoke.invoke("tickets.create_item", { name: 7 }, { source: "call_destructive_tool" });
+    if (invalid.ok) throw new Error("expected the refusal");
+    expect(sent).toBe(0);
+    expect(invalid.dispatched).toBe(true);
+    expect(invalid.error).toMatchObject({ code: "invalid_args", retryable: false });
+    expect(invalid.error.writeOutcome).toBeUndefined();
+    expect(invalid.error.retry).toMatch(/^Correct the listed arguments and retry/);
+    expect(classifyWriteOutcome(invalid)).toBe("failed");
+
+    const denied = await invoke.invoke("tickets.create_item", { name: "x" }, { source: "call_destructive_tool" });
+    if (denied.ok) throw new Error("expected the refusal");
+    expect(sent).toBe(1);
+    expect(denied.error).toMatchObject({ code: "provider_permission_denied", retryable: false });
+    expect(denied.error.writeOutcome).toBeUndefined();
+    expect(denied.error.retry).toMatch(/grant the required permission or scope, then retry/);
+    expect(classifyWriteOutcome(denied)).toBe("failed");
+  });
+});
+
+describe("a write's input_required suspension is no proof the handler never ran (round 12)", () => {
+  /** A real SDK server whose tools suspend for input after `create_item` applied. */
+  function suspending() {
+    const state = { applied: 0 };
+    const downstream = httpDownstream((server) => {
+      server.registerTool("create_item", { annotations: { readOnlyHint: false } }, async () => {
+        state.applied++;
+        return { resultType: "input_required", requestState: "write-already-applied" } as never;
+      });
+      server.registerTool("list_items", { annotations: { readOnlyHint: true } }, async () => {
+        return { resultType: "input_required", requestState: "read-state" } as never;
+      });
+    });
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => downstream.fetch(String(input), init));
+    const connector = remoteMcp("tickets", { url: downstream.url });
+    const registry = makeRegistry([connector]);
+    return { state, connector, registry };
+  }
+
+  it("INV-9: a served write suspended for input is unknown, told to reconcile, and counted unknown by a program", async () => {
+    const { state, connector, registry } = suspending();
+    const ctx = registry.contextFor("tickets", BASE);
+    await connector.listTools(ctx);
+    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "tickets.create_item",
+      {},
+      { source: "call_destructive_tool" },
+    );
+    expect(state.applied).toBe(1);
+    if (served.ok) throw new Error("expected the served write to fail");
+    expect(served.error).toMatchObject({
+      code: "input_required_unsupported",
+      retryable: false,
+      writeOutcome: "unknown",
+    });
+    expect(served.error.nextAction).toBeUndefined();
+    expect(served.error.retry).toMatch(/^Do not resend this write\. Re-read its target/);
+    expect(classifyWriteOutcome(served)).toBe("unknown");
+
+    const program = await catchingProgram(registry, "tickets.create_item");
+    expect(state.applied).toBe(2);
+    expect(program.structuredContent).toMatchObject({
+      error: { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } },
+    });
+    await connector.closeScope?.(ctx);
+  });
+
+  it("INV-9: control: a read suspended for input keeps its direct-call nextAction", async () => {
+    const { connector, registry } = suspending();
+    const ctx = registry.contextFor("tickets", BASE);
+    await connector.listTools(ctx);
+    const served = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "tickets.list_items",
+      {},
+      { source: "call_tool" },
+    );
+    if (served.ok) throw new Error("expected the served read to fail");
+    expect(served.error).toMatchObject({
+      code: "input_required_unsupported",
+      retryable: false,
+      nextAction: { tool: "call_tool", arguments: { address: "tickets.list_items" } },
+    });
+    expect(served.error.writeOutcome).toBeUndefined();
+    await connector.closeScope?.(ctx);
   });
 });

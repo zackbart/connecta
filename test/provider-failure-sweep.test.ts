@@ -312,7 +312,8 @@ function googleFetch(resource: (request: Request) => Response | Promise<Response
 describe("round-5 whole-call failure sweep", () => {
   it.each([
     ["single refusal", false, false, "rate_limited", 429, false],
-    ["generic refusal", false, false, "unavailable", 404, false],
+    // Round 12: a refusing status the provider reads as `unavailable` is not proof.
+    ["refusing status read as unavailable", false, false, "unavailable", 404, true],
     ["auxiliary preflight then refusal", true, false, "rate_limited", 429, false],
     ["resource success then auxiliary refusal", false, true, "rate_limited", 429, true],
   ] as const)(

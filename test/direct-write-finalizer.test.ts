@@ -6,6 +6,8 @@
 // and served calls keep what they had. Round 11: a served answer is a known
 // failure only when its status refuses (a 4xx other than 408); an error code
 // a mapper or parser throws after a 2xx, or after a 408, is no evidence.
+// Round 12: nor is a refusing status the provider itself reads as
+// `unavailable` (Stripe's 424), inside a call ledger or outside one.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
 import { api } from "../src/connectors/api.js";
@@ -20,9 +22,10 @@ import { notion } from "../src/providers/notion/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
-import type { Connector, ConnectorContext } from "../src/types.js";
+import { createExecuteTool } from "../src/execute.js";
+import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { makeRegistry } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 
 const WORKERD = typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
 const BASE = "https://connecta.example";
@@ -508,6 +511,117 @@ describe("a direct write's served answer: only a refusing status is evidence (ro
     expect(classifyCallError(invalid)).toMatchObject({ code: "invalid_args" });
     expect(classifyCallError(invalid).writeOutcome).toBeUndefined();
     expect(classifyWriteOutcome({ ok: false, dispatched: true, error: invalid as never })).toBe("failed");
+  });
+});
+
+/**
+ * A Stripe API-key connector whose every request reaches the evidence server
+ * and is answered `status` with Stripe's error `body`. `keys` records each
+ * request's Idempotency-Key header.
+ */
+async function stripeAnswering(status: number, body: unknown) {
+  const server = answering(status, JSON.stringify(body));
+  const keys: Array<string | null> = [];
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+    if (!String(input).startsWith("https://api.stripe.com/")) return real(input, init);
+    keys.push(new Headers(init?.headers).get("idempotency-key"));
+    return real(`${server.origin}${server.path}?${new URLSearchParams(server.query)}`, init);
+  });
+  const connector = stripe("billing", { purpose: "Billing", auth: { type: "apiKey" }, mode: "sandbox" });
+  const storage = memoryStorage();
+  const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+  await vault.set("billing", "sk_test_fixture", "fixture");
+  const registry = makeRegistry([connector], { storage, credentialVault: vault });
+  const program = (args: Record<string, unknown>) => {
+    const executor: Executor = {
+      async execute(_code, providers) {
+        try {
+          await providers.find((provider) => provider.name === "connecta")!.fns["call"]!(
+            "billing.stripe_api_write",
+            args,
+          );
+        } catch {
+          /* caught by the guest */
+        }
+        return { result: "caught and continued" };
+      },
+    };
+    return createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: "async () => null",
+    });
+  };
+  return {
+    server,
+    keys,
+    direct: (args: Record<string, unknown>) =>
+      failure(connector.callTool("stripe_api_write", args, registry.contextFor("billing", BASE))),
+    served: (args: Record<string, unknown>) =>
+      new InvocationService(registry, new CatalogService(registry, BASE)).invoke("billing.stripe_api_write", args, {
+        source: "call_destructive_tool",
+      }),
+    program,
+  };
+}
+
+const STRIPE_424 = { error: { type: "api_error", message: "External dependency failed" } };
+
+describe("a refusing status the provider reads as unavailable is no refusal (round 12)", () => {
+  it("INV-9: Stripe's 424 on a keyless DELETE is unknown and never retryable, direct, served, and in a program", async () => {
+    const stripe424 = await stripeAnswering(424, STRIPE_424);
+    const args = { method: "DELETE", path: "/v1/customers/cus_1" };
+
+    const direct = await stripe424.direct(args);
+    expect(classifyCallError(direct)).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: direct as never })).toBe("unknown");
+
+    const served = await stripe424.served(args);
+    if (served.ok) throw new Error("expected the served write to fail");
+    expect(served.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(served.error.retry).toBeUndefined();
+    expect(classifyWriteOutcome(served)).toBe("unknown");
+
+    const program = await stripe424.program(args);
+    expect(program.structuredContent).toMatchObject({
+      error: { code: "write_outcome_unknown", retryable: false, writes: { succeeded: 0, failed: 0, unknown: 1 } },
+    });
+    expect(await stripe424.server.received()).toBe(3);
+    expect(stripe424.keys).toEqual([null, null, null]);
+  });
+
+  it("INV-9: Stripe's 424 with a genuine key keeps the direct retry and the served key-reuse advice", async () => {
+    const stripe424 = await stripeAnswering(424, STRIPE_424);
+    const args = { method: "POST", path: "/v1/customers", body: { description: "Fixture" }, idempotencyKey: "k-424" };
+
+    const direct = await stripe424.direct(args);
+    expect(classifyCallError(direct)).toMatchObject({ code: "unavailable", retryable: true });
+    expect(classifyCallError(direct).writeOutcome).toBeUndefined();
+
+    // A served verdict still reconciles first; the key makes the deliberate retry safe.
+    const served = await stripe424.served(args);
+    if (served.ok) throw new Error("expected the served write to fail");
+    expect(served.error).toMatchObject({
+      retryable: false,
+      writeOutcome: "unknown",
+      uncertainCall: { recovery: { idempotencyKey: "k-424" } },
+    });
+    expect(served.error.retry).toContain("uncertainCall.recovery.idempotencyKey");
+    expect(stripe424.keys).toEqual(["k-424", "k-424"]);
+  });
+
+  it("INV-9: control: Stripe's 400 refusal of a keyless DELETE stays a known failure, direct and served", async () => {
+    const stripe400 = await stripeAnswering(400, {
+      error: { type: "invalid_request_error", message: "No such customer: 'cus_1'" },
+    });
+    const args = { method: "DELETE", path: "/v1/customers/cus_1" };
+    const direct = await stripe400.direct(args);
+    expect(classifyCallError(direct).writeOutcome).toBeUndefined();
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: direct as never })).toBe("failed");
+    const served = await stripe400.served(args);
+    if (served.ok) throw new Error("expected the served write to fail");
+    expect(served.error.writeOutcome).toBeUndefined();
+    expect(classifyWriteOutcome(served)).toBe("failed");
+    expect(await stripe400.server.received()).toBe(2);
   });
 });
 

@@ -136,7 +136,8 @@ export function providerCallFailure(
     if (
       !(error instanceof ConnectorCallError && error.writeOutcome === "unknown") &&
       dispatched.length === 1 &&
-      dispatched[0] === refusal
+      dispatched[0] === refusal &&
+      servedRefusal(error, refusal?.status)
     )
       return knownProviderFailure(error);
     if (served === undefined && dispatched.length === 1 && dispatched[0]?.repeatable) return error;
@@ -167,10 +168,10 @@ export function providerCallFailure(
     // The served call's invocation reports it as `write_outcome_unknown`.
     if (isTimeout(error)) return error;
   }
-  // Provenance (b): the downstream served a refusing HTTP status. An error
-  // code alone (a mapper's `rate_limited` after a 2xx, a JSON-RPC `-32602`,
-  // an output validator's `invalid_args`) is never this evidence.
-  if (refusedStatus(facts.status) && error.code !== "unavailable") return knownProviderFailure(error);
+  // Provenance (b). An error code alone (a mapper's `rate_limited` after a
+  // 2xx, a JSON-RPC `-32602`, an output validator's `invalid_args`) is never
+  // this evidence.
+  if (servedRefusal(error, facts.status)) return knownProviderFailure(error);
   const serverError = facts.status !== undefined && facts.status >= 500;
   if (facts.repeatable === true && error.retryable) {
     return carryFailureFacts(
@@ -191,6 +192,19 @@ export function providerCallFailure(
       writeOutcome: "unknown",
     }),
   );
+}
+
+/**
+ * Provenance (b), the one rule for the ledger and for a transport outside
+ * one: the downstream served a refusing HTTP status (`refusedStatus`, a 4xx
+ * other than 408), and its provider read that status as a refusal. A
+ * provider that reads it as `unavailable` or a timeout (Stripe's 424) says
+ * the outcome is not proven.
+ */
+function servedRefusal(error: unknown, status: number | undefined): boolean {
+  if (!refusedStatus(status)) return false;
+  const code = classifyCallError(error).code;
+  return code !== "unavailable" && code !== "timeout";
 }
 
 function isTimeoutCode(code: string | undefined): boolean {

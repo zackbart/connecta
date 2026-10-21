@@ -1934,8 +1934,12 @@ compiling and configuring the real thing.
   left, or (b) the downstream served an HTTP refusal, a 4xx other than 408
   (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`), under the
   provider's existing served classification (Notion's write 409 is a
-  `conflict`). A 408 is a timeout, and a 2xx followed by a mapper, parser, or
-  output-validation failure may have applied. `classifyWriteOutcome` counts a
+  `conflict`). One helper, `servedRefusal` in `src/write-outcome.ts`, decides
+  (b) for the ledger and for a transport outside one: a refusing status the
+  provider reads as `unavailable` or a timeout (Stripe's 424) is not proof, so
+  only a genuine idempotency key keeps such a direct write's retry. A 408 is a
+  timeout, and a 2xx followed by a mapper, parser, or output-validation
+  failure may have applied. `classifyWriteOutcome` counts a
   dispatched write `failed` only with that provenance (`answered`, or the
   error's private known-failure mark) or a downstream tool's `isError`; a
   bare `rate_limited`, `invalid_args`, or `conflict` code is `unknown`.
@@ -1945,7 +1949,14 @@ compiling and configuring the real thing.
   `remoteMcp()` applies the rule to direct and served writes alike: once
   `dispatch.sent`, a JSON-RPC error (`-32602` included), an unreadable result,
   or a failed output validation is unknown; only an HTTP 4xx (not 408) on the
-  request is a refusal. Owning transport attempts is planned for decision 0009's B.2
+  request is a refusal. A downstream's `input_required` is no proof either: a
+  handler asks for input from inside its run, so a write's unsupported
+  suspension (`src/invocation.ts`) and a direct write's failed relay
+  (`src/downstream-input.ts`) are unknown and say to reconcile, not resend.
+  The invocation finalizes every served write `classifyWriteOutcome` calls
+  unknown before it adds advice: `retryable: false`, `writeOutcome:
+  "unknown"`, and no grant-then-retry or correct-and-retry text, so a custom
+  connector's code cannot advertise a retry. Owning transport attempts is planned for decision 0009's B.2
   guarded `HttpClient`. Reads keep their retry advice. Every maintained
   provider declares (`tracksEveryRequest`) that its handlers send only through
   channels the ledger records; for an undeclared `api()` handler an empty

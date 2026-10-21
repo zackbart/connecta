@@ -416,16 +416,18 @@ export class InvocationService {
                   : " The arguments could not be echoed safely; use the exact arguments you sent."),
           };
         }
+        const enteredWrite =
+          dispatchedToConnector && resolved !== undefined && resolved.definition.classification !== "read";
+        // A dispatched write without refusal provenance is unknown whatever
+        // its connector's code says, a custom connector's included: never
+        // retryable, and no advice below may tell the agent to retry it.
+        const unknownWrite =
+          enteredWrite && classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown";
+        if (unknownWrite) error = { ...error, retryable: false, writeOutcome: "unknown" };
         // Any other dispatched write whose outcome is unknown (a lost response
         // body, a 5xx, an unreadable reply) keeps the facts its connector
         // recorded before dispatch, here and through program write accounting.
-        if (
-          recovery &&
-          !error.uncertainCall &&
-          dispatchedToConnector &&
-          resolved?.definition.classification === "write" &&
-          classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown"
-        ) {
+        if (recovery && !error.uncertainCall && unknownWrite) {
           const echoed = argumentEcho;
           error = {
             ...error,
@@ -442,10 +444,16 @@ export class InvocationService {
         if (error.code === "auth_required" && target.connector.startAuth) {
           error = { ...error, code: "downstream_oauth_required" };
         }
-        const enteredWrite = resolved?.definition.classification === "write" && dispatchedToConnector;
         switch (error.code) {
           case "input_required_unsupported":
             if (context.processInputRequired) return error;
+            // Resending could apply the write twice: reconcile first.
+            if (unknownWrite)
+              return {
+                ...error,
+                retry:
+                  "Do not resend this write. Re-read its target to check whether it took effect before any fresh call.",
+              };
             return {
               ...error,
               nextAction: {
@@ -785,14 +793,22 @@ export class InvocationService {
                   }),
                 );
                 if (target.connector.kind === "mcp" && isDownstreamInputResult(reply)) {
-                  // The downstream's own served answer: it suspended for input.
+                  // The downstream suspended for input. A handler asks for
+                  // input from inside its run, so a write may already have
+                  // applied: only a read's suspension is a known answer.
                   if (!context.processInputRequired)
-                    throw knownProviderFailure(
-                      new ConnectorCallError(
-                        "input_required_unsupported",
-                        "The downstream returned input_required. Use the equivalent direct MCP call to provide input.",
-                      ),
-                    );
+                    throw write
+                      ? new ConnectorCallError(
+                          "input_required_unsupported",
+                          "The downstream returned input_required after this write was sent, and this call cannot provide input. Whether the write took effect is unknown.",
+                          { writeOutcome: "unknown" },
+                        )
+                      : knownProviderFailure(
+                          new ConnectorCallError(
+                            "input_required_unsupported",
+                            "The downstream returned input_required. Use the equivalent direct MCP call to provide input.",
+                          ),
+                        );
                   const value = yield* Effect.tryPromise({
                     try: () => Promise.resolve(context.processInputRequired!(reply, target, sentSecrets)),
                     catch: (error) => error,
