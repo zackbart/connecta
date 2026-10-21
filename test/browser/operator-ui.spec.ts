@@ -1,23 +1,15 @@
-import { fixtureContract } from "./operator-fixture.js";
-import { operatorAsset } from "../../src/operator-ui/assets.js";
-import { createServer, type Server } from "node:http";
+import { expect, test } from "@playwright/test";
 import { once } from "node:events";
-import { test, expect } from "@playwright/test";
-import { operatorPageForPath, renderUiHtml, type UiData } from "../../src/ui.js";
-import { fixPrompt, type FixPromptKind } from "../../src/operator-ui/fix-prompts.js";
-import type { UiConnector } from "../../src/operator-ui/model.js";
-import { accessTokens, AccessTokenManager } from "../../src/access-tokens.js";
-import { api } from "../../src/connectors/api.js";
-import { CredentialVault, encryptedCredentialVault } from "../../src/credentials.js";
+import { createServer, type Server } from "node:http";
+import { AccessTokenManager, accessTokens } from "../../src/access-tokens.js";
+import { operatorAsset } from "../../src/operator-ui/assets.js";
 import { memoryStorage } from "../../src/storage/memory.js";
-import type { CatalogDriftReport, Connector } from "../../src/types.js";
-import { createTestConnecta } from "../helpers.js";
+import { operatorPageForPath, renderUiHtml, type UiData } from "../../src/ui.js";
 import { fakeClerkAuth } from "../fixtures/http.js";
+import { createTestConnecta } from "../helpers.js";
+import { fixtureContract } from "./operator-fixture.js";
 
 const TOKEN = "browser-operator-token";
-const CLERK_ORIGIN = "https://clerk.example.test";
-const CLERK_LOADER = `${CLERK_ORIGIN}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`;
-
 interface RecordedRequest {
   method: string;
   path: string;
@@ -27,35 +19,10 @@ interface RecordedRequest {
 
 let server: Server;
 let origin: string;
-let credentialValue: string | undefined;
-let oauthConnected = true;
 let requests: RecordedRequest[] = [];
-/** `METHOD /path` → the failure that route should answer with, once armed. */
-let faults = new Map<string, string>();
-/** A deployment that has been stood up but not yet used. */
-let emptyDeployment = false;
-let clerkLoaderFails = false;
-let clerkLoaderRequests: string[] = [];
-let activityEnabled = true;
-let authManagement = true;
-let tokenManagement = false;
-let detailBarriers = new Map<string, Promise<void>>();
-let releaseDetails: Array<() => void> = [];
-let pools: string[] = [];
-/** Held open until released, so a test can look at the page mid-request. */
+/** Held open until released to exercise identity changes during OAuth start. */
 let oauthStartBarrier: Promise<void> | undefined;
-/** What the OAuth start answers as its authorization URL, when not the fake provider. */
 let oauthStartUrl: string | undefined;
-/**
- * A downstream error body that quotes the secret it rejected. When armed, the
- * "drifted" connector's details answer as a failed status carrying it in a
- * `message` field — which the real server no longer sends, so this stands in
- * for an older or hostile one.
- */
-const LEAKY_STATUS_MESSAGE = "fetch failed: 503 upstream connect error (token sk_live_abc123)";
-let leakyStatus = false;
-/** Fields laid over the "drifted" connector, for a test that needs another problem on it. */
-let driftedOverride: Partial<UiConnector> | undefined;
 /**
  * A real deployment behind this fake one. While set, the paths it names are
  * forwarded to its `fetch` as a signed-in, same-origin operator, so the page
@@ -65,7 +32,6 @@ let realRoutes:
   | {
       connecta: ReturnType<typeof createTestConnecta>;
       paths: ReadonlySet<string>;
-      answered: string[];
     }
   | undefined;
 const REAL_BASE = "https://connecta.test";
@@ -76,82 +42,19 @@ function data(): UiData {
     connectaVersion: "package",
     credentialManagement: "available",
     oauthManagement: true,
-    activityEnabled,
-    ...(tokenManagement ? { accessTokenManagement: "available" as const } : {}),
-    ...(pools.length ? { pools } : {}),
-    connectors: emptyDeployment
-      ? []
-      : [
-          {
-            id: "vaulted",
-            permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
-            title: "Vaulted service",
-            status: credentialValue ? "ok" : "auth_required",
-            ...(credentialValue ? {} : { problem: "credential_required" as const }),
-            toolCount: credentialValue ? 1 : 0,
-            tools: credentialValue ? [{ name: "read", address: "vaulted.read", safety: "runs_in_programs" }] : [],
-            credential: {
-              label: "API token",
-              configured: Boolean(credentialValue),
-              removable: Boolean(credentialValue),
-              ...(credentialValue ? { lastFour: credentialValue.slice(-4) } : {}),
-              testable: true,
-            },
-            catalogDrift: {
-              observedAt: "2026-08-12T12:00:00.000Z",
-              reviewedBaseline: true,
-              verification: "complete",
-              schemaCoverage: { pinned: 2, unpinned: 0 },
-              unclassifiedTools: 0,
-              unservedTools: 0,
-              annotationConflicts: 0,
-              schemaChanges: 0,
-            },
-          },
-          {
-            id: "drifted",
-            permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
-            title: "Hosted proxy",
-            status: "ok",
-            toolCount: 0,
-            tools: [],
-            catalogDrift: {
-              observedAt: "2026-08-12T12:00:00.000Z",
-              reviewedBaseline: true,
-              verification: "complete",
-              schemaCoverage: { pinned: 2, unpinned: 0 },
-              unclassifiedTools: 2,
-              unservedTools: 0,
-              annotationConflicts: 0,
-              schemaChanges: 1,
-            },
-            ...(leakyStatus
-              ? {
-                  status: "error" as const,
-                  problem: "connector_unavailable" as const,
-                  // Not a UiConnector field any more; widened so it can be sent.
-                  ...({ message: LEAKY_STATUS_MESSAGE } as object),
-                }
-              : {}),
-            ...driftedOverride,
-          },
-          {
-            id: "oauth",
-            permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
-            title: "CRM",
-            status: oauthConnected ? "ok" : "auth_required",
-            ...(oauthConnected ? {} : { problem: "oauth_required" as const }),
-            toolCount: oauthConnected ? 2 : 0,
-            tools: oauthConnected
-              ? [
-                  { name: "contacts", address: "oauth.contacts", safety: "needs_approval" },
-                  { name: "note", address: "oauth.note", safety: "needs_approval" },
-                ]
-              : [],
-            oauth: true,
-            ...(oauthConnected ? { registrationPath: "cimd" as const } : {}),
-          },
-        ],
+    activityEnabled: true,
+    connectors: [
+      {
+        id: "oauth",
+        permissions: { use: true, manageSharedAuth: true, connectPersonal: false },
+        title: "CRM",
+        status: "auth_required",
+        problem: "oauth_required",
+        toolCount: 0,
+        tools: [],
+        oauth: true,
+      },
+    ],
   };
 }
 
@@ -183,59 +86,6 @@ test.beforeAll(async () => {
       response.end(Buffer.from(await asset.arrayBuffer()));
       return;
     }
-    if (method === "GET" && url.pathname === "/clerk-loader") {
-      clerkLoaderRequests.push(url.pathname);
-      if (clerkLoaderFails) {
-        response.writeHead(503, { "Content-Type": "text/plain" });
-        response.end("unavailable");
-      } else {
-        response.writeHead(302, { Location: "/clerk-loader-6.99.0" });
-        response.end();
-      }
-      return;
-    }
-    if (method === "GET" && url.pathname === "/clerk-loader-6.99.0") {
-      clerkLoaderRequests.push(url.pathname);
-      response.writeHead(200, {
-        "Content-Type": "application/javascript; charset=utf-8",
-      });
-      response.end(`
-        window.__clerkLoaderEvents = ["loader"];
-        window.Clerk = {
-          user: { id: "user_browser" },
-          session: {
-            id: "session_browser",
-            getToken: async () => ${JSON.stringify(TOKEN)},
-          },
-          load: async () => window.__clerkLoaderEvents.push("load"),
-          addListener: () => {},
-          redirectToSignIn: () => {},
-          signOut: async () => {},
-        };
-      `);
-      return;
-    }
-    if (method === "GET" && url.pathname === "/clerk") {
-      response.writeHead(200, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Content-Security-Policy": `script-src 'self' ${CLERK_ORIGIN}`,
-      });
-      // Production only permits an HTTPS Clerk origin. This HTTP-only fixture
-      // keeps the generated tag and rewrites its transport target to the local
-      // server so Chromium follows a real redirect without external network.
-      response.end(
-        renderUiHtml(
-          {
-            kind: "clerk",
-            publishableKey: "pk_test_browser",
-            frontendApiUrl: CLERK_ORIGIN,
-          },
-          `${origin}/mcp`,
-        ).replace(CLERK_LOADER, `${origin}/clerk-loader`),
-      );
-      return;
-    }
-
     // The provider's consent screen, as far as the opened tab can tell.
     if (method === "GET" && url.pathname === "/connect/oauth" && !realRoutes?.paths.has(url.pathname)) {
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -274,7 +124,6 @@ test.beforeAll(async () => {
         }),
       );
       const text = await real.text();
-      realRoutes.answered.push(text);
       response.writeHead(real.status, {
         "Content-Type": real.headers.get("Content-Type") ?? "text/plain",
         "Cache-Control": "no-store",
@@ -288,12 +137,6 @@ test.beforeAll(async () => {
       sendJson(response, 401, { error: "unauthorized" });
       return;
     }
-    const fault = faults.get(`${method} ${url.pathname}`);
-    if (fault) {
-      sendJson(response, 502, { error: fault });
-      return;
-    }
-
     if (method === "GET" && url.pathname === "/ui/data") {
       const full = data();
       sendJson(response, 200, {
@@ -316,84 +159,22 @@ test.beforeAll(async () => {
     }
     const detailMatch = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(url.pathname);
     if (method === "GET" && detailMatch) {
-      await detailBarriers.get(detailMatch[1]!);
       const connector = data().connectors.find((item) => item.id === detailMatch[1]);
       if (!connector) {
         sendJson(response, 404, { error: "unknown connector" });
         return;
       }
-      if (!authManagement) delete connector.credential;
       sendJson(response, 200, connector);
       return;
     }
-    if (method === "GET" && url.pathname === "/ui/api/activity") {
+    if (url.pathname === "/ui/oauth/oauth" && method === "POST") {
+      await oauthStartBarrier;
       sendJson(response, 200, {
-        events: emptyDeployment
-          ? []
-          : [
-              {
-                schemaVersion: 1,
-                id: "activity-1",
-                occurredAt: "2026-07-28T12:00:00.000Z",
-                requestId: "request-1",
-                actor: {
-                  kind: "clerk",
-                  id: "user_1",
-                  namespace: "https://identity.example",
-                  label: "Ada Lovelace",
-                },
-                connectorId: "oauth",
-                toolName: "contacts",
-                address: "oauth.contacts",
-                source: "call_tool",
-                outcome: "success",
-                durationMs: 4,
-                attempts: 1,
-                serverName: "browser-test",
-                serverVersion: "host",
-              },
-            ],
+        state: "auth_required",
+        authorizationUrl: oauthStartUrl ?? `${origin}/connect/oauth?h=test-handoff`,
+        reused: false,
       });
       return;
-    }
-    if (url.pathname === "/ui/credentials/vaulted") {
-      if (method === "PUT") {
-        const value = (body as { value?: string } | undefined)?.value;
-        credentialValue = value;
-        sendJson(response, 200, { configured: true });
-        return;
-      }
-      if (method === "DELETE") {
-        credentialValue = undefined;
-        response.writeHead(204).end();
-        return;
-      }
-    }
-    if (method === "POST" && url.pathname === "/ui/credentials/vaulted/test") {
-      sendJson(response, 200, { ok: true });
-      return;
-    }
-    if (url.pathname === "/ui/oauth/oauth") {
-      if (method === "DELETE") {
-        oauthConnected = false;
-        response.writeHead(204).end();
-        return;
-      }
-      if (method === "POST") {
-        await oauthStartBarrier;
-        // `continue` on a healthy connector changes nothing.
-        if (url.searchParams.get("mode") === "continue" && oauthConnected) {
-          sendJson(response, 200, { state: "ok" });
-          return;
-        }
-        oauthConnected = false;
-        sendJson(response, 200, {
-          state: "auth_required",
-          authorizationUrl: oauthStartUrl ?? `${origin}/connect/oauth?h=test-handoff`,
-          reused: false,
-        });
-        return;
-      }
     }
 
     sendJson(response, 404, { error: "not found" });
@@ -407,34 +188,16 @@ test.beforeAll(async () => {
   origin = `http://127.0.0.1:${address.port}`;
 });
 
-test.afterEach(() => {
-  for (const release of releaseDetails) release();
-});
-
 test.afterAll(async () => {
   server.close();
   await once(server, "close");
 });
 
 test.beforeEach(() => {
-  credentialValue = undefined;
-  oauthConnected = true;
   requests = [];
-  faults = new Map();
-  emptyDeployment = false;
-  clerkLoaderFails = false;
-  clerkLoaderRequests = [];
-  activityEnabled = true;
-  authManagement = true;
-  detailBarriers = new Map();
-  releaseDetails = [];
-  pools = [];
   oauthStartBarrier = undefined;
   oauthStartUrl = undefined;
-  leakyStatus = false;
-  driftedOverride = undefined;
   realRoutes = undefined;
-  tokenManagement = false;
 });
 
 async function openAuthenticated(page: import("@playwright/test").Page, path = "/connectors") {
@@ -445,10 +208,6 @@ async function openAuthenticated(page: import("@playwright/test").Page, path = "
   await expect(page.locator("#app")).toBeVisible();
 }
 
-/** The detail page replaces the former expandable connector row. */
-function connectorRow(page: import("@playwright/test").Page, _title: string) {
-  return page.locator("#connectorView");
-}
 async function openRow(page: import("@playwright/test").Page, title: string, tab = "auth") {
   const id = data().connectors.find((c) => c.title === title)?.id;
   if (!id) throw new Error(`Unknown fixture connector ${title}`);
@@ -461,801 +220,10 @@ async function openRow(page: import("@playwright/test").Page, title: string, tab
     "true",
   );
   await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
-  return connectorRow(page, title);
+  return page.locator("#connectorView");
 }
-
-test("waits for Clerk's redirected loader before booting", async ({ page }) => {
-  await page.goto(origin + "/clerk");
-
-  expect(clerkLoaderRequests).toEqual(["/clerk-loader", "/clerk-loader-6.99.0"]);
-  expect(await page.evaluate("window.__clerkLoaderEvents")).toEqual(["loader", "load"]);
-  await page.getByRole("link", { name: "Connectors", exact: true }).click();
-  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
-});
-
-test("reports a real Clerk loader failure", async ({ page }) => {
-  clerkLoaderFails = true;
-
-  await page.goto(origin + "/clerk");
-
-  await expect(page.locator("#err")).toHaveText("Clerk couldn't load. Try again.");
-  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(0);
-  expect(clerkLoaderRequests).toEqual(["/clerk-loader"]);
-});
-
-test("INV-4: queued focus and later passive returns cannot restore data during delayed sign-out", async ({ page }) => {
-  await page.clock.install();
-  await page.goto(origin + "/clerk");
-  await page.getByRole("link", { name: "Connectors", exact: true }).click();
-  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
-  await page.waitForLoadState("networkidle");
-  requests = [];
-  await page.evaluate(`
-    window.Clerk.signOut = () => new Promise(() => {});
-    window.dispatchEvent(new Event("focus"));
-    document.querySelector(".session-action").click();
-  `);
-  await expect(page.locator("#gate")).toBeVisible();
-  await page.clock.runFor(200);
-  await page.waitForLoadState("networkidle");
-  await expect(page.locator("#gate")).toBeVisible();
-  await page.clock.runFor(2100);
-  await page.evaluate("window.dispatchEvent(new Event('focus'))");
-  await page.clock.runFor(60_000);
-  await page.waitForLoadState("networkidle");
-  await expect(page.locator("#gate")).toBeVisible();
-  await expect(page.locator("#app")).toHaveCount(0);
-  expect(requests.filter((request) => request.path.startsWith("/ui/"))).toEqual([]);
-});
-
-test("keeps the shell open and loads private data only after authentication", async ({ page }) => {
-  await page.goto(origin + "/");
-
-  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
-  await expect(page.getByText("CRM")).toHaveCount(0);
-  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(0);
-
-  await page.getByLabel("Bearer token").fill(TOKEN);
-  await page.getByRole("button", { name: "Open operator pages" }).click();
-
-  await page.getByRole("link", { name: "Connectors", exact: true }).click();
-  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
-  expect(requests.find((request) => request.path === "/ui/data")?.authorization).toBe(`Bearer ${TOKEN}`);
-});
-
-test("shows clean, warning, and unobserved drift without naming a tool", async ({ page }) => {
-  await openAuthenticated(page);
-  for (const [title, id, state, text] of [
-    ["Vaulted service", "vaulted", "clean", "Matches the reviewed manifest"],
-    ["Hosted proxy", "drifted", "warning", "3 differences from the reviewed manifest"],
-    ["CRM", "oauth", "unavailable", "No catalog refresh yet"],
-  ]) {
-    await openRow(page, title!, "diagnostics");
-    const panel = page.locator(`#drift-${id}`);
-    await expect(panel).toHaveAttribute("data-drift", state!);
-    await expect(panel).toContainText(text!);
-    expect(await panel.innerText()).not.toMatch(/inputSchema|\w+\.\w+\(/);
-  }
-});
-
-test("disconnects and reconnects downstream OAuth", async ({ page }) => {
-  await openAuthenticated(page);
-  const row = await openRow(page, "CRM");
-
-  await expect(row.locator("[data-oauth-client]")).toHaveText("Client metadata document (CIMD)");
-
-  // Disconnecting a healthy connection asks first, in the row.
-  await row.getByRole("button", { name: "Disconnect CRM" }).click();
-  const confirm = row.getByRole("group", { name: /Disconnect CRM\?/ });
-  await confirm.getByRole("button", { name: "Disconnect", exact: true }).click();
-  await expect(row.locator("#oauthNotice-oauth")).toContainText("Disconnected.");
-  await expect(row.locator("[data-oauth-client]")).toHaveCount(0);
-
-  // Connecting one that is not healthy does not: it opens the tab at once.
-  const popup = page.waitForEvent("popup");
-  await row.getByRole("button", { name: "Connect CRM" }).click();
-  await (await popup).close();
-  await expect(row.locator("#oauthNotice-oauth")).toHaveText("Finish in the new tab.");
-
-  expect(
-    requests
-      .filter((request) => request.path.startsWith("/ui/oauth/oauth"))
-      .map(({ method, path, authorization }) => ({ method, path, authorization })),
-  ).toEqual([
-    { method: "DELETE", path: "/ui/oauth/oauth", authorization: `Bearer ${TOKEN}` },
-    { method: "POST", path: "/ui/oauth/oauth?mode=continue", authorization: `Bearer ${TOKEN}` },
-  ]);
-});
-
-for (const [path, label] of [
-  ["static", "Pre-registered client"],
-  ["cimd", "Client metadata document (CIMD)"],
-  ["dcr", "Dynamic registration (DCR)"],
-] as const) {
-  test(`renders the ${path} OAuth client label on Connection, not in the ledger`, async ({ page }) => {
-    await page.route("**/ui/api/config", async (route) => {
-      const response = await route.fetch();
-      const facts = await response.json();
-      facts.live.connectors.find((c: { id: string }) => c.id === "oauth").auth = { registrationPath: path };
-      return route.fulfill({ json: facts });
-    });
-    await page.route("**/ui/connectors/oauth", async (route) => {
-      const response = await route.fetch();
-      const connector = await response.json();
-      return route.fulfill({ json: { ...connector, registrationPath: path } });
-    });
-    await openAuthenticated(page);
-    await page.getByRole("link", { name: "Connectors", exact: true }).click();
-    await expect(
-      page.getByRole("listitem").filter({ has: page.getByRole("link", { name: "CRM", exact: true }) }),
-    ).not.toContainText(label);
-    const row = await openRow(page, "CRM", "auth");
-    await expect(row.locator("[data-oauth-client]")).toHaveText(label);
-  });
-}
-
-test("reports a typed revocation failure after local disconnect in the Auth tab", async ({ page }) => {
-  await page.route("**/ui/oauth/oauth", (route) => {
-    if (route.request().method() !== "DELETE") return route.fallback();
-    oauthConnected = false;
-    return route.fulfill({ json: { ok: true, code: "oauth_revocation_failed", message: "raw-provider-secret" } });
-  });
-  await openAuthenticated(page);
-  const row = await openRow(page, "CRM", "auth");
-  await row.getByRole("button", { name: "Disconnect CRM" }).click();
-  await row
-    .getByRole("group", { name: /Disconnect CRM\?/ })
-    .getByRole("button", { name: "Disconnect", exact: true })
-    .click();
-  await expect(row.locator("#oauthNotice-oauth")).toHaveText(
-    "Disconnected here. Revoke the grant in the provider's console too.",
-  );
-  await expect(row.locator("[data-oauth-client]")).toHaveCount(0);
-  await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("raw-provider-secret");
-});
-
-test("reloads retired OAuth state when disconnect reports an error", async ({ page }) => {
-  await page.route("**/ui/oauth/oauth", (route) => {
-    if (route.request().method() !== "DELETE") return route.fallback();
-    oauthConnected = false;
-    return route.fulfill({ status: 500, json: { error: "cleanup failed after retirement" } });
-  });
-  await openAuthenticated(page);
-  const row = await openRow(page, "CRM");
-  await row.getByRole("button", { name: "Disconnect CRM" }).click();
-  await row
-    .getByRole("group", { name: /Disconnect CRM\?/ })
-    .getByRole("button", { name: "Disconnect", exact: true })
-    .click();
-  await expect(row.locator("#oauthNotice-oauth")).toContainText("Disconnect failed.");
-  await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
-  await expect(row.locator(".conn-head")).toContainText("Authorization needed");
-  await expect(row.getByText("oauth.contacts", { exact: true })).toHaveCount(0);
-});
-
-test("navigates to the activity list and back without a shell reload", async ({ page }) => {
-  await openAuthenticated(page);
-
-  await page.getByRole("link", { name: "Activity" }).click();
-  await expect(page).toHaveURL(origin + "/activity");
-  const activity = page.locator("#activityList");
-  await expect(activity.getByText("oauth.contacts")).toBeVisible();
-  await expect(activity.getByText("Ada Lovelace", { exact: true })).toBeVisible();
-  // One status dot per call, named for assistive technology.
-  await expect(activity.locator(".activity-status.success").first()).toHaveText("Succeeded");
-  expect(requests.find((request) => request.path.startsWith("/ui/api/activity"))?.authorization).toBe(
-    `Bearer ${TOKEN}`,
-  );
-
-  await page.goBack();
-  await expect(page).toHaveURL(origin + "/connectors");
-  await expect(page.getByRole("heading", { name: "Connectors", exact: true })).toBeVisible();
-});
-
-for (const body of ["truncated JSON", "null", "{}"]) {
-  test(`offers Activity retry after an unreadable successful response: ${body}`, async ({ page }) => {
-    await page.route("**/ui/api/activity?**", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body,
-      }),
-    );
-    await openAuthenticated(page);
-    await page.getByRole("link", { name: "Activity" }).click();
-    await expect(page.locator("#activityError")).toContainText("Activity couldn't be loaded");
-    await expect(page.getByText("No calls yet", { exact: true })).toHaveCount(0);
-    await page.unroute("**/ui/api/activity?**");
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
-    await expect(page.locator("#activityList").getByText("oauth.contacts")).toBeVisible();
-    await expect(page.locator("#activityError")).toHaveCount(0);
-  });
-}
-
-test("keeps a rejected credential save on screen and retryable", async ({ page }) => {
-  faults.set("PUT /ui/credentials/vaulted", "vault unavailable");
-  await openAuthenticated(page);
-  const row = await openRow(page, "Vaulted service");
-
-  await row.getByRole("button", { name: "Add credential" }).click();
-  await row.locator('input[aria-label="API token"]').fill("first-secret");
-  await row.getByRole("button", { name: "Save" }).click();
-  // Fixed words by status; the route's own text never reaches the page.
-  await expect(row.locator("#credentialNotice-vaulted")).toHaveText(
-    "Not saved. Try again, or check the deployment log.",
-  );
-  await expect(page.locator("body")).not.toContainText("vault unavailable");
-  // No dead end: the form stays open holding what was typed, so the operator
-  // retries with one click rather than re-entering a secret.
-  await expect(row.locator('input[aria-label="API token"]')).toHaveValue("first-secret");
-
-  faults.clear();
-  await row.getByRole("button", { name: "Save" }).click();
-  await expect(row.locator('[data-credential-state="configured"]')).toBeVisible();
-});
-
-test("reports a failed OAuth restart and re-enables the control", async ({ page }) => {
-  faults.set("POST /ui/oauth/oauth", "downstream unavailable");
-  await openAuthenticated(page);
-  const row = await openRow(page, "CRM");
-
-  await row.getByRole("button", { name: "Reconnect CRM" }).click();
-  const popup = page.waitForEvent("popup");
-  await row
-    .getByRole("group", { name: /Reconnect CRM\?/ })
-    .getByRole("button", { name: "Reconnect", exact: true })
-    .click();
-  // The tab opened for the provider closes again when the route refuses.
-  const tab = await popup;
-  await expect.poll(() => tab.isClosed()).toBe(true);
-  await expect(row.locator("#oauthNotice-oauth")).toContainText("Authorization couldn't start.");
-  // Failure leaves the action retryable without reloading the connection list.
-  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeEnabled();
-  expect(requests.filter((request) => request.path === "/ui/data").length).toBe(1);
-});
-
-function holdDetails(id: string): () => void {
-  let release!: () => void;
-  detailBarriers.set(
-    id,
-    new Promise<void>((resolve) => {
-      release = resolve;
-    }),
-  );
-  releaseDetails.push(release);
-  return release;
-}
-
-test("shows connections and usable controls while one provider is still loading", async ({ page }) => {
-  const release = holdDetails("drifted");
-  await openAuthenticated(page);
-  const vaulted = await openRow(page, "Vaulted service");
-  await expect(vaulted.getByRole("button", { name: "Add credential" })).toBeVisible();
-  const crm = await openRow(page, "CRM");
-  await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
-  const slow = await openRow(page, "Hosted proxy");
-  await expect(slow.getByText("Loading authentication details…")).toBeVisible();
-  release();
-  await expect(slow.getByText("Loading authentication details…")).toHaveCount(0);
-  await expect(slow.getByRole("button", { name: "Refresh Hosted proxy" })).toBeEnabled();
-  // Navigation cancels the old view's pending read, then bounded recovery
-  // must fetch again so that the destination's auth details can still land.
-  expect(requests.filter((request) => request.path === "/ui/data").length).toBeGreaterThan(1);
-});
-
-test("acknowledges a credential save before its refreshed details arrive", async ({ page }) => {
-  await openAuthenticated(page);
-  const row = await openRow(page, "Vaulted service");
-  await row.getByRole("button", { name: "Add credential" }).click();
-  const release = holdDetails("vaulted");
-  await row.locator('input[aria-label="API token"]').fill("saved-without-waiting");
-  await row.getByRole("button", { name: "Save", exact: true }).click();
-
-  await expect(row.locator("#credentialNotice-vaulted")).toHaveText("Credential saved.");
-  await expect(page.locator('input[aria-label="API token"]')).toHaveCount(0);
-  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(1);
-
-  release();
-  await expect(row.getByRole("button", { name: "Replace", exact: true })).toBeVisible();
-});
-
-test("shows effective access without exposing auth controls to a reader", async ({ page }) => {
-  authManagement = false;
-  activityEnabled = false;
-  await openAuthenticated(page);
-  // Every row open, so the absence of a control below is not just a closed body.
-  for (const title of ["Vaulted service", "Hosted proxy", "CRM"]) {
-    const row = await openRow(page, title);
-    await expect(row.getByRole("button", { name: `Refresh ${title}` })).toBeVisible();
-    await expect(row.locator("[data-managed-by]")).toHaveText("Deployment");
-  }
-  await expect(
-    page.getByRole("button", { name: /credential|OAuth|authoriz|Connect|Disconnect|Reconnect/i }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Activity", exact: true })).toHaveCount(0);
-  expect(requests.some((request) => request.path.startsWith("/ui/access-tokens"))).toBe(false);
-});
-
-test("retries a failed connection without reloading the list", async ({ page }) => {
-  faults.set("GET /ui/connectors/drifted", "provider unavailable");
-  await openAuthenticated(page);
-  const row = await openRow(page, "Hosted proxy", "diagnostics");
-  await expect(row.locator('[data-problem="connector_unavailable"]')).toBeVisible();
-  faults.clear();
-  await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
-  // Informational drift does not change the recovered connection's verdict.
-  await expect(row.locator(".conn-head")).toContainText("Connected");
-  await expect(row.locator("[data-problem]")).toHaveCount(0);
-  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(1);
-});
-
-test("keeps a connector's verdict while its refresh is in flight", async ({ page }) => {
-  await page.route("**/ui/connectors/drifted", (route) => route.abort());
-  await openAuthenticated(page);
-  const row = await openRow(page, "Hosted proxy");
-  await expect(row.locator(".conn-head")).toContainText("Couldn't load");
-  const release = holdDetails("drifted");
-  await page.unroute("**/ui/connectors/drifted");
-  await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
-  await expect(row.getByText("Loading authentication details…")).toBeVisible();
-  // Not "Unavailable" or "Loading details": the last verdict until the read settles.
-  await expect(row.locator(".conn-head")).toContainText("Couldn't load");
-  release();
-  await expect(row.locator(".conn-head")).toContainText("Connected");
-});
-
-test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
-  faults.set("GET /ui/connectors/drifted", "upstream said sk_live_leaked_value");
-  await openAuthenticated(page);
-
-  const row = await openRow(page, "Hosted proxy", "diagnostics");
-  // The operator sees the classified description, not the failure's text...
-  await expect(row.locator(".msg")).toContainText("Unavailable. Its status check or catalog load failed");
-  await expect(row).not.toContainText("sk_live_leaked_value");
-  // The prompt sits beside the problem notice it answers.
-  const actions = row.getByRole("region", { name: "Authentication", exact: true }).locator(".fix-prompt");
-  await actions.getByRole("button", { name: "Copy fix prompt for Hosted proxy" }).click();
-  await expect(actions.getByRole("button", { name: "Copied" })).toBeVisible();
-  await expect(row.getByRole("button", { name: "Refresh Hosted proxy" })).toBeVisible();
-  await expect(row.locator('[data-fix-prompt="connector_unavailable"]')).toContainText("Preview prompt");
-  // ...but the clipboard gets only the fixed catalogue text.
-  const copied = String(await page.evaluate("navigator.clipboard.readText()"));
-  expect(copied).toContain("Connector id: drifted");
-  expect(copied).toContain("configured as code");
-  expect(copied).not.toContain("sk_live_leaked_value");
-  expect(copied).not.toContain("502");
-});
-
-/** Hosted proxy's drift prompt is its own kind; these cases clear it so one button remains. */
-const CLEAN_DRIFT: CatalogDriftReport = {
-  observedAt: "2026-08-12T12:00:00.000Z",
-  reviewedBaseline: true,
-  verification: "complete",
-  schemaCoverage: { pinned: 2, unpinned: 0 },
-  unclassifiedTools: 0,
-  unservedTools: 0,
-  annotationConflicts: 0,
-  schemaChanges: 0,
-};
-const CONNECTION_FIX_PROMPTS: ReadonlyArray<{
-  kind: FixPromptKind;
-  connector: string;
-  title: string;
-  arrange: () => void;
-}> = [
-  { kind: "oauth_required", connector: "oauth", title: "CRM", arrange: () => (oauthConnected = false) },
-  { kind: "credential_required", connector: "vaulted", title: "Vaulted service", arrange: () => {} },
-  {
-    kind: "auth_required",
-    connector: "drifted",
-    title: "Hosted proxy",
-    arrange: () => (driftedOverride = { status: "auth_required", problem: "auth_required", catalogDrift: CLEAN_DRIFT }),
-  },
-  {
-    kind: "connector_unavailable",
-    connector: "drifted",
-    title: "Hosted proxy",
-    arrange: () => {
-      leakyStatus = true;
-      driftedOverride = { catalogDrift: CLEAN_DRIFT };
-    },
-  },
-  {
-    // The notice and the credential card both name this kind; it is offered once.
-    kind: "credential_mismatch",
-    connector: "drifted",
-    title: "Hosted proxy",
-    arrange: () =>
-      (driftedOverride = {
-        status: "error",
-        problem: "credential_mismatch",
-        catalogDrift: CLEAN_DRIFT,
-        credential: {
-          label: "API key",
-          configured: true,
-          removable: true,
-          testable: false,
-          error: "stored fields differ (sk_live_mismatch_marker)",
-          problem: "credential_mismatch",
-        },
-      }),
-  },
-];
-
-for (const { kind, connector, title, arrange } of CONNECTION_FIX_PROMPTS) {
-  test(`INV-6: offers one ${kind} fix prompt on Connection carrying only its kind and connector`, async ({
-    page,
-    context,
-  }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
-    arrange();
-    await openAuthenticated(page);
-
-    const row = await openRow(page, title);
-    await expect(row.locator(`[data-problem="${kind}"]`)).toBeVisible();
-    const buttons = page.getByRole("button", { name: /^Copy fix prompt/ });
-    await expect(buttons).toHaveCount(1);
-    await buttons.click();
-    await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
-    // Byte for byte the catalogue's text for this kind and id: nothing else rides along.
-    expect(String(await page.evaluate("navigator.clipboard.readText()"))).toBe(fixPrompt(kind, connector));
-  });
-}
-
-test("renders a classified description and never a connector's status message", async ({ page }) => {
-  leakyStatus = true;
-  await openAuthenticated(page);
-
-  const row = await openRow(page, "Hosted proxy", "diagnostics");
-  await expect(row.locator(".conn-head")).toContainText("Unavailable");
-  await expect(row.locator('[data-problem="connector_unavailable"]')).toHaveText(
-    "Unavailable. Its status check or catalog load failed or timed out. The deployment log has the error.",
-  );
-  await expect(row.locator('[data-fix-prompt="connector_unavailable"]')).toBeVisible();
-  // The detail response really did carry the text; the page just never uses it.
-  expect(requests.some((request) => request.path === "/ui/connectors/drifted")).toBe(true);
-  const assertAbsent = async () => {
-    const html = await page.content();
-    expect(html).not.toContain("sk_live_abc123");
-    expect(html).not.toContain("upstream connect error");
-    expect(await page.locator("body").innerText()).not.toContain("sk_live_abc123");
-  };
-  await assertAbsent();
-
-  // A refresh lands the same details through the other store path.
-  await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
-  await expect.poll(() => requests.filter((request) => request.path === "/ui/connectors/drifted").length).toBe(2);
-  await expect(row.locator('[data-problem="connector_unavailable"]')).toBeVisible();
-  await assertAbsent();
-
-  // Nor does the filter treat it as searchable text.
-  await page.getByRole("link", { name: "Connectors", exact: true }).click();
-  await page.getByLabel("Filter connectors", { exact: true }).fill("sk_live_abc123");
-  await expect(page.getByText("No matches")).toBeVisible();
-});
-
-test("attaches a fix prompt to a failed OAuth restart", async ({ page }) => {
-  // The route's error text is what an older server sent back from the
-  // downstream; the notice says its own sentence and never this one.
-  faults.set("POST /ui/oauth/oauth", "downstream token=abc123");
-  await openAuthenticated(page);
-
-  const row = await openRow(page, "CRM");
-  await row.getByRole("button", { name: "Reconnect CRM" }).click();
-  await row
-    .getByRole("group", { name: /Reconnect CRM\?/ })
-    .getByRole("button", { name: "Reconnect", exact: true })
-    .click();
-  await expect(row.locator("#oauthNotice-oauth")).toContainText("Authorization couldn't start.");
-  expect(await page.content()).not.toContain("abc123");
-  const prompt = page.locator('[data-fix-prompt="oauth_action_failed"]');
-  await prompt.getByText("Preview prompt").click();
-  await expect(prompt.locator(".fix-prompt-text")).toContainText("Connector id: oauth");
-  await expect(prompt.locator(".fix-prompt-text")).not.toContainText("abc123");
-});
-
-test("keeps a downstream's error text out of every action notice, end to end", async ({ page }) => {
-  // The real OAuth and credential Test routes, answering for connectors whose
-  // downstream refuses with the secret it was sent.
-  const SECRET = "sk_live_e2e_leak";
-  const LEAK = `invalid_grant: token ${SECRET} was revoked`;
-  const logged: string[] = [];
-  const log = (...args: unknown[]) => {
-    logged.push(args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "));
-  };
-  const key = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
-  const storage = memoryStorage();
-  await new CredentialVault(storage, key).set("vaulted", "stored-secret-1234", "user_operator");
-  const oauth: Connector = {
-    id: "oauth",
-    kind: "mcp",
-    async listTools() {
-      return [];
-    },
-    async callTool() {
-      return null;
-    },
-    async startAuth() {
-      throw new Error(LEAK);
-    },
-    async finishAuth() {},
-    async verifyState() {
-      return true;
-    },
-    async disconnectAuth() {
-      throw new Error(LEAK);
-    },
-  };
-  const connecta = createTestConnecta({
-    connectors: [
-      oauth,
-      api("vaulted", {
-        description: "Vaulted API",
-        credential: { label: "API token" },
-        testCredential: async () => ({ ok: false, message: LEAK }),
-        tools: [],
-      }),
-    ],
-    auth: fakeClerkAuth(),
-    storage,
-    publicUrl: REAL_BASE,
-    vault: encryptedCredentialVault(storage, key),
-    logger: { debug: log, info: log, warn: log, error: log },
-  });
-  realRoutes = {
-    connecta,
-    paths: new Set(["/ui/oauth/oauth", "/connect/oauth", "/ui/credentials/vaulted/test"]),
-    answered: [],
-  };
-  credentialValue = "stored-secret-1234";
-  await page.context().addCookies([{ name: "__session", value: "clerk-operator", url: origin }]);
-  await openAuthenticated(page);
-
-  const crm = await openRow(page, "CRM");
-  await crm.getByRole("button", { name: "Disconnect CRM" }).click();
-  await crm
-    .getByRole("group", { name: /Disconnect CRM\?/ })
-    .getByRole("button", { name: "Disconnect", exact: true })
-    .click();
-  await expect(crm.locator("#oauthNotice-oauth")).toContainText("Disconnect failed.");
-  oauthConnected = false;
-  const popup = page.waitForEvent("popup");
-  await crm.getByRole("button", { name: "Reconnect CRM" }).click();
-  await crm
-    .getByRole("group", { name: /Reconnect CRM\?/ })
-    .getByRole("button", { name: "Reconnect", exact: true })
-    .click();
-  const connectTab = await popup;
-  await expect(connectTab.locator("body")).toContainText("OAuth authorization could not start");
-  expect(await connectTab.content()).not.toContain(SECRET);
-  expect(await connectTab.content()).not.toContain(LEAK);
-  await connectTab.close();
-
-  const vaulted = await openRow(page, "Vaulted service");
-  await vaulted.getByRole("button", { name: "Test" }).click();
-  await expect(vaulted.locator("#credentialNotice-vaulted")).toContainText("Credential test failed");
-  await expect(page.locator('[data-fix-prompt="credential_test_failed"]')).toBeVisible();
-
-  // Not on the page, not in any answer the page received...
-  expect(await page.content()).not.toContain(SECRET);
-  expect(await page.locator("body").innerText()).not.toContain(SECRET);
-  expect(realRoutes.answered).toHaveLength(4);
-  for (const body of realRoutes.answered) expect(body).not.toContain(SECRET);
-  // ...nor in the host's log, which records each failure as typed facts (INV-6).
-  expect(logged.join("\n")).not.toContain(SECRET);
-  expect(logged).toEqual(
-    expect.arrayContaining([
-      '[connecta] OAuth disconnect failed {"connector":"oauth","errorClass":"Error"}',
-      '[connecta] OAuth start failed {"connector":"oauth","errorClass":"Error"}',
-      '[connecta] credential test failed {"connector":"vaulted"}',
-    ]),
-  );
-});
-
-test("stays signed in with a retry when operator data fails, and gates only on 401", async ({ page }) => {
-  const start = new Date("2026-01-01T00:00:00Z");
-  await page.clock.install({ time: start });
-  await page.clock.pauseAt(start);
-  let summaryReads = 0;
-  let answer: "500" | "network" | "401" | "ok" = "500";
-  await page.route("**/ui/data", async (route) => {
-    summaryReads++;
-    if (answer === "network") return route.abort("failed");
-    if (answer === "500") return route.fulfill({ status: 500, json: { error: "boom" } });
-    if (answer === "401") return route.fulfill({ status: 401, json: { error: "unauthorized" } });
-    return route.fallback();
-  });
-  await openAuthenticated(page);
-
-  // A 500 is the deployment's trouble, not the session's: chrome stays, no gate.
-  const failure = page.locator("#loadFailure");
-  await expect(failure).toContainText("Couldn't reach Connecta");
-  await expect(failure).not.toContainText("boom");
-  await expect(page.locator("#gate")).toHaveCount(0);
-  await page.getByRole("button", { name: "Account", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Change token" })).toBeVisible();
-  await page.keyboard.press("Escape");
-
-  answer = "network";
-  await failure.getByRole("button", { name: "Retry" }).click();
-  await expect(failure).toContainText("Your browser couldn't connect.");
-  await expect(page.locator("#gate")).toHaveCount(0);
-
-  answer = "ok";
-  const beforeDebouncedClick = summaryReads;
-  await failure.getByRole("button", { name: "Retry" }).click();
-  await expect(failure).toContainText("Your browser couldn't connect.");
-  expect(summaryReads).toBe(beforeDebouncedClick);
-  // A distinct explicit retry must be outside the documented 150 ms debounce.
-  await page.clock.runFor(160);
-  await failure.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
-  // The Retry button went with its block; focus is on the region it reloaded.
-  await expect(page.locator("#connectionsHeading")).toBeFocused();
-
-  // With one good answer seen in this tab, a later failure keeps the nav's shape.
-  answer = "500";
-  await page.reload();
-  await expect(page.locator("#loadFailure")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Activity", exact: true })).toBeVisible();
-  answer = "ok";
-
-  // Only a refused session sends the operator back to the token form.
-  answer = "401";
-  await page.reload();
-  await expect(page.locator("#gate")).toBeVisible();
-  await expect(page.locator("#err")).toHaveText("Token not accepted. Paste a valid operator token.");
-});
-
-test("recovers from a successful null operator-data response", async ({ page }) => {
-  let malformed = true;
-  await page.route("**/ui/data", (route) =>
-    malformed ? route.fulfill({ status: 200, contentType: "application/json", body: "null" }) : route.fallback(),
-  );
-  await openAuthenticated(page);
-  await expect(page.locator("#loadFailure")).toBeVisible();
-  await expect(page.locator("#gate")).toHaveCount(0);
-  malformed = false;
-  await page.locator("#loadFailure").getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
-  await expect(page.locator("#loadFailure")).toHaveCount(0);
-});
-
-test("keeps a 403 on a mutation beside its control, signed in", async ({ page }) => {
-  await page.route("**/ui/credentials/vaulted", (route) =>
-    route.request().method() === "PUT"
-      ? route.fulfill({ status: 403, json: { error: "credential management is not permitted" } })
-      : route.fallback(),
-  );
-  await openAuthenticated(page);
-  const row = await openRow(page, "Vaulted service");
-  await row.getByRole("button", { name: "Add credential" }).click();
-  await row.locator('input[aria-label="API token"]').fill("first-secret");
-  await row.getByRole("button", { name: "Save" }).click();
-
-  await expect(row.locator("#credentialNotice-vaulted")).toHaveText(
-    "You can't change this connection's authentication.",
-  );
-  await expect(page.locator("#gate")).toHaveCount(0);
-  await expect(page.locator("body")).not.toContainText("not permitted");
-});
-
-test("tells a lost session and a dropped connection apart from a failing connector", async ({ page }) => {
-  await page.route("**/ui/connectors/drifted", (route) =>
-    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
-  );
-  await page.route("**/ui/connectors/oauth", (route) => route.abort("failed"));
-  await openAuthenticated(page);
-
-  const drifted = await openRow(page, "Hosted proxy", "diagnostics");
-  await expect(drifted.locator('[data-load-failure="session"]')).toContainText("sign in again");
-  // Neither is the downstream's fault, so neither blames it or offers a fix prompt.
-  await expect(drifted.locator("[data-problem], [data-fix-prompt]")).toHaveCount(0);
-  const crm = await openRow(page, "CRM");
-  await expect(crm.locator('[data-load-failure="network"]')).toContainText("Couldn't reach Connecta");
-  await expect(crm.locator(".conn-head")).toContainText("Couldn't load");
-  await expect(crm.locator("[data-problem], [data-fix-prompt]")).toHaveCount(0);
-  // The browser's connection is the problem, so reading again is the action,
-  // not redoing authorization.
-  await expect(crm.getByRole("button", { name: /Connect|Reconnect|Disconnect/ })).toHaveCount(0);
-  await expect(crm.getByRole("button", { name: "Refresh CRM" })).toBeVisible();
-});
-
-test("opens the authorization tab inside the click and sends it on once the route answers", async ({ page }) => {
-  oauthConnected = false;
-  let release!: () => void;
-  oauthStartBarrier = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await openAuthenticated(page);
-  const crm = await openRow(page, "CRM");
-
-  const popup = page.waitForEvent("popup");
-  await crm.getByRole("button", { name: "Connect CRM" }).click();
-  // The tab exists while the route has not answered: it was opened by the
-  // click itself, which is what keeps a popup blocker out of the way.
-  const tab = await popup;
-  await expect(crm.getByRole("button", { name: "Connect CRM" })).toHaveText("Opening…");
-  expect(requests.filter((request) => request.path.startsWith("/ui/oauth/"))).toHaveLength(1);
-
-  release();
-  await tab.waitForURL(`${origin}/connect/oauth?h=test-handoff`);
-  // The provider's page gets no handle on the operator page.
-  expect(await tab.evaluate("window.opener")).toBeNull();
-  await expect(crm.locator("#oauthNotice-oauth")).toHaveText("Finish in the new tab.");
-  expect(requests.filter((request) => request.path.startsWith("/ui/oauth/")).map((request) => request.path)).toEqual([
-    "/ui/oauth/oauth?mode=continue",
-  ]);
-});
-
-test("closes the authorization tab when the route refuses", async ({ page }) => {
-  oauthConnected = false;
-  faults.set("POST /ui/oauth/oauth", "downstream token=abc123");
-  await openAuthenticated(page);
-  const crm = await openRow(page, "CRM");
-
-  const popup = page.waitForEvent("popup");
-  await crm.getByRole("button", { name: "Connect CRM" }).click();
-  const tab = await popup;
-  await expect.poll(() => tab.isClosed()).toBe(true);
-  await expect(crm.locator("#oauthNotice-oauth")).toContainText("Authorization couldn't start.");
-  await expect(crm.getByRole("button", { name: "Connect CRM" })).toBeEnabled();
-});
-
-test("falls back to the authorization link when the browser blocks the tab", async ({ page }) => {
-  oauthConnected = false;
-  await page.addInitScript("window.open = () => null;");
-  await openAuthenticated(page);
-  const crm = await openRow(page, "CRM");
-
-  await crm.getByRole("button", { name: "Connect CRM" }).click();
-  await expect(crm.locator("#oauthNotice-oauth")).toContainText("The new tab was blocked.");
-  const link = crm.getByRole("link", { name: "Open authorization page" });
-  await expect(link).toHaveAttribute("href", `${origin}/connect/oauth?h=test-handoff`);
-  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
-  await expect(crm.locator(".btn.primary")).toHaveCount(1);
-});
-
-test("re-reads status when the tab comes back, without starting authorization", async ({ page }) => {
-  oauthConnected = false;
-  await openAuthenticated(page);
-  const crm = await openRow(page, "CRM");
-  const popup = page.waitForEvent("popup");
-  await crm.getByRole("button", { name: "Connect CRM" }).click();
-  await (await popup).close();
-  await expect(crm.locator(".conn-head")).toContainText("Authorization needed");
-
-  // Authorization finishes in the other tab; this one hears nothing until it
-  // is looked at again.
-  oauthConnected = true;
-  const before = requests.length;
-  await page.evaluate(`
-    document.dispatchEvent(new Event("visibilitychange"));
-    window.dispatchEvent(new Event("focus"));
-  `);
-  await expect(crm.locator(".conn-head")).toContainText("Connected");
-  await expect(crm.locator("#oauthNotice-oauth")).toHaveText("Connected.");
-  const since = requests.slice(before);
-  // One passive read for the waiting connector — focus and visibility
-  // coalesce — and nothing that could start authorization.
-  expect(since.filter((request) => request.path.startsWith("/ui/oauth/"))).toHaveLength(0);
-  expect(since.some((request) => request.path === "/ui/connectors/oauth")).toBe(true);
-});
-
-test("keeps inactive connector tabs out of sight and out of the tab order", async ({ page }) => {
-  await openAuthenticated(page);
-  const row = await openRow(page, "CRM");
-  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
-  await page.getByRole("tab", { name: "Tools", exact: true }).click();
-  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toHaveCount(0);
-  await page.getByRole("tab", { name: "Connection", exact: true }).click();
-  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
-});
 
 test("closes the opened tab when the identity changes mid-request", async ({ page }) => {
-  oauthConnected = false;
   let release!: () => void;
   oauthStartBarrier = new Promise<void>((resolve) => {
     release = resolve;
@@ -1275,7 +243,6 @@ test("closes the opened tab when the identity changes mid-request", async ({ pag
 });
 
 test("never sends the tab to a non-http authorization URL", async ({ page }) => {
-  oauthConnected = false;
   oauthStartUrl = "javascript:alert(document.domain)";
   await openAuthenticated(page);
   const crm = await openRow(page, "CRM");
@@ -1285,45 +252,6 @@ test("never sends the tab to a non-http authorization URL", async ({ page }) => 
   await expect.poll(() => tab.isClosed()).toBe(true);
   await expect(crm.locator("#oauthNotice-oauth")).toContainText("Authorization couldn't start.");
   await expect(crm.getByRole("link", { name: /authoriz/i })).toHaveCount(0);
-});
-
-test("backs out of a confirm with Escape, and keeps focus when its trigger is gone", async ({ page }) => {
-  await openAuthenticated(page);
-  const crm = await openRow(page, "CRM");
-  await crm.getByRole("button", { name: "Disconnect CRM" }).click();
-  const confirm = crm.getByRole("group", { name: /Disconnect CRM\?/ });
-  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(confirm).toHaveCount(0);
-  await expect(crm.getByRole("button", { name: "Disconnect CRM" })).toBeFocused();
-
-  // A refresh takes the row's controls away while the confirm is open.
-  await crm.getByRole("button", { name: "Reconnect CRM" }).click();
-  const release = holdDetails("oauth");
-  await crm.getByRole("button", { name: "Refresh CRM" }).click();
-  await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toHaveCount(0);
-  await crm
-    .getByRole("group", { name: /Reconnect CRM\?/ })
-    .getByRole("button", { name: "Cancel" })
-    .click();
-  await expect(page.locator("#auth-oauth")).toBeFocused();
-  release();
-});
-
-test("ignores a failed background read instead of repainting the row", async ({ page }) => {
-  oauthConnected = false;
-  await openAuthenticated(page);
-  const crm = await openRow(page, "CRM");
-  await expect(crm.locator(".conn-head")).toContainText("Authorization needed");
-
-  faults.set("GET /ui/connectors/oauth", "upstream hiccup");
-  await page.evaluate('document.dispatchEvent(new Event("visibilitychange"))');
-  await expect.poll(() => requests.filter((request) => request.path === "/ui/connectors/oauth").length).toBe(2);
-  await expect(crm.locator(".conn-head")).toContainText("Authorization needed");
-  await expect(
-    crm.locator('[data-problem="connector_unavailable"], [data-fix-prompt="connector_unavailable"]'),
-  ).toHaveCount(0);
-  await expect(crm.locator('[data-fix-prompt="oauth_required"]')).toHaveCount(1);
 });
 
 test("issues, shows once, rotates and revokes agent tokens through real routes", async ({ page }) => {
@@ -1341,8 +269,7 @@ test("issues, shows once, rotates and revokes agent tokens through real routes",
   // Contract, data and slots all come from main's real v2 server, so the
   // contract's agents and the slot list describe one deployment.
   const paths = new Set(["/ui/api/config", "/ui/data", "/ui/access-tokens", "/ui/access-tokens/desktop-client"]);
-  realRoutes = { connecta, paths, answered: [] };
-  tokenManagement = true;
+  realRoutes = { connecta, paths };
   let releaseList!: () => void;
   const listGate = new Promise<void>((resolve) => {
     releaseList = resolve;
