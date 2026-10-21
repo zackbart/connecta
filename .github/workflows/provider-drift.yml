@@ -2,20 +2,14 @@ name: Provider drift
 
 # Public vendor contracts only. This workflow reports evidence and never
 # participates in CI's check gate or accepts a new baseline. Every run scans
-# every public provider: on every pull request, weekly, and on demand.
+# every public provider weekly and on demand.
 on:
-  pull_request:
   schedule:
     - cron: "23 10 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
-
-# Superseded PR evidence need not finish; scheduled/manual runs stay independent.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   drift:

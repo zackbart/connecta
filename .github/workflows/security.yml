@@ -1,9 +1,16 @@
 name: Security
 
-# Advisories land upstream without a commit here. Pull requests audit only
-# dependency changes, so this run notices new advisories against main, and
-# publishing still refuses a release that fails the same audit.
+# Independent status: dependency-changing PRs, every main push and nightly.
 on:
+  pull_request:
+    paths:
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".npmrc"
+      - ".github/workflows/security.yml"
+  push:
+    branches: [main]
   schedule:
     - cron: "17 9 * * *"
   workflow_dispatch:

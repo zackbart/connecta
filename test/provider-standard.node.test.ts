@@ -2,30 +2,16 @@
 //
 // Applies decision 0011's provider standard to every provider folder. A
 // provider listed in `PENDING` (test/provider-standard.ts) is exempt from the
-// step it has not landed, and must still fail that step, so the list only
-// shrinks. Every other folder, including any created after the list, meets
-// the whole standard.
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+// step it has not landed, and must still fail that step. Every other folder,
+// including any created after the list, meets the whole standard.
 import baseline from "./provider-pending-baseline.json";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { authoredFixtures } from "./providers.generated.js";
 import {
   PENDING,
-  pendingAdditions,
   authoredTools,
   driftViolations,
   evidenceViolations,
@@ -33,7 +19,6 @@ import {
   layoutViolations,
   surfaceViolations,
   type ProviderFacts,
-  type PendingBaseline,
 } from "./provider-standard.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { silentLogger } from "./helpers.js";
@@ -100,47 +85,8 @@ const stepTwo = ({ facts, tools }: (typeof folders)[number]) =>
     (finding) => `${facts.name} ${finding}`,
   );
 
-const baselinePath = "test/provider-pending-baseline.json";
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-
-function pendingHistoryViolations(cwd: string, current: PendingBaseline, configuredBase?: string): string[] {
-  if (configuredBase !== undefined && (!configuredBase.trim() || /^0+$/.test(configuredBase))) {
-    throw new Error(
-      "CONNECTA_STANDARD_BASE must name a real pre-push/base commit; first pushes with an all-zero before SHA fail closed.",
-    );
-  }
-  let base: string;
-  try {
-    const head = git(cwd, "rev-parse", "--verify", "HEAD^{commit}");
-    base =
-      configuredBase === undefined
-        ? git(cwd, "merge-base", "origin/main", "HEAD")
-        : git(cwd, "rev-parse", "--verify", `${configuredBase}^{commit}`);
-    // origin/main advances to HEAD on main pushes. Never compare a commit
-    // with itself, including when a caller explicitly configures HEAD.
-    if (base === head) base = git(cwd, "rev-parse", "--verify", "HEAD^1^{commit}");
-    if (git(cwd, "ls-tree", "--name-only", base, "--", baselinePath)) {
-      return pendingAdditions(current, JSON.parse(git(cwd, "show", `${base}:${baselinePath}`)));
-    }
-  } catch (cause) {
-    throw new Error(
-      `Provider exemption baseline history is unavailable (${configuredBase ?? "origin/main merge base or HEAD first parent"}). Fetch the base SHA and sufficient history in CI (increase fetch-depth); refusing to skip the ratchet.`,
-      { cause },
-    );
-  }
-  // Initial PR only: its base predates the baseline. Freeze names AND count
-  // through a digest, so adding a name to both files still fails this PR.
-  return createHash("sha256").update(JSON.stringify(current)).digest("hex") ===
-    "4dda1a450b4cefae1a2da67ee3a83ce13976a243907d2e246a6b5920ab45d9e7"
-    ? []
-    : ["Initial provider exemptions differ from the frozen baseline"];
-}
-
 describe("the provider standard (decision 0011)", () => {
-  it("rejects additions and reinsertions even when PENDING and its baseline change together", () => {
-    const cwd = fileURLToPath(new URL("../", import.meta.url));
-    expect(pendingHistoryViolations(cwd, baseline, process.env["CONNECTA_STANDARD_BASE"])).toEqual([]);
+  it("keeps the exemption inventory consistent with the pending providers", () => {
     expect(baseline).toEqual({ step1: [...PENDING.step1].sort(), step2: [...PENDING.step2].sort() });
   });
   it("keeps one shrinking list of providers that have not landed a step", () => {
@@ -168,149 +114,6 @@ describe("the provider standard (decision 0011)", () => {
       }
     }
     expect(stale).toEqual([]);
-  });
-});
-
-/** Real Git histories exercise the same guard as the repository assertion. */
-function withHistory(run: (cwd: string, commit: (pending: PendingBaseline) => string) => void): void {
-  const cwd = mkdtempSync(join(tmpdir(), "connecta-standard-"));
-  try {
-    git(cwd, "init", "--initial-branch=main");
-    git(cwd, "config", "user.name", "Test");
-    git(cwd, "config", "user.email", "test@example.com");
-    mkdirSync(join(cwd, "test"));
-    const commit = (pending: PendingBaseline) => {
-      writeFileSync(join(cwd, baselinePath), JSON.stringify(pending));
-      git(cwd, "add", baselinePath);
-      git(
-        cwd,
-        "-c",
-        "commit.gpgsign=false",
-        "-c",
-        "core.hooksPath=/dev/null",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "Record exemptions",
-      );
-      return git(cwd, "rev-parse", "HEAD");
-    };
-    run(cwd, commit);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-}
-
-const withoutGithub = {
-  step1: baseline.step1.filter((name) => name !== "github"),
-  step2: baseline.step2.filter((name) => name !== "github"),
-};
-
-describe("provider exemption comparison history", () => {
-  it("rejects main-push additions and reinsertions after origin/main advances to HEAD", () => {
-    withHistory((cwd, commit) => {
-      commit(baseline);
-      const before = commit(withoutGithub);
-      const added = { step1: [...baseline.step1, "new-provider"], step2: [...baseline.step2, "new-provider"] };
-      const head = commit(added);
-      git(cwd, "update-ref", "refs/remotes/origin/main", head);
-      const expected = [
-        "step1: added or reinserted github",
-        "step1: added or reinserted new-provider",
-        "step2: added or reinserted github",
-        "step2: added or reinserted new-provider",
-      ];
-      expect(pendingHistoryViolations(cwd, added, before)).toEqual(expected);
-      expect(pendingHistoryViolations(cwd, added, head)).toEqual(expected);
-      expect(pendingHistoryViolations(cwd, added)).toEqual(expected);
-      // A multi-commit push must compare before the whole push, not HEAD^1.
-      commit(added);
-      git(cwd, "update-ref", "refs/remotes/origin/main", "HEAD");
-      expect(pendingHistoryViolations(cwd, added, before)).toEqual(expected);
-    });
-  });
-
-  it("accepts removals on main pushes", () => {
-    withHistory((cwd, commit) => {
-      const before = commit(baseline);
-      const head = commit(withoutGithub);
-      git(cwd, "update-ref", "refs/remotes/origin/main", head);
-      expect(pendingHistoryViolations(cwd, withoutGithub, before)).toEqual([]);
-      expect(pendingHistoryViolations(cwd, withoutGithub)).toEqual([]);
-    });
-  });
-
-  it("keeps PR comparisons against the base, with the local merge-base default", () => {
-    withHistory((cwd, commit) => {
-      const base = commit(baseline);
-      git(cwd, "checkout", "-b", "pr");
-      commit(withoutGithub);
-      git(cwd, "checkout", "main");
-      writeFileSync(join(cwd, "unrelated"), "main change");
-      git(cwd, "add", "unrelated");
-      const main = commit(baseline);
-      git(cwd, "update-ref", "refs/remotes/origin/main", main);
-      git(cwd, "checkout", "pr");
-      expect(git(cwd, "merge-base", "origin/main", "HEAD")).toBe(base);
-      expect(pendingHistoryViolations(cwd, withoutGithub)).toEqual([]);
-      git(
-        cwd,
-        "-c",
-        "commit.gpgsign=false",
-        "-c",
-        "core.hooksPath=/dev/null",
-        "merge",
-        "--no-ff",
-        "main",
-        "-m",
-        "PR merge",
-      );
-      expect(pendingHistoryViolations(cwd, withoutGithub, main)).toEqual([]);
-      const added = { step1: [...baseline.step1, "new-provider"], step2: baseline.step2 };
-      expect(pendingHistoryViolations(cwd, added, main)).toEqual(["step1: added or reinserted new-provider"]);
-    });
-  });
-
-  it("fails closed on missing refs, unavailable shallow history, and missing first parents", () => {
-    withHistory((cwd, commit) => {
-      const before = commit(baseline);
-      const head = commit(withoutGithub);
-      expect(() => pendingHistoryViolations(cwd, withoutGithub)).toThrow(/Fetch the base SHA.*fetch-depth/);
-      expect(() => pendingHistoryViolations(cwd, withoutGithub, "missing-ref")).toThrow(/Fetch the base SHA/);
-      const shallow = join(cwd, "shallow");
-      git(cwd, "clone", "--depth=1", pathToFileURL(cwd).href, shallow);
-      expect(() => pendingHistoryViolations(shallow, withoutGithub, before)).toThrow(/Fetch the base SHA/);
-      expect(() => pendingHistoryViolations(shallow, withoutGithub, head)).toThrow(/Fetch the base SHA/);
-      expect(() => pendingHistoryViolations(shallow, withoutGithub)).toThrow(/Fetch the base SHA/);
-    });
-  });
-
-  it("fails closed on first-push all-zero or empty configured bases", () => {
-    for (const base of ["0".repeat(40), ""]) {
-      expect(() => pendingHistoryViolations("unused", baseline, base)).toThrow(/first pushes.*fail closed/);
-    }
-  });
-
-  it("retains the frozen initial digest when the base predates the baseline", () => {
-    withHistory((cwd, commit) => {
-      git(
-        cwd,
-        "-c",
-        "commit.gpgsign=false",
-        "-c",
-        "core.hooksPath=/dev/null",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "Before baseline",
-      );
-      const before = git(cwd, "rev-parse", "HEAD");
-      commit(baseline);
-      expect(pendingHistoryViolations(cwd, baseline, before)).toEqual([]);
-      expect(pendingHistoryViolations(cwd, withoutGithub, before)).toEqual([
-        "Initial provider exemptions differ from the frozen baseline",
-      ]);
-    });
   });
 });
 

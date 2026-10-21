@@ -7,35 +7,33 @@ description: Diagnose a red connecta CI run - read the aggregate check gate, rec
 
 ## Read the gate
 
-[ci.yml](../../../.github/workflows/ci.yml) runs seven jobs for every pull
-request and every push to main; nothing is skipped by path. `check` is the one
-to merge on: it runs `if: always()`, prints each job's result, and fails unless
-every job succeeded. Superseded PR runs are cancelled by concurrency; inspect
-the newest head's run.
+[ci.yml](../../../.github/workflows/ci.yml) runs three work jobs and the
+required `check` gate for every PR, main push and nightly. `check` uses
+`if: always()` and fails unless all three dependencies succeeded, including
+when a dependency was cancelled or unexpectedly skipped. Superseded PR runs
+are cancelled; inspect the newest head's run.
 
-- `static`: `pnpm run check:static` (formatting, generated providers, docs,
-  changes, UI/Clerk freshness, lint, Knip, typecheck).
-- `node`: `pnpm run test:node`, the complete Node project through
-  `vitest.config.node.ts`. The coverage reporter enforces INV and spec
-  evidence and collection completeness here.
-- `workers`: `pnpm run test:workers`, the suites `WORKERS_SUITES` in
-  [vitest.config.ts](../../../vitest.config.ts) lists for workerd.
-- `build`: `pnpm run check:build` (build, declarations, bundle, examples), then
-  `check:package`, including the generated Node deployment's Docker build.
-  Package smoke reuses `dist/` and packs with `--ignore-scripts`.
-- `security`: `pnpm run check:security`.
-- `browser`: Playwright Chromium.
-  [playwright.config.ts](../../../playwright.config.ts) splits three projects:
-  `behavior` (two CI retries), `visual` (pixel comparisons, no retries) and
-  `visual-unstable` (comparisons tagged `@unstable`, two retries). When any
-  attempt fails, flaky ones included, the job uploads `playwright-report`
-  (HTML report plus `test-results/` actual, expected and diff images, and traces).
+- `static`: `check:static` (format, generated freshness, docs, fragments,
+  lint, Knip, typecheck), then `check:build` (build, declarations, bundle cap).
+- `node`: unfiltered `test:node` through `vitest.config.node.ts`, including
+  INV/spec evidence and collection enforcement.
+- `workers`: `test:workers`, the runtime-sensitive `WORKERS_SUITES` in
+  [vitest.config.ts](../../../vitest.config.ts).
 
-[Provider drift](../../../.github/workflows/provider-drift.yml) is advisory and
-outside `check`. It scans every provider on every PR, weekly, and on manual
-dispatch. Its summary separates new or
-changed findings from standing `manual-required` reviews. Drift parser and
-contract tests run in the `node` job.
+Separate workflows report status without participating in `check`:
+
+- [Browser](../../../.github/workflows/browser.yml): main, nightly, manual,
+  and PRs matching native UI/browser/config paths. Playwright `behavior` and
+  `visual-unstable` retry twice in CI; `visual` never retries. A failed attempt,
+  including a flaky pass, uploads `playwright-report` with HTML, diffs/traces.
+- [Security](../../../.github/workflows/security.yml): main, nightly, manual,
+  and PRs matching native dependency-file paths; `check:security` without an
+  install.
+- [Package smoke](../../../.github/workflows/package.yml): main, nightly and
+  manual; build, example typechecks, then `check:package`, including Docker.
+- [Provider drift](../../../.github/workflows/provider-drift.yml): weekly and
+  manual only, advisory. Scans all public providers and separates new findings
+  from standing manual reviews. Parser/contract tests remain in `node`.
 
 Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
@@ -68,8 +66,8 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   failure after dispatch. Keep deadline assertions deterministic with a
   controllable clock when supported; do not relax correctness or performance
   assertions to hide a failure.
-- **pnpm audit.** A new upstream advisory fails `security` on every PR and
-  main push, whatever the PR changed. The nightly Security workflow also
+- **pnpm audit.** A new upstream advisory fails the independent Security workflow on
+  dependency-changing PRs and every main push. The nightly run also
   audits main without a new commit. Fix it in its own PR that moves the
   dependency, then rebase; publishing stays blocked until audit passes.
 - **Coverage reporter.** `Test-backed coverage failed` comes from the full,
@@ -84,5 +82,6 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
 `pnpm run check:fast` runs static checks and Vitest’s built-in
 `--changed origin/main` selection on Node as the partial inner loop. `pnpm run check` runs CI's
-jobs serially, except `security` and package smoke, which `release:check` adds. Other agents
+core checks locally; `release:check` adds Chromium, examples, audit and
+package/Docker smoke. Other agents
 share this machine; check `uptime` before blaming a timeout on your change.

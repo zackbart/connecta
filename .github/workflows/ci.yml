@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,7 +16,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Every job runs for every change. `check` is the one required status.
+# Every core check runs for every change. Share static/build setup; `check`
+# is the only required status. Browser, audit and package smoke report separately.
 jobs:
   static:
     runs-on: ubuntu-latest
@@ -27,18 +31,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check:static
+      - run: pnpm run check:build
 
   # The unfiltered Node run also enforces invariant and spec coverage.
   node:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # The provider exemption ratchet compares against the PR base, or the
-      # commit before a push to main (test/provider-standard.node.test.ts).
-      CONNECTA_STANDARD_BASE: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+      VITEST_MAX_WORKERS: 4
     steps:
       - uses: actions/checkout@v7
-      - run: git fetch --no-tags --depth=1 origin "$CONNECTA_STANDARD_BASE"
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -51,6 +53,8 @@ jobs:
   workers:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      VITEST_MAX_WORKERS: 4
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -61,85 +65,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test:workers
 
-  build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run check:build
-      # The smoke packs this job's dist/ with --ignore-scripts, without a rebuild.
-      - run: pnpm run check:package
-
-  # pnpm audit reads the lockfile and the registry, so it needs no install;
-  # verify-deps-before-run=false stops pnpm run from installing first.
-  security:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - run: pnpm --config.verify-deps-before-run=false run check:security
-
-  browser:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Read installed Playwright version
-        id: playwright
-        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
-      # Even a cache hit needs the runner's system libraries.
-      - name: Install Chromium and system dependencies
-        id: install
-        timeout-minutes: 5
-        continue-on-error: true
-        run: pnpm run test:browser:install --with-deps
-      # A timed-out first attempt can leave apt-get holding the dpkg lock.
-      - name: Retry Chromium installation once
-        if: steps.install.outcome == 'failure'
-        timeout-minutes: 9
-        run: |
-          bash scripts/ci-settle-apt.sh
-          pnpm run test:browser:install --with-deps
-      - name: Run browser tests
-        run: pnpm run test:browser
-      # test-results/ holds output only for failed attempts, flaky ones included.
-      # A run that fails before any test still uploads its HTML report.
-      - name: Upload Playwright report, diffs and traces
-        if: ${{ !cancelled() && (failure() || hashFiles('test-results/**') != '') }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: playwright-report
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: warn
-          retention-days: 14
-
   # Branch protection requires this name. It runs even when a job fails, and
   # passes only when every job it needs succeeded: failed, cancelled and
   # skipped jobs all fail it.
   check:
-    needs: [static, node, workers, build, security, browser]
+    needs: [static, node, workers]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

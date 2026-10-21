@@ -2,4 +2,4 @@
 type: changed
 ---
 
-Run CI jobs in parallel without path, planning-only, or goldens-tier selectors. Keep the required `check` gate fail-closed on every job result, and run the complete Node suite with invariant and spec evidence enforcement. Limit workerd to platform-sensitive suites, including native-output privacy guards and provider goldens. Audit dependencies on every PR and main push as well as nightly. Replace the custom local change selector with Vitest's built-in selection, and expose `check:static` and `check:build` for the shared local and CI steps.
+Reduce required PR CI to static/build checks, the complete Node suite with invariant and spec enforcement, runtime-specific workerd suites, and the fail-closed `check` gate. Compare each provider golden once per runtime. Run browser, dependency audit, and package/Docker smoke on main and nightly, with native path-filtered browser and dependency PR workflows; run advisory provider drift weekly. Remove custom selection machinery and the provider exemption history comparison, retaining provider conformance checks. Make local `check` mirror required PR CI and put the additional checks in `release:check`.
