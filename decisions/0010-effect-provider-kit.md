@@ -109,6 +109,30 @@ from the run is committed:
 - The substituted provider matches those bytes in compare mode on Node and
   workerd, at the full and the always tier.
 
+**Final-round verification.** `VITEST_MAX_WORKERS=2 pnpm run check` ran once
+and passed:
+
+- 441 test files passed and 5 were skipped; 22,680 tests passed and 325 were
+  skipped.
+- All 13 invariants and 156 spec references are backed by passing tests.
+- Build, declarations, bundle caps and examples pass, and all 347 Chromium
+  tests pass.
+- `check:fast` passed with 480 related tests. The in-tree goldens pass at the
+  always tier (Node 54 passed and 18 skipped; workerd 53 and 19) and the full
+  tier (72 of 72 on each).
+
+Every shipped entry's gzip size equals `origin/main`'s, measured on both
+trees: the root at 393,052 B against its 399,882 B cap, `./worker` at
+76,625 B, `examples/worker` at 733,424 B against 734,000 B,
+`./providers/tithely` at 46,496 B and `./providers/stripe` at 261,971 B.
+`dist/` holds no kit or prototype file.
+
+Unshipped, with the same esbuild settings: every kit module over the root
+costs 157,102 B, against 157,620 B at the previous head by the same method;
+the Tithe.ly prototype entry costs 160,480 B over the root, and today's
+Tithe.ly costs 10,054 B. Round 2's "about 120 KB" (below) measured only what
+its prototype reached; B.5 reports the real migrated provider.
+
 **Round-5 ruling and evidence (superseded by the final round above: the
 adapter is deleted and the kit delegates through the core ledger).** The kit delegates single-write verdicts to
 `classifyWriteOutcome` and `providerCallFailure` in the core's
@@ -203,7 +227,8 @@ Four constraints shape the design:
   and `kit-stability.node.test.ts` checks it (Q7).
 - **The kit stays out of the root graph.** The round-3 build measures the root at 379,170 B gzip
   against a 399,882 B cap, which leaves 20,712 B of headroom. The kit costs
-  about 120 KB. A deployment pays that once, through its first kit provider
+  about 120 KB by round 2's measure, and 157 KB with every kit module by the
+  final round's. A deployment pays that once, through its first kit provider
   entry. The purity suite checks that `src/index.ts` reaches nothing under
   `src/http/`.
 - **Classification belongs to the call.** The registry's served verdict
@@ -1599,8 +1624,9 @@ The previous draft asked eight questions. The orchestrator decided them:
   a header for it, or keep the text out of the decision.
 - **The kit is internal until a later decision publishes it** (0009). Custom
   `api()` handlers and published declarations do not change (INV-13).
-- **Deployments pay about 120 KB gzip once,** when they configure their first
-  kit provider. The root does not change, and the purity suite holds that.
+- **Deployments pay about 120–160 KB gzip once,** when they configure their
+  first kit provider (round 2's measure, then the final round's). The root
+  does not change, and the purity suite holds that.
 - **Reconsider if** an effect upgrade forces changes beyond `client.ts`,
   `oauth.ts` and `vendor.ts`, B.5 trips the HttpApiClient fallback, or a
   migrated provider cannot match its goldens without a new kit primitive.
