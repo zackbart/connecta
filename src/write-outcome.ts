@@ -12,7 +12,13 @@ import {
   WithheldTextError,
   type CallErrorDetails,
 } from "./errors.js";
-import { isKnownProviderFailure, knownProviderFailure, providerRequests, refusalRequest } from "./provider-call.js";
+import {
+  isKnownProviderFailure,
+  knownProviderFailure,
+  providerRequests,
+  refusalRequest,
+  refusedStatus,
+} from "./provider-call.js";
 import { carryFailureFacts, errorLabel } from "./operator-record.js";
 
 /** How a dispatched write ended, as far as anyone can know. */
@@ -23,16 +29,17 @@ export type WriteState = "ok" | "failed" | "unknown";
  *
  * `unknown` is the outcome a result must never paper over: the call left
  * connecta and no answer came back, so sending it again could do it twice and
- * not sending it could leave it undone. That is a dispatched call that timed
- * out, was cancelled, found the service unavailable, or failed any way that
- * is not a verdict. A refusal code (`REFUSALS`) or a downstream tool's own
- * `isError` is an answer, so it is `failed`, unless the connector said the
- * outcome is unknown (`writeOutcome`): a verdict reached only after the
- * downstream had the write, such as a renewal that failed after a 401, keeps
- * its code for the handoff but proves nothing about the write. Response text
- * does not decide whether an outcome is unknown. A call that was never
- * dispatched is `failed`: nothing was sent.
- * `result_processing_failed` means the downstream call completed.
+ * not sending it could leave it undone. A dispatched write is `failed` only on
+ * positive refusal provenance, recorded where the evidence was observed: a
+ * request connecta refused before it left (the ledger), a served HTTP refusal
+ * (a 4xx other than 408), or a downstream tool's own `isError` (`answered`).
+ * An error code is never that evidence by itself: a mapper, parser, output
+ * validator, or JSON-RPC error (`-32602` included) can follow a write that
+ * applied, so its `rate_limited` or `invalid_args` is `unknown`. So is any
+ * failure the connector marked unknown (`writeOutcome`), such as a renewal
+ * that failed after a 401. A call that was never dispatched is `failed`:
+ * nothing was sent. `result_processing_failed` means the downstream call
+ * completed.
  */
 export function classifyWriteOutcome(outcome: {
   ok: boolean;
@@ -43,35 +50,10 @@ export function classifyWriteOutcome(outcome: {
   if (outcome.ok) return "ok";
   if (!outcome.dispatched) return "failed";
   if (outcome.error?.writeOutcome === "unknown") return "unknown";
-  if (isKnownProviderFailure(outcome.error)) return "failed";
-  const code = outcome.error?.code;
-  if (code === "result_processing_failed") return "ok";
-  if (code === "timeout" || code === "cancelled" || code === "unavailable") {
-    return "unknown";
-  }
-  if (code !== undefined && REFUSALS.has(code)) return "failed";
-  return outcome.answered === true ? "failed" : "unknown";
+  if (outcome.answered === true || isKnownProviderFailure(outcome.error)) return "failed";
+  if (outcome.error?.code === "result_processing_failed") return "ok";
+  return "unknown";
 }
-
-/**
- * Codes that say the other side refused the call rather than acted on it:
- * the credential, the arguments, the resource, the rate, or a base version
- * someone else already moved past (`conflict`). Anything else a
- * connector reports after dispatch — `connector_call_failed` from a response
- * too large to read, a redirect it would not follow, a body it could not
- * parse, a 5xx — may come after the write landed, so only a downstream
- * tool's own `isError` answer makes it a known failure.
- */
-const REFUSALS = new Set([
-  "auth_required",
-  "downstream_oauth_required",
-  "provider_permission_denied",
-  "invalid_args",
-  "not_found",
-  "rate_limited",
-  "input_required_unsupported",
-  "conflict",
-]);
 
 /**
  * A write's retryable common failure, told as an unknown outcome (INV-9). A
@@ -80,14 +62,12 @@ const REFUSALS = new Set([
  * a 5xx, a gateway's 502 to 504, a broken-off reply, or a connection lost
  * after sending. No network failure proves a write unsent: one send can hide
  * several attempts (a 421 or HTTP/2 refused-stream resend, a retrying
- * dispatcher), so a refusal on the last says nothing about the first.
- * Definite answers pass through: refusals and 4xx verdicts (a 429 or a lock
- * conflict included). Timeouts pass through too, for a served call's
- * invocation to report as `write_outcome_unknown`; a served `remoteMcp()`
- * write comes here directly. A direct write never reaches this with a timeout
- * or an abort: {@link providerCallFailure} settles those first.
+ * dispatcher), so a refusal on the last says nothing about the first. Other
+ * failures pass through for {@link providerCallFailure} to decide, and
+ * timeouts pass through for a served call's invocation to report as
+ * `write_outcome_unknown`.
  */
-export function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
+function unknownOutcome(vendor: { title: string }, error: unknown): unknown {
   if (error instanceof WithheldTextError) {
     if (!error.retryable || error.timeout) return error;
   } else {
@@ -108,19 +88,21 @@ export function unknownOutcome(vendor: { title: string }, error: unknown): unkno
  * failure is finalized (INV-9). Every connector surface hands a write's
  * failure here before it leaves: the `api()` handler boundary, a guarded
  * transport outside a call ledger (inside one, beneath `ctx.fetch`, the
- * shared REST layer, or Google, it defers to the `api()` boundary), and a
- * direct `remoteMcp().callTool()`. Nothing passes a direct write's failure on
- * ahead of it, the caller's own abort included.
+ * shared REST layer, or Google, it defers to the `api()` boundary), and
+ * every `remoteMcp().callTool()` write, direct or served. Nothing passes a
+ * direct write's failure on ahead of it, the caller's own abort included.
  *
  * The served verdict outranks every transport default and replay-safety hint.
  * Dispatch facts come from the transport, never from a provider's
  * interpretation of its HTTP method. A write is a known failure only on
- * positive evidence: a definite refusal served by the vendor, or a request
- * connecta refused before it left. A direct write that may have left and then
- * timed out, was aborted, or failed without a served refusal is an unknown
- * outcome, never retryable, unless the caller proved it repeatable with an
- * idempotency key the vendor receives. A served call's invocation reports its
- * own timeouts and aborts.
+ * refusal provenance recorded where the evidence was observed: (a) the
+ * ledger shows the request never left connecta, or (b) the downstream served
+ * an HTTP refusal, a 4xx other than 408 (`refusedStatus`, `vendorRefusal`).
+ * An error code is never that evidence. A write that may have left and then
+ * timed out, was aborted, or failed any other way is an unknown outcome,
+ * never retryable, unless a direct caller sent an idempotency key the vendor
+ * honors (`repeatable`; no operation hint counts). A served call's
+ * invocation reports its own timeouts and aborts.
  */
 export function providerCallFailure(
   ctx: ConnectorContext,
@@ -160,10 +142,16 @@ export function providerCallFailure(
     if (served === undefined && dispatched.length === 1 && dispatched[0]?.repeatable) return error;
     return uncertainProviderFailure({ title: dispatched[0]?.provider ?? vendor.title }, error, ctx);
   }
-  if (!facts.dispatched) return error;
+  // Provenance (a): the ledger shows the request never left connecta, unless
+  // the connector itself could not tell (an explicit unknown marker).
+  if (!facts.dispatched)
+    return error instanceof ConnectorCallError && error.writeOutcome === "unknown"
+      ? error
+      : knownProviderFailure(error);
   if (served === undefined) {
-    // A direct transport user may prove idempotency. A deployment's served
-    // write verdict still requires reconciliation rather than retry advice.
+    // A direct transport user may prove idempotency with a key the vendor
+    // honors. A deployment's served write verdict still requires
+    // reconciliation rather than retry advice.
     if (facts.repeatable === true) return error;
     // Read before any code filter: a timeout or an abort, whatever its code
     // or source, is no verdict, and no invocation will report it.
@@ -179,14 +167,11 @@ export function providerCallFailure(
     // The served call's invocation reports it as `write_outcome_unknown`.
     if (isTimeout(error)) return error;
   }
-  // A 5xx cannot prove refusal, even when its body names a quota/auth reason.
+  // Provenance (b): the downstream served a refusing HTTP status. An error
+  // code alone (a mapper's `rate_limited` after a 2xx, a JSON-RPC `-32602`,
+  // an output validator's `invalid_args`) is never this evidence.
+  if (refusedStatus(facts.status) && error.code !== "unavailable") return knownProviderFailure(error);
   const serverError = facts.status !== undefined && facts.status >= 500;
-  if (
-    !serverError &&
-    (REFUSALS.has(error.code) || (facts.status !== undefined && facts.status >= 400 && error.code !== "unavailable"))
-  )
-    return knownProviderFailure(error);
-  if (error.code !== "unavailable" && error.code !== "connector_call_failed" && !serverError) return error;
   if (facts.repeatable === true && error.retryable) {
     return carryFailureFacts(
       error,

@@ -817,15 +817,6 @@ async function adding<T>(work: () => Promise<T>, check: string): Promise<T> {
   }
 }
 
-/**
- * Writes safe to send twice: each sets fixed values — a name, a description,
- * the trashed flag, a role, the whole content — so a second identical request
- * leaves the file as the first did, and a 5xx stays a retryable outage. Never
- * a create, copy, share, permission delete, or move, whose second send makes a
- * second thing, fails differently, or acts on parents the first send changed.
- */
-const IDEMPOTENT = { idempotent: true } as const;
-
 const CHECK_CREATED =
   "Find it with search_files or list_folder_items before creating it again: a second call makes a second one.";
 
@@ -1127,7 +1118,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     fileId: string,
     body: JsonRecord,
     query: Record<string, string | undefined> = {},
-    options: { idempotent?: true } = {},
   ) =>
     projectFile(
       await client.json(
@@ -1138,7 +1128,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           body,
         },
         ctx,
-        options,
       ),
       fileId,
     );
@@ -1563,8 +1552,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
               rawBody: content.bytes as BodyInit,
             },
             ctx,
-            // The whole content, replaced: a second send leaves the same file.
-            IDEMPOTENT,
           ),
           String(args["fileId"]),
         );
@@ -1583,13 +1570,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         if (args["name"] === undefined && args["description"] === undefined) {
           throw new ConnectorCallError("invalid_args", "Pass name, description, or both.");
         }
-        return patch(
-          ctx,
-          args["fileId"],
-          compact({ name: args["name"], description: args["description"] }),
-          {},
-          IDEMPOTENT,
-        );
+        return patch(ctx, args["fileId"], compact({ name: args["name"], description: args["description"] }));
       },
     },
     {
@@ -1670,7 +1651,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       annotations: destructive,
       inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
       outputSchema: FILE_SCHEMA,
-      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: true }, {}, IDEMPOTENT),
+      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: true }),
     },
     {
       name: "restore_file",
@@ -1680,7 +1661,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       annotations: additive,
       inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
       outputSchema: FILE_SCHEMA,
-      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: false }, {}, IDEMPOTENT),
+      handler: async (args, ctx) => patch(ctx, args["fileId"], { trashed: false }),
     },
     {
       name: "share_file",
@@ -1797,7 +1778,6 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
               body: { role: args["role"] },
             },
             ctx,
-            IDEMPOTENT,
           ),
           String(args["permissionId"]),
         ),

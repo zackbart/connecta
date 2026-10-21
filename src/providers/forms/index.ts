@@ -1005,8 +1005,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           // it, or a reply that broke: the form may exist, and there is no
           // form id to re-read. Another create would make a second one, so
           // say where to look first. The shared verdict (not retryable)
-          // stands. No Forms write is sent as idempotent: a create, a batch,
-          // and an info update are each not safe to send twice blind.
+          // stands: a create, a batch, and an info update are each not safe
+          // to send twice blind.
           // Any phase that is neither "never sent" nor "explicitly refused"
           // is uncertain, so a phase the shared layer adds later is too.
           const outcome = googleOutcomeOf(error);

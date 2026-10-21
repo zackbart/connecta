@@ -622,9 +622,8 @@ function uncertain(message: string, ctx: ConnectorContext): unknown {
  *   could not be used — it broke off, overflowed the ceiling, or would not
  *   parse.
  *
- * "Nothing applied" is claimed only for an observed 4xx: `refused` can also
- * carry a 5xx on an idempotent write, and no Docs write is sent `idempotent`
- * — a create or an insert sent twice is two; replaceAllText can match its own
+ * "Nothing applied" is claimed only for an observed 4xx (`refused`), never
+ * for a write's 5xx — a create or an insert sent twice is two; replaceAllText can match its own
  * replacement; and a revision-guarded batch sent again after its first landed
  * is refused as `conflict`, whose advice to reapply the change would then
  * duplicate it. A failure the client did not classify is `unknown`, the

@@ -3,7 +3,9 @@
 // (#902 round 10). A direct call has no invocation to report its outcome, so
 // each one must say it: unknown and never retryable, whatever timed out or
 // aborted it, unless a genuine idempotency key makes a repeat harmless. Reads
-// and served calls keep what they had.
+// and served calls keep what they had. Round 11: a served answer is a known
+// failure only when its status refuses (a 4xx other than 408); an error code
+// a mapper or parser throws after a 2xx, or after a 408, is no evidence.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { z } from "zod";
 import { api } from "../src/connectors/api.js";
@@ -16,7 +18,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { notion } from "../src/providers/notion/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
-import { classifyCallError } from "../src/errors.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -349,6 +351,163 @@ describe("a direct write's timeout or abort, on every path out of a connector", 
       "The caller's signal aborted this call (Error) after the write may have reached tickets. Whether it took " +
         "effect is unknown; check the target before repeating it.",
     );
+  });
+});
+
+/** A route of the evidence server that answers each request with `status` and `body`. */
+function answering(status: number, body?: string) {
+  const id = crypto.randomUUID();
+  return {
+    origin: `${inject("evidenceHttpServer")}/${id}`,
+    path: `/status/${status}`,
+    query: body === undefined ? {} : { body },
+    received: async () => (await exchanges(id)).length,
+  };
+}
+
+type Mapper = (response: { json(): Promise<unknown> }) => unknown;
+
+/** What a provider's mapper does with the answer it was served. */
+const throwing =
+  (code: "rate_limited" | "invalid_args" | "timeout", retryable = true): Mapper =>
+  () => {
+    throw new ConnectorCallError(code, `The mapper's own ${code}.`, { retryable });
+  };
+
+/** Send one request through a guarded transport, outside any ledger or inside a tracked api() call. */
+async function guardedCall(
+  where: "outside any call ledger" | "in a tracked api() call",
+  kind: Kind,
+  server: ReturnType<typeof answering>,
+  map: Mapper,
+): Promise<unknown> {
+  const send = guardedFetch({
+    provider: "Tickets",
+    baseUrl: server.origin,
+    authenticate: () => ({}),
+    maxResponseBytes: 1024,
+  });
+  const request =
+    kind === "write"
+      ? ({ method: "POST", path: server.path, query: server.query, body: { title: "Fixture" } } as const)
+      : ({ method: "GET", path: server.path, query: server.query } as const);
+  if (where === "outside any call ledger") {
+    const ctx = makeRegistry([]).contextFor("tickets", BASE);
+    return failure(send(request, ctx, (response) => map(response)));
+  }
+  const connector = tracksEveryRequest(tickets((_kind, ctx) => send(request, ctx, map)));
+  return failure(connector.callTool(kind, {}, makeRegistry([connector]).contextFor("tickets", BASE)));
+}
+
+const GUARDED = ["outside any call ledger", "in a tracked api() call"] as const;
+
+const UNKNOWN_ANSWERS: Array<[label: string, status: number, body: string | undefined, map: Mapper, code: string]> = [
+  ["200 then the mapper's rate_limited", 200, undefined, throwing("rate_limited"), "rate_limited"],
+  ["200 then the mapper's invalid_args", 200, undefined, throwing("invalid_args", false), "invalid_args"],
+  ["200 then an unparseable reply", 200, "not json", (response) => response.json(), ""],
+  ["408 the mapper reads as a timeout", 408, undefined, throwing("timeout"), "timeout"],
+  ["408 then the mapper's invalid_args", 408, undefined, throwing("invalid_args", false), "invalid_args"],
+];
+
+describe("a direct write's served answer: only a refusing status is evidence (round 11)", () => {
+  it.each(GUARDED.flatMap((where) => UNKNOWN_ANSWERS.map((answer) => [where, ...answer] as const)))(
+    "INV-9: through a guarded transport %s, %s is unknown and never retryable",
+    async (where, _label, status, body, map, code) => {
+      const server = answering(status, body);
+      const error = await guardedCall(where, "write", server, map);
+      expect(await server.received()).toBe(1);
+      const classified = classifyCallError(error);
+      expect(classified).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      // The code stays for diagnostics; it is not the verdict.
+      if (code) expect(classified.code).toBe(code);
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("unknown");
+    },
+  );
+
+  it.each(
+    GUARDED.flatMap((where) => [
+      [where, 422, throwing("invalid_args", false), false] as const,
+      [where, 429, throwing("rate_limited"), true] as const,
+    ]),
+  )(
+    "INV-9: control: through a guarded transport %s, a served %i refusal stays a known failure",
+    async (where, status, map, retryable) => {
+      const server = answering(status);
+      const error = await guardedCall(where, "write", server, map);
+      expect(await server.received()).toBe(1);
+      const classified = classifyCallError(error);
+      expect(classified.retryable).toBe(retryable);
+      expect(classified.writeOutcome).toBeUndefined();
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("failed");
+    },
+  );
+
+  it.each(GUARDED)(
+    "INV-9: control: through a guarded transport %s, a read's 200 then the mapper's rate_limited is unchanged",
+    async (where) => {
+      const server = answering(200);
+      const error = await guardedCall(where, "read", server, throwing("rate_limited"));
+      expect(classifyCallError(error)).toMatchObject({ code: "rate_limited", retryable: true });
+      expect(classifyCallError(error).writeOutcome).toBeUndefined();
+    },
+  );
+
+  /** A Notion write served `status` and `body` over a real socket. */
+  async function notionWrite(status: number, body?: string) {
+    const server = answering(status, body);
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith("https://api.notion.com/")
+        ? real(`${server.origin}${server.path}?${new URLSearchParams(server.query)}`, init)
+        : real(input, init),
+    );
+    const connector = notion("workspace", { auth: { type: "token" }, purpose: "Team knowledge base" });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await vault.set("workspace", "secret_token", "fixture");
+    const ctx = makeRegistry([connector], { storage, credentialVault: vault }).contextFor("workspace", BASE);
+    const error = await failure(
+      connector.callTool(
+        "notion_api_write",
+        {
+          method: "PATCH",
+          path: "/v1/pages/page-1",
+          body: { cover: { type: "external", external: { url: "https://example.com/cover.png" } } },
+        },
+        ctx,
+      ),
+    );
+    expect(await server.received()).toBe(1);
+    return error;
+  }
+
+  it.each([
+    ["200 with an unparseable reply", 200, "not json"],
+    ["408", 408, JSON.stringify({ object: "error", status: 408, code: "timeout", message: "Timed out." })],
+  ] as const)(
+    "INV-9: through the shared REST layer (Notion), %s is unknown and never retryable",
+    async (_label, status, body) => {
+      const error = await notionWrite(status, body);
+      expect(classifyCallError(error)).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("unknown");
+    },
+  );
+
+  it("INV-9: control: Notion's write 409 conflict_error stays a known conflict, and its 400 a known invalid_args", async () => {
+    const conflict = await notionWrite(
+      409,
+      JSON.stringify({ object: "error", status: 409, code: "conflict_error", message: "Conflict occurred." }),
+    );
+    expect(classifyCallError(conflict)).toMatchObject({ code: "conflict", retryable: false });
+    expect(classifyCallError(conflict).writeOutcome).toBeUndefined();
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: conflict as never })).toBe("failed");
+    const invalid = await notionWrite(
+      400,
+      JSON.stringify({ object: "error", status: 400, code: "validation_error", message: "Bad cover." }),
+    );
+    expect(classifyCallError(invalid)).toMatchObject({ code: "invalid_args" });
+    expect(classifyCallError(invalid).writeOutcome).toBeUndefined();
+    expect(classifyWriteOutcome({ ok: false, dispatched: true, error: invalid as never })).toBe("failed");
   });
 });
 

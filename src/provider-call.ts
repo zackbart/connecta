@@ -11,6 +11,7 @@ export interface ProviderRequest {
   status?: number;
   auxiliary: boolean;
   provider: string;
+  /** A genuine idempotency key the vendor honors was sent with it; nothing else. */
   repeatable: boolean;
 }
 interface ProviderCall {
@@ -116,16 +117,22 @@ export function providerFetch(
   };
 }
 
-/** Only the mapper's own 4xx answer supplies refusal provenance. */
+/**
+ * Whether a served HTTP status says the request was refused, not applied: a
+ * 4xx other than 408. A 408 is a timeout, whose request may have been acted
+ * on; a 2xx or 5xx never proves a write unapplied.
+ */
+export function refusedStatus(status: number | undefined): boolean {
+  return status !== undefined && status >= 400 && status < 500 && status !== 408;
+}
+
+/**
+ * Refusal provenance, recorded where the answer is observed: the request was
+ * served a refusing status (`refusedStatus`) and the mapper failed on it. An
+ * error code alone is never this evidence.
+ */
 export function vendorRefusal<T>(error: T, request: ProviderRequest): T {
-  if (
-    error !== null &&
-    typeof error === "object" &&
-    request.status !== undefined &&
-    request.status >= 400 &&
-    request.status < 500
-  )
-    refusals.set(error, request);
+  if (error !== null && typeof error === "object" && refusedStatus(request.status)) refusals.set(error, request);
   return error;
 }
 

@@ -313,12 +313,12 @@ export function googleReasonsOf(error: unknown): readonly string[] {
  *   reply could not be used. A write probably applied.
  * - `redirected`: Google answered 3xx, which is never followed. It shows
  *   neither that a write applied nor that it did not: outcome unknown.
- * - `server-error`: Google answered a non-idempotent write with a 5xx,
- *   whatever reason it named. It may have committed before failing, so the
- *   outcome is unknown.
- * - `refused`: Google answered with a 4xx, or a read or idempotent write
- *   with a 5xx. Nothing to repeat blindly: a 4xx applied nothing, and a
- *   repeated read or idempotent write is harmless.
+ * - `server-error`: Google answered a write with a 5xx, whatever reason it
+ *   named. It may have committed before failing, so the outcome is unknown.
+ *   No operation hint makes it repeatable: only an idempotency key the
+ *   vendor honors does, and Google takes none.
+ * - `refused`: Google answered with a 4xx, or a read with a 5xx. Nothing to
+ *   repeat blindly: a 4xx applied nothing, and a repeated read is harmless.
  * - `unauthorized`: Google answered a write with 401, and it was not sent
  *   again (INV-9). A server may act on a request before it rejects the
  *   token, so the outcome is unknown.
@@ -346,7 +346,7 @@ interface SendFacts {
   headers?: Headers;
   /** Google answered with an error status, which the mapper classified. */
   refused?: boolean;
-  /** Google answered a non-idempotent write with a 5xx. */
+  /** Google answered a write with a 5xx. */
   serverError?: boolean;
 }
 
@@ -626,13 +626,6 @@ interface GoogleRequestOptions {
    * like a product switched off for the user.
    */
   revisionGuarded?: boolean;
-  /**
-   * Sending this write twice leaves the same state as sending it once — a
-   * PUT of a whole resource, a Sheets `values.update` of fixed cells. This
-   * proves repeatability only for a direct request with no served verdict.
-   * A served write still reports an unknown outcome rather than retry advice.
-   */
-  idempotent?: boolean;
 }
 
 /** The token the API refused, carried out of the mapper for one replay. */
@@ -715,17 +708,16 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
    * repeat and keeps its retryable classification.
    */
   /**
-   * A 5xx answering a write that is not idempotent. Google can fail after a
-   * change commits, so "unavailable, retry" would invite a duplicate insert
-   * or a second draft: the outcome is unknown and the write is not retried,
-   * whatever reason the 5xx names. Its reasons stay readable beside it.
+   * A 5xx answering a write. Google can fail after a change commits, so
+   * "unavailable, retry" would invite a duplicate insert or a second draft:
+   * the outcome is unknown and the write is not retried, whatever reason the
+   * 5xx names. Its reasons stay readable beside it.
    */
   function serverErrorOnWrite(
     mapped: ConnectorCallError,
     status: number,
     method: string,
     ctx: ConnectorContext,
-    requestOptions: GoogleRequestOptions,
   ): ConnectorCallError | undefined {
     // Any 5xx, whatever reason it names: a quota reason on a 503 does not
     // prove the write was turned away before it committed. Only a 429, or a
@@ -735,12 +727,10 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       dispatched: true,
       status,
       fallback: method === "GET" ? "read" : "write",
-      repeatable: requestOptions.idempotent === true,
     });
     const collecting = providerRequests(ctx) !== undefined;
     if (collecting) {
-      if (!isWrite(method, ctx) || (callClassification(ctx) === undefined && requestOptions.idempotent === true))
-        return undefined;
+      if (!isWrite(method, ctx)) return undefined;
     } else if (!(decision instanceof ConnectorCallError) || decision.writeOutcome !== "unknown") return undefined;
     const unknown = new ConnectorCallError(
       "connector_call_failed",
@@ -781,7 +771,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     // still says what to do next.
     if (status !== undefined && status >= 400 && !ctx.signal?.aborted) {
       const mapped = apiFailure(failure, status, facts.headers ?? new Headers(), undefined, requestOptions);
-      const unknown = serverErrorOnWrite(mapped, status, method, ctx, requestOptions);
+      const unknown = serverErrorOnWrite(mapped, status, method, ctx);
       return unknown
         ? outcome(unknown, { dispatched: true, status, phase: "server-error" })
         : outcome(mapped, { dispatched: true, status, phase: "refused" });
@@ -793,7 +783,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       const phase: GoogleOutcome["phase"] =
         status === undefined
           ? "awaiting-response"
-          : status >= 500 && write && requestOptions.idempotent !== true
+          : status >= 500 && write
             ? "server-error"
             : status >= 400
               ? "refused"
@@ -855,7 +845,6 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       dispatched: facts.dispatched,
       ...(facts.status === undefined ? {} : { status: facts.status }),
       fallback: method === "GET" ? "read" : "write",
-      repeatable: requestOptions.idempotent === true,
     });
     if (decision instanceof ConnectorCallError && mapped instanceof ConnectorCallError && decision !== mapped) {
       googleReasons.set(decision, googleReasonsOf(mapped));
@@ -891,7 +880,6 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     }
     const headed: GuardedRequest = {
       ...request,
-      repeatable: requestOptions.idempotent === true,
       headers: { Accept: accept, ...request.headers },
     };
     for (let attempt = 0; ; attempt += 1) {
@@ -923,7 +911,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
             const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions);
-            const unknown = serverErrorOnWrite(mapped, response.status, headed.method, ctx, requestOptions);
+            const unknown = serverErrorOnWrite(mapped, response.status, headed.method, ctx);
             if (unknown) {
               facts.serverError = true;
               throw unknown;

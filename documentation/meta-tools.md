@@ -991,9 +991,19 @@ Node's fetch sends a request again after HTTP 421 and after an HTTP/2
 operator-installed dispatcher such as undici's `RetryAgent` can retry further,
 so a refusal on the last attempt says nothing about the earlier ones.
 Connecta therefore never reports a transport-failed write as known failed. A
-write stays a known failure, with its own advice, only when connecta refused
-it before it left, or the downstream answered with a response classified as
-not applied (a refusal such as a 4xx). A failure during a composite
+write stays a known failure, with its own advice, only on refusal provenance
+recorded where the evidence was observed: connecta refused it before it left,
+or the downstream served an HTTP refusal, a 4xx other than 408 (a 408 is a
+timeout). An error code is never that evidence by itself. A `rate_limited`,
+`invalid_args`, or any other code thrown after a 2xx (by a response mapper,
+a parser, or an output-schema check) or after a 408, and any JSON-RPC error a
+`remoteMcp()` server returns once the `tools/call` was sent (`-32602`
+included: a server can run the tool and then reject its own result), keeps
+its code and message for diagnostics but is `retryable: false` with
+`writeOutcome: "unknown"`, on a direct and a served call alike, and counts in
+a program's `writes.unknown`. A `remoteMcp()` write refused at the HTTP layer
+with a 4xx other than 408, or before its `tools/call` was sent, stays a known
+failure. A failure during a composite
 call's later request leaves earlier requests' outcomes unknown, and once the
 call's outcome is decided, a request that had not left is never sent. A
 write the downstream answered with HTTP 401 is not resent: the credential is
@@ -1018,9 +1028,12 @@ The classification served for the call decides this advice, including deployment
 `retryable: false` and `writeOutcome: "unknown"`, even if its request uses GET.
 A served read keeps the provider's read retry advice even if its request uses
 POST. Tool defaults and HTTP methods supply a fallback only when no served
-classification exists. A vendor idempotency key or an idempotent-operation hint
-does not change an uncertain served write into retry advice; its recovery facts
-still help reconcile the target before a deliberate repeat.
+classification exists. A vendor idempotency key does not change an uncertain
+served write into retry advice; its recovery facts still help reconcile the
+target before a deliberate repeat. An operation hint (a whole-resource `PUT`,
+fixed spreadsheet cells, a content-addressed upload) grants no retry credit on
+any call, direct or served: only an idempotency key the vendor honors, which is
+Stripe's today, keeps a direct write's retry advice.
 
 Retryability comes from typed errors, HTTP status, registered OAuth error codes,
 SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:

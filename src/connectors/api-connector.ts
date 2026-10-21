@@ -11,6 +11,7 @@ import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
 import {
   closeProviderCall,
+  knownProviderFailure,
   providerCallContext,
   providerFetch,
   providerRequests,
@@ -370,8 +371,9 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
     async callTool(name, args, ctx) {
       trackCredentialReads(ctx);
       const tool = byName.get(name);
+      // Refusals before the handler runs are known failures: nothing was sent.
       if (!tool) {
-        throw new Error(`Unknown tool "${name}" on connector "${id}"`);
+        throw knownProviderFailure(new Error(`Unknown tool "${name}" on connector "${id}"`));
       }
       const input = args ?? {};
       if (validateArgs && tool.inputSchema) {
@@ -388,7 +390,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
           },
           { connector: id, tool },
         );
-        if (invalid) throw invalid;
+        if (invalid) throw knownProviderFailure(invalid);
       }
       // `await` (not a bare promise return) so a handler that throws before
       // its first await never sits handler-less for the thenable-adoption

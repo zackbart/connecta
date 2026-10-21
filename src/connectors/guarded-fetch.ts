@@ -82,7 +82,12 @@ export interface GuardedRequest {
   classification?: "read" | "write";
   /** Provider-declared request that cannot perform the logical resource write. */
   auxiliary?: boolean;
-  /** Replay proof for direct transport users; never overrides a served write. */
+  /**
+   * Replay proof for direct transport users, set only when the request
+   * carries a genuine idempotency key its vendor honors. An operation hint
+   * (a PUT, a content address) is never this proof. Never overrides a served
+   * write.
+   */
   repeatable?: boolean;
 }
 

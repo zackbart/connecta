@@ -1895,7 +1895,7 @@ compiling and configuring the real thing.
   and `unsentAfterUnauthorized` reports a write answered 401, which is never
   resent whatever credential renewal meets. Both mark the error
   `writeOutcome: "unknown"`, which `classifyWriteOutcome` honors before any
-  refusal code, so an authorization verdict reached after the write left still
+  refusal provenance, so an authorization verdict reached after the write left still
   counts as unknown in program write accounting (`src/program-writes.ts`),
   whose result is then that verdict with its handoff, caught or not.
   `remoteMcp()` classifies by the invocation's verdict
@@ -1929,9 +1929,23 @@ compiling and configuring the real thing.
   an operator-installed dispatcher such as undici's `RetryAgent` can retry
   further. A refusal on the last attempt says nothing about the earlier ones,
   so connecta never reports a transport-failed write as known failed. A write
-  is a known failure only when connecta refused it before dispatch (the ledger
-  proves it never left) or a served HTTP response's classification says it was
-  not applied. Owning transport attempts is planned for decision 0009's B.2
+  is a known failure only on refusal provenance recorded where the evidence is
+  observed, never inferred from an error code: (a) the ledger proves it never
+  left, or (b) the downstream served an HTTP refusal, a 4xx other than 408
+  (`refusedStatus` and `vendorRefusal` in `src/provider-call.ts`), under the
+  provider's existing served classification (Notion's write 409 is a
+  `conflict`). A 408 is a timeout, and a 2xx followed by a mapper, parser, or
+  output-validation failure may have applied. `classifyWriteOutcome` counts a
+  dispatched write `failed` only with that provenance (`answered`, or the
+  error's private known-failure mark) or a downstream tool's `isError`; a
+  bare `rate_limited`, `invalid_args`, or `conflict` code is `unknown`.
+  Pre-dispatch refusals mark themselves: `api()`'s unknown tool and argument
+  validation, `remoteMcp()`'s allowlist, connect, and any failure before its
+  `tools/call` is sent, and GitHub's hosted target check and token mint.
+  `remoteMcp()` applies the rule to direct and served writes alike: once
+  `dispatch.sent`, a JSON-RPC error (`-32602` included), an unreadable result,
+  or a failed output validation is unknown; only an HTTP 4xx (not 408) on the
+  request is a refusal. Owning transport attempts is planned for decision 0009's B.2
   guarded `HttpClient`. Reads keep their retry advice. Every maintained
   provider declares (`tracksEveryRequest`) that its handlers send only through
   channels the ledger records; for an undeclared `api()` handler an empty
@@ -1943,8 +1957,8 @@ compiling and configuring the real thing.
   `providerCallFailure` in `src/write-outcome.ts` finalizes the call once at the
   `api()` boundary, including handler-thrown typed errors. For a served write,
   no resource dispatch keeps the failure's own advice. A vendor's own 4xx
-  refusal is a known failure only when no other resource request was
-  dispatched. Refusal provenance travels with the error independently of its
+  refusal (a 4xx other than 408) is a known failure only when no other
+  resource request was dispatched. Refusal provenance travels with the error independently of its
   code or wording, so a generic `connector_call_failed` refusal still counts
   as failed in program write accounting. Every other possibly executing
   failure is non-retryable with `writeOutcome: "unknown"`; authorization codes
@@ -1952,19 +1966,22 @@ compiling and configuring the real thing.
   A later refusal cannot make an earlier successful request safe to repeat.
   Provider recovery wrappers change wording through helpers that preserve
   verdicts and provenance; Google also retains its response phases and reasons.
-  A served write requires reconciliation even with an idempotency key or a
-  provider's idempotent-operation hint; direct transport calls without a
-  served verdict can still prove repeatability, but only with a key the
-  vendor receives: the REST write tool refuses an `idempotencyKey` that fetch
+  No operation hint (a whole-resource `PUT`, fixed cells, a content address)
+  grants retry credit, direct or served. A served write requires
+  reconciliation even with an idempotency key; direct transport calls
+  without a served verdict can still prove repeatability, but only with a
+  genuine key sent to a vendor that honors it (Stripe today, through
+  `idempotencyHeader`): the REST write tool refuses an `idempotencyKey` that fetch
   would send empty after trimming or would not send at all (CR, LF, NUL, any
   other control character but tab, DEL, or a code point past Latin-1), as
   `invalid_args` before recovery is recorded, and `callRest` marks a request
   repeatable only for a key fetch sends as given.
   `providerCallFailure` (`src/write-outcome.ts`) is the one finalizer for a
   direct write's failure: the `api()` handler boundary, a guarded transport
-  outside a call ledger, and a direct `remoteMcp().callTool()` (with its
-  `tools/call` dispatch record as the ledger and the endpoint's HTTP status
-  as the served verdict) all hand it every write failure. Guarded transports
+  outside a call ledger, and every `remoteMcp().callTool()` write, direct or
+  served (with its `tools/call` dispatch record as the ledger and the
+  endpoint's HTTP status as the served verdict) all hand it every write
+  failure. Guarded transports
   inside a call (`ctx.fetch`, the shared REST layer, Google) defer to the
   `api()` boundary. No identity passthrough or code filter runs ahead of it
   for a direct write. It recognizes every timeout and abort before any code

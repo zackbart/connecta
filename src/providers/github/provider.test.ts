@@ -23,6 +23,7 @@ import { buildSandboxProviders } from "../../execute.js";
 import { silentLogger } from "../../../test/helpers.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { negotiationKeys, responseCacheKeys } from "../../storage/keys.js";
+import { classifyWriteOutcome } from "../../write-outcome.js";
 
 function value(result: any): any {
   return result.structuredContent;
@@ -574,6 +575,49 @@ describe("GitHub App provider", () => {
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(fixture.requests).toHaveLength(before);
   });
+
+  it.each([
+    [
+      "an unreviewed argument",
+      "create_or_update_file",
+      { owner: "acme", repo: "one", path: "a", content: "x", message: "m", branch: "main", sha: "a", extra: 1 },
+    ],
+    [
+      "an unconfigured owner",
+      "create_or_update_file",
+      { owner: "elsewhere", repo: "one", path: "a", content: "x", message: "m", branch: "main" },
+    ],
+    ["an unreviewed method", "issue_write", { owner: "acme", repo: "one", method: "lock", title: "t" }],
+    [
+      "a workflow file without workflow scope",
+      "push_files",
+      {
+        owner: "acme",
+        repo: "one",
+        branch: "main",
+        message: "m",
+        files: [{ path: ".github/workflows/ci.yml", content: "x" }],
+      },
+    ],
+  ])(
+    "INV-9: a hosted write's target check refuses %s before any token mint or send, a known failure",
+    async (_label, name, args) => {
+      const fixture = apiFixture();
+      const error = await connection()
+        .callTool(name, args, context())
+        .then(
+          () => {
+            throw new Error("expected a refusal");
+          },
+          (failure: unknown) => failure,
+        );
+      expect(error).toMatchObject({ code: "invalid_args" });
+      expect(fixture.fetchStub).not.toHaveBeenCalled();
+      expect(fixture.tokens).toHaveLength(0);
+      // Ledger provenance: nothing left, so the write is a known failure.
+      expect(classifyWriteOutcome({ ok: false, dispatched: true, error: error as never })).toBe("failed");
+    },
+  );
 
   it("INV-10: exposes secret-free mixed scope discovery and lazily pages only the selected owner", async () => {
     const fixture = apiFixture();

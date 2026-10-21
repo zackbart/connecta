@@ -26,12 +26,15 @@ interface Exchange {
  *   the request breaks off, answer 200 if it ends.
  * - `POST /<id>/hold`: read the whole request and never answer, until the
  *   client gives up.
+ * - `POST /<id>/status/<code>`: read the whole request, then answer HTTP
+ *   `<code>` with the `body` query parameter (default `{}`) as JSON.
  * - `GET /<id>/exchanges`: what the server received for `<id>`.
  */
 export default async function setup(project: TestProject) {
   const exchanges = new Map<string, Exchange[]>();
   const server = createServer((request, response) => {
-    const [, id, route] = new URL(request.url!, "http://localhost").pathname.split("/");
+    const url = new URL(request.url!, "http://localhost");
+    const [, id, route, code] = url.pathname.split("/");
     if (!id) {
       response.writeHead(404).end();
       return;
@@ -49,6 +52,10 @@ export default async function setup(project: TestProject) {
     request.on("aborted", () => response.destroy());
     request.on("end", () => {
       if (route === "reset") response.destroy();
+      else if (route === "status")
+        response
+          .writeHead(Number(code), { "content-type": "application/json" })
+          .end(url.searchParams.get("body") ?? "{}");
       else if (route !== "hold") response.writeHead(200, { "content-type": "application/json" }).end("{}");
     });
   });

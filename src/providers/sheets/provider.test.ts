@@ -1099,26 +1099,23 @@ describe("errors (H11)", () => {
     status: 503,
     body: { error: { code: 503, message: "The service is currently unavailable.", status: "UNAVAILABLE" } },
   });
-  const idempotent = new Set(["update_values", "batch_update_values", "clear_values"]);
+  it.each(writes)("treats a 5xx answering %s as an unknown outcome, never retryable", async (name, args) => {
+    route = serverError;
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("outcome is unknown");
+    expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+    expect(calls).toHaveLength(1);
+  });
 
-  it.each(writes.filter(([name]) => !idempotent.has(name)))(
-    "treats a 5xx answering %s as an unknown outcome, never retryable",
+  // Writing fixed cells is an operation hint, not an idempotency key, and
+  // grants no retry credit (#902 round 11).
+  it.each(writes.filter(([name]) => ["update_values", "batch_update_values", "clear_values"].includes(name)))(
+    "INV-9: a 5xx answering %s is unknown, though it writes fixed cells",
     async (name, args) => {
       route = serverError;
       const failure = await call(connection(), name, args).catch((error) => error);
-      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message).toContain("outcome is unknown");
-      expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
-      expect(calls).toHaveLength(1);
-    },
-  );
-
-  it.each(writes.filter(([name]) => idempotent.has(name)))(
-    "keeps a 5xx answering %s retryable: the same cells written twice are written once",
-    async (name, args) => {
-      route = serverError;
-      const failure = await call(connection(), name, args).catch((error) => error);
-      expect(failure).toMatchObject({ code: "unavailable", retryable: true });
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
     },
   );
 

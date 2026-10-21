@@ -962,9 +962,6 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
             ctx,
-            // The same cells set to the same values twice is one write: a 5xx
-            // stays retryable.
-            { idempotent: true },
           ),
         );
         return {
@@ -1027,7 +1024,6 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
             ctx,
-            { idempotent: true },
           ),
         );
         return {
@@ -1066,8 +1062,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       handler: async (args, ctx) => {
         checkWriteSize([args["values"]]);
         const response = asRecord(
-          // Appending is not idempotent: a second call after one that landed
-          // adds the rows twice.
+          // A second call after one that landed adds the rows twice.
           await uncertainWrite(
             "Appending again would add the rows a second time if the first append landed: read the table with get_values and append only what is missing.",
             () =>
@@ -1123,8 +1118,6 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               body: { ranges: args["ranges"] },
             },
             ctx,
-            // Clearing fixed ranges twice clears them once.
-            { idempotent: true },
           ),
         );
         return {

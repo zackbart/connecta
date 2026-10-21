@@ -36,12 +36,6 @@ const READ_CAP_MS = 60_000;
 const MAX_LOG_BYTES = 1024 * 1024;
 /** Characters kept from one log line; the rest is marked truncated. */
 const MAX_LOG_TEXT = 4_000;
-/**
- * Uploads named by their content, so repeating one stores the same bytes:
- * Remote Cache artifacts by the hash in the path, deployment files by the
- * SHA-1 sent as `x-vercel-digest` (Vercel answers "already uploaded").
- */
-const CONTENT_ADDRESSED: ReadonlySet<string> = new Set(["PUT /v8/artifacts/{hash}", "POST /v2/files"]);
 /** Most raw upload bytes, after base64 decoding. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
@@ -1061,14 +1055,12 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
         for (const [name, value] of Object.entries(call.query)) {
           if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") query[name] = value;
         }
-        // The shared decision treats a served write's failure as unknown.
-        // A content-addressed upload supplies repeatability proof only for a
-        // direct transport call without a served verdict (INV-9).
-
+        // A failed upload that may have left is an unknown outcome, direct
+        // or served: a content address is an operation hint, not an
+        // idempotency key, and grants no retry credit (INV-9).
         return await transport(
           {
             method: call.method,
-            repeatable: CONTENT_ADDRESSED.has(`${call.method} ${call.op.path}`),
             path: call.path,
             query,
             headers: {

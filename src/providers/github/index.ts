@@ -1,6 +1,7 @@
 import { remoteMcp } from "../../connectors/remote-mcp.js";
 import { array, keys, optionsOf } from "../../config-schema.js";
 import { ConnectorCallError } from "../../errors.js";
+import { knownProviderFailure } from "../../provider-call.js";
 import { redactSentSecrets } from "../../sent-secrets.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
 import type { Connector, ConnectorContext, ToolClassification } from "../../types.js";
@@ -143,12 +144,22 @@ export const github = defineProvider<GitHubOptions>({
       },
       async callTool(name, args, ctx, callOptions) {
         if (Object.hasOwn(HOSTED_ROUTES, name)) {
-          const route = hostedTarget(name, args, policy);
-          const token = await auth.repo(route.target, route.permissions, ctx);
+          // The argument, scope, method, and workflow checks, then the
+          // installation-token mint, all before the write's tools/call
+          // exists: their refusals are known failures (ledger provenance).
+          let token: string;
+          try {
+            const route = hostedTarget(name, args, policy);
+            token = await auth.repo(route.target, route.permissions, ctx);
+          } catch (error) {
+            throw knownProviderFailure(error);
+          }
           return withHosted(token, ctx, (client) => client.callTool(name, args, ctx, callOptions));
         }
         if (!Object.hasOwn(CLASSIFICATION.tools, name))
-          throw new ConnectorCallError("invalid_args", "This GitHub tool is not in the reviewed allowlist.");
+          throw knownProviderFailure(
+            new ConnectorCallError("invalid_args", "This GitHub tool is not in the reviewed allowlist."),
+          );
         const result = await rest.callTool(name, args, ctx, callOptions);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       },

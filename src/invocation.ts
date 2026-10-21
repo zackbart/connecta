@@ -31,7 +31,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 import { recoveryFor } from "./call-recovery.js";
-import { isKnownProviderFailure } from "./provider-call.js";
+import { isKnownProviderFailure, knownProviderFailure } from "./provider-call.js";
 import { classifyWriteOutcome } from "./write-outcome.js";
 import {
   classificationDigest,
@@ -498,6 +498,8 @@ export class InvocationService {
                 : `Retry ${target.connector.id}.${target.toolName} after the operator completes recovery.`,
             };
           case "provider_permission_denied":
+            // A write whose outcome is unknown is never told to retry.
+            if (error.writeOutcome === "unknown") return error;
             return {
               ...error,
               connector: target.connector.id,
@@ -506,7 +508,7 @@ export class InvocationService {
                 "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access.",
             };
           case "invalid_args":
-            if (!error.validation) return error;
+            if (!error.validation || error.writeOutcome === "unknown") return error;
             return {
               ...error,
               connector: target.connector.id,
@@ -783,10 +785,13 @@ export class InvocationService {
                   }),
                 );
                 if (target.connector.kind === "mcp" && isDownstreamInputResult(reply)) {
+                  // The downstream's own served answer: it suspended for input.
                   if (!context.processInputRequired)
-                    throw new ConnectorCallError(
-                      "input_required_unsupported",
-                      "The downstream returned input_required. Use the equivalent direct MCP call to provide input.",
+                    throw knownProviderFailure(
+                      new ConnectorCallError(
+                        "input_required_unsupported",
+                        "The downstream returned input_required. Use the equivalent direct MCP call to provide input.",
+                      ),
                     );
                   const value = yield* Effect.tryPromise({
                     try: () => Promise.resolve(context.processInputRequired!(reply, target, sentSecrets)),

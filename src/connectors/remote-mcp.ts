@@ -112,7 +112,8 @@ import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./res
 import { callerOf } from "../connector-caller.js";
 import { callClassification } from "../call-classification.js";
 import { classifyTool } from "../tool-safety.js";
-import { providerCallFailure, unknownOutcome, unsentAfterUnauthorized } from "../write-outcome.js";
+import { knownProviderFailure } from "../provider-call.js";
+import { providerCallFailure, unsentAfterUnauthorized } from "../write-outcome.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
@@ -3218,11 +3219,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async callTool(name, args, ctx, options) {
+      // Refusals before this call's dispatch record exists: no tools/call of
+      // its can have left, so they are known failures (ledger provenance).
       if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
-        throw new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist.");
+        throw knownProviderFailure(
+          new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist."),
+        );
       }
       const state = stateFor(ctx);
-      const client = await ensureConnected(ctx, state);
+      const client = await ensureConnected(ctx, state).catch((error: unknown) => {
+        throw knownProviderFailure(error);
+      });
       const definition = options?.definition;
       // The registry's verdict for this call; outside an invocation, the
       // dispatched definition's, else a reviewed write or the annotations.
@@ -3334,17 +3341,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             : failure;
         const vendor = { title: `connector "${id}"` };
         // Whether this call's tools/call reached fetch is the dispatch ledger;
-        // the HTTP status the endpoint answered is its served verdict.
+        // the HTTP status the endpoint answered is its served verdict. Once
+        // sent, a JSON-RPC error (-32602 included: a server can run the
+        // handler and then reject its result), an unreadable result, or a
+        // failed output validation is no refusal, direct or served.
         const status = failureRecord({}, err).httpStatus;
-        const settled = direct
-          ? providerCallFailure(ctx, vendor, verdict, {
-              dispatched: dispatch.sent,
-              ...(status === undefined ? {} : { status }),
-              fallback: "write",
-            })
-          : verdict === failure
-            ? unknownOutcome(vendor, failure)
-            : verdict;
+        const settled = providerCallFailure(ctx, vendor, verdict, {
+          dispatched: dispatch.sent,
+          ...(status === undefined ? {} : { status }),
+          fallback: "write",
+        });
         throw settled === failure ? failure : carryFailureFacts(failure, settled);
       } finally {
         state.dispatches.delete(dispatch);

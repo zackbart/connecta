@@ -491,7 +491,8 @@ describe("round-5 whole-call failure sweep", () => {
             answered: result.answered === true,
             error: result.error,
           }),
-        ).toBe(classification === "write" ? "unknown" : code === "conflict" ? "failed" : "unknown");
+          // A typed code after a 200 is no refusal provenance (round 11).
+        ).toBe("unknown");
       },
     );
 

@@ -2085,15 +2085,6 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
       });
 
-      it("stays retryable for a write the provider marks idempotent", async () => {
-        apiReplies.push(upstream(503));
-        const failure = await failing(
-          client().json({ method: "PUT", path: "/files/f1", body: {} }, context(), { idempotent: true }),
-        );
-        expect(failure).toMatchObject({ code: "unavailable", retryable: true });
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "refused" });
-      });
-
       /** A quota refusal, carried on whichever status. */
       const quota = (status: number, reason: string) => () =>
         Response.json(
@@ -2196,17 +2187,16 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 302, phase: "redirected" });
       });
 
-      it("keeps a quota 5xx retryable for a read or an idempotent write", async () => {
+      it("keeps a quota 5xx retryable for a read, and a whole-resource PUT's unknown", async () => {
         apiReplies.push(quota(503, "rateLimitExceeded"), quota(503, "rateLimitExceeded"));
         const drive = client();
         const read = await failing(drive.json({ method: "GET", path: "/files/f1" }, context()));
         expect(read.code).toBe("rate_limited");
         expect(googleOutcomeOf(read)).toEqual({ dispatched: true, status: 503, phase: "refused" });
-        const idempotent = await failing(
-          drive.json({ method: "PUT", path: "/files/f1", body: {} }, context(), { idempotent: true }),
-        );
-        expect(idempotent.code).toBe("rate_limited");
-        expect(googleOutcomeOf(idempotent)).toEqual({ dispatched: true, status: 503, phase: "refused" });
+        // No operation hint makes a write repeatable: only a key would.
+        const put = await failing(drive.json({ method: "PUT", path: "/files/f1", body: {} }, context()));
+        expect(put).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(googleOutcomeOf(put)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
       });
 
       it("is unknown even when the 5xx body itself is past the ceiling", async () => {
@@ -2297,12 +2287,10 @@ describe("the shared client reads bytes and text for the products that need them
         }
       });
 
-      it("keeps an idempotent write's 5xx a refusal", async () => {
+      it("keeps a whole-resource PUT's 5xx a server error, never a refusal", async () => {
         const ctx = cancelledOnAnswer(oversized(503));
-        const failure = await failing(
-          client(1024).json({ method: "PUT", path: "/files/f1", body: {} }, ctx, { idempotent: true }),
-        );
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "refused" });
+        const failure = await failing(client(1024).json({ method: "PUT", path: "/files/f1", body: {} }, ctx));
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
       });
     });
 
