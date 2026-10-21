@@ -40,7 +40,8 @@ function executorBundles() {
 // own Request validation and each request to it is a separate Worker request
 // (test/clerk-organization-workerd.test.ts). Every outbound fetch it makes
 // goes over TCP to the Clerk Backend API stand-in at `backend`. Built once
-// when the project starts; restart a watch run after editing src/auth/clerk.ts.
+// per run; restart a watch run after editing src/auth/clerk.ts.
+let clerkOrganizationScript: Promise<string> | undefined;
 async function clerkOrganizationWorker(backend: string) {
   const transport: Plugin = {
     name: "clerk-organization-transport",
@@ -50,7 +51,7 @@ async function clerkOrganizationWorker(backend: string) {
       }));
     },
   };
-  const { outputFiles } = await build({
+  clerkOrganizationScript ??= build({
     entryPoints: [fileURLToPath(new URL("./test/fixtures/clerk-organization-worker.ts", import.meta.url))],
     bundle: true,
     format: "esm",
@@ -59,49 +60,57 @@ async function clerkOrganizationWorker(backend: string) {
     external: ["node:*"],
     plugins: [transport],
     write: false,
-  });
+  }).then(({ outputFiles }) => outputFiles[0]!.text);
   return {
     name: "clerk-organization",
     modules: true,
-    script: outputFiles[0]!.text,
+    script: await clerkOrganizationScript,
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
     outboundService: { external: { address: backend, http: {} } },
   };
 }
 
+// cloudflareTest resolves its options on every pool worker start, once per
+// test file. Bundle each fixture once per run, off the event loop: a
+// synchronous build there stalls the host serving running tests' imports.
+const fixtureBundles = new Map<string, Promise<string>>();
+function fixtureBundle(entry: string): Promise<string> {
+  let text = fixtureBundles.get(entry);
+  if (!text) {
+    text = build({
+      entryPoints: [fileURLToPath(new URL(entry, import.meta.url))],
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      conditions: ["workerd", "worker", "browser"],
+      write: false,
+    }).then(({ outputFiles }) => outputFiles[0]!.text);
+    fixtureBundles.set(entry, text);
+  }
+  return text;
+}
+
 // A separate native Worker: requests share no test-request I/O or promises.
 // enable_weak_ref matches the Worker example, so a charge whose work workerd
 // cancelled can be released by the collector (src/auth-admission.ts).
-function authAdmissionWorker(backend?: string, name = backend ? "auth-admission-sdk" : "auth-admission") {
+async function authAdmissionWorker(backend?: string, name = backend ? "auth-admission-sdk" : "auth-admission") {
   return {
     name,
     ...(backend ? { outboundService: { external: { address: backend, http: {} } } } : {}),
     compatibilityDate: "2025-01-01",
     compatibilityFlags: ["nodejs_compat", "enable_request_signal", "enable_weak_ref"],
     modules: true,
-    script: buildSync({
-      entryPoints: [
-        fileURLToPath(
-          new URL(
-            backend ? "./test/fixtures/auth-admission/clerk.ts" : "./test/fixtures/auth-admission/index.ts",
-            import.meta.url,
-          ),
-        ),
-      ],
-      bundle: true,
-      format: "esm",
-      platform: "neutral",
-      conditions: ["workerd", "worker", "browser"],
-      write: false,
-    }).outputFiles[0]!.text,
+    script: await fixtureBundle(
+      backend ? "./test/fixtures/auth-admission/clerk.ts" : "./test/fixtures/auth-admission/index.ts",
+    ),
   };
 }
 
 // The plain Worker export plus named middleware and control entrypoints
 // sharing its isolate. Without enable_weak_ref, at this compatibility date,
 // the twin has no FinalizationRegistry and releases on settlement alone.
-function authAdmissionEntryWorker(name: string, origin: string, weakRef = true) {
+async function authAdmissionEntryWorker(name: string, origin: string, weakRef = true) {
   return {
     name,
     compatibilityDate: "2025-01-01",
@@ -114,14 +123,7 @@ function authAdmissionEntryWorker(name: string, origin: string, weakRef = true) 
     bindings: { ORIGIN: origin },
     serviceBindings: { SELF: name },
     modules: true,
-    script: buildSync({
-      entryPoints: [fileURLToPath(new URL("./test/fixtures/auth-admission/entry.ts", import.meta.url))],
-      bundle: true,
-      format: "esm",
-      platform: "neutral",
-      conditions: ["workerd", "worker", "browser"],
-      write: false,
-    }).outputFiles[0]!.text,
+    script: await fixtureBundle("./test/fixtures/auth-admission/entry.ts"),
   };
 }
 
@@ -226,8 +228,8 @@ export default defineConfig({
                   ),
                 ),
               },
-              workers: [
-                await clerkOrganizationWorker(inject("clerkBackendServer")),
+              workers: await Promise.all([
+                clerkOrganizationWorker(inject("clerkBackendServer")),
                 authAdmissionWorker(),
                 authAdmissionWorker(new URL(inject("authAdmissionServer")).host),
                 ...AUTH_ADMISSION_BINDING_ISOLATES.map((key) =>
@@ -237,7 +239,7 @@ export default defineConfig({
                   authAdmissionEntryWorker(`auth-admission-entry-${key}`, inject("authAdmissionServer")),
                 ),
                 authAdmissionEntryWorker("auth-admission-entry-no-weak-ref", inject("authAdmissionServer"), false),
-              ],
+              ]),
             },
           })),
         ],
