@@ -1298,6 +1298,21 @@ describe("get_page and list_layouts: every page, element, and layout is reachabl
       }
       expect(calls).toEqual([]);
     });
+
+    it("binds a viewer's get_page cursor to the page's text, so an edit is a conflict", async () => {
+      const page = (content: string) => ({
+        objectId: "p",
+        pageElements: [{ objectId: "essay", shape: { shapeType: "TEXT_BOX", text: textContent(content) } }],
+      });
+      const connector = connection();
+      route = () => ({ body: page(long(300_000)) });
+      const first = await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p" });
+      expect(first.page.hasMore).toBe(true);
+      route = () => ({ body: page(`inserted ${long(300_000)}`) });
+      await expect(
+        call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p", cursor: first.page.nextCursor }),
+      ).rejects.toMatchObject({ code: "conflict" });
+    });
   });
 
   it("refuses, explicitly, a result it cannot fit rather than returning it", async () => {
@@ -1653,6 +1668,26 @@ describe("comments: the read path (#696)", { timeout: 60_000 }, () => {
         message: expect.stringContaining("deck's comments changed"),
       });
     });
+
+    it("is a conflict when an anchor moves to another element, with no revision and the threads unchanged", async () => {
+      const deck = (objectId: string) => ({
+        ...COMMENT_DECK,
+        revisionId: undefined,
+        slides: [{ objectId: "p", commentAnchors: [{ anchorId: "a2", objectAnchors: [{ objectId }] }] }],
+      });
+      const connector = connection();
+      const cursor = await firstPage(connector, deck("shapeA"));
+      route = () => ({ body: deck("shapeB") });
+      await expect(
+        call(connector, "list_comments", { presentationId: "deck1", limit: 1, cursor }),
+      ).rejects.toMatchObject({
+        code: "conflict",
+      });
+      // Unmoved, it continues, and places the thread where the anchor is.
+      const fresh = await firstPage(connector, deck("shapeA"));
+      const next = await call(connector, "list_comments", { presentationId: "deck1", limit: 1, cursor: fresh });
+      expect(next.threads[0]).toMatchObject({ commentId: "c2", objectIds: ["shapeA"] });
+    });
   });
 });
 
@@ -1823,6 +1858,7 @@ describe("comments: writes (#696)", () => {
 });
 
 describe("comments: partial saves are reported, not hidden (#696)", () => {
+  const sent = () => calls[0]!.body.requests;
   const unsaved = {
     presentationId: "deck1",
     replies: [{}],
@@ -1955,6 +1991,102 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
         await call(connection(), "batch_update_presentation", batch({ deleteObject: { objectId: "x" } })),
         "ALL_FAILED_UNKNOWN_REASON",
       );
+    });
+
+    it("reports a batch whose deck changes applied and whose comments did not", async () => {
+      route = () => ({ body: { ...unsaved, replies: [{}, {}] } });
+      const result = await call(
+        connection(),
+        "batch_update_presentation",
+        batch({ insertText: { objectId: "t", text: "x" } }, { insertComment: { objectId: "p", content: "c" } }),
+      );
+      expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
+      expect(result.note).toContain(
+        "re-read with get_presentation or get_page for deck changes, and list_comments for comments",
+      );
+    });
+
+    it("never says a comment-only batch applied when Slides did not confirm its comments, even with a summarized reply", async () => {
+      const content = "c".repeat(2_048);
+      route = () => ({
+        body: insertedComment(
+          { plainTextQuote: content, headPost: slidesPost("p9", content) },
+          { commentUpdateState: "ALL_FAILED_UNKNOWN_REASON" },
+        ),
+      });
+      const result = await call(
+        connection(),
+        "batch_update_presentation",
+        batch({ insertComment: { objectId: "p", content } }),
+      );
+      expect(result.replies[0].cut.length).toBeGreaterThan(0);
+      expect(result.replies[0].insertComment.commentThread.commentId).toBe("c9");
+      expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
+      expect(result.note).not.toMatch(/(write|batch) applied/i);
+      expect(result.note).toContain("Slides accepted the write but did not report its comment changes saved");
+    });
+
+    it("accepts every Request kind in Slides' Discovery document, comment kinds included", async () => {
+      // `Request`'s properties at Discovery revision 20260930, the revision
+      // src/providers/slides/drift.json records. A kind Google adds moves
+      // batchUpdate's digested contract, and the drift check says so.
+      const discovery = [
+        "addCommentReply",
+        "createImage",
+        "createLine",
+        "createParagraphBullets",
+        "createShape",
+        "createSheetsChart",
+        "createSlide",
+        "createTable",
+        "createVideo",
+        "deleteComment",
+        "deleteCommentReply",
+        "deleteObject",
+        "deleteParagraphBullets",
+        "deleteTableColumn",
+        "deleteTableRow",
+        "deleteText",
+        "duplicateObject",
+        "groupObjects",
+        "insertComment",
+        "insertTableColumns",
+        "insertTableRows",
+        "insertText",
+        "mergeTableCells",
+        "refreshSheetsChart",
+        "replaceAllShapesWithImage",
+        "replaceAllShapesWithSheetsChart",
+        "replaceAllText",
+        "replaceImage",
+        "rerouteLine",
+        "ungroupObjects",
+        "unmergeTableCells",
+        "updateCommentPost",
+        "updateImageProperties",
+        "updateLineCategory",
+        "updateLineProperties",
+        "updatePageElementAltText",
+        "updatePageElementTransform",
+        "updatePageElementsZOrder",
+        "updatePageProperties",
+        "updateParagraphStyle",
+        "updateShapeProperties",
+        "updateSlideProperties",
+        "updateSlidesPosition",
+        "updateTableBorderProperties",
+        "updateTableCellProperties",
+        "updateTableColumnProperties",
+        "updateTableRowProperties",
+        "updateTextStyle",
+        "updateVideoProperties",
+      ];
+      expect(discovery).toHaveLength(49);
+      route = () => ({
+        body: { presentationId: "deck1", replies: discovery.map(() => ({})), commentUpdateState: "ALL_SAVED" },
+      });
+      await call(connection(), "batch_update_presentation", batch(...discovery.map((kind) => ({ [kind]: {} }))));
+      expect(sent().map((request: Record<string, unknown>) => Object.keys(request)[0])).toEqual(discovery);
     });
   });
 });

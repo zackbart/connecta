@@ -976,6 +976,52 @@ describe("notion() lean projections", () => {
     // The nested cursor belongs to b1; re-reading it directly is the route.
     expect(walked.next_cursor).toBeNull();
   });
+
+  it("names native and custom icons, and reads an uncomputable value as null", async () => {
+    const page = (icon: unknown) => ({
+      ...PAGE_FIXTURE,
+      icon,
+      properties: {
+        Name: PAGE_FIXTURE.properties.Name,
+        Score: {
+          id: "fx",
+          type: "formula",
+          formula: { type: "unsupported", unsupported: {} },
+        },
+        Count: {
+          id: "rl",
+          type: "rollup",
+          rollup: {
+            type: "unsupported",
+            unsupported: {},
+            function: "show_original",
+          },
+        },
+      },
+    });
+    queue(
+      { body: page({ type: "icon", icon: { name: "pizza", color: "blue" } }) },
+      {
+        body: page({
+          type: "custom_emoji",
+          custom_emoji: { id: "e1", name: "shipit", url: "https://x/e.png" },
+        }),
+      },
+    );
+    const native: any = await call(build(), "integration_get_page", {
+      page_id: "page-1",
+    });
+    expect(native.icon).toBe("pizza");
+    expect(native.properties).toEqual({
+      Name: "Quarterly review",
+      Score: null,
+      Count: null,
+    });
+    const custom: any = await call(build(), "integration_get_page", {
+      page_id: "page-1",
+    });
+    expect(custom.icon).toBe(":shipit:");
+  });
 });
 
 describe("notion() named-tool pagination", () => {
@@ -1232,6 +1278,24 @@ describe("notion() successful response integrity", () => {
     expect(outcome.error.message).not.toContain("synthetic body detail");
     expect(outcome.dispatched).toBe(true);
     expect(writeStateOf(outcome)).toBe("unknown");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["text/html", "<html>synthetic gateway</html>"],
+    ["application/json", ""],
+    ["application/json", "null"],
+    ["application/json", "[]"],
+    ["application/json", '"text"'],
+    ["application/json", "{not json"],
+  ])("rejects an unusable successful %s body without reporting an empty page: %s", async (type, body) => {
+    globalThis.fetch = vi.fn(
+      async () => new Response(body, { headers: { "content-type": type } }),
+    ) as unknown as typeof fetch;
+    await expect(call(build(), "integration_get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 });

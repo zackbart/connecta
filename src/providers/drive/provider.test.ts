@@ -388,6 +388,25 @@ describe("reading content", () => {
     expect(result.content).toBeUndefined();
     expect(result.note).toContain(said);
   });
+
+  it("fails a 416 that does not say the file is empty", async () => {
+    const meta = metadata({ mimeType: "text/plain", size: "5" });
+    route = (request) =>
+      meta(request) ?? {
+        ...GOOGLE_ERROR(416, "requestedRangeNotSatisfiable", "Request range not satisfiable"),
+        headers: { "Content-Range": "bytes */9" },
+      };
+    await expect(call(connection(), "get_file_content", { fileId: "f1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
+  });
+
+  it("reads a verified empty binary as empty base64", async () => {
+    const meta = metadata({ mimeType: "application/pdf", size: "500" });
+    route = (request) => meta(request) ?? EMPTY_RANGE;
+    const result = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(result).toMatchObject({ format: "base64", content: "", contentTruncated: false });
+  });
 });
 
 describe("writing files", () => {
@@ -821,6 +840,39 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
     }
     expect(calls).toEqual([]);
   });
+
+  it("refuses a permissions cursor for another file, and a folder cursor for another folder", async () => {
+    const connector = connection();
+    route = () => ({ body: { permissions: [{ id: "p1" }, { id: "p2" }], nextPageToken: "more" } });
+    const permissions = await call(connector, "list_permissions", { fileId: "f1", limit: 2 });
+    await expect(
+      call(connector, "list_permissions", { fileId: "f2", limit: 2, cursor: permissions.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+
+    route = (request) =>
+      request.url.pathname.endsWith("/files")
+        ? { body: { files: [{ id: "a" }], nextPageToken: "more" } }
+        : { body: { id: "x", mimeType: "application/vnd.google-apps.folder" } };
+    const folder = await call(connector, "list_folder_items", { folderId: "folder-a", limit: 1 });
+    calls.length = 0;
+    await expect(
+      call(connector, "list_folder_items", { folderId: "folder-b", limit: 1, cursor: folder.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    // Only the folder lookup that tells its drive; never the listing.
+    expect(calls.map((_, index) => line(index))).toEqual(["GET /files/folder-b"]);
+  });
+
+  it("lets maxBytes change between pages, since it only decides where a page stops", async () => {
+    const connector = connection();
+    const first = await firstPage(connector);
+    const rest = await call(connector, "search_files", {
+      limit: 100,
+      maxBytes: 4 * 1024 * 1024,
+      cursor: first.page.nextCursor,
+    });
+    expect(rest.files[0].id).toBe(ids[first.files.length]);
+    expect(first.files.length + rest.files.length).toBe(ids.length);
+  });
 });
 
 describe("nothing is lost silently, and nothing outgrows its result", () => {
@@ -933,6 +985,33 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
       await expect(
         call(connector, "search_files", { limit: 100, maxBytes: 65_536, cursor: first.page.nextCursor }),
       ).rejects.toMatchObject({ code: "conflict" });
+    });
+
+    it("replays a cursor carrying the longest page token it accepts, at a boundary and mid-page", async () => {
+      const token = "t".repeat(LONGEST_TOKEN);
+      const rows = Array.from({ length: 100 }, (_, index) => ({ id: `r${index}`, name: "n".repeat(1_900) }));
+      route = (request) =>
+        request.url.searchParams.get("pageToken") === token
+          ? { body: { files: rows } }
+          : { body: { files: [{ id: "a" }], nextPageToken: token } };
+      const connector = connection();
+      const first = await call(connector, "search_files", { limit: 100 });
+      expect(first.page.nextCursor.length).toBeLessThanOrEqual(16_384);
+      const second = await call(connector, "search_files", {
+        limit: 100,
+        maxBytes: 65_536,
+        cursor: first.page.nextCursor,
+      });
+      expect(calls[1]!.url.searchParams.get("pageToken")).toBe(token);
+      // Mid-page, beside a full page of rows: the widest cursor there is.
+      expect(second.page.nextCursor.length).toBeLessThanOrEqual(16_384);
+      expect(new TextEncoder().encode(JSON.stringify(second)).length).toBeLessThanOrEqual(65_536);
+      const third = await call(connector, "search_files", {
+        limit: 100,
+        maxBytes: 65_536,
+        cursor: second.page.nextCursor,
+      });
+      expect(third.files[0].id).toBe(rows[second.files.length]!.id);
     });
   });
 });

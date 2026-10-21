@@ -403,6 +403,11 @@ function standard(): ProviderFacts {
 }
 
 describe("the provider standard's rules", () => {
+  it("excuses no provider created after the list", () => {
+    expect(PENDING.step1.has("acme")).toBe(false);
+    expect(PENDING.step2.has("acme")).toBe(false);
+  });
+
   it("rejects a new provider written to legacy shapes, in every rule family", () => {
     const folder = legacy();
     const found = [

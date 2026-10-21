@@ -425,6 +425,13 @@ describe("ccb() typed failures (H11)", () => {
       retryAfterMs: 3000,
     });
   });
+
+  it("refuses a successful response that is not JSON", async () => {
+    expect(await failing(new Response("<html>maintenance</html>", { status: 200 }))).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+  });
 });
 
 describe("ccb() escape hatches (H14)", () => {

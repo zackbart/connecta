@@ -148,9 +148,8 @@
 //       verdict the drift check reads can never disagree. Drift surfaces as a
 //       loud unclassified tool on the approval path, never a quiet re-guess.
 //
-// This suite decides H2, H3, H5, H7, H8, H12, and H13 for the hand-written
-// `api()` providers; each provider's golden catalog pins its H10 page
-// parameters and H14 safety split. H1, H9, and H11 are mechanical too but are decided in
+// This suite decides H2, H3, H5, H7, H8, H10, H12, H13, and H14's split for the
+// hand-written `api()` providers. H1, H9, and H11 are mechanical too but are decided in
 // each provider's own suite, where the mapped statuses and projections live, and
 // P1–P13 likewise in the proxies' suites: their bar is about the wrapper's
 // identity and classification, not about tool shapes it does not own. H4, H6,
@@ -389,6 +388,49 @@ describe("hand-written providers refuse schemas they cannot enforce (H5)", () =>
       }
     }
     expect(unevaluable).toEqual([]);
+  });
+
+  it("refuses an argument the schema does not declare, before any request", async () => {
+    // The closed schemas are the whole point of H5: a stray argument is caught
+    // locally as `invalid_args` instead of becoming a round trip that fails
+    // somewhere inside the provider.
+    const { connector } = providers.find((provider) => provider.name === "notion")!;
+    await expect(
+      connector.callTool("integration_get_page", { page_id: "page-1", workspace: "nope" }, CONTEXT),
+    ).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+  });
+});
+
+describe("Cloudflare states its two pagination conventions in the schema (H10)", () => {
+  it("names the page parameter beside every next value", async () => {
+    const { tools } = providers.find((provider) => provider.name === "cloudflare")!;
+    for (const name of ["cloudflare_api_read", "list_zones", "list_accounts"]) {
+      const page = (tools.find((tool) => tool.name === name)!.outputSchema as any).properties.page;
+      expect(page.properties.hasMore, name).toBeDefined();
+      expect(page.properties.param, name).toBeDefined();
+    }
+  });
+});
+
+describe("Notion splits its guarded raw access by safety class (H14)", () => {
+  it("reads through GET and reviewed queries, and writes through one destructive tool", () => {
+    const { connector, tools } = providers.find((provider) => provider.name === "notion")!;
+    const hatch = Object.fromEntries(
+      tools.filter((tool) => tool.name.startsWith("notion_api_")).map((tool) => [tool.name, tool.annotations]),
+    );
+    expect(hatch).toEqual({
+      notion_api_search: { readOnlyHint: true },
+      notion_api_details: { readOnlyHint: true },
+      notion_api_read: { readOnlyHint: true },
+      notion_api_write: { readOnlyHint: false, destructiveHint: true },
+    });
+    const guide = connector.usageGuide;
+    if (typeof guide !== "object" || guide === undefined) {
+      throw new Error("expected a structured usage guide");
+    }
+    expect(guide.content).toContain("Refused by design");
   });
 });
 

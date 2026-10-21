@@ -1072,4 +1072,63 @@ describe("reading carried attachments", () => {
       note: expect.stringContaining("no attachment data"),
     });
   });
+
+  it("reads a parsed forwarded stored-apart HTML body and applies maxChars", async () => {
+    serve(
+      {
+        ...attachmentFixtures.parsedForwarded,
+        parts: [
+          {
+            mimeType: "text/html",
+            headers: [{ name: "Content-Type", value: 'text/html; charset = "iso-8859-1"' }],
+            body: { size: 11, attachmentId: "forward-body" },
+          },
+        ],
+      },
+      b64url("<p>Café</p>", "latin1"),
+    );
+    expect(await read({ partId: "7", maxChars: 3 })).toMatchObject({
+      format: "text",
+      content: expect.stringMatching(/^Caf\n\[… 1 more characters truncated/),
+      contentTruncated: true,
+    });
+    expect(path(1)).toBe("/messages/m1/attachments/forward-body");
+  });
+
+  it("reports a forwarded subtree with no readable body explicitly", async () => {
+    serve({
+      ...attachmentFixtures.parsedForwarded,
+      parts: [{ mimeType: "image/png", body: { size: 2, data: "__4" } }],
+    });
+    expect(await read({ partId: "7" })).toMatchObject({
+      format: "unavailable",
+      note: expect.stringContaining("no readable"),
+    });
+  });
+
+  it.each(["inline", "stored"])("prefers %s raw forwarded content over nested parts", async (storage) => {
+    const content = "From: raw@example.com\r\n\r\nRaw body";
+    const body =
+      storage === "inline"
+        ? { size: content.length, data: b64url(content) }
+        : { size: content.length, attachmentId: "raw-mail" };
+    serve({ ...attachmentFixtures.parsedForwarded, body }, b64url(content));
+    expect(await read({ partId: "7" })).toMatchObject({ format: "text", content });
+    expect(calls).toHaveLength(storage === "inline" ? 1 : 2);
+  });
+
+  it("refuses unknown descendant sizes before a forwarded-body download", async () => {
+    serve({
+      ...attachmentFixtures.parsedForwarded,
+      parts: [
+        { mimeType: "text/plain", body: { size: 2, attachmentId: "body" } },
+        { mimeType: "image/png", body: { attachmentId: "image" } },
+      ],
+    });
+    expect(await read({ partId: "7" })).toMatchObject({
+      format: "unavailable",
+      note: expect.stringContaining("valid attachment size"),
+    });
+    expect(calls).toHaveLength(1);
+  });
 });

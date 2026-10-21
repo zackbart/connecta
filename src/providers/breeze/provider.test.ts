@@ -82,6 +82,10 @@ function call(
   return connector.callTool(name, args, ctx) as Promise<any>;
 }
 
+function url(index = 0): URL {
+  return new URL(calls[index]!.url);
+}
+
 async function failure(promise: Promise<unknown>): Promise<ConnectorCallError> {
   try {
     await promise;
@@ -232,5 +236,56 @@ describe("Breeze credentials", () => {
     const mismatch = await connector.testCredential!("candidate-key", context(null));
     expect(mismatch.ok).toBe(false);
     expect(mismatch.message).toContain("otherchurch");
+  });
+});
+
+describe("Breeze people and profile reads", () => {
+  it("ends paging on a short page and uses the configured default page size", async () => {
+    queue({ body: [{ id: "1", first_name: "A", last_name: "B" }] });
+    const result = await call(connection({ defaultPageSize: 25 }), "list_people");
+    expect(url().searchParams.get("limit")).toBe("25");
+    expect(url().searchParams.get("filter_json")).toBeNull();
+    expect(result.page).toEqual({ hasMore: false, nextCursor: null });
+  });
+
+  it("refuses a tag passed both ways before any request", async () => {
+    const error = await failure(
+      call(connection(), "list_people", {
+        tagId: "1",
+        filter: { tag_contains: "y_2" },
+      }),
+    );
+    expect(error.code).toBe("invalid_args");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("Breeze events, attendance, forms, volunteers, and the log", () => {
+  it("refuses a non-ISO date before the request", async () => {
+    const error = await failure(call(connection(), "list_events", { start: "5-3-2025" }));
+    expect(error.code).toBe("invalid_args");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("Breeze giving reads (undocumented endpoints)", () => {
+  it("refuses includeFamily without a donor before the request", async () => {
+    const error = await failure(
+      call(connection(), "list_contributions", {
+        start: "2022-01-01",
+        end: "2022-06-30",
+        includeFamily: true,
+      }),
+    );
+    expect(error.code).toBe("invalid_args");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("Breeze typed failures and credential test", () => {
+  it("refuses a non-JSON success on a named read instead of inventing rows", async () => {
+    queue({ text: "<html>maintenance</html>" });
+    const error = await failure(call(connection(), "list_funds"));
+    expect(error.code).toBe("connector_call_failed");
   });
 });

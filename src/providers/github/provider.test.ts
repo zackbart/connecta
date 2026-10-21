@@ -978,4 +978,67 @@ describe("GitHub App provider", () => {
     const pkcs1 = `-----BEGIN RSA PRIVATE KEY-----\n${btoa(String.fromCharCode(...rsa))}\n-----END RSA PRIVATE KEY-----`;
     expect(privateKeyDer(pkcs1)).toEqual(der);
   });
+
+  it("INV-4: rename lookup expiry preserves the grant ID and token cache key across both names", async () => {
+    const fixture = apiFixture();
+    const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    fixture.rename(201, "other/two");
+    now += 300_001;
+    expect(value(await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context()))).toEqual({
+      ok: true,
+    });
+    expect(value(await connector.callTool("get_file_contents", { owner: "other", repo: "two" }, context()))).toEqual({
+      ok: true,
+    });
+    expect(fixture.tokens).toHaveLength(1);
+    expect(fixture.requests.filter((request) => request.url.pathname === "/installation/repositories")).toHaveLength(2);
+  });
+
+  it("INV-4: discovery and search accept renamed repositories by ID and teach their current aliases", async () => {
+    const fixture = apiFixture();
+    const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    fixture.rename(201, "other/renamed");
+    fixture.respond((request) =>
+      request.url.pathname === "/search/code"
+        ? Response.json({ items: [{ repository: { id: 201, full_name: "other/renamed" }, path: "a" }], total_count: 1 })
+        : undefined,
+    );
+    const search = value(await connector.callTool("search_scoped", { terms: "test", kind: "code" }, context()));
+    expect(search.partitions[0].items[0].repository.id).toBe(201);
+    const scopes = value(await connector.callTool("list_scopes", { owner: "other" }, context()));
+    expect(scopes.repositories).toEqual(["other/renamed"]);
+    expect(
+      value(await connector.callTool("get_file_contents", { owner: "other", repo: "renamed" }, context())),
+    ).toEqual({ ok: true });
+    expect(fixture.tokens.filter((token) => token.body.permissions.contents === "read")).toHaveLength(1);
+  });
+
+  it("INV-5: repository-ID sets sort and deduplicate token caches independently of requested names", async () => {
+    const fixture = apiFixture();
+    const auth = new AppAuth({ appId: "12345", privateKey: PRIVATE_KEY }, new ScopePolicy(parseScopes(SCOPES)));
+    const first = await auth.token("other", ["readonly", "one", "one"], { contents: "read" }, context());
+    expect(await auth.token("other", ["one", "readonly"], { contents: "read" }, context())).toBe(first);
+    expect(fixture.tokens).toHaveLength(1);
+    expect(fixture.tokens[0]!.body.repository_ids).toEqual([201, 202]);
+  });
+
+  it("INV-9: release update/publish/delete use explicit write tokens and correct repository paths", async () => {
+    const fixture = apiFixture();
+    const connector = connection();
+    await connector.callTool(
+      "update_release",
+      { owner: "other", repo: "one", release_id: 7, draft: false, name: "v1" },
+      context(),
+    );
+    await connector.callTool("delete_release", { owner: "other", repo: "one", release_id: 7 }, context());
+    const writes = fixture.requests.filter((request) => request.url.pathname === "/repos/other/one/releases/7");
+    expect(writes.map((request) => request.method)).toEqual(["PATCH", "DELETE"]);
+    expect(writes[0]!.body).toEqual({ draft: false, name: "v1" });
+    expect(fixture.tokens).toHaveLength(1);
+    expect(fixture.tokens[0]!.body).toEqual({ repository_ids: [201], permissions: { contents: "write" } });
+  });
 });

@@ -419,3 +419,10 @@ describe("Planning Center excludeApps", () => {
     ]);
   });
 });
+
+describe("Planning Center transport", () => {
+  it("refuses a successful response that is not JSON", async () => {
+    queue({ text: "<html>gateway</html>" });
+    await expect(call("list_funds")).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+  });
+});

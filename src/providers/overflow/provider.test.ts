@@ -198,3 +198,12 @@ describe("overflow() rate limits", () => {
     expect((await failure(call(connection(), "list_locations"))).retryAfterMs).toBe(60_000);
   });
 });
+
+describe("overflow() named reads", () => {
+  it("fails a successful named read that is not JSON", async () => {
+    queue({ text: "<html>maintenance</html>" });
+    const error = await failure(call(connection(), "list_locations"));
+    expect(error.code).toBe("connector_call_failed");
+    expect(error.retryable).toBe(false);
+  });
+});

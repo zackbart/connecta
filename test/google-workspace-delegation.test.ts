@@ -1,3 +1,8 @@
+import { docs } from "../src/providers/docs/index.js";
+import { drive } from "../src/providers/drive/index.js";
+import { forms } from "../src/providers/forms/index.js";
+import { sheets } from "../src/providers/sheets/index.js";
+import { slides } from "../src/providers/slides/index.js";
 // Google Workspace domain-wide delegation, the layer every Workspace product
 // provider shares (src/providers/_shared/google/). Driven through gmail() because the
 // layer has no export of its own; the Gmail suite owns the tool surface.
@@ -53,6 +58,7 @@ function pem(der: ArrayBuffer): string {
 }
 
 const PRIVATE_KEY = pem((await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer);
+const DER_BASE64 = PRIVATE_KEY.replace(/-----[A-Z ]+-----|\s/g, "");
 
 /** A second, distinct RSA key, for rotation under one client email. */
 const ROTATED_KEY = pem(
@@ -79,6 +85,39 @@ const EC_PRIVATE_KEY = pem(
     ).privateKey,
   )) as ArrayBuffer,
 );
+
+const RSA_OID = [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+
+function indexOf(der: Uint8Array, needle: readonly number[]): number {
+  for (let at = 0; at + needle.length <= der.length; at += 1) {
+    if (needle.every((byte, offset) => der[at + offset] === byte)) return at;
+  }
+  throw new Error("pattern not found in the fixture key");
+}
+
+/** Where the NULL parameters' tag sits, right after the rsaEncryption OID. */
+function afterOid(der: Uint8Array): number {
+  return indexOf(der, RSA_OID) + RSA_OID.length;
+}
+
+/** The RSAPrivateKey's own version byte: OCTET STRING, SEQUENCE, INTEGER 0. */
+function rsaVersionAt(der: Uint8Array): number {
+  const nullAt = afterOid(der);
+  // 05 00 | 04 82 hh ll | 30 82 hh ll | 02 01 00
+  return nullAt + 2 + 4 + 4 + 2;
+}
+
+/** The fixture key with its DER changed in place, plus any appended bytes. */
+function mutated(change: (der: Uint8Array) => void, append: number[] = []): string {
+  const der = Uint8Array.from(atob(DER_BASE64), (character) => character.charCodeAt(0));
+  change(der);
+  return armor(String.fromCharCode(...der, ...append));
+}
+
+/** Arbitrary binary in PEM armor. */
+function armor(binary: string): string {
+  return `-----BEGIN PRIVATE KEY-----\n${btoa(binary)}\n-----END PRIVATE KEY-----`;
+}
 
 /** Each test gets its own service account, so the module-level cache is fresh. */
 let accounts = 0;
@@ -275,11 +314,16 @@ describe("construction refuses a structural mistake", () => {
     } as Parameters<typeof gmail>[1]);
 
   it.each([
+    ["no purpose", { purpose: " " }, /purpose/],
+    ["no service account", { serviceAccount: undefined }, /serviceAccount/],
+    ["a non-JSON string", { serviceAccount: "not json" }, /not JSON/],
     [
       "a user credential file",
       { serviceAccount: JSON.stringify({ type: "authorized_user" }) },
       /not a service_account/,
     ],
+    ["no client email", { serviceAccount: { privateKey: PRIVATE_KEY } }, /clientEmail/],
+    ["no private key", { serviceAccount: { clientEmail: "a@b.iam.gserviceaccount.com" } }, /privateKey/],
     [
       "a PKCS#1 key",
       {
@@ -291,8 +335,70 @@ describe("construction refuses a structural mistake", () => {
       /PKCS#1/,
     ],
     [
+      "a key that is not PKCS#8",
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: `-----BEGIN PRIVATE KEY-----\n${btoa("x".repeat(100))}\n-----END PRIVATE KEY-----`,
+        },
+      },
+      /PKCS#8/,
+    ],
+    [
+      "a PEM that only opens like PKCS#8",
+      { serviceAccount: { clientEmail: "a@b.c", privateKey: armor(`0${"k".repeat(95)}`) } },
+      /PKCS#8 RSA/,
+    ],
+    [
+      "a truncated key",
+      { serviceAccount: { clientEmail: "a@b.c", privateKey: armor(atob(DER_BASE64).slice(0, 600)) } },
+      /PKCS#8 RSA/,
+    ],
+    [
       "a well-formed key of another algorithm",
       { serviceAccount: { clientEmail: "a@b.c", privateKey: EC_PRIVATE_KEY } },
+      /PKCS#8 RSA/,
+    ],
+    [
+      "rsaEncryption parameters that are not NULL",
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: mutated((der) => {
+            der[afterOid(der)] = 0xff;
+          }),
+        },
+      },
+      /PKCS#8 RSA/,
+    ],
+    [
+      "bytes after the key that are not attributes",
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: mutated(
+            (der) => {
+              // Grow the outer SEQUENCE by two and put a NULL after the key.
+              const length = (der[2]! << 8) + der[3]! + 2;
+              der[2] = length >> 8;
+              der[3] = length & 0xff;
+            },
+            [0x05, 0x00],
+          ),
+        },
+      },
+      /PKCS#8 RSA/,
+    ],
+    [
+      "a multi-prime RSAPrivateKey version with no other primes",
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: mutated((der) => {
+            der[rsaVersionAt(der)] = 0x01;
+          }),
+        },
+      },
       /PKCS#8 RSA/,
     ],
     ["no subject", { subject: undefined }, /subject/],
@@ -1000,6 +1106,43 @@ describe("the in-memory token cache", () => {
     await labels(mailbox({}, { ...owner, privateKey: ROTATED_KEY }), context(identity("alice")));
     expect(tokenCalls).toHaveLength(2);
   });
+
+  it("stays bounded, dropping the oldest token first", async () => {
+    const connector = mailbox({ subject: (who: AuthenticatedIdentity) => `${who.principal?.id}@org.example` });
+    await labels(connector, context(identity("first")));
+    for (let index = 0; index < 512; index += 1) {
+      await labels(connector, context(identity(`user${index}`)));
+    }
+    expect(tokenCalls).toHaveLength(513);
+    await labels(connector, context(identity("user511")));
+    expect(tokenCalls).toHaveLength(513);
+    await labels(connector, context(identity("first")));
+    expect(tokenCalls).toHaveLength(514);
+  }, 60_000);
+
+  it("shares a refusal from Google with everyone waiting on it", async () => {
+    const held = deferred();
+    tokenReplies.push(held.reply);
+    const connector = mailbox();
+    const pending = [1, 2].map(() => labels(connector, context(identity("alice"))).catch((error) => error));
+    await vi.waitFor(() => expect(tokenCalls).toHaveLength(1));
+    held.release(Response.json({ error: "unauthorized_client" }, { status: 401 }));
+    const failures = await Promise.all(pending);
+    expect(failures.map((error) => error.code)).toEqual(["provider_permission_denied", "provider_permission_denied"]);
+    expect(tokenCalls).toHaveLength(1);
+  });
+
+  it("stops waiting on another caller's mint at its deadline", async () => {
+    tokenReplies.push(deferred().reply);
+    const connector = mailbox();
+    const short = context(identity("alice"));
+    short.timeoutMs = 50;
+    // The owner's request hangs and never settles its flight.
+    void labels(connector, short).catch(() => undefined);
+    await vi.waitFor(() => expect(tokenCalls).toHaveLength(1));
+    await labels(connector, context(identity("alice")));
+    expect(tokenCalls).toHaveLength(2);
+  });
 });
 
 describe("Workspace served classification on unauthorized requests", () => {
@@ -1050,6 +1193,62 @@ describe("Workspace served classification on unauthorized requests", () => {
     expect(apiCalls[1]!.body).toEqual(apiCalls[0]!.body);
     expect(tokenCalls).toHaveLength(2);
   });
+
+  it.each([503, "reset"] as const)(
+    "INV-9: a write-classified Google GET's %s stays an unknown outcome",
+    async (answer) => {
+      apiReplies.push(() => {
+        if (answer === "reset") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+        return Response.json({ error: { code: 503 } }, { status: 503 });
+      });
+      const registry = makeRegistry(
+        [gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" })],
+        { classification: { gmail: { list_labels: "write" } } },
+      );
+      const result = await createMetaTools(registry, "https://connecta.example").callDestructiveTool({
+        address: "gmail.list_labels",
+        args: {},
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "connector_call_failed", retryable: false },
+      });
+      expect(apiCalls).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    ["gmail", gmail, "create_draft", { body: "Draft text" }],
+    ["drive", drive, "create_folder", { name: "Example" }],
+    ["docs", docs, "create_document", { title: "Example" }],
+    ["forms", forms, "create_form", { title: "Example" }],
+    ["sheets", sheets, "create_spreadsheet", { title: "Example" }],
+    ["slides", slides, "create_presentation", { title: "Example" }],
+  ] as const)(
+    "INV-9: %s preserves the write's authorization verdict and unknown outcome through recovery advice",
+    async (_name, provider, tool, args) => {
+      apiReplies.push(() => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }));
+      const registry = makeRegistry([
+        provider("workspace", { purpose: "Files", serviceAccount: account(), subject: "alice@example.com" }),
+      ]);
+      const result = await createMetaTools(registry, "https://connecta.example").callDestructiveTool({
+        address: `workspace.${tool}`,
+        args,
+      });
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: {
+          code: "auth_required",
+          retryable: false,
+          writeOutcome: "unknown",
+          reconciliationRequired: true,
+          nextAction: { tool: "authorize_connector", arguments: { connector: "workspace" } },
+        },
+      });
+      expect(apiCalls).toHaveLength(1);
+      expect(tokenCalls).toHaveLength(1);
+    },
+  );
 });
 
 // --- Failures -----------------------------------------------------------------------
@@ -1701,9 +1900,7 @@ describe("the shared client reads bytes and text for the products that need them
         ["POST", 200, "reading-body"],
       ] as const)("%s → %i records %s", async (method, status, phase) => {
         const ctx = cancelledOnAnswer(oversized(status));
-        const failure = await failing(
-          client(1024).json({ method, path: "/files", ...(method === "GET" ? {} : { body: {} }) }, ctx),
-        );
+        const failure = await failing(client(1024).json({ method, path: "/files", body: {} }, ctx));
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase });
       });
 
@@ -1887,5 +2084,19 @@ describe("the shared client reads bytes and text for the products that need them
       });
       expect(apiCalls).toHaveLength(1);
     }
+  });
+
+  it("refuses a stream body, which a replay could not resend, before anything leaves", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    await expect(client().json({ method: "POST", path: "/files", rawBody: stream }, context())).rejects.toThrow(
+      /replayable/,
+    );
+    expect(tokenCalls).toEqual([]);
+    expect(apiCalls).toEqual([]);
   });
 });

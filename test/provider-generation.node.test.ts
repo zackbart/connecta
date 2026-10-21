@@ -253,7 +253,7 @@ describe("provider folder generation", () => {
     expect(run(root, true).status).toBe(0);
   });
 
-  it.each(["drift.json", "provider.test.ts"])(
+  it.each(["index.ts", "SKILL.md", "drift.json", "fixtures.ts", "provider.test.ts"])(
     "rejects a missing required %s with a provider-specific error",
     (file) => {
       const root = repository();
@@ -268,6 +268,18 @@ describe("provider folder generation", () => {
       expect(snapshot(root)).toEqual(before);
     },
   );
+
+  it("rejects malformed or duplicated skill fragments before writing outputs", () => {
+    const root = repository();
+    provider(root, "alpha");
+    const skill = "src/providers/alpha/SKILL.md";
+    write(root, skill, read(root, skill) + "<!-- fragment: content -->\nDuplicate<!-- endfragment -->\n");
+    const before = snapshot(root);
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("providers/alpha: duplicate skill fragment content");
+    expect(snapshot(root)).toEqual(before);
+  });
 
   it("checks each operation index against its pinned source offline and never regenerates it", async () => {
     const { buildOperationIndex, renderOpenApiModule, sha256 } = await generator();
@@ -471,9 +483,19 @@ describe("decision 0011 guides and drift records", () => {
 
   it.each([
     [
+      "a fragment guide",
+      { skill: "<!-- fragment: content -->\nText.\n<!-- endfragment -->\n" },
+      "G2: SKILL.md uses retired fragment markers",
+    ],
+    [
       "an undeclared when-block key",
       { skill: "<!-- when: region -->\nUS only.\n<!-- end -->\n" },
       "G2: SKILL.md uses the when-block region, which blocks.keys omits",
+    ],
+    [
+      "an inline when-block",
+      { skill: "Text <!-- when: api -->inline<!-- end -->\n" },
+      "G2: a when-block marker stands alone on its line",
     ],
     [
       "a written Conventions section",
@@ -486,11 +508,34 @@ describe("decision 0011 guides and drift records", () => {
       "G4: SKILL.md carries operator setup",
     ],
     [
+      "a dual guide without hosted and api keys",
+      { kind: "dual" as const, definition: 'classify: { tools: { list_items: "read" } },' },
+      "G2: a dual provider declares the hosted and api block keys",
+    ],
+    [
+      "a manual check without lastVerified",
+      { checks: [{ type: "manual", source: "https://vendor.example", reason: "Prose." }] },
+      "D3: checks[0] manual check needs lastVerified",
+    ],
+    [
       "a hand-kept reviewed list",
       {
         checks: [{ type: "mcp-docs", setup: "https://vendor.example/mcp", endpoints: ["https://x"], reviewed: ["a"] }],
       },
       "D4: checks[0] hand-keeps a reviewed list",
+    ],
+    [
+      "an endpoint row the manifest does not send",
+      {
+        checks: [
+          {
+            type: "endpoints",
+            specification: { url: "https://vendor.example/openapi.json" },
+            endpoints: [{ operation: "GET /unsent", specRevision: "1" }],
+          },
+        ],
+      },
+      "D4: checks[0] entries are keyed by an operation in generated.operations",
     ],
     [
       "a ReadMe endpoint row without its page, which providers:check cannot read",
@@ -506,6 +551,22 @@ describe("decision 0011 guides and drift records", () => {
       },
       "D3: providers:check rejects checks[0]: GET /a names its reference page",
     ],
+    [
+      "reviewed access to a tool generated.hosted does not serve",
+      {
+        kind: "mcp" as const,
+        definition: 'classify: { tools: { list_items: "read" } },',
+        checks: [
+          {
+            type: "mcp-docs",
+            setup: "https://vendor.example/mcp",
+            endpoints: ["https://mcp.vendor.example/mcp"],
+            reviewedAccess: { ghost: "read" },
+          },
+        ],
+      },
+      "D3: providers:check rejects checks[0]: reviewed access must name generated hosted tools",
+    ],
   ])("refuses %s past its step before writing anything", (_label, options, finding) => {
     const root = repository();
     standardProvider(root, "alpha", options);
@@ -515,6 +576,71 @@ describe("decision 0011 guides and drift records", () => {
     expect(result.stderr).toContain(`providers/alpha: ${finding}`);
     expect(snapshot(root)).toEqual(before);
     expect(run(root, true).status).toBe(1);
+  });
+
+  it("generates an endpoint row awaiting its contract, which providers:check --record then writes", async () => {
+    const { driftViolations } = await import("./provider-standard.js");
+    const root = repository();
+    const pages = join(root, "pages");
+    mkdirSync(pages);
+    for (const [file, method, path] of [
+      ["list-a", "get", "/a"],
+      ["create-b", "post", "/b"],
+    ]) {
+      const snippet = {
+        openapi: "3.1.0",
+        info: { version: "3" },
+        paths: { [path!]: { [method!]: { responses: {} } } },
+      };
+      write(root, `pages/${file}.md`, `# OpenAPI definition\n\n\`\`\`json\n${JSON.stringify(snippet)}\n\`\`\`\n`);
+    }
+    standardProvider(root, "alpha", {
+      definition: KIT,
+      checks: [
+        {
+          type: "endpoints",
+          specification: { url: "https://docs.vendor.example/reference/", format: "readme-operation-pages" },
+          endpoints: [
+            { operation: "GET /a", page: "list-a", specRevision: "0" },
+            { operation: "POST /b", page: "create-b", specRevision: "0" },
+          ],
+        },
+      ],
+    });
+    const facts = () => ({
+      name: "alpha",
+      kind: "api",
+      display: "Vendor alpha",
+      files: ["drift.json"],
+      read: (path: string) => (path === "drift.json" ? read(root, "src/providers/alpha/drift.json") : undefined),
+    });
+    // Generation accepts the rows --record will complete; the suite does not accept them committed.
+    expect(run(root).status).toBe(0);
+    expect(driftViolations(facts(), "2026-10-20")).toEqual([
+      "D3: providers:check rejects checks[0]: invalid contract digest: GET /a",
+    ]);
+    const recorded = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../scripts/drift-check.mjs", import.meta.url)),
+        "--specs",
+        "--record",
+        "--provider-dir",
+        join(root, "src/providers"),
+        "--provider",
+        "alpha",
+        "--spec",
+        `alpha=${pages}/`,
+      ],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    expect(recorded.status, recorded.stdout + recorded.stderr).toBe(0);
+    expect(json(root, "src/providers/alpha/drift.json").checks[0].endpoints).toEqual([
+      { operation: "GET /a", page: "list-a", specRevision: "3", contract: expect.stringMatching(/^sha256:/) },
+      { operation: "POST /b", page: "create-b", specRevision: "3", contract: expect.stringMatching(/^sha256:/) },
+    ]);
+    expect(driftViolations(facts(), "2026-10-20")).toEqual([]);
+    expect(run(root, true).status).toBe(0);
   });
 
   it("refuses a version-1 record past step 1, and excuses G only while step 2 is pending", () => {
@@ -549,8 +675,157 @@ describe("decision 0011 guides and drift records", () => {
   });
 });
 
+describe("the generated Conventions", () => {
+  const conventions = async () =>
+    (await import(new URL("../scripts/provider-guide.mjs", import.meta.url).href)) as {
+      renderConventions(input: object): string;
+    };
+  const labels = (text: string) => [...text.matchAll(/^- \*\*([A-Za-z ]+):\*\*/gm)].map((match) => match[1]);
+
+  it("states the hosted conventions for mcp, and only the declared API ones for api", async () => {
+    const { renderConventions } = await conventions();
+    expect(labels(renderConventions({ name: "acme", kind: "mcp" }))).toEqual(["Writes", "Hosted tools"]);
+    expect(labels(renderConventions({ name: "acme", kind: "api" }))).toEqual(["Results", "Writes"]);
+    const kit = { operations: [], pageSize: { default: 10, max: 50 }, hatch: { name: "acme", verdicts: {} } };
+    const full = renderConventions({ name: "acme", kind: "api", kit, withheld: true });
+    expect(labels(full)).toEqual(["Paging", "Results", "Hatch", "Writes", "Withheld values"]);
+    // A hatch with no write verdict offers no write tool and asks no approval.
+    expect(full).not.toContain("acme_api_write");
+    expect(full).toContain("An operation without a reviewed verdict is refused.");
+  });
+
+  it("refuses kit facts it cannot state truthfully", async () => {
+    const { renderConventions } = await conventions();
+    expect(() =>
+      renderConventions({ name: "acme", kind: "api", kit: { operations: [], pageSize: { default: 50, max: 10 } } }),
+    ).toThrow("kit.pageSize default exceeds its maximum");
+    expect(() =>
+      renderConventions({ name: "acme", kind: "api", kit: { operations: [], hatch: { name: "Acme", verdicts: {} } } }),
+    ).toThrow("snake_case tool prefix");
+    expect(() =>
+      renderConventions({
+        name: "acme",
+        kind: "api",
+        kit: { operations: [], hatch: { name: "acme", verdicts: { "GET /a": "maybe" } } },
+      }),
+    ).toThrow("read, write, destructive, or refuse");
+    expect(() => renderConventions({ name: "acme", kind: "composed" })).toThrow("mcp, api, or dual");
+  });
+});
+
 describe("OpenAPI operation index generation", () => {
+  const document = {
+    openapi: "3.0.0",
+    info: { version: "2026-09-30.test" },
+    servers: [{ url: "https://api.vendor.example/" }],
+    components: {
+      schemas: {
+        address: {
+          type: "object",
+          description: "<p>Postal address.</p> More prose.",
+          properties: { city: { type: "string", maxLength: 5000 }, line1: { type: "string" } },
+        },
+      },
+    },
+    paths: {
+      "/v1/things": {
+        get: {
+          operationId: "GetThings",
+          summary: "List things",
+          parameters: [
+            { name: "limit", in: "query", schema: { type: "integer" }, description: "A limit. Ignored prose." },
+            {
+              name: "created",
+              in: "query",
+              style: "deepObject",
+              schema: { type: "object", properties: { gte: { type: "integer" } } },
+            },
+          ],
+        },
+        post: {
+          operationId: "PostThings",
+          summary: "Create a thing",
+          requestBody: {
+            content: {
+              "application/x-www-form-urlencoded": {
+                schema: {
+                  type: "object",
+                  required: ["name"],
+                  properties: {
+                    name: { type: "string", description: "The name." },
+                    shipping: { $ref: "#/components/schemas/address" },
+                    billing: { $ref: "#/components/schemas/address" },
+                    deep: {
+                      type: "object",
+                      properties: { inner: { type: "object", properties: { leaf: { type: "string" } } } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/v1/things/{thing}": {
+        delete: {
+          operationId: "DeleteThing",
+          summary: "Delete a thing",
+          parameters: [{ name: "thing", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            content: { "application/x-www-form-urlencoded": { schema: { type: "object", properties: {} } } },
+          },
+        },
+        get: { operationId: "GetThing", summary: "Old", deprecated: true },
+      },
+      "/v1/uploads": {
+        post: {
+          operationId: "PostUploads",
+          summary: "Upload",
+          servers: [{ url: "https://files.vendor.example/" }],
+          requestBody: {
+            content: {
+              "multipart/form-data": {
+                schema: { type: "object", properties: { file: { type: "string", format: "binary" } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
   const source = { url: "https://vendor.example/r1.json", revision: "r1", digest: `sha256:${"0".repeat(64)}` };
+
+  it("drops deprecated operations, records per-operation servers, and shares repeated schema nodes", async () => {
+    const { buildOperationIndex } = await generator();
+    const data = buildOperationIndex(document, { ...source, options: { depth: 2, descriptions: 40 } });
+    expect(data.version).toBe("2026-09-30.test");
+    expect(data.servers).toEqual(["https://api.vendor.example", "https://files.vendor.example"]);
+    expect(data.ops.map((row: unknown[]) => `${row[0]} ${row[1]}`)).toEqual([
+      "GET /v1/things",
+      "POST /v1/things",
+      "DELETE /v1/things/{thing}",
+      "POST /v1/uploads",
+    ]);
+    expect(data.ops[3]).toEqual(["POST", "/v1/uploads", "PostUploads", "Upload", 1, 1]);
+    const details = JSON.parse(data.details);
+    // The repeated address schema is one shared node referenced twice.
+    const create = details.o[1][1][1];
+    expect(create.p.shipping).toEqual({ $: expect.any(Number) });
+    expect(create.p.billing).toEqual(create.p.shipping);
+    expect(details.d[create.p.shipping.$]).toEqual({
+      t: "object",
+      d: "Postal address.",
+      p: { city: { t: "string" }, line1: { t: "string" } },
+    });
+    // Past the depth an object keeps its type and is marked truncated; top-level descriptions are clipped.
+    expect(create.p.deep).toEqual({ t: "object", p: { inner: { t: "object", x: 1 } } });
+    expect(details.o[0][0]).toEqual([
+      ["limit", "query", 0, { t: "integer" }, "A limit."],
+      ["created", "query", 0, { t: "object", p: { gte: { t: "integer" } } }],
+    ]);
+    // An empty form body is no body at all.
+    expect(details.o[2]).toEqual([[["thing", "path", 1, { t: "string" }]], 0]);
+  });
 
   it("reads the API version from a named header parameter when info.version is not the sent version", async () => {
     const { buildOperationIndex } = await generator();
@@ -765,11 +1040,47 @@ describe("OpenAPI operation index generation", () => {
     }
     expect(() => index.check(create, {}, { priority: 5 })).toThrow("admit none");
   });
+
+  it("distributes outer enum constraints into union branches and drops branches they empty", async () => {
+    const { buildOperationIndex } = await generator();
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const body = (field: unknown) => ({
+      openapi: "3.0.0",
+      info: { version: "1" },
+      paths: {
+        "/records": {
+          post: {
+            operationId: "create",
+            requestBody: {
+              content: {
+                "application/json": { schema: { type: "object", properties: { kind: field } } },
+              },
+            },
+          },
+        },
+      },
+    });
+    const narrowed = new OperationIndex(
+      buildOperationIndex(body({ allOf: [{ enum: ["A"] }, { anyOf: [{ enum: ["A"] }, { enum: ["B"] }] }] }), source),
+      { vendor: "cf", title: "Cloudflare" },
+    );
+    const create = narrowed.resolve("POST", "/records").op;
+    expect(() => narrowed.check(create, {}, { kind: "A" })).not.toThrow();
+    expect(() => narrowed.check(create, {}, { kind: "B" })).toThrow("/body/kind (enum: one of A)");
+    const emptied = new OperationIndex(
+      buildOperationIndex(body({ allOf: [{ enum: ["C"] }, { anyOf: [{ enum: ["A"] }, { enum: ["B"] }] }] }), source),
+      { vendor: "cf", title: "Cloudflare" },
+    );
+    for (const kind of ["A", "B", "C"]) {
+      expect(() => emptied.check(emptied.resolve("POST", "/records").op, {}, { kind })).toThrow("admit none");
+    }
+  });
 });
 
 describe("value-safety candidate detection", () => {
   const detection = async () =>
     (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {
+      VALUE_SAFETY_FORMAT: number;
       valueSafetyCandidates(document: unknown, options?: object): Record<string, { fields: string[]; named: boolean }>;
       renderValueSafety(document: unknown, source: object, reviewed?: object): { text: string; problems: string[] };
       reviewedPaths(
@@ -846,6 +1157,22 @@ describe("value-safety candidate detection", () => {
     });
     // Stripe: an id-or-object expansion is its own operation's candidate.
     expect(valueSafetyCandidates(document, { expansions: false })["POST /v1/keys"]?.fields).toEqual(fields);
+  });
+
+  it("stamps the candidates file with the detector format, the pinned digest, and the detector options", async () => {
+    const { renderValueSafety, VALUE_SAFETY_FORMAT } = await detection();
+    const rendered = JSON.parse(
+      renderValueSafety(
+        { openapi: "3.0.0", paths: {} },
+        { digest: "sha256:x", options: { valueSafety: { expansions: false } } },
+      ).text,
+    );
+    expect(rendered).toEqual({
+      format: VALUE_SAFETY_FORMAT,
+      digest: "sha256:x",
+      options: { expansions: false },
+      candidates: {},
+    });
   });
 
   it("INV-5: checks every reviewed path against the pinned response schema, and refuses unacknowledged misses", async () => {
@@ -1005,6 +1332,7 @@ describe("value-safety candidate detection", () => {
 describe("decision 0011 evidence names in providers:spec and value safety", () => {
   interface Spec {
     checkOpenApiOutputs(root: string, providers: { directory: string }[]): Promise<string[]>;
+    openApiEvidence(directory: string): Promise<{ pin: string } | undefined>;
     readOpenApiSource(directory: string): Promise<unknown>;
     sha256(bytes: string): string;
     specProvider(
@@ -1013,6 +1341,10 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     ): Promise<{ problems: string[]; summary: string }>;
   }
   const spec = async () => (await import(new URL("../scripts/generate-openapi.mjs", import.meta.url).href)) as Spec;
+  const safetyScript = async () =>
+    (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {
+      reviewedTable(directory: string): Promise<{ table: unknown; absent: Record<string, unknown> } | undefined>;
+    };
   const document = JSON.stringify({
     openapi: "3.0.0",
     info: { version: "1" },
@@ -1094,5 +1426,74 @@ describe("decision 0011 evidence names in providers:spec and value safety", () =
     await expect(readOpenApiSource(directory)).rejects.toThrow("evidence/openapi.document.json is missing");
     const legacy = folder({ "openapi.source.json": JSON.stringify(pin) });
     await expect(readOpenApiSource(legacy.directory)).rejects.toThrow("vendored is true, beside");
+  });
+
+  it("reads a vendored index as stale once its conversion document changes", async () => {
+    const { checkOpenApiOutputs, sha256, specProvider } = await spec();
+    const pin = {
+      url: "https://vendor.example/openapi.yaml",
+      revision: "1.0.0",
+      digest: sha256("openapi: 3.0.0\n"),
+      vendored: true,
+    };
+    const { root, directory, provider } = folder({
+      "evidence/openapi.json": JSON.stringify(pin),
+      "evidence/openapi.document.json": document,
+    });
+    await specProvider(provider);
+    const output = join(directory, "openapi.generated.ts");
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual([]);
+    // The published-byte pin is unchanged, but the index it would compile is not.
+    const moved = document.replace('"version":"1"', '"version":"2"');
+    writeFileSync(join(directory, "evidence/openapi.document.json"), moved);
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual(["acme/openapi.generated.ts"]);
+    await specProvider(provider);
+    expect(readFileSync(output, "utf8")).toContain('version: "2"');
+    expect(readFileSync(output, "utf8")).toContain(`// document: ${sha256(moved)}`);
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual([]);
+    // A non-vendored module states no conversion digest.
+    writeFileSync(join(directory, "evidence/openapi.json"), JSON.stringify({ ...pin, vendored: undefined }));
+    unlinkSync(join(directory, "evidence/openapi.document.json"));
+    expect(await checkOpenApiOutputs(root, [provider])).toEqual(["acme/openapi.generated.ts"]);
+  });
+
+  it("refuses a folder that pins OpenAPI under both names, and keeps legacy names until step 1", async () => {
+    const { openApiEvidence } = await spec();
+    const pin = JSON.stringify({
+      url: "https://vendor.example/openapi.json",
+      revision: "r1",
+      digest: `sha256:${"0".repeat(64)}`,
+    });
+    const both = folder({ "evidence/openapi.json": pin, "openapi.source.json": pin });
+    await expect(openApiEvidence(both.directory)).rejects.toThrow("pins OpenAPI twice");
+    const legacy = folder({ "openapi.source.json": pin });
+    expect(await openApiEvidence(legacy.directory)).toEqual({
+      pin: "openapi.source.json",
+      candidates: "value-safety.candidates.json",
+    });
+  });
+
+  it("reads the reviewed table and its absent paths from safety.ts, legacy files until step 1, never both", async () => {
+    const { reviewedTable } = await safetyScript();
+    const standard = folder({ "safety.ts": table(true) });
+    expect((await reviewedTable(standard.directory))?.absent).toEqual({
+      operations: { "GET /v1/keys": ["legacy_secret"] },
+      resources: {},
+      reason: "A shared verdict path.",
+    });
+    writeFileSync(join(standard.directory, "value-safety.absent.json"), "{}");
+    await expect(reviewedTable(standard.directory)).rejects.toThrow("remove value-safety.*");
+    const legacy = folder({
+      "value-safety.ts": table(false),
+      "value-safety.absent.json": JSON.stringify({
+        reason: "Shared.",
+        operations: { "GET /v1/keys": ["legacy_secret"] },
+      }),
+    });
+    expect((await reviewedTable(legacy.directory))?.absent).toMatchObject({
+      operations: { "GET /v1/keys": ["legacy_secret"] },
+      resources: {},
+    });
+    expect(await reviewedTable(folder({}).directory)).toBeUndefined();
   });
 });

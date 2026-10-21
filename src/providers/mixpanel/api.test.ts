@@ -51,7 +51,7 @@ describe("Mixpanel service-account REST", () => {
     expect(() => mixpanel("mcp", { purpose: "Analytics", defaultProjectId: 42 } as never)).toThrow("defaultProjectId");
   });
 
-  it.each(["eu"] as const)(
+  it.each(["eu", "in"] as const)(
     "INV-5: routes query, app, export and import to %s residency using ordinary Basic",
     async (region) => {
       reply = () => Response.json(responses.insights);
@@ -61,8 +61,8 @@ describe("Mixpanel service-account REST", () => {
       await call("export_events", range, { region });
       reply = () => Response.json(responses.imported);
       await call("import_events", { events: [responses.event] }, { region });
-      const app = region === "us" ? "mixpanel.com" : `${region}.mixpanel.com`;
-      const suffix = region === "us" ? "" : `-${region}`;
+      const app = `${region}.mixpanel.com`;
+      const suffix = `-${region}`;
       expect(calls.map((c) => c.url.host)).toEqual([
         app,
         app,
@@ -252,5 +252,99 @@ describe("Mixpanel service-account REST", () => {
     } finally {
       await deployment.close();
     }
+  });
+
+  it("queries profiles with form encoding, explicit workspace/project ids and vendor session paging", async () => {
+    reply = () => Response.json(responses.profiles);
+    const first = await call("query_profiles", {
+      project_id: 99,
+      workspace_id: 3,
+      distinct_ids: ["13793"],
+      output_properties: ["$email"],
+      where: 'properties["$first_name"]=="Example"',
+    });
+    expect(first).toMatchObject({
+      data: { total: 2, session_id: "1234567890-EXAMPL" },
+      page: { hasMore: true, next: "1", param: "page", in: "body" },
+    });
+    const sent = calls[0]!;
+    expect(sent.url.pathname).toBe("/api/query/engage");
+    expect(sent.url.searchParams.get("project_id")).toBe("99");
+    expect(sent.url.searchParams.get("workspace_id")).toBe("3");
+    expect(sent.init.method).toBe("POST");
+    expect(new Headers(sent.init.headers).get("content-type")).toBe("application/x-www-form-urlencoded");
+    const form = new URLSearchParams(String(sent.init.body));
+    expect(form.get("distinct_ids")).toBe('["13793"]');
+    expect(form.get("output_properties")).toBe('["$email"]');
+    reply = () => Response.json({ ...responses.profiles, page: 1, results: [] });
+    expect(await call("query_profiles", { page: 1, session_id: responses.profiles.session_id })).toMatchObject({
+      page: { hasMore: false },
+    });
+    expect(await call("query_profiles", { raw: true })).toMatchObject({ data: { status: "ok", page: 1 }, status: 200 });
+    await expect(call("query_profiles", { page: 2 })).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
+  it("refuses default birth retention without born_event on named and generic routes", async () => {
+    for (const name of ["query_retention", "mixpanel_api_read"]) {
+      const args = name === "query_retention" ? range : { path: "/api/query/retention", query: range };
+      await expect(call(name, args)).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toHaveLength(0);
+    reply = () => Response.json(responses.retention);
+    await call("query_retention", { ...range, retention_type: "compounded" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each(["query_retention", "mixpanel_api_read"])(
+    "%s caps retention intervals only for explicit or default day units",
+    async (name) => {
+      reply = () => Response.json(responses.retention);
+      const args = (unit: string | undefined, interval: number) => {
+        const query = { ...range, born_event: "Signup", interval, ...(unit === undefined ? {} : { unit }) };
+        return name === "query_retention" ? query : { path: "/api/query/retention", query };
+      };
+      for (const unit of [undefined, "day"]) {
+        await call(name, args(unit, 90));
+        const dispatched = calls.length;
+        await expect(call(name, args(unit, 91))).rejects.toMatchObject({ code: "invalid_args" });
+        expect(calls).toHaveLength(dispatched);
+      }
+      for (const unit of ["week", "month"]) {
+        await call(name, args(unit, 91));
+        expect(calls.at(-1)?.url.searchParams.get("unit")).toBe(unit);
+        expect(calls.at(-1)?.url.searchParams.get("interval")).toBe("91");
+      }
+      expect(calls).toHaveLength(4);
+    },
+  );
+
+  it("refuses import count, size, required-key and nested-property violations before sending", async () => {
+    const event = responses.event;
+    const badProps = [
+      { ...event.properties, $insert_id: "bad_id" },
+      { ...event.properties, $insert_id: "null" },
+      { ...event.properties, distinct_id: "anonymous" },
+      { ...event.properties, time: 1 },
+      { ...event.properties, time: Date.now() + 7_200_000 },
+      { ...event.properties, huge: "x".repeat(1_000_000) },
+      { ...event.properties, array: Array(255).fill(1) },
+      { ...event.properties, nested: { a: { b: { c: { d: 1 } } } } },
+      { ...event.properties, ...Object.fromEntries(Array.from({ length: 255 }, (_, n) => [`p${n}`, n])) },
+    ];
+    for (const properties of badProps)
+      await expect(call("import_events", { events: [{ ...event, properties }] })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+    await expect(call("import_events", { events: Array(2001).fill(event) })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    const large = { ...event, properties: { ...event.properties, text: "x".repeat(600_000) } };
+    await expect(call("import_events", { events: Array(17).fill(large) })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    await expect(call("import_events", { events: [{ event: "Signup", properties: {} }] })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    expect(calls).toHaveLength(0);
   });
 });

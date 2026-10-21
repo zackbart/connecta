@@ -78,7 +78,7 @@ const PLACEHOLDERS = [
   "[file](https://files.example/a#&#x5b;redacted&#x5d;)",
 ];
 /** The hardest placeholder, for surfaces whose decoding the vendor matrix already covers. */
-const PLACEHOLDER = [PLACEHOLDERS[2]];
+const PLACEHOLDER = [PLACEHOLDERS[2]!];
 
 let sent: Array<{ body: BodyInit | null | undefined; url: string }>;
 let respond: () => Response;
@@ -122,6 +122,7 @@ describe.each(VENDORS)("$name URL safety", (vendor) => {
   );
 
   it.each([
+    "See https://docs.example/tutorial?code=welcome&key=public#section",
     "https://docs.example/a?token=ordinary&signature=public&sig=example",
     "https://public.example/a<br>https://docs.example/a?token&#61;ordinary",
   ])("INV-5: round-trips ordinary code/key URLs in customer data byte for byte: %s", async (input) => {

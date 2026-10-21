@@ -26,10 +26,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// Which echo forms the redactor recognizes is test/sent-secret-output-boundary.test.ts;
-// here one plain and one JSON-escaped form show each cut site redacts before it cuts.
-const FORMS = echoForms(SECRET).filter(([name]) => name === "raw" || name === "\\u-escaped (lower hex)");
-
 function base64url(text: string): string {
   let binary = "";
   for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
@@ -72,7 +68,7 @@ describe("Gmail", () => {
     };
   }
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: a message body echoing the sent token %s across maxBodyChars leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => message("Subject", straddling(form, 500)));
@@ -82,7 +78,7 @@ describe("Gmail", () => {
     },
   );
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: a Subject header echoing the sent token %s across its 4 KiB cut leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => message(straddlingJson(form, 4 * 1024), "body"));
@@ -91,10 +87,33 @@ describe("Gmail", () => {
       expectNoFragment(result.subject, form);
     },
   );
+
+  it.each(echoForms(SECRET))(
+    "INV-5: a text attachment echoing the sent token %s across maxChars leaks no fragment of it",
+    async (_name, form) => {
+      const content = straddling(form, 500);
+      stubGoogle(() =>
+        message("Subject", "body", [
+          {
+            partId: "1",
+            mimeType: "text/plain",
+            filename: "notes.txt",
+            headers: [],
+            body: { size: new TextEncoder().encode(content).length, data: base64url(content) },
+          },
+        ]),
+      );
+      const connector = gmail("mail", await workspaceOptions());
+      const result = await read(
+        connector.callTool("get_attachment", { messageId: "m1", partId: "1", maxChars: 500 }, caller()),
+      );
+      expectNoFragment(result.content, form);
+    },
+  );
 });
 
 describe("Drive", () => {
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: a file name echoing the sent token %s across its 32 KiB cut leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => ({ id: "f1", name: straddlingJson(form, 32 * 1024), mimeType: "text/plain" }));
@@ -104,7 +123,7 @@ describe("Drive", () => {
     },
   );
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: an exported Google Doc echoing the sent token %s across maxChars leaks no fragment of it",
     async (_name, form) => {
       stubGoogle((url) =>
@@ -115,6 +134,46 @@ describe("Drive", () => {
       const connector = drive("files", await workspaceOptions());
       const result = await read(connector.callTool("get_file_content", { fileId: "f1", maxChars: 500 }, caller()));
       expectNoFragment(result.content, form);
+    },
+  );
+
+  it.each(echoForms(SECRET))(
+    "INV-5: a downloaded text file echoing the sent token %s across maxChars leaks no fragment of it",
+    async (_name, form) => {
+      const content = `${straddling(form, 500)}${"y".repeat(5_000)}`;
+      stubGoogle((url) =>
+        url.searchParams.get("alt") === "media"
+          ? new Response(content, { headers: { "content-type": "text/plain" } })
+          : { id: "f1", name: "notes.txt", mimeType: "text/plain", size: String(content.length) },
+      );
+      const connector = drive("files", await workspaceOptions());
+      const result = await read(connector.callTool("get_file_content", { fileId: "f1", maxChars: 500 }, caller()));
+      expectNoFragment(result.content, form);
+    },
+  );
+});
+
+describe("Drive bounded reads", () => {
+  // A text read keeps 4·maxChars + 4 bytes. A form that begins in the shown
+  // characters and ends past the read never arrives whole.
+  it.each(echoForms(SECRET))(
+    "INV-5: a download that stops inside the sent token %s shows no fragment of it",
+    async (_name, form) => {
+      const escaped = form.startsWith("\\u");
+      // Shown units of the form: eight decoded characters.
+      const shown = escaped ? 48 : 8;
+      const maxChars = Math.floor((form.length - 4 - shown - 1) / 3);
+      const content = `${"x".repeat(maxChars - shown)}${form}${"y".repeat(1_000)}`;
+      expect(maxChars - shown + form.length).toBeGreaterThan(4 * maxChars + 4);
+      stubGoogle((url) =>
+        url.searchParams.get("alt") === "media"
+          ? new Response(content, { headers: { "content-type": "text/plain" } })
+          : { id: "f1", name: "notes.txt", mimeType: "text/plain", size: String(content.length) },
+      );
+      const connector = drive("files", await workspaceOptions());
+      const result = await read(connector.callTool("get_file_content", { fileId: "f1", maxChars }, caller()));
+      expect(result.content).toContain("x");
+      expect(result.content).not.toContain(form.slice(0, shown));
     },
   );
 });
@@ -142,7 +201,7 @@ describe("Docs", () => {
     };
   }
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: document text echoing the sent token %s across maxChars leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => document("Plan", straddling(form, 500)));
@@ -152,7 +211,7 @@ describe("Docs", () => {
     },
   );
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: a title echoing the sent token %s across its 4 KiB cut leaks no fragment of it",
     async (_name, form) => {
       const marker = (dropped: number) => `… [${dropped} more characters]`;
@@ -162,12 +221,23 @@ describe("Docs", () => {
       expectNoFragment(result.title, form);
     },
   );
+
+  it.each(echoForms(SECRET))(
+    "INV-5: an index row's preview echoing the sent token %s across its 80-character cut leaks no fragment of it",
+    async (_name, form) => {
+      const kept = Math.min(head(form).length, 60);
+      stubGoogle(() => document("Plan", straddling(form, 80, kept)));
+      const connector = docs("documents", await workspaceOptions());
+      const result = await read(connector.callTool("get_document", { documentId: "d1", withIndexes: true }, caller()));
+      expectNoFragment(result.tabs[0].elements[0].text, form, { kept });
+    },
+  );
 });
 
 describe("Sheets", () => {
   const ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: a cell echoing the sent token %s across maxCellChars leaks no fragment of it",
     async (_name, form) => {
       stubGoogle(() => ({
@@ -179,6 +249,30 @@ describe("Sheets", () => {
         connector.callTool("get_values", { spreadsheetId: ID, ranges: ["Sheet1!A1"], maxCellChars: 500 }, caller()),
       );
       expectNoFragment(result.valueRanges[0].values[0][0], form);
+    },
+  );
+
+  it.each(echoForms(SECRET))(
+    "INV-5: a summarized reply echoing the sent token %s across its 256-byte cut leaks no fragment of it",
+    async (_name, form) => {
+      const marker = (dropped: number) => `[… ${dropped} more characters]`;
+      stubGoogle(() => ({
+        spreadsheetId: ID,
+        // Too large to return whole, so every reply after it is summarized.
+        replies: [
+          { addSheet: { properties: { sheetId: 1, title: "y".repeat(200_000) } } },
+          { addSheet: { properties: { sheetId: 2, title: straddlingJson(form, 256, marker) } } },
+        ],
+      }));
+      const connector = sheets("sheets", await workspaceOptions());
+      const result = await read(
+        connector.callTool(
+          "batch_update_spreadsheet",
+          { spreadsheetId: ID, requests: [{ addSheet: {} }, { addSheet: {} }] },
+          caller(),
+        ),
+      );
+      expectNoFragment(result.replies[1].properties.title, form);
     },
   );
 });
@@ -193,13 +287,34 @@ describe("Forms", () => {
     };
   }
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: a form title echoing the sent token %s across its 2,000-character cut leaks no fragment of it",
     async (_name, echo) => {
       stubGoogle(() => form(straddling(echo, 2_000)));
       const connector = forms("forms", await workspaceOptions());
       const result = await read(connector.callTool("get_form", { formId: "form1" }, caller()));
       expectNoFragment(result.title, echo);
+    },
+  );
+
+  it.each(echoForms(SECRET))(
+    "INV-5: an answer echoing the sent token %s across its 2,000-character cut leaks no fragment of it",
+    async (_name, echo) => {
+      stubGoogle((url) =>
+        url.pathname.endsWith("/responses")
+          ? {
+              responses: [
+                {
+                  responseId: "resp1",
+                  answers: { q1: { questionId: "q1", textAnswers: { answers: [{ value: straddling(echo, 2_000) }] } } },
+                },
+              ],
+            }
+          : form("Survey"),
+      );
+      const connector = forms("forms", await workspaceOptions());
+      const result = await read(connector.callTool("list_responses", { formId: "form1" }, caller()));
+      expectNoFragment(result.responses[0].answers[0].values[0], echo);
     },
   );
 });
@@ -237,7 +352,7 @@ describe("Slides", () => {
     expect(leaks(text)).toBe(false);
   }
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
     "INV-5: slide text echoing the sent token %s across maxCharsPerSlide, and its continuation, leak no fragment of it",
     async (_name, form) => {
       const { presentation, page } = deck("Plan", straddling(form, 500));
@@ -261,7 +376,63 @@ describe("Slides", () => {
     },
   );
 
-  it.each(FORMS)(
+  it.each(echoForms(SECRET))(
+    "INV-5: a deck title echoing the sent token %s across its 4 KiB cut leaks no fragment of it",
+    async (_name, form) => {
+      const marker = (dropped: number) => `[… ${dropped} more characters; Drive shows the whole title]`;
+      const { presentation } = deck(straddlingJson(form, 4 * 1024, marker), "Body");
+      stubGoogle(() => presentation);
+      const connector = slides("decks", await workspaceOptions());
+      const result = await read(connector.callTool("get_presentation", { presentationId: "deck1" }, caller()));
+      expectNoFragment(result.title, form);
+    },
+  );
+
+  it.each(echoForms(SECRET))(
+    "INV-5: a page's text echoing the sent token %s, paged past one result, leaks no fragment across pages",
+    async (_name, form) => {
+      const { page } = deck("Plan", form.repeat(Math.ceil(400_000 / form.length)));
+      stubGoogle(() => page);
+      const connector = slides("decks", await workspaceOptions());
+      const args = { presentationId: "deck1", pageObjectId: "s1" };
+      const first = await read(connector.callTool("get_page", args, caller()));
+      let shown = first.elements.map((element: { text?: string }) => element.text ?? "").join("");
+      if (first.page.nextCursor) {
+        const second = await read(connector.callTool("get_page", { ...args, cursor: first.page.nextCursor }, caller()));
+        shown += second.elements.map((element: { text?: string }) => element.text ?? "").join("");
+      }
+      expectNoPiece(shown.replace(/\n\[… \d+ more characters continue on the next page\]/g, ""), form);
+    },
+  );
+
+  it.each(echoForms(SECRET))(
+    "INV-5: a comment echoing the sent token %s, paged past one result, leaks no fragment across pages",
+    async (_name, form) => {
+      stubGoogle(() => ({
+        presentationId: "deck1",
+        revisionId: "rev-1",
+        commentsViewMode: "COMMENTS_VIEW_MODE_INCLUDED",
+        comments: [
+          { commentId: "c1", headPost: { postId: "p1", content: form.repeat(Math.ceil(400_000 / form.length)) } },
+        ],
+        slides: [],
+      }));
+      const connector = slides("decks", await workspaceOptions());
+      const shown: string[] = [];
+      let cursor: string | undefined;
+      for (let pages = 0; pages < 4; pages++) {
+        const args = { presentationId: "deck1", ...(cursor ? { cursor } : {}) };
+        const result = await read(connector.callTool("list_comments", args, caller()));
+        for (const thread of result.threads as { headPost?: { content?: string } }[])
+          shown.push(thread.headPost?.content ?? "");
+        cursor = result.page.nextCursor ?? undefined;
+        if (!cursor) break;
+      }
+      expectNoPiece(shown.join("").replace(/\n\[… \d+ more characters continue on the next page\]/g, ""), form);
+    },
+  );
+
+  it.each(echoForms(SECRET))(
     "INV-5: a raw page element echoing the sent token %s, chunked past one result, leaks no fragment across chunks",
     async (_name, form) => {
       const { page } = deck("Plan", form.repeat(Math.ceil(400_000 / form.length)));
