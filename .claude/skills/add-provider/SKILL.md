@@ -17,7 +17,7 @@ provider folder, and `test/provider-conventions.test.ts` applies S on Node.
 `PENDING` in `test/provider-standard.ts` lists providers that have not landed
 step 1 or step 2. Names leave it and `test/provider-pending-baseline.json` together;
 none join either. CI's static job compares each baseline step with the PR base
-(or HEAD's first parent on main/nightly/manual runs), rejecting added or
+(the pre-push SHA on main; HEAD's first parent on nightly/manual runs), rejecting added or
 reinserted names even if both files change. Removals remain allowed; missing
 history or an unreadable baseline fails. No `CONNECTA_STANDARD_BASE` is needed.
 See AGENTS.md Verification.

@@ -19,8 +19,8 @@ newest head's run.
 
 - `static`: `check:static` (format, generated freshness, docs, fragments,
   lint, Knip, typecheck), then `check:build` (build, declarations, bundle cap).
-  The exemption guard rejects names absent from the PR base (or HEAD's first
-  parent on main/nightly/manual); it fails on missing comparison history.
+  The exemption guard rejects names absent from the PR base (the pre-push SHA on main; HEAD's
+  first parent on nightly/manual); it fails on missing comparison history.
 - `node`: unfiltered `test:node` through `vitest.config.node.ts`, including
   INV/spec evidence and collection enforcement. Goldens compare forward and
   reverse observations; nightly adds repeats/jitter via

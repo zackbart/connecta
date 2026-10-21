@@ -112,7 +112,7 @@ for partial runs only. The same reporter enforces the complete `test` run.
 Decision 0011's provider layout, evidence, drift, guide and surface checks
 remain, along with exemption-inventory consistency and stale-exemption checks.
 The static job compares `test/provider-pending-baseline.json` with the PR base
-(or HEAD's first parent on main/nightly/manual runs). Each step's names may
+(the pre-push SHA on main; HEAD's first parent on nightly/manual runs). Each step's names may
 only shrink. Missing history or an unreadable baseline fails the job. No
 `CONNECTA_STANDARD_BASE` setting or local history fallback is needed; the
 small guard's test runs in `check:static`.

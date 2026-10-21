@@ -34,9 +34,10 @@ jobs:
         id: changes
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
           EVENT: ${{ github.event_name }}
         run: |
-          base=${PR_BASE:-HEAD^1}
+          base=${PR_BASE:-${PUSH_BASE:-HEAD^1}}
           echo "base=$base" >> "$GITHUB_OUTPUT"
           if [[ "$EVENT" != pull_request ]]; then
             echo 'browser=true' >> "$GITHUB_OUTPUT"
@@ -68,7 +69,10 @@ jobs:
       - name: Reject new provider exemptions (decision 0011)
         env:
           BASE: ${{ steps.changes.outputs.base }}
-        run: git show "$BASE:test/provider-pending-baseline.json" | node scripts/check-provider-exemptions.mjs
+        run: |
+          test -n "$BASE"
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
+          git show "$BASE:test/provider-pending-baseline.json" | node scripts/check-provider-exemptions.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check:static
       - run: pnpm run check:build
